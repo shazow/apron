@@ -99,14 +99,13 @@ Server IDs and identity proofs are deferred.
 
 Reference: PROTOCOL.md §§3.4, 6.2, 6.3.
 
-How do clients learn that rooms or threads disappeared or changed while
-disconnected? Leaving a room is confirmed with a `room` frame, but that frame
-has no membership/removal field. Thread metadata has no stated replay
-requirement.
+Decision: `room` and `thread` announcements replace metadata; omitted optional
+fields are cleared. After authentication, servers re-announce visible rooms
+and their visible thread metadata; clients rebuild the current metadata view.
+`removed: true` withdraws the room or thread. Removed-room history retention,
+access, and client cache policy are implementation-defined.
 
-What should happen after access revocation, room deletion, or an offline thread
-rename? Consider a replacement snapshot or an explicit removal convention,
-and define which metadata is re-announced after reconnect.
+Review complete; awaiting confirmation before advancing.
 
 ## 7. Mandatory receiving behavior and capability evolution
 
@@ -205,6 +204,9 @@ Specify required fields and defaults, whether attachment-only messages may
 omit text, and how malformed requests are handled. Clarify whether re-sent
 room/thread metadata frames merge or replace previous metadata, including how
 optional fields are cleared.
+
+Progress: Question 6 defines replacement, omission, and removal semantics for
+room/thread metadata. Other required-field and default questions remain open.
 
 ## 13. Markdown HTML and the content trust model
 

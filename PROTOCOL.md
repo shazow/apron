@@ -212,8 +212,9 @@ protocol level.
 
 ### 3.4 Rooms
 
-Rooms have server-chosen string IDs. The server announces each room the client
-can see (at minimum, once after auth):
+Rooms have server-chosen string IDs. After authentication, servers MUST announce
+all currently visible rooms. Clients rebuild the current metadata view from
+these announcements:
 
 ```json
 {"method": "room", "params": {
@@ -221,14 +222,24 @@ can see (at minimum, once after auth):
 }}
 ```
 
-Re-sending a `room` frame updates its metadata. Servers MUST announce a room
-before delivering any entry in it. A Level 0 server announces one room and
-never revisits the subject. Join/leave/create are cap `rooms.manage` (§6.3).
+Re-sending `room` fully replaces its metadata; omitted optional fields are
+cleared. Servers MUST emit `removed: true` when a room leaves the client's
+visible set. This withdraws the room and its thread metadata from the current
+view; only `room` and `removed` are required:
+
+```json
+{"method": "room", "params": {"room": "general", "removed": true}}
+```
+
+Omitted `removed` means false. History retention and access after room removal,
+including client cache policy, are implementation-defined. Servers MUST
+announce a room before delivering entries in it. A Level 0 server announces
+one room. Join/leave/create are cap `rooms.manage` (§6.3).
 
 `latest_id` is the maximum committed room log ID, including events and updates;
-`"0"` denotes an empty log. It is REQUIRED on room announcements when `history`
-is supported, OPTIONAL otherwise. For history-enabled rooms, the first
-announcement after auth MUST establish `latest_id` and live delivery at one
+`"0"` denotes an empty log. It is REQUIRED on active room announcements when
+`history` is supported, OPTIONAL otherwise. For history-enabled rooms, an
+announcement establishing live delivery MUST establish `latest_id` at the same
 serialization point: transitions through `latest_id` are recoverable via history
 (raw or equivalent rasters), and subsequent entries MUST be delivered live in
 log order. No commit may fall between these paths. Re-announcements report the
@@ -575,6 +586,16 @@ frame:
 `root` is optional advisory metadata (the event the thread grew from), not a
 protocol mechanism.
 
+Thread announcements fully replace metadata. Servers MUST re-announce current
+visible thread metadata after authentication, following the containing room's
+announcement. Servers MUST emit `removed: true` when a thread leaves the
+client's visible set, unless its room is removed. Only `room`, `thread`, and
+`removed` are required for removal. Omitted `removed` means false.
+
+```json
+{"method": "thread", "params": {"room": "general", "thread": "t_deploy", "removed": true}}
+```
+
 Threading is server-authoritative and retroactive: moving an event into a
 thread is `update` with `"set": {"thread": "t_deploy"}`; removing it is
 `"set": {"thread": null}` (merge-patch deletion). A moderator agent
@@ -602,7 +623,8 @@ exist:
 ```
 
 Server confirms requests with `result: {}` and emits the corresponding `room`
-notification. Visibility and membership policy are entirely server-defined.
+notification; successful `room_leave` emits `removed: true`. Visibility and
+membership policy are entirely server-defined.
 
 ### 6.4 `embed.iframe`, `embed.html`
 
@@ -663,7 +685,8 @@ present and its omission otherwise; per-cap behavior
 including RFC 7386 merge semantics, raw/rastered replay equivalence (including
 nested object resets and deletions), source-span
 pagination with `limit: 1`, `room.latest_id` (including update-only and empty
-logs), gap-free history/live boundaries, and `unsupported` responses for
+logs), metadata replacement/removal and re-announcement after authentication,
+gap-free history/live boundaries, and `unsupported` responses for
 undeclared caps. Client recovery checks include interleaved live traffic and
 disconnects between history pages; checkpoints MUST NOT skip unprocessed entries.
 Retry deduplication is recommended only; accepting duplicates MUST NOT fail
