@@ -12,41 +12,110 @@ frontend.
 
 ## 1. Transport & framing
 
-- One WebSocket connection. Each WebSocket text frame contains exactly one JSON
+- One WebSocket connection. Each WebSocket text message contains exactly one JSON
   object (a **frame**). No batching, no newline-delimited streams.
-- Every frame has a string `type`.
-- **Requests** (client→server) carry a client-chosen string `id`. The server's
-  reply echoes `id`. Replies are `ok` or `error`. Requests MAY be pipelined;
-  the server processes them in order but MAY reply out of order.
-- **Events** (server→client, unsolicited) carry no `id`.
-- Unknown frame types: servers reply `error/unsupported`; clients ignore.
-  Unknown *fields* in known frames MUST be ignored by both sides.
+- The RECOMMENDED envelope follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification),
+  with the Apron conventions in §1.1. `jsonrpc` and request `id` are optional;
+  receivers MUST accept their omission. Omitting `jsonrpc` is an Apron
+  shorthand, not a standard JSON-RPC 2.0 envelope.
+- **Calls** have a string `method` and an object `params` (omission means `{}`).
+  Method-specific fields live in `params`, not at the envelope's top level.
+  The names “`server` frame”, “`event` frame”, etc. refer to these methods.
+- A call with `id` is a **request**; its reply echoes `id` and contains exactly
+  one of `result` or `error`. A call without `id` is a **notification** and
+  MUST NOT receive a reply, including on failure. A notification can still
+  cause normal effects such as room announcements or message broadcasts.
+- Requests MAY be pipelined; the server processes them in order but MAY reply
+  out of order. Server announcements and broadcasts are notifications.
+- Unknown methods: servers reply `error/unsupported` to requests and ignore
+  notifications; clients ignore unknown notifications. Unknown *fields* in
+  known methods MUST be ignored by both sides.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
-  reject larger ones with `error/too_large`. This is a suggested soft limit,
+  reject larger requests with `error/too_large`; oversized notifications may
+  be dropped without a reply. This is a suggested soft limit,
   not a conformance requirement.
 - Liveness rides on WebSocket ping/pong at the transport layer. There is no
   application-level heartbeat; do not invent one.
 
-### 1.1 Replies
+### 1.1 Envelope and replies
+
+`jsonrpc`, when present, MUST be `"2.0"`; senders SHOULD include it. Request
+`id`, when present, MUST be a string (§2). Clients SHOULD include `id` when
+they need a result or want to identify retries, particularly for `auth`,
+`history`, and mutations. Notifications omit `id`; event/update log IDs belong
+in their `params` payloads and do not solicit replies.
 
 ```json
-{"type": "ok", "id": "c42", ...}
-{"type": "error", "id": "c42", "code": "unsupported", "message": "optional human text"}
+→ {"jsonrpc": "2.0", "method": "send", "id": "c42",
+   "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}}
+← {"jsonrpc": "2.0", "id": "c42", "result": {"event_id": "1724803200042"}}
 ```
 
-Standard `code` values (others are freeform strings):
+The same call without `jsonrpc` is valid Apron. A fire-and-forget send may
+omit both optional keys:
 
-| code          | meaning                                        |
-|---------------|------------------------------------------------|
-| `unsupported` | capability not implemented                     |
-| `denied`      | authentication/authorization failure           |
-| `retry_after` | rate limited; carries integer `ms`             |
+```json
+{"method": "send", "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}}
+```
+
+Successful replies put all returned fields in a `result` object; an operation
+with no returned fields uses `{}`. Errors have an integer `code`, a human-readable
+string `message`, and optional `data`, following JSON-RPC 2.0:
+
+```json
+{"jsonrpc": "2.0", "id": "c42", "error": {"code": -32601, "message": "Unsupported method"}}
+{"jsonrpc": "2.0", "id": "c43", "error": {"code": -32002, "message": "Try later", "data": {"ms": 1000}}}
+```
+
+Names such as `error/unsupported` in this document are shorthand for these
+numeric codes, not additional wire fields:
+
+| code   | name             | meaning                                      |
+|--------|------------------|----------------------------------------------|
+| -32700 | `parse_error`    | invalid JSON                                 |
+| -32600 | `invalid_request` | invalid envelope                            |
+| -32601 | `unsupported`    | method/capability not implemented            |
+| -32602 | `invalid_params` | invalid method parameters                    |
+| -32603 | `internal_error` | internal server error                        |
+| -32001 | `denied`         | authentication/authorization failure         |
+| -32002 | `retry_after`    | rate limited; `data.ms` is an integer delay   |
+| -32003 | `too_large`      | message too large                            |
+
+Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
+and invalid envelopes whose request ID cannot be determined use `id: null`,
+as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
+still receive no error replies. Examples below omit `jsonrpc` for brevity.
+
+### 1.2 Retries and recommended deduplication
+
+Clients retrying an operation SHOULD reuse its original `id`, `method`, and
+`params`, including after reconnect. A different operation MUST use a new ID;
+changing parameters is a new operation. `jsonrpc` presence and JSON object key
+order do not change the identity of a retry.
+
+Servers SHOULD deduplicate repeated requests by `id` within the authenticated
+sender's namespace. For a recognized duplicate of an accepted operation, the
+server SHOULD return the original result without performing the operation or
+broadcasting its effects again. Repeated IDs with different methods or
+parameters SHOULD be rejected with `invalid_params`. Implementations following
+this recommendation SHOULD handle concurrent copies as a single operation.
+
+Deduplication is best effort: retention duration and survival across reconnects
+or server restarts are implementation-defined. It requires no new handshake,
+capability, or per-client session state; a server may retain accepted request
+IDs with stored operations. Before authentication, IDs are scoped to the
+connection; authentication itself MUST still be performed on each connection.
+
+Servers MAY process retries again, including assigning fresh event/update IDs.
+Duplicate messages are therefore allowed, and clients MUST NOT assume
+exactly-once delivery. Calls without `id` have no request-level deduplication.
 
 ---
 
 ## 2. Identifiers (mandatory)
 
-All IDs on the wire are **strings**. They come in two flavors:
+All IDs on the wire are **strings**, except the `null` response ID used for
+unidentifiable invalid requests (§1.1). They come in two flavors:
 
 **Log IDs** (event IDs and update IDs) are strings of decimal digits encoding
 `unix_seconds * 1000 + counter`, where `counter` is a per-second sequence
@@ -73,7 +142,10 @@ into the next second, and backward clock steps are absorbed).
 are arbitrary strings chosen by whichever side mints them. Servers SHOULD
 prefix them by type — `t_` for threads, `call_` for RTC sessions, etc. — to
 keep IDs self-describing in logs and impossible to confuse across kinds.
-Client request `id`s SHOULD be random per connection (see §3.5 echo).
+Client request `id`s SHOULD be randomly generated to avoid collisions across
+devices and connections, including devices authenticated as the same sender.
+A retry reuses the original ID (§1.2); reconnecting does not change that ID.
+Request IDs identify operations, not positions in the server's room log.
 
 ---
 
@@ -89,14 +161,21 @@ Upon accepting a connection, the server MUST immediately send a `server` frame,
 unprompted. There is no client hello.
 
 ```json
-{"type": "server", "protocol": 0, "name": "impl-name/1.0",
- "caps": ["history", "typing"],
- "auth": ["token"],
- "upload": "https://example/upload"}
+{
+  "method": "server",
+  "params": {
+    "protocol": 1,
+    "name": "impl-name/1.0",
+    "caps": ["history", "typing", "upload"],
+    "auth": ["token"],
+    "upload": "https://example/upload"
+  }
+}
 ```
 
 - `protocol`: integer. Bumped only for breaking changes to this mandatory core;
-  never for capabilities.
+  never for capabilities. This draft uses `1` for the JSON-RPC envelope;
+  the earlier `type`-based envelope used `0`.
 - `caps`: capability identifiers (§4). MAY be empty.
 - `auth`: supported auth methods (§3.2), in server preference order.
 - `upload`: present iff cap `upload` (§6.1).
@@ -109,8 +188,8 @@ NOT retroactively un-render existing content. After replying
 ### 3.2 Authentication
 
 ```json
-→ {"type": "auth", "id": "c1", "method": "token", "token": "...", "client": "bottomless-web/0.3"}
-← {"type": "ok", "id": "c1", "you": {"id": "alice", "name": "Alice"}}
+→ {"method": "auth", "id": "c1", "params": {"method": "token", "token": "...", "client": "bottomless-web/0.3"}}
+← {"id": "c1", "result": {"you": {"id": "alice", "name": "Alice"}}}
 ```
 
 Methods:
@@ -118,14 +197,16 @@ Methods:
 - `anonymous` — no credentials; server assigns identity. Legal and expected in
   trusted deployments.
 - `token` — bearer string. The reference default.
-- `webauthn` — two-round-trip challenge: `auth(method=webauthn)` →
-  `ok` carrying `challenge` → `auth` carrying the assertion → final `ok`.
+- `webauthn` — two-round-trip challenge: `auth(params.method=webauthn)` →
+  `result` carrying `challenge` → `auth` carrying the assertion → final `result`.
   Details deferred to a companion doc; cap-gated as `auth.webauthn`.
 
 A server MUST support at least one method. `client` is an optional free-form
 implementation/version string for debugging. Clients MAY pipeline `auth`
 before `server` arrives. All other requests before successful auth get
-`denied`.
+`denied`; unauthenticated notifications other than `auth` are ignored.
+An `auth` notification can authenticate the connection, but returns no `you`
+or challenge, so clients SHOULD use a request when they need those results.
 
 ### 3.3 Identity
 
@@ -140,7 +221,7 @@ sender inline. There is no user directory and no profile state.
 event. Rename request (server MAY comply, decline, or alter):
 
 ```json
-→ {"type": "nick", "id": "c2", "name": "Alice ⚙"}
+→ {"method": "nick", "id": "c2", "params": {"name": "Alice ⚙"}}
 ```
 
 Bots and agents are ordinary senders; nothing distinguishes them at the
@@ -152,7 +233,7 @@ Rooms have server-chosen string IDs. The server announces each room the client
 can see (at minimum, once after auth):
 
 ```json
-{"type": "room", "room": "general", "name": "General", "topic": "optional"}
+{"method": "room", "params": {"room": "general", "name": "General", "topic": "optional"}}
 ```
 
 Re-sending a `room` frame updates its metadata. Servers MUST announce a room
@@ -164,17 +245,29 @@ never revisits the subject. Join/leave/create are cap `rooms.manage` (§6.3).
 Send:
 
 ```json
-→ {"type": "send", "id": "c3", "room": "general", "body": {"text": "hello *world*", "format": "markdown"}}
-← {"type": "ok", "id": "c3", "event_id": "1724803200042"}
+→ {
+  "method": "send",
+  "id": "c3",
+  "params": {"room": "general", "body": {"text": "hello *world*", "format": "markdown"}}
+}
+← {"id": "c3", "result": {"event_id": "1724803200042"}}
 ```
 
 Broadcast (to all clients in the room, including the sender):
 
 ```json
-{"type": "event", "room": "general", "echo": "c3", "event": {
-  "event_id": "1724803200042",
-  "sender": {"id": "alice", "name": "Alice"},
-  "body": {"text": "hello *world*", "format": "markdown"}}}
+{
+  "method": "event",
+  "params": {
+    "room": "general",
+    "echo": "c3",
+    "event": {
+      "event_id": "1724803200042",
+      "sender": {"id": "alice", "name": "Alice"},
+      "body": {"text": "hello *world*", "format": "markdown"}
+    }
+  }
+}
 ```
 
 - `body.format` ∈ `"plain" | "markdown"`. Both are mandatory to render;
@@ -183,15 +276,16 @@ Broadcast (to all clients in the room, including the sender):
   Renderers SHOULD disable raw inline HTML passthrough — CommonMark permits it
   by default, and enabling it reopens the sanitization hole that §6.4
   deliberately closes.
-- **Echo:** the broadcast `event` for a client-originated `send` carries
-  `echo` = the originating request `id`. Clients match `echo` against their
-  own pending sends to confirm local echo and to reconcile retries — a `send`
-  resent after reconnect that was already accepted produces a broadcast whose
-  `echo` matches, preventing silent duplicates even though the server MAY
-  assign it a fresh `event_id` or duplicate the message. Servers MAY include
-  `echo` on all copies of the broadcast (simplest implementation); this is why
-  client request `id`s SHOULD be random (§2) — clients MUST ignore `echo`
-  values that don't match their own pending requests.
+- **Echo:** the broadcast `event` for a client-originated `send` with `id`
+  carries `params.echo` = the originating request `id`. Omit `echo` for sends
+  without `id`. Clients match `echo` against their own pending sends to
+  reconcile local echo. Servers MAY include it on all copies of the broadcast;
+  clients MUST ignore values that do not match their own pending requests.
+  Echo is correlation, not a duplicate-prevention guarantee. A server following
+  §1.2 returns the original `event_id` in its result for a recognized retry,
+  without a second broadcast; clients MUST also accept that result as
+  confirmation.
+  Otherwise, retries MAY create multiple events with different `event_id`s.
 - Clients additionally dedup on `event_id`.
 - `body.attachments` and `body.embeds`: see §6. **Clients MUST render entries
   of unknown `kind` as a labeled fallback card** (kind name + `url` if
@@ -211,30 +305,40 @@ unknown keys are retained and ignored per §1):
 | `redacted`  | `update`                | tombstone marker (§5.3)          |
 
 Fields a client supplies on `send` (`body`, and `thread` when replying in a
-thread) sit at the **top level of the `send` frame**, alongside `room`; the
-server copies them into the event object it creates.
+thread) sit in **`send.params`**, alongside `room`; the server copies them
+into the event object it creates.
 
 ### 3.6 Level 0 conformance checklist
 
 Accept connection → emit `server` → accept one `auth` method → emit ≥1 `room`
-→ accept `send`, reply `ok`, broadcast `event` with conforming IDs → reply
-`error/unsupported` to everything else. That is the entire Level 0 surface.
+→ accept `send`, return a `result` for requests, broadcast `event` with
+conforming IDs → reply `error/unsupported` to other requests and ignore unknown
+notifications. Accept omission of `jsonrpc` and `id` as specified in §1;
+deduplication is recommended, not required. That is the entire Level 0 surface.
 
 ### 3.7 A complete Level 0 session
 
 ```json
-← {"type": "server", "protocol": 0, "name": "demo/1", "caps": [], "auth": ["token"]}
-→ {"type": "auth", "id": "a", "method": "token", "token": "hunter2"}
-← {"type": "ok", "id": "a", "you": {"id": "alice", "name": "Alice"}}
-← {"type": "room", "room": "general", "name": "General"}
-→ {"type": "send", "id": "b", "room": "general", "body": {"text": "hi", "format": "markdown"}}
-← {"type": "ok", "id": "b", "event_id": "1724803200000"}
-← {"type": "event", "room": "general", "echo": "b", "event": {
-     "event_id": "1724803200000",
-     "sender": {"id": "alice", "name": "Alice"},
-     "body": {"text": "hi", "format": "markdown"}}}
-→ {"type": "history", "id": "c", "room": "general", "limit": 50}
-← {"type": "error", "id": "c", "code": "unsupported"}
+← {"method": "server", "params": {"protocol": 1, "name": "demo/1", "caps": [], "auth": ["token"]}}
+→ {"method": "auth", "id": "a", "params": {"method": "token", "token": "hunter2"}}
+← {"id": "a", "result": {"you": {"id": "alice", "name": "Alice"}}}
+← {"method": "room", "params": {"room": "general", "name": "General"}}
+→ {"method": "send", "id": "b", "params": {"room": "general", "body": {"text": "hi", "format": "markdown"}}}
+← {"id": "b", "result": {"event_id": "1724803200000"}}
+← {
+  "method": "event",
+  "params": {
+    "room": "general",
+    "echo": "b",
+    "event": {
+      "event_id": "1724803200000",
+      "sender": {"id": "alice", "name": "Alice"},
+      "body": {"text": "hi", "format": "markdown"}
+    }
+  }
+}
+→ {"method": "history", "id": "c", "params": {"room": "general", "limit": 50}}
+← {"id": "c", "error": {"code": -32601, "message": "Unsupported method"}}
 ```
 
 Every conforming implementation, at any level, produces a superset of this
@@ -273,9 +377,12 @@ cursors, no pagination tokens. The log contains two entry kinds — events and
 updates (§5.3) — sharing one ID sequence (§2).
 
 ```json
-→ {"type": "history", "id": "c9", "room": "general",
-   "after": "1724803200000", "before": "1724806800000", "limit": 200}
-← {"type": "history_page", "id": "c9", "entries": [...], "more": true}
+→ {
+  "method": "history",
+  "id": "c9",
+  "params": {"room": "general", "after": "1724803200000", "before": "1724806800000", "limit": 200}
+}
+← {"id": "c9", "result": {"entries": [...], "more": true}}
 ```
 
 Bounds and ordering:
@@ -317,11 +424,15 @@ gap-fill reads slice the list. A dict and a list suffice.
 
 ### 5.2 `typing`
 
-Fire-and-forget ephemera; no replies, servers MAY drop freely.
+Fire-and-forget ephemera sent as notifications (omit `id`); no replies,
+servers MAY drop freely.
 
 ```json
-→ {"type": "typing", "room": "general", "active": true, "timeout": 8}
-← {"type": "typing", "room": "general", "sender": {...}, "active": true, "timeout": 8}
+→ {"method": "typing", "params": {"room": "general", "active": true, "timeout": 8}}
+← {
+  "method": "typing",
+  "params": {"room": "general", "sender": {...}, "active": true, "timeout": 8}
+}
 ```
 
 `timeout` (optional, seconds) is how long the indicator should persist without
@@ -335,9 +446,15 @@ entries: each consumes an ID from the room's sequence (§2) and appears in
 gap-fill history (§5.1).
 
 ```json
-{"type": "update", "room": "general", "update_id": "1724803312007",
- "target": "1724803200042",
- "set": {"body": {"text": "hello world", "format": "plain"}, "edited": true}}
+{
+  "method": "update",
+  "params": {
+    "room": "general",
+    "update_id": "1724803312007",
+    "target": "1724803200042",
+    "set": {"body": {"text": "hello world", "format": "plain"}, "edited": true}
+  }
+}
 ```
 
 Client rule: apply `set` to the local copy of event `target` using **JSON
@@ -351,14 +468,18 @@ including ones predating the connection.
 Client-initiated mutation is one request frame mirroring the server frame:
 
 ```json
-→ {"type": "update_request", "id": "c12", "room": "general",
-   "target": "1724803200042", "set": {"body": {"text": "hello world", "format": "plain"}}}
-← {"type": "ok", "id": "c12", "update_id": "1724803312007"}
+→ {
+  "method": "update_request",
+  "id": "c12",
+  "params": {"room": "general", "target": "1724803200042", "set": {"body": {"text": "hello world", "format": "plain"}}}
+}
+← {"id": "c12", "result": {"update_id": "1724803312007"}}
 ```
 
 The server validates which keys this sender may touch on this target
-(policy is entirely server-defined), replies `ok`/`denied`, and on success
-broadcasts the resulting `update` (the broadcast is authoritative and MAY
+(policy is entirely server-defined), replies with `result` or `error/denied`
+when `id` is present, and on success broadcasts the resulting `update`
+(the broadcast is authoritative and MAY
 differ from the request). Capabilities `edit` and `redact` gate client UI
 only; both use `update_request`.
 
@@ -400,9 +521,16 @@ Unknown kinds → fallback card rule (§3.5).
 frame:
 
 ```json
-{"type": "thread", "room": "general", "thread": "t_deploy",
- "name": "Deploy discussion", "summary": "Debugging the 4pm outage",
- "root": "1724801100007"}
+{
+  "method": "thread",
+  "params": {
+    "room": "general",
+    "thread": "t_deploy",
+    "name": "Deploy discussion",
+    "summary": "Debugging the 4pm outage",
+    "root": "1724801100007"
+  }
+}
 ```
 
 `root` is optional advisory metadata (the event the thread grew from), not a
@@ -418,7 +546,7 @@ deleted, and SHOULD indicate the move at the message's original position.
 Client participation reuses existing frames — no thread-specific requests
 exist:
 
-- **Reply in a thread:** `send` with top-level `"thread": "t_deploy"` (an
+- **Reply in a thread:** `send` with `"thread": "t_deploy"` in `params` (an
   existing thread ID; see the field-placement rule in §3.5).
 - **Propose a new thread:** `update_request` on the intended root event with
   `"set": {"thread": "t_<random>"}`, a fresh client-generated ID. The server
@@ -429,13 +557,13 @@ exist:
 ### 6.3 `rooms.manage`
 
 ```json
-→ {"type": "room_create", "id": "c20", "name": "Ops"}
-→ {"type": "room_join",   "id": "c21", "room": "ops"}
-→ {"type": "room_leave",  "id": "c22", "room": "ops"}
+→ {"method": "room_create", "id": "c20", "params": {"name": "Ops"}}
+→ {"method": "room_join", "id": "c21", "params": {"room": "ops"}}
+→ {"method": "room_leave", "id": "c22", "params": {"room": "ops"}}
 ```
 
-Server confirms with `ok` and the corresponding `room` frame. Visibility and
-membership policy are entirely server-defined.
+Server confirms requests with `result: {}` and emits the corresponding `room`
+notification. Visibility and membership policy are entirely server-defined.
 
 ### 6.4 `embed.iframe`, `embed.html`
 
@@ -465,8 +593,12 @@ UnifiedPush-shaped registration; the client supplies an HTTPS endpoint owned
 by its push relay:
 
 ```json
-→ {"type": "push_register",   "id": "c30", "endpoint": "https://relay.example/p/xyz", "token": "..."}
-→ {"type": "push_unregister", "id": "c31", "endpoint": "https://relay.example/p/xyz"}
+→ {
+  "method": "push_register",
+  "id": "c30",
+  "params": {"endpoint": "https://relay.example/p/xyz", "token": "..."}
+}
+→ {"method": "push_unregister", "id": "c31", "params": {"endpoint": "https://relay.example/p/xyz"}}
 ```
 
 When the user should be woken while disconnected, the server POSTs JSON
@@ -483,12 +615,18 @@ endpoints resolving to non-internal addresses.
 ## 7. Conformance
 
 A conformance harness (companion to this spec) connects to a backend and
-verifies, per level: `server` frame timing and shape; auth flows; log-ID
-monotonicity (across events and updates) and digit-string encoding under
-burst load; `send`/`event` round-trip including `echo`; per-cap behavior
+verifies, per level: envelope shape with and without `jsonrpc`; request/result
+correlation and notification behavior without `id`; `server` frame timing and
+shape; auth flows; log-ID monotonicity (across events and updates) and
+digit-string encoding under
+burst load; `send`/`event` round-trip including `echo` when a request ID is
+present and its omission otherwise; per-cap behavior
 including RFC 7386 merge semantics, both history modes (chronological
 ordering, inclusive bounds, truncation direction, compaction on backfill,
 update replay on gap-fill), and `unsupported` responses for undeclared caps.
+Retry deduplication is recommended only; accepting duplicates MUST NOT fail
+conformance. If tested, deduplication checks include returning the original
+result without rebroadcasting a recognized duplicate.
 **Passing the harness, not matching this prose, is the definition of
 conformance.** The harness plus a Level 0 reference backend (~80 lines,
 Python/`websockets`) ship with the spec; the acceptance test for this
@@ -525,7 +663,10 @@ A mux endpoint wraps every core-protocol frame in an envelope carrying an
 opaque connection ID:
 
 ```json
-{"conn": "b1", "frame": {"type": "send", "id": "c3", "room": "general", "body": {...}}}
+{
+  "conn": "b1",
+  "frame": {"method": "send", "id": "c3", "params": {"room": "general", "body": {...}}}
+}
 ```
 
 Within each `conn`, the core protocol applies verbatim and in full: per-`conn`
@@ -540,7 +681,7 @@ Frame ordering is preserved per `conn`; no ordering is guaranteed across
 Envelope-level control uses unwrapped frames (no `frame` field):
 
 ```json
-→ {"type": "conn_open",  "conn": "b1", "url": "wss://backend.example/ws"}
+→ {"type": "conn_open", "conn": "b1", "url": "wss://backend.example/ws"}
 ← {"type": "conn_ready", "conn": "b1"}
 ← {"type": "conn_error", "conn": "b1", "code": "unreachable", "message": "..."}
 ← {"type": "conn_close", "conn": "b1"}
@@ -570,8 +711,8 @@ connections arrive muxed or on separate sockets.
 
 ## Appendix B — Out-of-band channel negotiation: WebRTC (informative)
 
-Planned capability `rtc`, targeted at v1. Included here to document the
-pattern it instantiates: **the socket is a signaling plane; heavy traffic goes
+Planned capability `rtc`, targeted at a future draft. Included here to document
+the pattern it instantiates: **the socket is a signaling plane; heavy traffic goes
 elsewhere.** The `upload` URL (§6.1) and iframe embeds (§6.4) are prior
 instances. Any future out-of-band channel (screenshare, collaborative
 documents, file transfer over data channels) should reuse the same three-frame
@@ -585,8 +726,16 @@ A call is a server-announced, room-scoped session, following the re-sendable
 metadata-frame idiom of `room` and `thread`:
 
 ```json
-← {"type": "rtc", "room": "general", "session": "call_7",
-   "kind": "voice", "members": [{"id": "alice", "name": "Alice"}], "active": true}
+← {
+  "method": "rtc",
+  "params": {
+    "room": "general",
+    "session": "call_7",
+    "kind": "voice",
+    "members": [{"id": "alice", "name": "Alice"}],
+    "active": true
+  }
+}
 ```
 
 Re-sent on membership change; `"active": false` ends the session. Membership
@@ -595,10 +744,14 @@ is server-authoritative, not peer gossip.
 ### B.2 Join / leave
 
 ```json
-→ {"type": "rtc_join",  "id": "c40", "room": "general", "session": "call_7"}
-← {"type": "ok", "id": "c40", "ice": [{"urls": "stun:stun.example:3478"},
-                                      {"urls": "turn:turn.example", "username": "u", "credential": "c"}]}
-→ {"type": "rtc_leave", "id": "c41", "session": "call_7"}
+→ {"method": "rtc_join", "id": "c40", "params": {"room": "general", "session": "call_7"}}
+← {
+  "id": "c40",
+  "result": {
+    "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}]
+  }
+}
+→ {"method": "rtc_leave", "id": "c41", "params": {"session": "call_7"}}
 ```
 
 ICE server configuration is vended at join time (mirroring the `upload` URL
@@ -609,16 +762,25 @@ authoritative `rtc` frame or rejects with `denied`.
 
 ### B.3 Signaling relay
 
-One fire-and-forget frame; the server is a mailbox, not a participant.
+One fire-and-forget notification (omit `id`); the server is a mailbox, not a
+participant.
 `payload` is opaque to the server (SDP offers/answers, ICE candidates —
 whatever the peers need). No acks: WebRTC's own state machine handles loss and
 renegotiation.
 
 ```json
-→ {"type": "rtc_signal", "session": "call_7", "to": "bob",
-   "payload": {"sdp_type": "offer", "sdp": "v=0..."}}
-← {"type": "rtc_signal", "session": "call_7", "from": {"id": "alice", "name": "Alice"},
-   "payload": {"sdp_type": "offer", "sdp": "v=0..."}}
+→ {
+  "method": "rtc_signal",
+  "params": {"session": "call_7", "to": "bob", "payload": {"sdp_type": "offer", "sdp": "v=0..."}}
+}
+← {
+  "method": "rtc_signal",
+  "params": {
+    "session": "call_7",
+    "from": {"id": "alice", "name": "Alice"},
+    "payload": {"sdp_type": "offer", "sdp": "v=0..."}
+  }
+}
 ```
 
 A conforming backend's obligation is routing `rtc_signal` by `to` within a

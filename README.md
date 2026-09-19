@@ -6,7 +6,7 @@ What is "bottomless"? It's the opposite of "headless", bottomless apps are front
 
 We aim to substantially simplify the chat protocol by taking advantage of several trust assumptions.
 
-**Status**: v0 draft, protocol changes will continue as implementations improve
+**Status**: v1 draft, protocol changes will continue as implementations improve
 
 ## Assumptions & Goals
 

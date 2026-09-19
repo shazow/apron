@@ -4,14 +4,14 @@ Review of [README.md](README.md) and [PROTOCOL.md](PROTOCOL.md).
 Work through these in order, recording each decision and any corresponding
 specification changes before marking the item resolved.
 
-XXX: These questions are unresolved; proposed directions below are discussion
-options, not protocol requirements.
+XXX: Unchecked questions remain unresolved; proposed directions for those items
+are discussion options, not protocol requirements.
 
 ## 1. Retry semantics and duplicate messages
 
-- [ ] Resolved
+- [x] Resolved
 
-Reference: PROTOCOL.md §3.5.
+Reference: PROTOCOL.md §§1, 2, 3.5.
 
 Are duplicate messages after reconnect acceptable? `echo` reconciles a pending
 send, but cannot prevent duplicates across clients or history. If the server
@@ -24,6 +24,17 @@ idempotency key? The current claim about preventing silent duplicates needs
 narrowing unless the protocol adds a mechanism to guarantee it. If deduplication
 is supported, define its scope and retention period, and how retry identity
 survives reconnects.
+
+Decision: Recommend a JSON-RPC 2.0 envelope with optional `jsonrpc` and request
+`id`. Omitting `jsonrpc` is an Apron shorthand; omitting `id` makes a call a
+notification with no reply. Calls use `method`/`params`; replies use
+`result`/`error`. Retry the same operation with the same ID. Servers SHOULD
+deduplicate by ID within the authenticated sender's namespace and return the
+original result without repeating the operation. Deduplication and its
+retention are best effort; duplicates remain explicitly allowed. No additional
+client-instance handshake or separate message ID is required. Request IDs
+remain distinct from server-assigned log IDs. The revised wire envelope bumps
+the draft protocol to `1` under §8.
 
 ## 2. Live traffic during history recovery
 
@@ -119,7 +130,7 @@ for changes.
 
 ## 8. WebSocket messages versus transport frames
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §1;
 [RFC 6455 §5.4](https://www.rfc-editor.org/rfc/rfc6455.html#section-5.4).
@@ -127,6 +138,9 @@ Reference: PROTOCOL.md §1;
 Use “WebSocket text message” for the unit containing one JSON object. A message
 may span several transport frames, and receivers must support fragmentation.
 Keep application-level frame terminology distinct from transport framing.
+
+Decision: Use “WebSocket text message” in §1 while retaining “frame” as the
+application-level name for its JSON object. Corrected during the envelope change.
 
 ## 9. Merge-patch semantics and immutable fields
 
@@ -145,7 +159,7 @@ that updates may set any key.
 
 ## 10. Reply envelopes and fire-and-forget exceptions
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§1, 5.1, 5.2, Appendix B.
 
@@ -154,6 +168,13 @@ Should data replies use `ok`, or should the envelope rules permit typed replies?
 
 Unsupported fire-and-forget frames have no request `id` to echo. Define their
 handling, including how the pre-authentication denial rule applies to them.
+
+Decision: All successful requests return `result`, including history pages;
+errors use the JSON-RPC `error` object with numeric codes. Notifications have no
+`id` and receive no replies, including on failure. Unknown notifications and
+unauthenticated notifications other than `auth` are ignored. Protocol examples
+now use the common envelope throughout; multiplexing control frames remain a
+separate outer protocol.
 
 ## 11. Pagination progress and compaction limits
 
@@ -177,6 +198,9 @@ Reference: PROTOCOL.md §§3.1, 3.3–3.5, 6.1–6.3.
 
 The initial `server` example includes `upload` without its capability; align it
 with the stated “present iff” rule.
+
+Progress: The `upload` capability is now included in that example. The other
+field/default and metadata questions below remain open.
 
 Specify required fields and defaults, whether attachment-only messages may
 omit text, and how malformed requests are handled. Clarify whether re-sent
