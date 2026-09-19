@@ -13,34 +13,23 @@ frontend.
 ## 1. Transport & framing
 
 - One WebSocket connection. Each WebSocket text message contains exactly one JSON
-  object (a **frame**). No batching, no newline-delimited streams.
+  object (a **frame**).
 - Receivers MUST accept both the [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
-  envelope and a minimal form omitting `jsonrpc` (§1.1), subject to the field
-  and framing rules below.
-- **Calls** have a string `method` and an object `params` (omission means `{}`).
-  Method-specific fields reside in `params`. Frame names denote methods.
-- A call with `id` is a **request**; its reply echoes `id` and contains exactly
-  one of `result` or `error`. A call without `id` is a **notification** and
-  MUST NOT receive a reply, including on failure; method side effects still apply.
+  envelope and a minimal form (omitting unused keys like `jsonrpc`).
 - Requests MAY be pipelined; the server processes them in order but MAY reply
   out of order. Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications. Unknown *fields* in
   known methods MUST be ignored by both sides.
-- Requests with missing required method fields or incorrect field types yield
-  `error/invalid_params`.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
 - Liveness uses WebSocket ping/pong; there is no application-level heartbeat.
-- Top-level `conn` is reserved for the multiplexing envelope (Appendix A) and
-  MUST NOT appear in core frames.
 
 ### 1.1 Envelope and replies
 
-`jsonrpc`, when present, MUST be `"2.0"`; senders SHOULD include it. Request
-`id`, when present, MUST be a string (§2). Clients SHOULD include `id` for
-result correlation or retries, including `auth`, `history`, and mutations.
+Request `id`, when present, MUST be a string (§2). Clients SHOULD include `id`
+for result correlation or retries, including `auth`, `history`, and mutations.
 Event/update log IDs reside in `params`.
 
 ```json
@@ -67,8 +56,8 @@ Success returns a `result` object (`{}` if empty). Errors contain integer
 `code`, string `message`, and optional `data`:
 
 ```json
-{"jsonrpc": "2.0", "id": "c42", "error": {"code": -32601, "message": "Unsupported method"}}
-{"jsonrpc": "2.0", "id": "c43", "error": {"code": -32002, "message": "Try later", "data": {"ms": 1000}}}
+{"id": "c42", "error": {"code": -32601, "message": "Unsupported method"}}
+{"id": "c43", "error": {"code": -32002, "message": "Try later", "data": {"ms": 1000}}}
 ```
 
 `error/<name>` denotes the following numeric codes:
@@ -87,7 +76,7 @@ Success returns a `result` object (`{}` if empty). Errors contain integer
 Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
 and invalid envelopes whose request ID cannot be determined use `id: null`,
 as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
-still receive no error replies. Examples below omit `jsonrpc` for brevity.
+still receive no error replies. Examples below use the minimal form for brevity.
 
 ### 1.2 Retries and recommended deduplication
 
@@ -103,10 +92,6 @@ duplicates.
 Retention and persistence across reconnects/restarts are implementation-defined.
 Pre-authentication IDs are connection-scoped; authentication MUST execute on
 each connection.
-
-Servers MAY re-execute retries with fresh log IDs;
-clients MUST NOT assume exactly-once delivery. Notifications have no
-request-level deduplication.
 
 ---
 
