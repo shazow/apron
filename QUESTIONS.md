@@ -67,16 +67,17 @@ Page `first_id`/`last_id` describe the source slice before compaction; checkpoin
 and continuation use those bounds. Initial replay starts at `"0"`, bounded by
 `latest_id`. The history-contract change bumps `protocol` to `2` under §8.
 
-## 4. Redaction and retrieval of original content
+## 4. Deletion and retrieval of original content
 
 - [ ] Resolved
 
 Reference: PROTOCOL.md §§5.1, 5.3, 6.1.
 
-Decision: Redaction produces a tombstone; raw history may retain earlier content.
-Content and media retention policies are implementation-defined.
+Decision: Use capability `delete` and event field `deleted`. Deletion produces
+a tombstone; raw history may retain earlier content. Content and media retention
+policies are implementation-defined.
 
-Open: retain `redact`/`redacted` or rename them to `delete`/`deleted`?
+Review complete; awaiting confirmation before advancing.
 
 ## 5. Log timestamps and identity across reconnects
 
@@ -116,7 +117,7 @@ and define which metadata is re-announced after reconnect.
 Reference: PROTOCOL.md §§3.1, 4, 5.3, 6.2, 8.
 
 Which receive-side behaviors are mandatory regardless of capabilities? `edit`
-and `redact` gate UI only, and `threads` can independently produce updates.
+and `delete` gate UI only, and `threads` can independently produce updates.
 Must every frontend therefore understand `update`, even without those caps?
 Separate mandatory receiving behavior from optional requests.
 
@@ -234,5 +235,5 @@ Define how discrepancies between prose and tests are resolved.
 ## Review follow-up
 
 TODO: Add expected wire transcripts for disconnect-after-send, live updates
-during backfill, and redaction during replay after their semantics are decided.
+during backfill, and deletion during replay after their semantics are decided.
 Concrete traces should make subsequent reviews and conformance checks easier.

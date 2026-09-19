@@ -303,7 +303,7 @@ are retained during replay and ignored by renderers):
 | `body`      | sender; mutable         | `text`, `format`, `attachments`, `embeds` |
 | `thread`    | server or `update`      | thread ID (§6.2)                 |
 | `edited`    | `update`                | convention: true after body edits |
-| `redacted`  | `update`                | tombstone marker (§5.3)          |
+| `deleted`   | `update`                | tombstone marker (§5.3)          |
 
 Fields a client supplies on `send` (`body`, and `thread` when replying in a
 thread) sit in **`send.params`**, alongside `room`; the server copies them
@@ -358,7 +358,7 @@ client to a defined fallback:
 | `history`      | session-only scrollback; divider on reconnect  |
 | `typing`       | no indicators                                  |
 | `edit`         | edit UI hidden                                 |
-| `redact`       | delete UI hidden                               |
+| `delete`       | delete UI hidden                               |
 | `threads`      | flat message list                              |
 | `rooms.manage` | fixed room list                                |
 | `upload`       | attach button disabled                         |
@@ -480,7 +480,7 @@ servers MAY drop freely.
 refresh; clients expire remote typing state after `timeout`, defaulting to 10s
 when absent. There is deliberately no presence system in this spec.
 
-### 5.3 `edit`, `redact` — and the `update` frame
+### 5.3 `edit`, `delete` — and the `update` frame
 
 All retroactive mutation uses one server→client frame. Updates consume room
 log IDs (§2) and appear in history (§5.1), raw or represented by rasters.
@@ -506,7 +506,7 @@ History rasters use `replace` for full-object replacement, not merge patch;
 an update contains exactly one of `set` or `replace`. Live updates and client
 `update_request`s use `set`. Partial-history replay follows §5.1.
 Re-render after reduction. Servers MAY update any event, including ones
-predating the connection; the same mechanism covers edits, redaction,
+predating the connection; the same mechanism covers edits, deletion,
 re-threading (§6.2), and future state mutations.
 
 Client-initiated mutation is one request frame mirroring the server frame:
@@ -524,16 +524,16 @@ The server validates which keys this sender may touch on this target
 (policy is entirely server-defined), replies with `result` or `error/denied`
 when `id` is present, and on success broadcasts the resulting `update`
 (the broadcast is authoritative and MAY differ from the request).
-Capabilities `edit` and `redact` gate client UI
+Capabilities `edit` and `delete` gate client UI
 only; both use `update_request`.
 
-**Redaction is an ordinary update.** A delete request is
-`update_request` with `"set": {"redacted": true}`; the server SHOULD
+**Deletion is an ordinary update.** A delete request is
+`update_request` with `"set": {"deleted": true}`; the server SHOULD
 broadcast (and store) it as
-`"set": {"redacted": true, "body": null, "attachments": null, "embeds": null}` —
+`"set": {"deleted": true, "body": null, "attachments": null, "embeds": null}` —
 merge-patch `null` deletion strips the reduced event state. Raw replay may
-still contain earlier content; rastered state after redaction omits it.
-Clients render redacted events as tombstones. Content and media retention
+still contain earlier content; rastered state after deletion omits it.
+Clients render deleted events as tombstones. Content and media retention
 policies are implementation-defined.
 
 ---
