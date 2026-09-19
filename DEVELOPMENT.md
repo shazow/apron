@@ -44,12 +44,14 @@ identity that created the message.
 ## Build and serve
 
 ```sh
-make build
-make serve
+make run
 ```
 
 Open `http://127.0.0.1:8080`. The Go process serves the static SvelteKit build
 and WebSocket endpoint from the same origin; no Node.js process is needed.
+`make run` builds the frontend, builds the Go executable, then starts it.
+Use `make serve` to run the existing build. Re-run `make run` after source changes;
+use the two development processes above for frontend hot reload.
 See `servers/go/README.md` for server flags and origin configuration.
 
 ## Validate

@@ -1,4 +1,4 @@
-.PHONY: install dev-web dev-server check test test-web test-go test-interop build serve
+.PHONY: install dev-web dev-server check test test-web test-go test-interop build serve run
 
 install:
 	npm --prefix clients/web ci
@@ -32,3 +32,6 @@ build:
 
 serve:
 	./build/aprond -static-dir clients/web/build
+
+run: build
+	$(MAKE) serve
