@@ -32,18 +32,22 @@ Request `id`, when present, MUST be a string (§2). Clients SHOULD include `id`
 for result correlation or retries, including `auth`, `history`, and mutations.
 Event/update log IDs reside in `params`.
 
-```json
-→ {"jsonrpc": "2.0", "method": "send", "id": "c42",
+```jsonc
+// ->
+{"jsonrpc": "2.0", "method": "send", "id": "c42",
    "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}}
-← {"jsonrpc": "2.0", "id": "c42", "result": {"event_id": "1724803200042"}}
+// <-
+{"jsonrpc": "2.0", "id": "c42", "result": {"event_id": "1724803200042"}}
 ```
 
 Equivalent minimal exchange:
 
-```json
-→ {"method": "send", "id": "c42",
+```jsonc
+// ->
+{"method": "send", "id": "c42",
    "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}}
-← {"id": "c42", "result": {"event_id": "1724803200042"}}
+// <-
+{"id": "c42", "result": {"event_id": "1724803200042"}}
 ```
 
 A notification additionally omits `id`:
@@ -164,9 +168,11 @@ NOT retroactively un-render existing content. After replying
 
 ### 3.2 Authentication
 
-```json
-→ {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "bottomless-web/0.3"}}
-← {"id": "c1", "result": {"you": {"id": "alice", "name": "Alice"}}}
+```jsonc
+// ->
+{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "bottomless-web/0.3"}}
+// <-
+{"id": "c1", "result": {"you": {"id": "alice", "name": "Alice"}}}
 ```
 
 `params.scheme` selects the authentication scheme:
@@ -197,8 +203,9 @@ There is no user directory or profile state.
 current as of that event; absent `name` falls back to `id`. Rename request
 (server MAY comply, decline, or alter):
 
-```json
-→ {"method": "nick", "id": "c2", "params": {"name": "Alice ⚙"}}
+```jsonc
+// ->
+{"method": "nick", "id": "c2", "params": {"name": "Alice ⚙"}}
 ```
 
 Bots and agents are ordinary senders; nothing distinguishes them at the
@@ -244,13 +251,15 @@ client checkpoints or replace an active recovery bound (§5.1).
 
 Send:
 
-```json
-→ {
+```jsonc
+// ->
+{
   "method": "send",
   "id": "c3",
   "params": {"room": "general", "body": {"text": "hello *world*", "format": "markdown"}}
 }
-← {"id": "c3", "result": {"event_id": "1724803200042"}}
+// <-
+{"id": "c3", "result": {"event_id": "1724803200042"}}
 ```
 
 Broadcast (to all clients in the room, including the sender):
@@ -316,14 +325,21 @@ notifications. Framing and retries follow §1.
 
 ### 3.7 A complete Level 0 session
 
-```json
-← {"method": "server", "params": {"protocol": 2, "name": "demo/1", "caps": [], "auth": ["token"]}}
-→ {"method": "auth", "id": "a", "params": {"scheme": "token", "token": "hunter2"}}
-← {"id": "a", "result": {"you": {"id": "alice", "name": "Alice"}}}
-← {"method": "room", "params": {"room": "general", "name": "General"}}
-→ {"method": "send", "id": "b", "params": {"room": "general", "body": {"text": "hi", "format": "markdown"}}}
-← {"id": "b", "result": {"event_id": "1724803200000"}}
-← {
+```jsonc
+// <-
+{"method": "server", "params": {"protocol": 2, "name": "demo/1", "caps": [], "auth": ["token"]}}
+// ->
+{"method": "auth", "id": "a", "params": {"scheme": "token", "token": "hunter2"}}
+// <-
+{"id": "a", "result": {"you": {"id": "alice", "name": "Alice"}}}
+// <-
+{"method": "room", "params": {"room": "general", "name": "General"}}
+// ->
+{"method": "send", "id": "b", "params": {"room": "general", "body": {"text": "hi", "format": "markdown"}}}
+// <-
+{"id": "b", "result": {"event_id": "1724803200000"}}
+// <-
+{
   "method": "event",
   "params": {
     "room": "general",
@@ -335,8 +351,10 @@ notifications. Framing and retries follow §1.
     }
   }
 }
-→ {"method": "history", "id": "c", "params": {"room": "general", "limit": 50}}
-← {"id": "c", "error": {"code": -32601, "message": "Unsupported method"}}
+// ->
+{"method": "history", "id": "c", "params": {"room": "general", "limit": 50}}
+// <-
+{"id": "c", "error": {"code": -32601, "message": "Unsupported method"}}
 ```
 
 ---
@@ -369,13 +387,15 @@ Stateless window query over the room's **append-only transition log** (§2).
 Servers MAY return raw transitions or equivalent rastered transitions
 (complete event snapshots); no capability negotiation is required.
 
-```json
-→ {
+```jsonc
+// ->
+{
   "method": "history",
   "id": "c9",
   "params": {"room": "general", "after": "1724803200000", "before": "1724806800000", "limit": 200}
 }
-← {"id": "c9", "result": {
+// <-
+{"id": "c9", "result": {
   "entries": [...], "first_id": "1724803200000", "last_id": "1724803200199", "more": true
 }}
 ```
@@ -440,9 +460,11 @@ recovery resumes from the last valid checkpoint.
 
 Recovery boundary example:
 
-```json
-← {"method": "room", "params": {"room": "general", "name": "General", "latest_id": "1724803200120"}}
-→ {"method": "history", "id": "recover1", "params": {
+```jsonc
+// <-
+{"method": "room", "params": {"room": "general", "name": "General", "latest_id": "1724803200120"}}
+// ->
+{"method": "history", "id": "recover1", "params": {
   "room": "general", "after": "1724803200101", "before": "1724803200120"
 }}
 ```
@@ -452,9 +474,11 @@ Recovery boundary example:
 Ephemeral notifications; clients MAY send them without capability discovery.
 Servers MAY drop them.
 
-```json
-→ {"method": "typing", "params": {"room": "general", "active": true, "timeout": 8}}
-← {
+```jsonc
+// ->
+{"method": "typing", "params": {"room": "general", "active": true, "timeout": 8}}
+// <-
+{
   "method": "typing",
   "params": {"room": "general", "sender": {...}, "active": true, "timeout": 8}
 }
@@ -500,13 +524,15 @@ re-threading (§6.2), and future state mutations.
 
 Clients submit mutations with `update_request`:
 
-```json
-→ {
+```jsonc
+// ->
+{
   "method": "update_request",
   "id": "c12",
   "params": {"room": "general", "target": "1724803200042", "set": {"body": {"text": "hello world", "format": "plain"}}}
 }
-← {"id": "c12", "result": {"event_id": "1724803312007"}}
+// <-
+{"id": "c12", "result": {"event_id": "1724803312007"}}
 ```
 
 The server authorizes changes according to local policy, replies to requests
@@ -594,10 +620,13 @@ Client participation:
 
 ### 6.3 `rooms`
 
-```json
-→ {"method": "room_create", "id": "c20", "params": {"name": "Ops"}}
-→ {"method": "room_join", "id": "c21", "params": {"room": "ops"}}
-→ {"method": "room_leave", "id": "c22", "params": {"room": "ops"}}
+```jsonc
+// ->
+{"method": "room_create", "id": "c20", "params": {"name": "Ops"}}
+// ->
+{"method": "room_join", "id": "c21", "params": {"room": "ops"}}
+// ->
+{"method": "room_leave", "id": "c22", "params": {"room": "ops"}}
 ```
 
 Server confirms requests with `result: {}` and emits the corresponding `room`
@@ -631,13 +660,15 @@ membership policy are server-defined.
 UnifiedPush-shaped registration; the client supplies an HTTPS endpoint owned
 by its push relay:
 
-```json
-→ {
+```jsonc
+// ->
+{
   "method": "push_register",
   "id": "c30",
   "params": {"url": "https://relay.example/p/xyz", "token": "..."}
 }
-→ {"method": "push_unregister", "id": "c31", "params": {"url": "https://relay.example/p/xyz"}}
+// ->
+{"method": "push_unregister", "id": "c31", "params": {"url": "https://relay.example/p/xyz"}}
 ```
 
 When the user should be woken while disconnected, the server POSTs JSON
@@ -677,12 +708,17 @@ preserved per `conn`; no ordering is guaranteed across `conn`s.
 
 Envelope-level control uses unwrapped frames (no `frame` field):
 
-```json
-→ {"type": "conn_open", "conn": "b1", "url": "wss://backend.example/ws"}
-← {"type": "conn_ready", "conn": "b1"}
-← {"type": "conn_error", "conn": "b1", "code": "unreachable", "message": "..."}
-← {"type": "conn_close", "conn": "b1"}
-→ {"type": "conn_close", "conn": "b1"}
+```jsonc
+// ->
+{"type": "conn_open", "conn": "b1", "url": "wss://backend.example/ws"}
+// <-
+{"type": "conn_ready", "conn": "b1"}
+// <-
+{"type": "conn_error", "conn": "b1", "code": "unreachable", "message": "..."}
+// <-
+{"type": "conn_close", "conn": "b1"}
+// ->
+{"type": "conn_close", "conn": "b1"}
 ```
 
 - `conn` is an opaque string chosen by the opener, unique per physical socket.
@@ -714,8 +750,9 @@ relay frame.
 A call is a server-announced, room-scoped session, following the re-sendable
 metadata-frame idiom of `room` and `thread`:
 
-```json
-← {
+```jsonc
+// <-
+{
   "method": "rtc",
   "params": {
     "room": "general",
@@ -731,15 +768,18 @@ Re-sent on membership change; `"active": false` ends the session.
 
 ### B.2 Join / leave
 
-```json
-→ {"method": "rtc_join", "id": "c40", "params": {"room": "general", "session": "call_7"}}
-← {
+```jsonc
+// ->
+{"method": "rtc_join", "id": "c40", "params": {"room": "general", "session": "call_7"}}
+// <-
+{
   "id": "c40",
   "result": {
     "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}]
   }
 }
-→ {"method": "rtc_leave", "id": "c41", "params": {"session": "call_7"}}
+// ->
+{"method": "rtc_leave", "id": "c41", "params": {"session": "call_7"}}
 ```
 
 ICE server configuration is vended at join time (mirroring the `upload` URL
@@ -753,12 +793,14 @@ authoritative `rtc` frame or rejects with `denied`.
 The server relays notifications with opaque `payload` (SDP offers/answers,
 ICE candidates, etc.). WebRTC handles loss and renegotiation.
 
-```json
-→ {
+```jsonc
+// ->
+{
   "method": "rtc_signal",
   "params": {"session": "call_7", "to": "bob", "payload": {"sdp_type": "offer", "sdp": "v=0..."}}
 }
-← {
+// <-
+{
   "method": "rtc_signal",
   "params": {
     "session": "call_7",
