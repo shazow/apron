@@ -6,6 +6,8 @@ What is "bottomless"? It's the opposite of "headless", bottomless apps are front
 
 We aim to substantially simplify the chat protocol by taking advantage of several trust assumptions.
 
+**Status**: v0 draft, protocol changes will continue as implementations improve
+
 ## Assumptions & Goals
 
 - Trusted deployments: Small groups where members are mostly known to each other. No sybil resistance, no spam defense, no public federation. Permission policy is whatever the backend decides.
