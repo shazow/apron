@@ -12,6 +12,7 @@ After the WebSocket opens, the server announces itself, accepts authentication,
 and announces visible rooms. The client can then send messages; the server
 broadcasts them to all clients in the room, including the sender.
 `// ->` denotes client → server; `// <-` denotes server → client.
+`// <- (broadcast)` marks delivery to clients in the room.
 
 ```jsonc
 // <-
@@ -26,7 +27,7 @@ broadcasts them to all clients in the room, including the sender.
 {"method": "send", "id": "c2", "params": {"room": "general", "body": {"text": "Hello"}}}
 // <-
 {"id": "c2", "result": {"event_id": "1724803200042"}}
-// <-
+// <- (broadcast)
 {"method": "event", "params": {"room": "general", "echo": "c2", "event": {
   "event_id": "1724803200042", "sender": {"id": "guest_1"}, "body": {"text": "Hello"}
 }}}
@@ -291,7 +292,8 @@ Send:
 
 Broadcast (to all clients in the room, including the sender):
 
-```json
+```jsonc
+// <- (broadcast)
 {
   "method": "event",
   "params": {
@@ -365,7 +367,7 @@ notifications. Framing and retries follow §1.
 {"method": "send", "id": "b", "params": {"room": "general", "body": {"text": "hi", "format": "markdown"}}}
 // <-
 {"id": "b", "result": {"event_id": "1724803200000"}}
-// <-
+// <- (broadcast)
 {
   "method": "event",
   "params": {
@@ -504,7 +506,7 @@ Servers MAY drop them.
 ```jsonc
 // ->
 {"method": "typing", "params": {"room": "general", "active": true, "timeout": 8}}
-// <-
+// <- (broadcast)
 {
   "method": "typing",
   "params": {"room": "general", "sender": {...}, "active": true, "timeout": 8}
@@ -521,7 +523,8 @@ All retroactive mutation uses one server→client frame. Updates consume room
 log IDs (§2) and appear in history (§5.1), raw or represented by rasters.
 Frontend update/replay support is mandatory regardless of cap `edit`.
 
-```json
+```jsonc
+// <- (broadcast)
 {
   "method": "update",
   "params": {
