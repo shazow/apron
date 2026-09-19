@@ -11,8 +11,6 @@ frontend.
 After the WebSocket opens, the server announces itself, accepts authentication,
 and announces visible rooms. The client can then send messages; the server
 broadcasts them to all clients in the room, including the sender.
-`// ->` denotes client → server; `// <-` denotes server → client.
-`// <- (broadcast)` marks delivery to clients in the room.
 
 ```jsonc
 // <-
