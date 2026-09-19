@@ -176,7 +176,7 @@ of representation. Empty source slices omit both IDs and return `more: false`.
 
 ## 12. Examples, required fields, and metadata replacement
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§3.1, 3.3–3.5, 6.1–6.3.
 
@@ -188,8 +188,6 @@ arrays. Attachment-only messages are valid; empty-message acceptance is backend
 policy. Defaults do not modify merge patches. Missing required method fields
 or incorrect types yield `invalid_params`; notifications receive no reply.
 The upload example is corrected; question 6 defines metadata replacement.
-
-Review complete; awaiting confirmation before advancing.
 
 ## 13. Markdown HTML and the content trust model
 
