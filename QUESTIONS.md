@@ -95,7 +95,7 @@ Server IDs and identity proofs are deferred.
 
 ## 6. Room and thread metadata lifecycle
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§3.4, 6.2, 6.3.
 
@@ -104,8 +104,6 @@ fields are cleared. After authentication, servers re-announce visible rooms
 and their visible thread metadata; clients rebuild the current metadata view.
 `removed: true` withdraws the room or thread. Removed-room history retention,
 access, and client cache policy are implementation-defined.
-
-Review complete; awaiting confirmation before advancing.
 
 ## 7. Mandatory receiving behavior and capability evolution
 
