@@ -69,15 +69,13 @@ and continuation use those bounds. Initial replay starts at `"0"`, bounded by
 
 ## 4. Deletion and retrieval of original content
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§5.1, 5.3, 6.1.
 
 Decision: Use capability `delete` and event field `deleted`. Deletion produces
 a tombstone; raw history may retain earlier content. Content and media retention
 policies are implementation-defined.
-
-Review complete; awaiting confirmation before advancing.
 
 ## 5. Log timestamps and identity across reconnects
 
