@@ -132,7 +132,7 @@ application-level name for its JSON object. Corrected during the envelope change
 
 ## 9. Merge-patch semantics and immutable fields
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§3.5, 5.3, 7;
 [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396.html).
@@ -140,8 +140,6 @@ Reference: PROTOCOL.md §§3.5, 5.3, 7;
 Decision: Reference RFC 7396; objects merge recursively, other values replace,
 and `null` deletes keys. `event_id` is immutable. Added one nested-patch example;
 history `replace` retains full-object replacement semantics.
-
-Review complete; awaiting confirmation before advancing.
 
 ## 10. Reply envelopes and fire-and-forget exceptions
 
