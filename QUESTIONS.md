@@ -7,8 +7,7 @@ and specification changes before checking them off. Obtain explicit user
 confirmation before advancing to the next question. Specify wire semantics and
 correctness invariants; leave implementation strategies unspecified.
 
-XXX: Unchecked questions remain unresolved; proposed directions for those items
-are discussion options, not protocol requirements.
+Status: All review items resolved.
 
 ## 1. Retry semantics and duplicate messages
 
@@ -134,7 +133,7 @@ application-level name for its JSON object. Corrected during the envelope change
 
 - [x] Resolved
 
-Reference: PROTOCOL.md §§3.5, 5.3, 7;
+Reference: PROTOCOL.md §§3.5, 5.3;
 [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396.html).
 
 Decision: Reference RFC 7396; objects merge recursively, other values replace,
@@ -201,20 +200,6 @@ remain implementation-defined.
 
 ## 14. Conformance authority and missing companion artifacts
 
-- [ ] Resolved
+- [x] Resolved
 
-Reference: PROTOCOL.md §7.
-
-The specification says the harness and reference backend ship with it, but
-neither is present in this checkout. Is this paragraph describing planned work?
-It also refers to `SPEC.md`, whereas the document is named `PROTOCOL.md`.
-
-Should the prose be normative, with the harness providing executable checks,
-rather than making passing the harness the sole definition of conformance?
-Define how discrepancies between prose and tests are resolved.
-
-## Review follow-up
-
-TODO: Add expected wire transcripts for disconnect-after-send, live updates
-during backfill, and deletion during replay after their semantics are decided.
-Concrete traces should make subsequent reviews and conformance checks easier.
+Decision: Remove the conformance section and ancillary test-planning discussion.

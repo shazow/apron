@@ -688,33 +688,6 @@ endpoints resolving to non-internal addresses.
 
 ---
 
-## 7. Conformance
-
-A conformance harness (companion to this spec) connects to a backend and
-verifies, per level: envelope shape with and without `jsonrpc`; request/result
-correlation and notification behavior without `id`; `server` frame timing and
-shape; auth flows; log-ID monotonicity (across events and updates) and
-digit-string encoding under
-burst load; `send`/`event` round-trip including `echo` when a request ID is
-present and its omission otherwise; per-cap behavior
-including RFC 7396 merge semantics, raw/rastered replay equivalence (including
-nested object resets and deletions), source-span
-pagination with `limit: 1`, `room.latest_id` (including update-only and empty
-logs), metadata replacement/removal and re-announcement after authentication,
-gap-free history/live boundaries, and `unsupported` responses for
-undeclared caps. Client recovery checks include interleaved live traffic and
-disconnects between history pages; checkpoints MUST NOT skip unprocessed entries.
-Retry deduplication is recommended only; accepting duplicates MUST NOT fail
-conformance. If tested, deduplication checks include returning the original
-result without rebroadcasting a recognized duplicate.
-**Passing the harness, not matching this prose, is the definition of
-conformance.** The harness plus a Level 0 reference backend (~80 lines,
-Python/`websockets`) ship with the spec; the acceptance test for this
-document is that an LLM given only SPEC.md one-shots a Level 0 backend that
-passes.
-
----
-
 ## Appendix A — Multiplexing envelope (informative)
 
 This appendix defines how multiple logical protocol connections share one
