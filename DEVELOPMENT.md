@@ -48,6 +48,20 @@ history is replayed from the current server, and messages belonging to the
 previous identity remain readable. Edit and delete permissions belong to the
 identity that created the message.
 
+## Threads
+
+Start a thread from one of your messages, then open it to reply. The room
+timeline retains a link at each threaded message's original position; thread
+views show the current membership after replaying edits and moves. Use the
+message controls to move your messages to another thread or back to the room.
+Drafts are kept separately for each room and thread.
+
+The server stores thread metadata in memory and re-announces it on connection.
+Empty threads remain available; deleting or moving their root does not remove
+them. Thread replies use `send.params.thread`; creation and reassignment use
+`update_request` with `set.thread`, with `null` moving a message to the room.
+Thread creation and moves follow the example's sender-only edit policy.
+
 ## Build and serve
 
 ```sh

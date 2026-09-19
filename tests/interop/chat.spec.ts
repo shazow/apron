@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext } from '@playwright/test';
 import {
+	composer,
 	deleteMessage,
 	editMessage,
 	messageByText,
@@ -141,6 +142,73 @@ test.describe('chat protocol interoperability', () => {
 			await sendMessage(pageA, afterReconnect);
 			await expect(await waitForMessage(pageA, afterReconnect)).toContainText(afterReconnect);
 			await expect(await waitForMessage(pageB, afterReconnect)).toContainText(afterReconnect);
+		} finally {
+			await contextA.setOffline(false).catch(() => undefined);
+			await Promise.all([contextA.close(), contextB.close()]);
+		}
+	});
+
+	test('starts a thread, preserves destination drafts, moves messages, and replays thread metadata', async ({ browser }) => {
+		const contextA = await browser.newContext();
+		const contextB = await browser.newContext();
+		try {
+			const pageA = await contextA.newPage();
+			const pageB = await contextB.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+
+			const rootText = `thread-root-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+			const replyText = `${rootText}-reply`;
+			await sendMessage(pageA, rootText);
+			const rootA = await waitForMessage(pageA, rootText);
+			const rootEventId = await rootA.getAttribute('data-message-id');
+			expect(rootEventId).toBeTruthy();
+			await waitForMessage(pageB, rootText);
+
+			await rootA.getByTestId('start-thread').click();
+			const threadTab = pageA.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
+			await expect(threadTab).toBeVisible();
+			const threadId = await threadTab.getAttribute('data-thread');
+			const threadButton = pageA.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+			expect(threadId).toMatch(/^t_/);
+			await expect(pageA.getByRole('button', { name: 'Back to room', exact: true })).toBeVisible();
+			const rootB = pageB.locator(`article[data-message-id="${rootEventId}"]`);
+			await expect(rootB.getByText('Moved to thread', { exact: true })).toBeVisible();
+			await expect(rootB.locator('.markdown, .plain')).toHaveCount(0);
+
+			await threadButton.click();
+			await expect(pageA.getByRole('button', { name: 'Back to room', exact: true })).toBeVisible();
+			await expect(await waitForMessage(pageA, rootText)).toContainText(rootText);
+			await composer(pageA).fill('draft kept in thread');
+			await pageA.getByRole('button', { name: 'Room', exact: true }).click();
+			await expect(composer(pageA)).toHaveValue('');
+			await composer(pageA).fill('draft kept in room');
+			await threadButton.click();
+			await expect(composer(pageA)).toHaveValue('draft kept in thread');
+
+			await sendMessage(pageA, replyText);
+			await expect(await waitForMessage(pageA, replyText)).toContainText(replyText);
+			await expect(pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`)).toBeVisible();
+
+			await pageB.locator(`button.thread-link[data-thread="${threadId}"]`).first().click();
+			await expect(await waitForMessage(pageB, replyText)).toContainText(replyText);
+
+			const rootInThread = pageA.locator(`article[data-message-id="${rootEventId}"]`);
+			await rootInThread.getByRole('button', { name: 'Move message', exact: true }).click();
+			const moveSelect = rootInThread.getByRole('combobox', { name: 'Move message to', exact: true });
+			await moveSelect.selectOption({ label: 'Move to room' });
+			await expect(rootInThread).toHaveCount(0);
+			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
+			await expect(await waitForMessage(pageA, rootText)).toContainText(rootText);
+
+			const threadButtonBeforeReconnect = pageA.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+			await expect(threadButtonBeforeReconnect).toBeVisible();
+			await contextA.setOffline(true);
+			await pageA.reload({ waitUntil: 'commit', timeout: 3_000 }).catch(() => undefined);
+			await contextA.setOffline(false);
+			await pageA.reload({ waitUntil: 'domcontentloaded' });
+			await expect(pageA.getByTestId('connection-status')).toHaveText('Connected', { timeout: 20_000 });
+			await expect(pageA.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`)).toBeVisible();
+			await expect(pageA.locator(`button.thread-link[data-thread="${threadId}"]`).first()).toBeVisible();
 		} finally {
 			await contextA.setOffline(false).catch(() => undefined);
 			await Promise.all([contextA.close(), contextB.close()]);
