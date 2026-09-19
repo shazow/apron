@@ -100,11 +100,14 @@ each connection.
 All IDs on the wire are **strings**, except the `null` response ID used for
 unidentifiable invalid requests (§1.1). They come in two flavors:
 
-**Log IDs** (event IDs and update IDs) are decimal strings based on Unix epoch
+**Log IDs** (`event_id`) are decimal strings based on Unix epoch
 milliseconds — e.g. `"1724803200042"`. Events and updates MUST share one
 strictly increasing sequence per room. Generation is implementation-defined.
 Recommended generator: `id = str(max(unix_epoch_ms(), last_id + 1))`.
 `"0"` is reserved for the empty-log boundary; entries MUST use positive IDs.
+
+A creation's `event_id` is the message's permanent identity. Each update has
+its own `event_id` and references the creation's ID through `target` (§5.3).
 
 - Compare numerically. Values are below `2^53`; clients MAY parse them as
   integers.
@@ -298,7 +301,6 @@ are retained during replay and ignored by renderers):
 | `sender`    | server, at creation     | inline identity (§3.3)           |
 | `body`      | sender; mutable         | `text`, `format`, `attachments`, `embeds` |
 | `thread`    | server or `update`      | thread ID (§6.2)                 |
-| `edited`    | `update`                | convention: true after body edits |
 | `deleted`   | `update`                | tombstone marker (§5.3)          |
 
 Fields a client supplies on `send` (`body`, and `thread` when replying in a
@@ -393,9 +395,8 @@ Bounds and ordering:
 - Forward continuation uses `after = last_id + 1`; backward continuation uses
   `before = first_id - 1`. Preserve the opposite bound. Arithmetic is numeric;
   encode the result as a string. Never derive continuation from compacted entries.
-- `entries` are always ascending by transition ID: `event_id` for creation,
-  `update_id` for mutation. Pages may mix raw and rastered transitions; their
-  representation is independent of query direction.
+- `entries` are always ascending by `event_id`. Pages may mix raw and rastered
+  transitions; their representation is independent of query direction.
 
 **Optional rastering.** For each target touched by a source slice, a server MAY
 replace its selected transitions with one complete snapshot at that target's
@@ -404,18 +405,19 @@ original event object. Otherwise return an update with `replace` instead of
 `set`:
 
 ```json
-{"update_id": "1724803312007", "target": "1724803200042", "replace": {
+{"event_id": "1724803312007", "target": "1724803200042", "replace": {
   "event_id": "1724803200042", "sender": {"id": "alice", "name": "Alice"},
-  "body": {"text": "hello world", "format": "plain"}, "edited": true
+  "body": {"text": "hello world", "format": "plain"}
 }}
 ```
 
-`replace` MUST equal the complete event state after replay through `update_id`,
-including unknown fields and deletions. It MUST NOT incorporate later updates.
-`replace.event_id` MUST equal `target`. The update ID is the existing last
-source transition for that target, not a newly allocated ID. Omitted transitions
-remain covered by `first_id`/`last_id`. Raw and rastered replies MUST yield the
-same terminal event state when applied to the source slice's preceding state.
+`replace` MUST equal the complete event state after replay through the outer
+`event_id`, including unknown fields and deletions. It MUST NOT incorporate
+later updates. `replace.event_id` MUST equal `target`. The outer `event_id`
+is the target's last source transition ID, not a newly allocated ID. Omitted
+transitions remain covered by `first_id`/`last_id`. Raw and rastered replies
+MUST yield the same terminal event state when applied to the source slice's
+preceding state.
 Replay equivalence concerns stored event state, not intermediate rendering.
 
 **Replay.** Clients MUST support ordered transition replay: creations insert
@@ -473,9 +475,9 @@ Frontend update/replay support is mandatory regardless of cap `edit`.
   "method": "update",
   "params": {
     "room": "general",
-    "update_id": "1724803312007",
+    "event_id": "1724803312007",
     "target": "1724803200042",
-    "set": {"body": {"text": "hello world", "format": "plain"}, "edited": true}
+    "set": {"body": {"text": "hello world", "format": "plain"}}
   }
 }
 ```
@@ -483,8 +485,8 @@ Frontend update/replay support is mandatory regardless of cap `edit`.
 Client rule: replay `set` on event `target` using
 [JSON Merge Patch (RFC 7396)](https://www.rfc-editor.org/rfc/rfc7396.html):
 recursively merge objects, replace other values, and delete keys
-whose patch value is `null`. `set` MUST be an object; `event_id` MUST NOT be
-changed or deleted.
+whose patch value is `null`. `set` MUST be an object; the target message's
+`event_id` MUST NOT be changed or deleted.
 
 For example, `{"body": {"text": "new", "attachments": null}}` updates text,
 removes attachments, and preserves other body fields such as `format`.
@@ -504,7 +506,7 @@ Clients submit mutations with `update_request`:
   "id": "c12",
   "params": {"room": "general", "target": "1724803200042", "set": {"body": {"text": "hello world", "format": "plain"}}}
 }
-← {"id": "c12", "result": {"update_id": "1724803312007"}}
+← {"id": "c12", "result": {"event_id": "1724803312007"}}
 ```
 
 The server authorizes changes according to local policy, replies to requests
