@@ -823,13 +823,12 @@ The backend routes `rtc_signal` by `to` within a session.
 
 ### B.5 Exclusions and knock-ons
 
-Deliberately out of scope: mute/camera state frames (derivable from media
-streams; a tiny ephemeral can be added later if UX demands), telephony-style
-invite/ring/reject state machines (an `rtc` frame plus a push notification
-covers call arrival), and recording/transcoding (server-side, protocol-
-invisible). Knock-on for `push` (§6.5): when `rtc` lands, push payloads gain
-an optional `kind` hint (e.g. `{"kind": "rtc", "session": "...", ...}`) so
-mobile clients can surface an incoming-call UI instead of a message
-notification.
-
-Fallbacks: no `rtc` → no call UI; no `rtc.sfu` → mesh only.
+- Mute/camera state frames are out of scope: state is derivable from media
+  streams; an ephemeral notification may be added if needed.
+- Invite/ring/reject state machines are out of scope: an `rtc` frame plus a
+  push notification covers call arrival.
+- Recording/transcoding is server-side and outside the protocol.
+- When `rtc` lands, push payloads (§6.5) gain an optional `kind` hint
+  (e.g. `{"kind": "rtc", "session": "...", ...}`) so mobile clients can show
+  an incoming-call UI instead of a message notification.
+- Without `rtc`, hide call UI; without `rtc.sfu`, use mesh only.
