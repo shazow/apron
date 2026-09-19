@@ -1,0 +1,64 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "unknown fields and prototype-shaped keys",
+  "description": "Unknown event fields survive replay without mutating JavaScript object prototypes.",
+  "references": ["PROTOCOL.md#35-messages", "PROTOCOL.md#53-edit--and-the-update-frame"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "preserve-unknowns",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "900",
+                "sender": {"id": "alice"},
+                "body": {
+                  "text": "unknown fields",
+                  "format": "plain",
+                  "client": {"theme": "blue", "__proto__": {"nested": true}}
+                },
+                "__proto__": {"polluted": true},
+                "future": {"kind": "v1", "payload": [1, {"x": 2}]}
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "901",
+              "target": "900",
+              "set": {
+                "__proto__": {"after": true},
+                "body": {"client": {"extra": "kept"}},
+                "future": {"payload": [3]}
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {
+        "event_id": "900",
+        "sender": {"id": "alice"},
+        "body": {
+          "text": "unknown fields",
+          "format": "plain",
+          "client": {"theme": "blue", "__proto__": {"nested": true}, "extra": "kept"}
+        },
+        "__proto__": {"polluted": true, "after": true},
+        "future": {"kind": "v1", "payload": [3]}
+      }
+    ]
+  }
+}

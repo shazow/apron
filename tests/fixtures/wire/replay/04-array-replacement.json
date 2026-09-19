@@ -1,0 +1,64 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "array replacement",
+  "description": "Merge patch replaces arrays as whole values rather than merging indexes.",
+  "references": ["PROTOCOL.md#53-edit--and-the-update-frame"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "replace-embeds-and-tags",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "300",
+                "sender": {"id": "alice"},
+                "body": {
+                  "text": "attachments",
+                  "format": "markdown",
+                  "embeds": [
+                    {"kind": "image", "url": "https://example.test/one.png"},
+                    {"kind": "image", "url": "https://example.test/two.png"}
+                  ]
+                },
+                "tags": ["old-a", "old-b"]
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "301",
+              "target": "300",
+              "set": {
+                "body": {"embeds": [{"kind": "video", "url": "https://example.test/new.mp4"}]},
+                "tags": ["new"]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {
+        "event_id": "300",
+        "sender": {"id": "alice"},
+        "body": {
+          "text": "attachments",
+          "format": "markdown",
+          "embeds": [{"kind": "video", "url": "https://example.test/new.mp4"}]
+        },
+        "tags": ["new"]
+      }
+    ]
+  }
+}

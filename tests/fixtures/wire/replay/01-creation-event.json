@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "creation event",
+  "description": "A live event notification inserts one complete message event.",
+  "references": ["PROTOCOL.md#35-messages", "PROTOCOL.md#2-identifiers-mandatory"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "live-event",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "echo": "send-1",
+              "event": {
+                "event_id": "1",
+                "sender": {"id": "alice", "name": "Alice"},
+                "body": {"text": "hello", "format": "plain"}
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {
+        "event_id": "1",
+        "sender": {"id": "alice", "name": "Alice"},
+        "body": {"text": "hello", "format": "plain"}
+      }
+    ]
+  }
+}

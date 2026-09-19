@@ -1,0 +1,536 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "Core session and metadata replacement",
+  "description": "Authenticate, send with either reply ordering, replace capabilities and room metadata, and remove a room without altering retained message state.",
+  "references": [
+    "PROTOCOL.md#11-envelope-and-replies",
+    "PROTOCOL.md#31-server-frame",
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#35-messages"
+  ],
+  "variants": [
+    {
+      "name": "result-before-broadcast",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "edit"
+              ],
+              "future_hint": {
+                "ignored": true
+              }
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "id": "alice"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "alice"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "topic": "Initial topic"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Initial topic",
+                "events": []
+              }
+            ]
+          }
+        },
+        {
+          "send": {
+            "as": "message",
+            "room": "general",
+            "text": "hello",
+            "format": "plain"
+          }
+        },
+        {
+          "request": {
+            "as": "send",
+            "match": {
+              "method": "send",
+              "params": {
+                "room": "general",
+                "body": {
+                  "text": "hello",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "send",
+            "result": {
+              "event_id": "1724803200001"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "1724803200001",
+                "sender": {
+                  "id": "alice"
+                },
+                "body": {
+                  "text": "hello",
+                  "format": "plain"
+                }
+              }
+            }
+          },
+          "echoFrom": "send"
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Initial topic",
+                "events": [
+                  {
+                    "event_id": "1724803200001",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ],
+            "operations": {
+              "message": "fulfilled"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ]
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "future_notice",
+            "params": {
+              "room": "general",
+              "text": "not a message"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "Renamed"
+            }
+          }
+        },
+        {
+          "expect": {
+            "caps": [],
+            "rooms": [
+              {
+                "id": "general",
+                "name": "Renamed",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200001",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "other"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "Renamed",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200001",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "other",
+                "name": "other",
+                "topic": null,
+                "events": []
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "other",
+              "removed": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "broadcast-before-result",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "edit"
+              ],
+              "future_hint": {
+                "ignored": true
+              }
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "id": "alice"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "alice"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "topic": "Initial topic"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Initial topic",
+                "events": []
+              }
+            ]
+          }
+        },
+        {
+          "send": {
+            "as": "message",
+            "room": "general",
+            "text": "hello",
+            "format": "plain"
+          }
+        },
+        {
+          "request": {
+            "as": "send",
+            "match": {
+              "method": "send",
+              "params": {
+                "room": "general",
+                "body": {
+                  "text": "hello",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "1724803200001",
+                "sender": {
+                  "id": "alice"
+                },
+                "body": {
+                  "text": "hello",
+                  "format": "plain"
+                }
+              }
+            }
+          },
+          "echoFrom": "send"
+        },
+        {
+          "reply": {
+            "to": "send",
+            "result": {
+              "event_id": "1724803200001"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Initial topic",
+                "events": [
+                  {
+                    "event_id": "1724803200001",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ],
+            "operations": {
+              "message": "fulfilled"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ]
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "future_notice",
+            "params": {
+              "room": "general",
+              "text": "not a message"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "Renamed"
+            }
+          }
+        },
+        {
+          "expect": {
+            "caps": [],
+            "rooms": [
+              {
+                "id": "general",
+                "name": "Renamed",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200001",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "other"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "Renamed",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200001",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "other",
+                "name": "other",
+                "topic": null,
+                "events": []
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "other",
+              "removed": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "you": {
+      "id": "alice"
+    },
+    "caps": [],
+    "rooms": [
+      {
+        "id": "general",
+        "name": "Renamed",
+        "topic": null,
+        "events": [
+          {
+            "event_id": "1724803200001",
+            "sender": {
+              "id": "alice"
+            },
+            "body": {
+              "text": "hello",
+              "format": "plain"
+            }
+          }
+        ]
+      }
+    ],
+    "operations": {
+      "message": "fulfilled"
+    }
+  }
+}
