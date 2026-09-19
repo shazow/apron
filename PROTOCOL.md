@@ -163,7 +163,7 @@ unprompted. There is no client hello.
 - `protocol`: required integer. Current value `2`.
 - `name`: optional implementation/version string.
 - `caps`: array of capability strings (§4), default `[]`.
-- `auth`: required nonempty array of supported auth-method strings (§3.2),
+- `auth`: required nonempty array of supported authentication schemes (§3.2),
   in server preference order.
 - `upload`: present iff cap `upload` (§6.1).
 
@@ -175,20 +175,20 @@ NOT retroactively un-render existing content. After replying
 ### 3.2 Authentication
 
 ```json
-→ {"method": "auth", "id": "c1", "params": {"method": "token", "token": "...", "client": "bottomless-web/0.3"}}
+→ {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "bottomless-web/0.3"}}
 ← {"id": "c1", "result": {"you": {"id": "alice", "name": "Alice"}}}
 ```
 
-Methods:
+`params.scheme` selects the authentication scheme:
 
 - `anonymous` — no credentials; server assigns identity. Legal and expected in
   trusted deployments.
 - `token` — bearer string. The reference default.
-- `webauthn` — two-round-trip challenge: `auth(params.method=webauthn)` →
+- `webauthn` — two-round-trip challenge: `auth(params.scheme=webauthn)` →
   `result` carrying `challenge` → `auth` carrying the assertion → final `result`.
   Details deferred to a companion doc; cap-gated as `auth.webauthn`.
 
-A server MUST support at least one method. `client` is an optional free-form
+A server MUST support at least one scheme. `client` is an optional free-form
 implementation/version string for debugging. Clients MAY pipeline `auth`
 before `server` arrives. All other requests before successful auth get
 `denied`; unauthenticated notifications other than `auth` are ignored.
@@ -326,7 +326,7 @@ into the event object it creates.
 
 ### 3.6 Level 0 conformance checklist
 
-Accept connection → emit `server` → accept one `auth` method → emit ≥1 `room`
+Accept connection → emit `server` → accept one auth scheme → emit ≥1 `room`
 → accept `send`, return a `result` for requests, broadcast `event` with
 conforming IDs → reply `error/unsupported` to other requests and ignore unknown
 notifications. Accept omission of `jsonrpc` and `id` as specified in §1;
@@ -336,7 +336,7 @@ deduplication is recommended, not required. That is the entire Level 0 surface.
 
 ```json
 ← {"method": "server", "params": {"protocol": 2, "name": "demo/1", "caps": [], "auth": ["token"]}}
-→ {"method": "auth", "id": "a", "params": {"method": "token", "token": "hunter2"}}
+→ {"method": "auth", "id": "a", "params": {"scheme": "token", "token": "hunter2"}}
 ← {"id": "a", "result": {"you": {"id": "alice", "name": "Alice"}}}
 ← {"method": "room", "params": {"room": "general", "name": "General"}}
 → {"method": "send", "id": "b", "params": {"room": "general", "body": {"text": "hi", "format": "markdown"}}}
@@ -380,7 +380,7 @@ client to a defined fallback:
 | `embed.iframe` | fallback card                                  |
 | `embed.html`   | fallback card                                  |
 | `push`         | no mobile wake-ups                             |
-| `auth.webauthn`| other auth methods only                        |
+| `auth.webauthn`| other auth schemes only                        |
 
 ---
 
@@ -572,7 +572,7 @@ Media travels over HTTP, not the socket. The client POSTs
 ```
 
 Upload authentication: with `token` auth, the same token as bearer. With
-other methods there is no reusable credential, so the server SHOULD re-send
+other schemes there is no reusable credential, so the server SHOULD re-send
 the `server` frame after auth carrying a per-session `upload` URL (capability
 re-announcement, §3.1 — no new machinery).
 
