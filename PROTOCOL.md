@@ -184,9 +184,8 @@ NOT retroactively un-render existing content. After replying
 - `anonymous` — no credentials; server assigns identity. Legal and expected in
   trusted deployments.
 - `token` — bearer string. The reference default.
-- `webauthn` — two-round-trip challenge: `auth(params.scheme=webauthn)` →
-  `result` carrying `challenge` → `auth` carrying the assertion → final `result`.
-  Details deferred to a companion doc; cap-gated as `auth.webauthn`.
+- `webauthn` — suggested optional scheme; exchange details are
+  implementation-defined. Cap-gated as `auth.webauthn`.
 
 A server MUST support at least one scheme. `client` is an optional free-form
 implementation/version string for debugging. Clients MAY pipeline `auth`
