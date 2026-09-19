@@ -111,6 +111,7 @@ unidentifiable invalid requests (§1.1). They come in two flavors:
 **strictly monotonic per room** across events *and* updates, which share one
 sequence (a `max(last+1, now_ms)` ratchet suffices; >1000 entries/sec borrows
 into the next second, and backward clock steps are absorbed).
+`"0"` is reserved for the empty-log boundary; entries MUST use positive IDs.
 
 - Comparison is numeric (or equivalently, as strings after zero-padding —
   raw ms timestamps are 13 digits until the year 2286). Values fit exactly in
@@ -221,12 +222,23 @@ Rooms have server-chosen string IDs. The server announces each room the client
 can see (at minimum, once after auth):
 
 ```json
-{"method": "room", "params": {"room": "general", "name": "General", "topic": "optional"}}
+{"method": "room", "params": {
+  "room": "general", "name": "General", "topic": "optional", "latest_id": "1724803200042"
+}}
 ```
 
 Re-sending a `room` frame updates its metadata. Servers MUST announce a room
 before delivering any entry in it. A Level 0 server announces one room and
 never revisits the subject. Join/leave/create are cap `rooms.manage` (§6.3).
+
+`latest_id` is the maximum committed room log ID, including events and updates;
+`"0"` denotes an empty log. It is REQUIRED on room announcements when `history`
+is supported, OPTIONAL otherwise. For history-enabled rooms, the first
+announcement after auth MUST establish `latest_id` and live delivery at one
+serialization point: entries through `latest_id` are available via history, and subsequent
+entries MUST be delivered live in log order. No commit may fall between these
+paths. Re-announcements report the current head but MUST NOT advance client
+checkpoints or replace an active recovery bound (§5.1).
 
 ### 3.5 Messages
 
@@ -402,9 +414,32 @@ Two response modes, chosen by the query shape:
   redaction, or re-threading of a message the client already rendered arrives
   as an update entry in the gap.
 
-Reconnect procedure: reconnect, re-auth, `history` with
-`after: last_seen_id` per room, where `last_seen_id` is the max ID of any
-entry (event or update) previously received. This is the entire sync model.
+Reconnect recovery for cached room state:
+
+1. Retain checkpoint `C`, the log position through which entries have been
+   processed. Receiving a higher live ID MUST NOT advance `C` during recovery.
+2. Re-authenticate; capture `H = room.latest_id`. Buffer live events and updates.
+3. If `C < H`, request `history(after=C, before=H)`. Process each page in log
+   order, deduplicating entries already processed. Advance `C` only after
+   processing the page; paginate with the same `H` until `more: false`.
+4. The exhausted window establishes checkpoint `H`. Drain buffered entries
+   above `H` in log order, then resume live processing and checkpoint advancement.
+   If `C = H` initially, skip history and drain directly.
+
+Persist checkpoints with their corresponding cached state. On disconnect during
+recovery, discard unprocessed buffered entries and resume from `C` after the
+next room announcement. An announced or buffered maximum is not a checkpoint.
+
+Recovery boundary example:
+
+```json
+← {"method": "room", "params": {"room": "general", "name": "General", "latest_id": "1724803200120"}}
+→ {"method": "history", "id": "recover1", "params": {
+  "room": "general", "after": "1724803200100", "before": "1724803200120"
+}}
+```
+
+Recovery adds no handshake round trip or server-held cursor.
 
 Reference storage model: an append-only list per room; backfill reads fold
 updates into their targets (or read a materialized current-state map),
@@ -611,7 +646,10 @@ burst load; `send`/`event` round-trip including `echo` when a request ID is
 present and its omission otherwise; per-cap behavior
 including RFC 7386 merge semantics, both history modes (chronological
 ordering, inclusive bounds, truncation direction, compaction on backfill,
-update replay on gap-fill), and `unsupported` responses for undeclared caps.
+update replay on gap-fill), `room.latest_id` (including update-only and empty
+logs), gap-free history/live boundaries, and `unsupported` responses for
+undeclared caps. Client recovery checks include interleaved live traffic and
+disconnects between history pages; checkpoints MUST NOT skip unprocessed entries.
 Retry deduplication is recommended only; accepting duplicates MUST NOT fail
 conformance. If tested, deduplication checks include returning the original
 result without rebroadcasting a recognized duplicate.

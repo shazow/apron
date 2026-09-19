@@ -27,19 +27,22 @@ IDs. Envelope changes bump `protocol` to `1` under §8.
 
 ## 2. Live traffic during history recovery
 
-- [ ] Resolved
+- [x] Resolved
 
-Reference: PROTOCOL.md §§2, 5.1.
+Reference: PROTOCOL.md §§2, 3.4, 5.1.
 
-How should live traffic interleave with history recovery? Receiving a high ID
-does not establish that everything before it was received. A client reconnecting
-from `100` could receive live event `120` before recovering `101–119`. Advancing
-its checkpoint to `120` would lose the gap on another disconnect. An older
-history update could also overwrite a newer live update.
+Issue: Advancing a recovery checkpoint to the highest received live ID can
+skip missing history after another disconnect; interleaved replay can overwrite
+newer state.
 
-Would a history watermark and an explicit buffering/replay procedure be
-acceptable? These can still avoid server-held per-client cursors. Define when
-the client may advance its recovery checkpoint.
+Decision: Announce `room.latest_id`, required with `history`, optional otherwise.
+It covers events and updates; `"0"` denotes an empty log. Establish the head and
+live delivery at one serialization point. Recover cached state through this
+fixed bound while buffering live entries; advance checkpoints only through
+processed history, then drain the buffer in order. Re-announcements do not move
+the active bound. Persist checkpoints with cached state; interrupted recovery
+resumes from the processed checkpoint. No additional handshake or server cursor.
+Compacted backfill reconciliation remains question 3.
 
 ## 3. Compacted history revision and window semantics
 
