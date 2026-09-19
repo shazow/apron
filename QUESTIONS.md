@@ -79,7 +79,7 @@ policies are implementation-defined.
 
 ## 5. Log timestamps and identity across reconnects
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§2, 5.1, Appendix A.
 
@@ -92,8 +92,6 @@ or restart procedure. Design assumes fewer than 1,000 entries/sec per room.
 Decision: Log namespacing and reconnect association are client-defined. Remove
 the prescribed storage tuple; retain only per-room, per-server ID uniqueness.
 Server IDs and identity proofs are deferred.
-
-Review complete; awaiting confirmation before advancing.
 
 ## 6. Room and thread metadata lifecycle
 
