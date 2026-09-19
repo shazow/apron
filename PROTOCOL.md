@@ -16,7 +16,7 @@ frontend.
   object (a **frame**). No batching, no newline-delimited streams.
 - The RECOMMENDED envelope follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification),
   with §1.1 extensions. Receivers MUST accept omitted `jsonrpc` and request
-  `id`. Omitted `jsonrpc` is an Apron extension to JSON-RPC 2.0.
+  `id`.
 - **Calls** have a string `method` and an object `params` (omission means `{}`).
   Method-specific fields reside in `params`. Frame names denote methods.
 - A call with `id` is a **request**; its reply echoes `id` and contains exactly
@@ -27,13 +27,12 @@ frontend.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications. Unknown *fields* in
   known methods MUST be ignored by both sides.
-- Missing required method fields or incorrect field types yield
-  `error/invalid_params`; notifications receive no reply.
+- Requests with missing required method fields or incorrect field types yield
+  `error/invalid_params`.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
-  be dropped without a reply. The limit is advisory, not a conformance requirement.
-- Liveness rides on WebSocket ping/pong at the transport layer. There is no
-  application-level heartbeat; do not invent one.
+  be dropped. The limit is advisory.
+- Liveness uses WebSocket ping/pong; there is no application-level heartbeat.
 - Top-level `conn` is reserved for the multiplexing envelope (Appendix A) and
   MUST NOT appear in core frames.
 
@@ -42,7 +41,7 @@ frontend.
 `jsonrpc`, when present, MUST be `"2.0"`; senders SHOULD include it. Request
 `id`, when present, MUST be a string (§2). Clients SHOULD include `id` for
 result correlation or retries, including `auth`, `history`, and mutations.
-Notifications omit `id`; event/update log IDs reside in `params`.
+Event/update log IDs reside in `params`.
 
 ```json
 → {"jsonrpc": "2.0", "method": "send", "id": "c42",
@@ -94,11 +93,10 @@ conflicting methods/parameters with `invalid_params`, and coalesce concurrent
 duplicates.
 
 Retention and persistence across reconnects/restarts are implementation-defined.
-Request IDs may be stored with accepted operations; no additional handshake or
-capability is required. Pre-authentication IDs are connection-scoped;
-authentication MUST execute on each connection.
+Pre-authentication IDs are connection-scoped; authentication MUST execute on
+each connection.
 
-Servers MAY re-execute retries with fresh log IDs. Duplicates are allowed;
+Servers MAY re-execute retries with fresh log IDs;
 clients MUST NOT assume exactly-once delivery. Notifications have no
 request-level deduplication.
 
@@ -116,31 +114,27 @@ Recommended generator: `id = str(max(unix_epoch_ms(), last_id + 1))`.
 `"0"` is reserved for the empty-log boundary; entries MUST use positive IDs.
 
 - Compare numerically. Values are below `2^53`; clients MAY parse them as
-  integers for window arithmetic.
+  integers.
 - Derived timestamps and time-window bounds are approximate. There is no
   separate timestamp field.
-- Ordering within a room is by log ID. Cross-room ordering is approximate.
-  On a live connection, servers MUST deliver a room's entries (`event` and
-  `update` frames) in ascending log-ID order.
+- Cross-room ordering is approximate. On a live connection, servers MUST
+  deliver a room's entries (`event` and `update` frames) in ascending log-ID order.
 - Log IDs are unique only within a room on a single server. Log namespacing
   is client-defined.
 
 **Opaque IDs** (rooms, threads, sessions, sender IDs, client request `id`s)
 are arbitrary strings chosen by whichever side mints them. Servers SHOULD
-prefix them by type — `t_` for threads, `call_` for RTC sessions, etc. — to
-keep IDs self-describing in logs and impossible to confuse across kinds.
+prefix them by type — e.g. `t_` for threads, `call_` for RTC sessions.
 Client request `id`s SHOULD be randomly generated to avoid collisions across
 devices and connections, including devices authenticated as the same sender.
-A retry reuses the original ID (§1.2); reconnecting does not change that ID.
 Request IDs identify operations, not positions in the server's room log.
 
 ---
 
 ## 3. Level 0 — mandatory core
 
-A Level 0 server implements this section and nothing else. All Level ≥1
-features are advertised capabilities (§4); their absence is signaled by
-omission from `caps` and/or `error/unsupported`.
+A Level 0 server implements this section. Additional features are optional
+capabilities (§4).
 
 ### 3.1 `server` frame
 
@@ -168,7 +162,7 @@ unprompted. There is no client hello.
 - `upload`: present iff cap `upload` (§6.1).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
-the previous (no merging). On receipt, clients re-evaluate feature UI but MUST
+the previous. On receipt, clients re-evaluate feature UI but MUST
 NOT retroactively un-render existing content. After replying
 `error/unsupported`, servers SHOULD follow with a fresh `server` frame.
 
@@ -181,27 +175,23 @@ NOT retroactively un-render existing content. After replying
 
 `params.scheme` selects the authentication scheme:
 
-- `anonymous` — no credentials; server assigns identity. Legal and expected in
-  trusted deployments.
+- `anonymous` — no credentials; server assigns identity.
 - `token` — bearer string. The reference default.
 - `webauthn` — suggested optional scheme; exchange details are
   implementation-defined.
 
-A server MUST support at least one scheme, advertised in `server.auth`;
-no separate capability is required. Servers MAY accept `auth` regardless of
-`params.scheme` and ignore credentials. Credential validation, identity
-assignment, and privilege policy are implementation-defined.
+Servers MAY accept `auth` regardless of `params.scheme` and ignore credentials.
+Credential validation, identity assignment, and privilege policy are
+implementation-defined.
 
 `client` is an optional free-form implementation/version string for debugging.
-Clients MAY pipeline `auth` before `server` arrives. All other requests before successful auth get
-`denied`; unauthenticated notifications other than `auth` are ignored.
-An `auth` notification can authenticate the connection, but returns no `you`
-or challenge, so clients SHOULD use a request when they need those results.
+Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
+other requests get `denied`; other notifications are ignored.
 
 ### 3.3 Identity
 
-Identity is server-authoritative and **denormalized**: every event carries its
-sender inline. There is no user directory and no profile state.
+Identity is server-authoritative: every event carries its sender inline.
+There is no user directory or profile state.
 
 ```json
 "sender": {"id": "alice", "name": "Alice", "avatar": "https://..."}
@@ -233,8 +223,8 @@ these announcements:
 Re-sending `room` fully replaces its metadata; omitted optional fields are
 cleared. `room` is required; `name` and `topic` are optional strings, with
 `name` defaulting to `room`. Servers MUST emit `removed: true` when a room
-leaves the client's visible set. This withdraws the room and its thread metadata from the current
-view; only `room` and `removed` are required:
+leaves the client's visible set, withdrawing the room and its thread metadata.
+Only `room` and `removed` are required:
 
 ```json
 {"method": "room", "params": {"room": "general", "removed": true}}
@@ -251,9 +241,8 @@ one room. Join/leave/create are cap `rooms.manage` (§6.3).
 announcement establishing live delivery MUST establish `latest_id` at the same
 serialization point: transitions through `latest_id` are recoverable via history
 (raw or equivalent rasters), and subsequent entries MUST be delivered live in
-log order. No commit may fall between these paths. Re-announcements report the
-current head but MUST NOT advance client checkpoints or replace an active
-recovery bound (§5.1).
+log order. Re-announcements report the current head but MUST NOT advance
+client checkpoints or replace an active recovery bound (§5.1).
 
 ### 3.5 Messages
 
@@ -300,16 +289,12 @@ Broadcast (to all clients in the room, including the sender):
   without `id`. Clients match `echo` against their own pending sends to
   reconcile local echo. Servers MAY include it on all copies of the broadcast;
   clients MUST ignore values that do not match their own pending requests.
-  Echo is correlation, not a duplicate-prevention guarantee. A server following
-  §1.2 returns the original `event_id` in its result for a recognized retry,
-  without a second broadcast; clients MUST also accept that result as
-  confirmation.
-  Otherwise, retries MAY create multiple events with different `event_id`s.
+  Clients MUST also accept the `send` result as confirmation, including when
+  deduplication suppresses a retry's broadcast (§1.2).
 - Clients additionally dedup on `event_id`.
 - `body.attachments` and `body.embeds`: see §6. **Clients MUST render entries
   of unknown `kind` as a labeled fallback card** (kind name + `url` if
-  present). This rule is core; it is the forward-compatibility hook for future
-  typed embeds.
+  present).
 
 The event object's defined fields (`event_id` is immutable; other unknown keys
 are retained during replay and ignored by renderers):
@@ -332,8 +317,7 @@ into the event object it creates.
 Accept connection → emit `server` → accept one auth scheme → emit ≥1 `room`
 → accept `send`, return a `result` for requests, broadcast `event` with
 conforming IDs → reply `error/unsupported` to other requests and ignore unknown
-notifications. Accept omission of `jsonrpc` and `id` as specified in §1;
-deduplication is recommended, not required. That is the entire Level 0 surface.
+notifications. Framing and retries follow §1.
 
 ### 3.7 A complete Level 0 session
 
@@ -359,9 +343,6 @@ deduplication is recommended, not required. That is the entire Level 0 surface.
 → {"method": "history", "id": "c", "params": {"room": "general", "limit": 50}}
 ← {"id": "c", "error": {"code": -32601, "message": "Unsupported method"}}
 ```
-
-Every conforming implementation, at any level, produces a superset of this
-exchange.
 
 ---
 
@@ -390,11 +371,9 @@ client to a defined fallback:
 
 ### 5.1 `history`
 
-Stateless window query over the room's **append-only transition log**. Events
-and updates (§5.3) share one ID sequence (§2). Frontends MUST support complete
-transition replay. Servers MAY return raw transitions or equivalent rastered
-transitions (complete event snapshots); no capability negotiation is required.
-A raw implementation only slices the log. Compaction is optional.
+Stateless window query over the room's **append-only transition log** (§2).
+Servers MAY return raw transitions or equivalent rastered transitions
+(complete event snapshots); no capability negotiation is required.
 
 ```json
 → {
@@ -474,16 +453,9 @@ Recovery boundary example:
 }}
 ```
 
-Recovery adds no handshake round trip or server-held cursor.
-
-Reference storage: an append-only list per room; history returns bounded slices.
-An optimizing server may fold target state through a selected update ID to emit
-rasters. A current-state map is usable only if it represents that revision.
-
 ### 5.2 `typing`
 
-Fire-and-forget ephemera sent as notifications (omit `id`); no replies,
-servers MAY drop freely.
+Ephemeral notifications; servers MAY drop them.
 
 ```json
 → {"method": "typing", "params": {"room": "general", "active": true, "timeout": 8}}
@@ -495,7 +467,7 @@ servers MAY drop freely.
 
 `timeout` (optional, seconds) is how long the indicator should persist without
 refresh; clients expire remote typing state after `timeout`, defaulting to 10s
-when absent. There is deliberately no presence system in this spec.
+when absent. There is no presence system.
 
 ### 5.3 `edit`, `delete` — and the `update` frame
 
@@ -531,7 +503,7 @@ Re-render after reduction. Servers MAY update any event, including ones
 predating the connection; the same mechanism covers edits, deletion,
 re-threading (§6.2), and future state mutations.
 
-Client-initiated mutation is one request frame mirroring the server frame:
+Clients submit mutations with `update_request`:
 
 ```json
 → {
@@ -542,12 +514,10 @@ Client-initiated mutation is one request frame mirroring the server frame:
 ← {"id": "c12", "result": {"update_id": "1724803312007"}}
 ```
 
-The server validates which keys this sender may touch on this target
-(policy is entirely server-defined), replies with `result` or `error/denied`
-when `id` is present, and on success broadcasts the resulting `update`
-(the broadcast is authoritative and MAY differ from the request).
-Capabilities `edit` and `delete` gate client UI
-only; both use `update_request`.
+The server authorizes changes according to local policy, replies to requests
+with `result` or `error/denied`, and on success broadcasts an authoritative
+`update` that MAY differ from the request. Capabilities `edit` and `delete`
+gate client UI only.
 
 **Deletion is an ordinary update.** A delete request is
 `update_request` with `"set": {"deleted": true}`; the server SHOULD
@@ -575,16 +545,14 @@ Media travels over HTTP, not the socket. The client POSTs
 
 Upload authentication: with `token` auth, the same token as bearer. With
 other schemes there is no reusable credential, so the server SHOULD re-send
-the `server` frame after auth carrying a per-session `upload` URL (capability
-re-announcement, §3.1 — no new machinery).
+the `server` frame after auth carrying a per-session `upload` URL (§3.1).
 
 Attachment kinds: `image`, `video`, `audio`, `file` (with `name`, `size`).
 Unknown kinds → fallback card rule (§3.5).
 
 ### 6.2 `threads`
 
-`thread` is an optional field on events: an opaque string thread ID
-(recommended prefix `t_`, per §2). Thread metadata is its own re-sendable
+`thread` is an optional opaque ID on events (§2). Metadata uses a `thread`
 frame:
 
 ```json
@@ -620,16 +588,14 @@ re-threading a message group emits N `update`s plus a `thread` frame carrying
 its summary. Clients MUST re-home moved messages without treating them as
 deleted, and SHOULD indicate the move at the message's original position.
 
-Client participation reuses existing frames — no thread-specific requests
-exist:
+Client participation:
 
 - **Reply in a thread:** `send` with `"thread": "t_deploy"` in `params` (an
   existing thread ID; see the field-placement rule in §3.5).
 - **Propose a new thread:** `update_request` on the intended root event with
   `"set": {"thread": "t_<random>"}`, a fresh client-generated ID. The server
   accepts (broadcasting the `update` and an authoritative `thread` metadata
-  frame) or replies `denied`. The `thread` field is always a string; there is
-  no root-reference form.
+  frame) or replies `denied`.
 
 ### 6.3 `rooms.manage`
 
@@ -641,7 +607,7 @@ exist:
 
 Server confirms requests with `result: {}` and emits the corresponding `room`
 notification; successful `room_leave` emits `removed: true`. Visibility and
-membership policy are entirely server-defined.
+membership policy are server-defined.
 
 ### 6.4 `embed.iframe`, `embed.html`
 
@@ -662,8 +628,7 @@ Embeds are `body.embeds` entries.
   before insertion, regardless of source. Servers make no safety promises and
   clients extend no trust; the trusted-deployment assumption does not cover
   content flowing *through* backends.
-- Typed embeds (`diff`, `poll`, …) are future capabilities; until then such
-  kinds hit the fallback-card rule, which is what makes them additive.
+- Future typed embeds (`diff`, `poll`, …) use the fallback rule (§3.5).
 
 ### 6.5 `push`
 
@@ -682,7 +647,7 @@ by its push relay:
 When the user should be woken while disconnected, the server POSTs JSON
 `{room, event_id, sender_name, preview}` to the endpoint with the token as
 bearer. Delivery beyond that POST (APNs/FCM, coalescing) is the relay's
-concern. Wake policy (mentions, all messages) is server-defined for now.
+concern. Wake policy (mentions, all messages) is server-defined.
 
 Note: registered endpoints are client-supplied URLs the server will POST to —
 an SSRF vector into the server's network. Servers SHOULD accept only `https`
@@ -692,11 +657,8 @@ endpoints resolving to non-internal addresses.
 
 ## Appendix A — Multiplexing envelope (informative)
 
-This appendix defines how multiple logical protocol connections share one
-physical WebSocket — e.g. a frontend talking to an aggregator/bouncer that
-proxies N backends, or a mobile app holding a single socket to a local daemon.
-It is **not part of the core protocol**: servers implementing this spec need
-no knowledge of it, and a Level 0 backend is unaffected by its existence.
+Multiple logical protocol connections can share one physical WebSocket via an
+aggregator that proxies backends. This envelope is **outside the core protocol**.
 
 ### A.1 Model
 
@@ -710,12 +672,9 @@ opaque connection ID:
 }
 ```
 
-Within each `conn`, the core protocol applies verbatim and in full: per-`conn`
-`server` frames, per-`conn` auth and identity, per-`conn` capability sets,
-per-`conn` ID monotonicity. The envelope is transparent — a demultiplexer
-strips it and hands each inner frame to an ordinary protocol client instance.
-Frame ordering is preserved per `conn`; no ordering is guaranteed across
-`conn`s.
+Each `conn` carries an independent core-protocol session. A demultiplexer
+passes inner frames to the corresponding client instance. Frame ordering is
+preserved per `conn`; no ordering is guaranteed across `conn`s.
 
 ### A.2 Control frames
 
@@ -729,10 +688,9 @@ Envelope-level control uses unwrapped frames (no `frame` field):
 → {"type": "conn_close", "conn": "b1"}
 ```
 
-- `conn` values are chosen by the opener and are opaque strings, unique per
-  physical socket.
+- `conn` is an opaque string chosen by the opener, unique per physical socket.
 - After `conn_ready`, the proxied backend's `server` frame arrives wrapped, as
-  the first frame on that `conn` — the connection bootstrap is unchanged.
+  the first frame on that `conn`.
 - `conn_close` from either side terminates the logical connection; the
   aggregator closes the upstream socket.
 - Aggregator authentication (who may open conns, to where) is out of scope
@@ -740,25 +698,19 @@ Envelope-level control uses unwrapped frames (no `frame` field):
 
 ### A.3 Properties
 
-The aggregator is a dumb pipe: it never parses inner frames, holds no
-protocol state beyond the `conn`↔upstream-socket mapping, and adds no trust
-surface — the backend remains authoritative end to end, which keeps this layer
-compatible with any future end-to-end encryption of frame contents. Client
-support is a thin demux shim feeding N unmodified protocol sessions. Log
-namespacing remains client-defined (§2).
+The aggregator forwards inner frames without parsing them and holds only the
+`conn`↔upstream-socket mapping. Backends remain authoritative; the envelope
+can carry encrypted frame contents. Log namespacing remains client-defined (§2).
 
 ---
 
 ## Appendix B — Out-of-band channel negotiation: WebRTC (informative)
 
-Planned capability `rtc`, targeted at a future draft. Included here to document
-the pattern it instantiates: **the socket is a signaling plane; heavy traffic goes
-elsewhere.** The `upload` URL (§6.1) and iframe embeds (§6.4) are prior
-instances. Any future out-of-band channel (screenshare, collaborative
-documents, file transfer over data channels) should reuse the same three-frame
-shape: a session-announce frame with server-authoritative membership, a join
-request that vends connection config, and an opaque relay frame. Note that the
-core protocol requires zero changes to accommodate this appendix.
+Planned capability `rtc`: the socket carries signaling; media travels out of
+band. Future channels (screenshare, collaborative documents, file transfer)
+should reuse this pattern: a session announcement with server-authoritative
+membership, a join request returning connection configuration, and an opaque
+relay frame.
 
 ### B.1 Sessions
 
@@ -778,8 +730,7 @@ metadata-frame idiom of `room` and `thread`:
 }
 ```
 
-Re-sent on membership change; `"active": false` ends the session. Membership
-is server-authoritative, not peer gossip.
+Re-sent on membership change; `"active": false` ends the session.
 
 ### B.2 Join / leave
 
@@ -802,11 +753,8 @@ authoritative `rtc` frame or rejects with `denied`.
 
 ### B.3 Signaling relay
 
-One fire-and-forget notification (omit `id`); the server is a mailbox, not a
-participant.
-`payload` is opaque to the server (SDP offers/answers, ICE candidates —
-whatever the peers need). No acks: WebRTC's own state machine handles loss and
-renegotiation.
+The server relays notifications with opaque `payload` (SDP offers/answers,
+ICE candidates, etc.). WebRTC handles loss and renegotiation.
 
 ```json
 → {
@@ -823,8 +771,7 @@ renegotiation.
 }
 ```
 
-A conforming backend's obligation is routing `rtc_signal` by `to` within a
-session — on the order of 15 lines.
+The backend routes `rtc_signal` by `to` within a session.
 
 ### B.4 Topology
 
@@ -833,9 +780,7 @@ session — on the order of 15 lines.
   SHOULD soft-cap participant count.
 - **SFU (future cap `rtc.sfu`):** a media server joins the session as an
   ordinary member with the reserved ID `@sfu`; clients negotiate a single
-  PeerConnection with it via the same `rtc_signal` frames. Because senders are
-  IDs and payloads are opaque, the upgrade introduces **no new frame types** —
-  the reserved member ID is the capability's only protocol-visible artifact.
+  PeerConnection with it via `rtc_signal`.
 
 ### B.5 Exclusions and knock-ons
 
