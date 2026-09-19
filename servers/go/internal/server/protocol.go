@@ -188,27 +188,3 @@ func cloneObject(value map[string]any) map[string]any {
 	}
 	return cloneValue(value).(map[string]any)
 }
-
-// applyMergePatch implements the object form of RFC 7396 used by update.set.
-func applyMergePatch(target map[string]any, patch map[string]any) map[string]any {
-	result := cloneObject(target)
-	if result == nil {
-		result = make(map[string]any)
-	}
-	for key, patchValue := range patch {
-		if patchValue == nil {
-			delete(result, key)
-			continue
-		}
-		if patchObject, ok := patchValue.(map[string]any); ok {
-			var targetObject map[string]any
-			if existing, ok := result[key].(map[string]any); ok {
-				targetObject = existing
-			}
-			result[key] = applyMergePatch(targetObject, patchObject)
-			continue
-		}
-		result[key] = cloneValue(patchValue)
-	}
-	return result
-}

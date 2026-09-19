@@ -80,13 +80,13 @@ func (c Config) withDefaults() Config {
 }
 
 type identity struct {
-	ID     string `json:"id"`
+	ID     string `json:"user_id"`
 	Name   string `json:"name,omitempty"`
 	Avatar string `json:"avatar,omitempty"`
 }
 
 func (i identity) object() map[string]any {
-	value := map[string]any{"id": i.ID}
+	value := map[string]any{"user_id": i.ID}
 	if i.Name != "" {
 		value["name"] = i.Name
 	}
@@ -97,43 +97,25 @@ func (i identity) object() map[string]any {
 }
 
 type transition struct {
-	id     int64
-	event  map[string]any
-	target string
-	set    map[string]any
+	id             int64
+	message        map[string]any
+	previousThread string
 }
 
 type threadMetadata struct {
-	id      string
-	name    string
-	summary string
-	root    string
+	id     string
+	fields map[string]any
 }
 
 func (t threadMetadata) announcement(roomID string) map[string]any {
-	params := map[string]any{
-		"room":   roomID,
-		"thread": t.id,
-		"name":   t.name,
-	}
-	if t.summary != "" {
-		params["summary"] = t.summary
-	}
-	if t.root != "" {
-		params["root"] = t.root
-	}
+	params := cloneObject(t.fields)
+	params["room_id"] = roomID
+	params["thread_id"] = t.id
 	return map[string]any{"method": "thread", "params": params}
 }
 
 func (t transition) historyEntry() map[string]any {
-	if t.event != nil {
-		return cloneObject(t.event)
-	}
-	return map[string]any{
-		"event_id": t.idString(),
-		"target":   t.target,
-		"set":      cloneObject(t.set),
-	}
+	return map[string]any{"log_id": t.idString(), "message": cloneObject(t.message)}
 }
 
 func (t transition) idString() string {
@@ -144,7 +126,7 @@ type room struct {
 	id      string
 	entries []transition
 	lastID  int64
-	// states contains only creation events and is the server's current state.
+	// states contains the latest message snapshots and is the server's current state.
 	states  map[string]map[string]any
 	owners  map[string]string
 	threads map[string]threadMetadata
@@ -462,15 +444,15 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	case "nick":
 		result, operationErr = s.rename(c, req)
 		cacheResult = operationErr == nil
-	case "send":
-		result, operationErr = s.sendMessage(c, req)
+	case "message":
+		result, operationErr = s.saveMessage(c, req)
 		cacheResult = operationErr == nil
 		responseSent = operationErr == nil
 	case "history":
 		result, operationErr = s.history(req)
 		cacheResult = operationErr == nil
-	case "update_request":
-		result, operationErr = s.updateMessage(c, req)
+	case "thread":
+		result, operationErr = s.createThread(c, req)
 		cacheResult = operationErr == nil
 		responseSent = operationErr == nil
 	case "typing":
@@ -532,7 +514,7 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	frames = append(frames, map[string]any{
 		"method": "room",
 		"params": map[string]any{
-			"room":      s.room.id,
+			"room_id":   s.room.id,
 			"name":      "General",
 			"latest_id": strconv.FormatInt(s.room.lastID, 10),
 		},
@@ -561,58 +543,142 @@ func (s *Server) rename(c *client, req request) (any, *rpcError) {
 	return result, nil
 }
 
-func (s *Server) sendMessage(c *client, req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room", true)
+func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
+	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
 		return nil, err
 	}
 	if roomID != s.room.id {
 		return nil, invalidParams("Unknown room %q", roomID)
 	}
-	body, err := parseObject(req.params, "body", true)
+	if _, present := req.params["log_id"]; present {
+		return nil, invalidParams("log_id is server-controlled")
+	}
+	messageID, err := parseString(req.params, "message_id", false)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateBody(body); err != nil {
-		return nil, err
+	_, replacing := req.params["message_id"]
+	if replacing && !validMessageID(messageID) {
+		return nil, invalidParams("message_id must be a positive decimal string")
 	}
-	threadID, hasThread, err := parseSendThread(req.params)
+	deleted, err := parseBool(req.params, "deleted", false)
 	if err != nil {
 		return nil, err
 	}
-
+	if deleted && !replacing {
+		return nil, invalidParams("Cannot create a deleted message")
+	}
+	next := make(map[string]any)
+	for key, raw := range req.params {
+		if key == "room_id" || key == "message_id" || key == "from" || (deleted && key == "body") {
+			continue
+		}
+		var value any
+		if json.Unmarshal(raw, &value) != nil {
+			return nil, invalidParams("Invalid %s", key)
+		}
+		next[key] = value
+	}
+	if !deleted {
+		body, err := parseObject(req.params, "body", true)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateBody(body); err != nil {
+			return nil, err
+		}
+	}
+	threadID, hasThread, err := parseThread(req.params)
+	if err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	var previousThread string
+	from := c.identity.object()
+	if replacing {
+		previous, exists := s.room.states[messageID]
+		if !exists {
+			return nil, invalidParams("Unknown message %q", messageID)
+		}
+		if s.room.owners[messageID] != c.identity.ID {
+			return nil, &rpcError{Code: codeDenied, Message: "Only the author may update this message"}
+		}
+		from = cloneObject(previous["from"].(map[string]any))
+		previousThread, _ = previous["thread_id"].(string)
+	}
 	if hasThread {
 		if _, exists := s.room.threads[threadID]; !exists {
-			s.mu.Unlock()
 			return nil, invalidParams("Unknown thread %q", threadID)
 		}
 	}
-	id := s.nextIDLocked()
-	event := map[string]any{
-		"event_id": id,
-		"sender":   c.identity.object(),
-		"body":     cloneObject(body),
+	logID := s.nextIDLocked()
+	if !replacing {
+		messageID = logID
 	}
-	if hasThread {
-		event["thread"] = threadID
-	}
-	state := cloneObject(event)
-	s.room.entries = append(s.room.entries, transition{id: s.room.lastID, event: state})
-	s.room.states[id] = state
-	s.room.owners[id] = c.identity.ID
-	result := map[string]any{"event_id": id}
-
-	params := map[string]any{"room": roomID, "event": cloneObject(event)}
+	next["message_id"] = messageID
+	next["from"] = from
+	s.room.states[messageID] = next
+	s.room.owners[messageID] = c.identity.ID
+	s.room.entries = append(s.room.entries, transition{id: s.room.lastID, message: next, previousThread: previousThread})
+	result := map[string]any{"message_id": messageID}
+	params := map[string]any{"room_id": roomID, "log_id": logID, "message": cloneObject(next)}
 	if req.hasID {
 		params["echo"] = req.id
+		c.enqueue(response(req.id, req.full, result))
 	}
-	frame := map[string]any{"method": "event", "params": params}
+	s.broadcastLocked(map[string]any{"method": "message", "params": params})
+	return result, nil
+}
+
+func validMessageID(id string) bool {
+	if len(id) == 0 || id[0] < '1' || id[0] > '9' {
+		return false
+	}
+	for _, ch := range id {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) createThread(c *client, req request) (any, *rpcError) {
+	roomID, err := parseString(req.params, "room_id", true)
+	if err != nil {
+		return nil, err
+	}
+	if roomID != s.room.id {
+		return nil, invalidParams("Unknown room %q", roomID)
+	}
+	if _, exists := req.params["thread_id"]; exists {
+		return nil, invalidParams("thread_id is server-controlled")
+	}
+	fields := make(map[string]any)
+	for _, key := range []string{"title", "summary", "root_message_id"} {
+		if _, exists := req.params[key]; !exists {
+			continue
+		}
+		value, err := parseString(req.params, key, false)
+		if err != nil {
+			return nil, err
+		}
+		if key == "root_message_id" && !validMessageID(value) {
+			return nil, invalidParams("root_message_id must be a positive decimal string")
+		}
+		fields[key] = value
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := fmt.Sprintf("t_%d", len(s.room.threads)+1)
+	metadata := threadMetadata{id: id, fields: fields}
+	s.room.threads[id] = metadata
+	result := map[string]any{"thread_id": id}
 	if req.hasID {
 		c.enqueue(response(req.id, req.full, result))
 	}
-	s.broadcastLocked(frame)
-	s.mu.Unlock()
+	s.broadcastLocked(metadata.announcement(roomID))
 	return result, nil
 }
 
@@ -636,20 +702,20 @@ func validateBody(body map[string]any) *rpcError {
 	return nil
 }
 
-func parseSendThread(params map[string]json.RawMessage) (string, bool, *rpcError) {
-	raw, present := params["thread"]
+func parseThread(params map[string]json.RawMessage) (string, bool, *rpcError) {
+	raw, present := params["thread_id"]
 	if !present {
 		return "", false, nil
 	}
 	var threadID string
 	if json.Unmarshal(raw, &threadID) != nil || threadID == "" {
-		return "", false, invalidParams("thread must be a non-empty string")
+		return "", false, invalidParams("thread_id must be a non-empty string")
 	}
 	return threadID, true, nil
 }
 
 func (s *Server) history(req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room", true)
+	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
 		return nil, err
 	}
@@ -671,51 +737,42 @@ func (s *Server) history(req request) (any, *rpcError) {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	start, end := 0, len(s.room.entries)
-	for i, entry := range s.room.entries {
-		if hasAfter && entry.id < after {
-			start = i + 1
-		}
-		if hasBefore && entry.id > before {
-			end = i
-			break
-		}
+	threadID, hasThread, err := parseThread(req.params)
+	if err != nil {
+		return nil, err
 	}
-	emptyBounds := start > end
-	if emptyBounds {
-		start = end
-	}
-	if start < 0 {
-		start = 0
-	}
-	if end < start {
-		end = start
-	}
-
-	selectedStart, selectedEnd := start, end
-	if emptyBounds {
-		selectedStart, selectedEnd = end, end
-	} else if !hasAfter {
-		selectedStart = end - limit
-		if selectedStart < start {
-			selectedStart = start
+	if hasThread {
+		if _, exists := s.room.threads[threadID]; !exists {
+			return nil, invalidParams("Unknown thread %q", threadID)
 		}
 	}
-	if hasAfter && selectedEnd-selectedStart > limit {
-		selectedEnd = selectedStart + limit
+	// Membership before the transition is stored independently of the requested bounds.
+	matching := make([]transition, 0)
+	for _, entry := range s.room.entries {
+		if (hasAfter && entry.id < after) || (hasBefore && entry.id > before) {
+			continue
+		}
+		if hasThread && entry.previousThread != threadID && entry.message["thread_id"] != threadID {
+			continue
+		}
+		matching = append(matching, entry)
 	}
-	entries := make([]map[string]any, 0, selectedEnd-selectedStart)
-	for _, entry := range s.room.entries[selectedStart:selectedEnd] {
+	more := len(matching) > limit
+	if more {
+		if hasAfter {
+			matching = matching[:limit]
+		} else {
+			matching = matching[len(matching)-limit:]
+		}
+	}
+	entries := make([]map[string]any, 0, len(matching))
+	for _, entry := range matching {
 		entries = append(entries, entry.historyEntry())
 	}
-	more := !emptyBounds && (selectedStart > start || selectedEnd < end)
-	result := map[string]any{
-		"entries": entries,
-		"more":    more,
-	}
-	if len(entries) > 0 {
-		result["first_id"] = strconv.FormatInt(s.room.entries[selectedStart].id, 10)
-		result["last_id"] = strconv.FormatInt(s.room.entries[selectedEnd-1].id, 10)
+	result := map[string]any{"entries": entries, "more": more}
+	if len(matching) > 0 {
+		result["first_id"] = matching[0].idString()
+		result["last_id"] = matching[len(matching)-1].idString()
 	}
 	return result, nil
 }
@@ -751,128 +808,8 @@ func parseLimit(params map[string]json.RawMessage, defaultLimit int) (int, *rpcE
 	return value, nil
 }
 
-func (s *Server) updateMessage(c *client, req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room", true)
-	if err != nil {
-		return nil, err
-	}
-	if roomID != s.room.id {
-		return nil, invalidParams("Unknown room %q", roomID)
-	}
-	target, err := parseString(req.params, "target", true)
-	if err != nil {
-		return nil, err
-	}
-	if target == "" {
-		return nil, invalidParams("target must be a non-empty string")
-	}
-	set, err := parseObject(req.params, "set", true)
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := set["event_id"]; ok {
-		return nil, invalidParams("event_id is immutable")
-	}
-	if _, ok := set["sender"]; ok {
-		return nil, invalidParams("sender is server-controlled")
-	}
-	threadID, hasThread, removesThread, err := parseThreadPatch(set)
-	if err != nil {
-		return nil, err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, exists := s.room.states[target]
-	if !exists {
-		return nil, invalidParams("Unknown target %q", target)
-	}
-	if s.room.owners[target] != c.identity.ID {
-		return nil, &rpcError{Code: codeDenied, Message: "Only the sender may update this event"}
-	}
-	patch := cloneObject(set)
-	if deleted, ok := patch["deleted"].(bool); ok && deleted {
-		patch["body"] = nil
-	}
-	next := applyMergePatch(state, patch)
-	if eventID, ok := next["event_id"].(string); !ok || eventID != target {
-		return nil, invalidParams("event_id is immutable")
-	}
-	if err := validateEventState(next); err != nil {
-		return nil, err
-	}
-	threadCreated := false
-	if hasThread && !removesThread {
-		_, exists := s.room.threads[threadID]
-		threadCreated = !exists
-	}
-	id := s.nextIDLocked()
-	s.room.entries = append(s.room.entries, transition{id: s.room.lastID, target: target, set: cloneObject(patch)})
-	s.room.states[target] = next
-	if threadCreated {
-		s.room.threads[threadID] = threadMetadata{id: threadID, name: threadID, root: target}
-	}
-	frame := map[string]any{
-		"method": "update",
-		"params": map[string]any{
-			"room":     roomID,
-			"event_id": id,
-			"target":   target,
-			"set":      cloneObject(patch),
-		},
-	}
-	result := map[string]any{"event_id": id}
-	if req.hasID {
-		c.enqueue(response(req.id, req.full, result))
-	}
-	s.broadcastLocked(frame)
-	if threadCreated {
-		s.broadcastLocked(s.room.threads[threadID].announcement(roomID))
-	}
-	return result, nil
-}
-
-func parseThreadPatch(set map[string]any) (string, bool, bool, *rpcError) {
-	raw, present := set["thread"]
-	if !present {
-		return "", false, false, nil
-	}
-	if raw == nil {
-		return "", true, true, nil
-	}
-	threadID, ok := raw.(string)
-	if !ok || threadID == "" {
-		return "", false, false, invalidParams("thread must be a non-empty string or null")
-	}
-	return threadID, true, false, nil
-}
-
-func validateEventState(state map[string]any) *rpcError {
-	if raw, ok := state["body"]; ok && raw != nil {
-		body, ok := raw.(map[string]any)
-		if !ok {
-			return invalidParams("event body must be an object")
-		}
-		if err := validateBody(body); err != nil {
-			return err
-		}
-	}
-	if raw, ok := state["thread"]; ok && raw != nil {
-		threadID, ok := raw.(string)
-		if !ok || threadID == "" {
-			return invalidParams("event thread must be a non-empty string")
-		}
-	}
-	if raw, ok := state["deleted"]; ok && raw != nil {
-		if _, ok := raw.(bool); !ok {
-			return invalidParams("event deleted must be a boolean")
-		}
-	}
-	return nil
-}
-
 func (s *Server) typing(c *client, req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room", true)
+	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
 		return nil, err
 	}
@@ -893,9 +830,9 @@ func (s *Server) typing(c *client, req request) (any, *rpcError) {
 	}
 	s.mu.Lock()
 	params := map[string]any{
-		"room":   roomID,
-		"sender": c.identity.object(),
-		"active": active,
+		"room_id": roomID,
+		"from":    c.identity.object(),
+		"active":  active,
 	}
 	if timeout != nil {
 		params["timeout"] = timeout

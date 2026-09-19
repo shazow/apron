@@ -21,13 +21,21 @@ same listener. Use `-origin <pattern,...>` for a deployment-specific origin
 allowlist, or `-allow-any-origin` only when the deployment provides its own
 cross-site protections. `-addr` changes the listener address.
 
-The implementation keeps raw room transitions and thread metadata in memory,
-assigns anonymous identities per connection, and authorizes edits, deletion,
-and thread changes by the creating identity. A thread is created by updating an
-owned event with a fresh non-empty thread ID; replies must name an existing
-thread. Thread names default to that opaque ID, the root is advisory metadata,
-and empty threads remain visible for the lifetime of the process. There is no
-persistent storage, token authentication, upload service, room management,
-push registration, or WebAuthn verifier in this example.
+The implementation keeps complete message snapshots and thread metadata in
+memory. `message` creates a message when `message_id` is absent and replaces
+its entire editable state when the ID is supplied. It assigns `from.user_id`
+from the authenticated connection and preserves the original author on edits.
+Edits, deletion, and moves require the creating identity. Unknown extension
+fields are retained; omitted editable fields are removed on replacement.
+
+`thread` creates metadata with a server-assigned ID and optional title, summary,
+and advisory root. Adding messages requires a separate `message` save. Empty
+threads retain their metadata; the client decides how to display them. History
+can filter by `thread_id`, including transitions that move messages out of the
+thread. Unfiltered history contains all room transitions, including threads.
+Request IDs deduplicate accepted operations for the connection's anonymous user.
+
+There is no persistent storage, token authentication, upload service, room
+management, push registration, or WebAuthn verifier in this example.
 
 Run `go test -race ./...` and `go vet ./...` from this directory to validate it.
