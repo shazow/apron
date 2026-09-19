@@ -185,11 +185,15 @@ NOT retroactively un-render existing content. After replying
   trusted deployments.
 - `token` — bearer string. The reference default.
 - `webauthn` — suggested optional scheme; exchange details are
-  implementation-defined. Cap-gated as `auth.webauthn`.
+  implementation-defined.
 
-A server MUST support at least one scheme. `client` is an optional free-form
-implementation/version string for debugging. Clients MAY pipeline `auth`
-before `server` arrives. All other requests before successful auth get
+A server MUST support at least one scheme, advertised in `server.auth`;
+no separate capability is required. Servers MAY accept `auth` regardless of
+`params.scheme` and ignore credentials. Credential validation, identity
+assignment, and privilege policy are implementation-defined.
+
+`client` is an optional free-form implementation/version string for debugging.
+Clients MAY pipeline `auth` before `server` arrives. All other requests before successful auth get
 `denied`; unauthenticated notifications other than `auth` are ignored.
 An `auth` notification can authenticate the connection, but returns no `you`
 or challenge, so clients SHOULD use a request when they need those results.
@@ -379,7 +383,6 @@ client to a defined fallback:
 | `embed.iframe` | fallback card                                  |
 | `embed.html`   | fallback card                                  |
 | `push`         | no mobile wake-ups                             |
-| `auth.webauthn`| other auth schemes only                        |
 
 ---
 
