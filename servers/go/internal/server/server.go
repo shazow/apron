@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -102,6 +103,28 @@ type transition struct {
 	set    map[string]any
 }
 
+type threadMetadata struct {
+	id      string
+	name    string
+	summary string
+	root    string
+}
+
+func (t threadMetadata) announcement(roomID string) map[string]any {
+	params := map[string]any{
+		"room":   roomID,
+		"thread": t.id,
+		"name":   t.name,
+	}
+	if t.summary != "" {
+		params["summary"] = t.summary
+	}
+	if t.root != "" {
+		params["root"] = t.root
+	}
+	return map[string]any{"method": "thread", "params": params}
+}
+
 func (t transition) historyEntry() map[string]any {
 	if t.event != nil {
 		return cloneObject(t.event)
@@ -122,8 +145,9 @@ type room struct {
 	entries []transition
 	lastID  int64
 	// states contains only creation events and is the server's current state.
-	states map[string]map[string]any
-	owners map[string]string
+	states  map[string]map[string]any
+	owners  map[string]string
+	threads map[string]threadMetadata
 }
 
 type dedupResult struct {
@@ -135,7 +159,7 @@ type dedupResult struct {
 type client struct {
 	server *Server
 	ws     *websocket.Conn
-	out    chan []byte
+	out    chan outboundBatch
 	done   chan struct{}
 	stop   sync.Once
 
@@ -144,6 +168,13 @@ type client struct {
 	identity identity
 	authed   bool
 }
+
+// outboundBatch keeps a sequence of protocol frames together in the writer's
+// queue while each frame is still written as its own WebSocket message. This
+// lets authentication announce an arbitrary number of retained threads without
+// consuming one queue slot per announcement or interleaving another broadcast
+// between the room and thread announcements.
+type outboundBatch [][]byte
 
 type Server struct {
 	config Config
@@ -166,6 +197,7 @@ func New(config Config) *Server {
 			id:      "general",
 			states:  make(map[string]map[string]any),
 			owners:  make(map[string]string),
+			threads: make(map[string]threadMetadata),
 			entries: make([]transition, 0),
 		},
 	}
@@ -252,7 +284,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	c := &client{
 		server: s,
 		ws:     ws,
-		out:    make(chan []byte, s.config.OutgoingQueue),
+		out:    make(chan outboundBatch, s.config.OutgoingQueue),
 		done:   make(chan struct{}),
 		dedup:  make(map[string]dedupResult),
 	}
@@ -304,13 +336,20 @@ func (c *client) writeLoop() {
 		select {
 		case <-c.done:
 			return
-		case payload := <-c.out:
-			ctx, cancel := context.WithTimeout(context.Background(), c.server.config.WriteTimeout)
-			err := c.ws.Write(ctx, websocket.MessageText, payload)
-			cancel()
-			if err != nil {
-				c.stopConnection()
-				return
+		case batch := <-c.out:
+			for _, payload := range batch {
+				select {
+				case <-c.done:
+					return
+				default:
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), c.server.config.WriteTimeout)
+				err := c.ws.Write(ctx, websocket.MessageText, payload)
+				cancel()
+				if err != nil {
+					c.stopConnection()
+					return
+				}
 			}
 		}
 	}
@@ -343,15 +382,26 @@ func (c *client) stopConnection() {
 }
 
 func (c *client) enqueue(value any) bool {
-	payload, err := json.Marshal(value)
-	if err != nil {
-		c.stopConnection()
-		return false
+	return c.enqueueBatch(value)
+}
+
+func (c *client) enqueueBatch(values ...any) bool {
+	if len(values) == 0 {
+		return true
+	}
+	batch := make(outboundBatch, 0, len(values))
+	for _, value := range values {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			c.stopConnection()
+			return false
+		}
+		batch = append(batch, payload)
 	}
 	select {
 	case <-c.done:
 		return false
-	case c.out <- payload:
+	case c.out <- batch:
 		return true
 	default:
 		// A slow client cannot hold the room lock or the server's broadcast path.
@@ -475,10 +525,11 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	c.authed = true
 
 	result := map[string]any{"you": c.identity.object()}
+	frames := make([]any, 0, 2+len(s.room.threads))
 	if req.hasID {
-		c.enqueue(response(req.id, req.full, result))
+		frames = append(frames, response(req.id, req.full, result))
 	}
-	c.enqueue(map[string]any{
+	frames = append(frames, map[string]any{
 		"method": "room",
 		"params": map[string]any{
 			"room":      s.room.id,
@@ -486,6 +537,15 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 			"latest_id": strconv.FormatInt(s.room.lastID, 10),
 		},
 	})
+	threadIDs := make([]string, 0, len(s.room.threads))
+	for threadID := range s.room.threads {
+		threadIDs = append(threadIDs, threadID)
+	}
+	sort.Strings(threadIDs)
+	for _, threadID := range threadIDs {
+		frames = append(frames, s.room.threads[threadID].announcement(s.room.id))
+	}
+	c.enqueueBatch(frames...)
 	return result, nil
 }
 
@@ -516,16 +576,26 @@ func (s *Server) sendMessage(c *client, req request) (any, *rpcError) {
 	if err := validateBody(body); err != nil {
 		return nil, err
 	}
-	if _, present := req.params["thread"]; present {
-		return nil, &rpcError{Code: codeDenied, Message: "This server does not support threads"}
+	threadID, hasThread, err := parseSendThread(req.params)
+	if err != nil {
+		return nil, err
 	}
 
 	s.mu.Lock()
+	if hasThread {
+		if _, exists := s.room.threads[threadID]; !exists {
+			s.mu.Unlock()
+			return nil, invalidParams("Unknown thread %q", threadID)
+		}
+	}
 	id := s.nextIDLocked()
 	event := map[string]any{
 		"event_id": id,
 		"sender":   c.identity.object(),
 		"body":     cloneObject(body),
+	}
+	if hasThread {
+		event["thread"] = threadID
 	}
 	state := cloneObject(event)
 	s.room.entries = append(s.room.entries, transition{id: s.room.lastID, event: state})
@@ -564,6 +634,18 @@ func validateBody(body map[string]any) *rpcError {
 		}
 	}
 	return nil
+}
+
+func parseSendThread(params map[string]json.RawMessage) (string, bool, *rpcError) {
+	raw, present := params["thread"]
+	if !present {
+		return "", false, nil
+	}
+	var threadID string
+	if json.Unmarshal(raw, &threadID) != nil || threadID == "" {
+		return "", false, invalidParams("thread must be a non-empty string")
+	}
+	return threadID, true, nil
 }
 
 func (s *Server) history(req request) (any, *rpcError) {
@@ -681,6 +763,9 @@ func (s *Server) updateMessage(c *client, req request) (any, *rpcError) {
 	if err != nil {
 		return nil, err
 	}
+	if target == "" {
+		return nil, invalidParams("target must be a non-empty string")
+	}
 	set, err := parseObject(req.params, "set", true)
 	if err != nil {
 		return nil, err
@@ -691,8 +776,9 @@ func (s *Server) updateMessage(c *client, req request) (any, *rpcError) {
 	if _, ok := set["sender"]; ok {
 		return nil, invalidParams("sender is server-controlled")
 	}
-	if _, ok := set["thread"]; ok {
-		return nil, &rpcError{Code: codeDenied, Message: "This server does not support threads"}
+	threadID, hasThread, removesThread, err := parseThreadPatch(set)
+	if err != nil {
+		return nil, err
 	}
 
 	s.mu.Lock()
@@ -715,9 +801,17 @@ func (s *Server) updateMessage(c *client, req request) (any, *rpcError) {
 	if err := validateEventState(next); err != nil {
 		return nil, err
 	}
+	threadCreated := false
+	if hasThread && !removesThread {
+		_, exists := s.room.threads[threadID]
+		threadCreated = !exists
+	}
 	id := s.nextIDLocked()
 	s.room.entries = append(s.room.entries, transition{id: s.room.lastID, target: target, set: cloneObject(patch)})
 	s.room.states[target] = next
+	if threadCreated {
+		s.room.threads[threadID] = threadMetadata{id: threadID, name: threadID, root: target}
+	}
 	frame := map[string]any{
 		"method": "update",
 		"params": map[string]any{
@@ -732,7 +826,25 @@ func (s *Server) updateMessage(c *client, req request) (any, *rpcError) {
 		c.enqueue(response(req.id, req.full, result))
 	}
 	s.broadcastLocked(frame)
+	if threadCreated {
+		s.broadcastLocked(s.room.threads[threadID].announcement(roomID))
+	}
 	return result, nil
+}
+
+func parseThreadPatch(set map[string]any) (string, bool, bool, *rpcError) {
+	raw, present := set["thread"]
+	if !present {
+		return "", false, false, nil
+	}
+	if raw == nil {
+		return "", true, true, nil
+	}
+	threadID, ok := raw.(string)
+	if !ok || threadID == "" {
+		return "", false, false, invalidParams("thread must be a non-empty string or null")
+	}
+	return threadID, true, false, nil
 }
 
 func validateEventState(state map[string]any) *rpcError {
@@ -746,8 +858,9 @@ func validateEventState(state map[string]any) *rpcError {
 		}
 	}
 	if raw, ok := state["thread"]; ok && raw != nil {
-		if _, ok := raw.(string); !ok {
-			return invalidParams("event thread must be a string")
+		threadID, ok := raw.(string)
+		if !ok || threadID == "" {
+			return invalidParams("event thread must be a non-empty string")
 		}
 	}
 	if raw, ok := state["deleted"]; ok && raw != nil {

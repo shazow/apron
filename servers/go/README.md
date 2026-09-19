@@ -21,9 +21,13 @@ same listener. Use `-origin <pattern,...>` for a deployment-specific origin
 allowlist, or `-allow-any-origin` only when the deployment provides its own
 cross-site protections. `-addr` changes the listener address.
 
-The implementation keeps raw room transitions in memory, assigns anonymous
-identities per connection, and authorizes edits and deletion by the creating
-identity. There is no persistent storage, token authentication, upload service,
-thread or room management, push registration, or WebAuthn verifier in this example.
+The implementation keeps raw room transitions and thread metadata in memory,
+assigns anonymous identities per connection, and authorizes edits, deletion,
+and thread changes by the creating identity. A thread is created by updating an
+owned event with a fresh non-empty thread ID; replies must name an existing
+thread. Thread names default to that opaque ID, the root is advisory metadata,
+and empty threads remain visible for the lifetime of the process. There is no
+persistent storage, token authentication, upload service, room management,
+push registration, or WebAuthn verifier in this example.
 
 Run `go test -race ./...` and `go vet ./...` from this directory to validate it.

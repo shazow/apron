@@ -264,6 +264,334 @@ func TestAnonymousSendHistoryAndOwnEdit(t *testing.T) {
 	}
 }
 
+func TestThreadsCreationReplyHistoryAndReauthentication(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	owner := dialTestClient(t, httpServer, "owner", false)
+	observer := dialTestClient(t, httpServer, "observer", false)
+
+	owner.write(t, map[string]any{
+		"method": "send", "id": "root",
+		"params": map[string]any{"room": "general", "body": map[string]any{"text": "root"}},
+	})
+	rootID := resultEventID(t, owner.read(t))
+	rootEvent := eventFromBroadcast(t, owner.read(t))
+	if rootEvent["event_id"] != rootID {
+		t.Fatalf("root event = %#v, want %q", rootEvent, rootID)
+	}
+	if eventFromBroadcast(t, observer.read(t))["event_id"] != rootID {
+		t.Fatalf("observer did not receive root event")
+	}
+
+	owner.write(t, map[string]any{
+		"method": "update_request", "id": "thread-create",
+		"params": map[string]any{
+			"room": "general", "target": rootID,
+			"set": map[string]any{"thread": "t_release"},
+		},
+	})
+	threadUpdateID := resultEventID(t, owner.read(t))
+	ownerUpdate := updateFromBroadcast(t, owner.read(t))
+	ownerThread := owner.read(t)
+	if ownerUpdate["event_id"] != threadUpdateID || ownerUpdate["target"] != rootID {
+		t.Fatalf("thread creation update = %#v", ownerUpdate)
+	}
+	if ownerUpdate["set"].(map[string]any)["thread"] != "t_release" {
+		t.Fatalf("thread creation set = %#v", ownerUpdate["set"])
+	}
+	if ownerThread["method"] != "thread" {
+		t.Fatalf("thread creation announcement = %#v", ownerThread)
+	}
+	threadParams := ownerThread["params"].(map[string]any)
+	if threadParams["room"] != "general" || threadParams["thread"] != "t_release" || threadParams["name"] != "t_release" || threadParams["root"] != rootID {
+		t.Fatalf("thread metadata = %#v", threadParams)
+	}
+	observerUpdate := updateFromBroadcast(t, observer.read(t))
+	if observerUpdate["event_id"] != threadUpdateID {
+		t.Fatalf("observer thread update = %#v", observerUpdate)
+	}
+	observerThread := observer.read(t)
+	if observerThread["method"] != "thread" {
+		t.Fatalf("observer thread announcement = %#v", observerThread)
+	}
+
+	owner.write(t, map[string]any{
+		"method": "send", "id": "reply",
+		"params": map[string]any{
+			"room": "general", "thread": "t_release",
+			"body": map[string]any{"text": "reply"},
+		},
+	})
+	replyID := resultEventID(t, owner.read(t))
+	replyEvent := eventFromBroadcast(t, owner.read(t))
+	if replyEvent["event_id"] != replyID || replyEvent["thread"] != "t_release" {
+		t.Fatalf("thread reply = %#v", replyEvent)
+	}
+	if eventFromBroadcast(t, observer.read(t))["event_id"] != replyID {
+		t.Fatalf("observer did not receive thread reply")
+	}
+
+	owner.write(t, map[string]any{
+		"method": "history", "id": "history",
+		"params": map[string]any{"room": "general", "after": "0", "limit": 10},
+	})
+	history := owner.read(t)["result"].(map[string]any)
+	entries := history["entries"].([]any)
+	if len(entries) != 3 {
+		t.Fatalf("thread history entries = %#v", entries)
+	}
+	if entries[1].(map[string]any)["event_id"] != threadUpdateID || entries[2].(map[string]any)["event_id"] != replyID {
+		t.Fatalf("thread history ordering = %#v", entries)
+	}
+	if entries[2].(map[string]any)["thread"] != "t_release" {
+		t.Fatalf("thread reply missing from raw history = %#v", entries[2])
+	}
+
+	reconnected := dialTestClient(t, httpServer, "reconnected", false)
+	reconnectedThread := reconnected.read(t)
+	if reconnectedThread["method"] != "thread" {
+		t.Fatalf("reauthentication metadata = %#v", reconnectedThread)
+	}
+	reconnectedParams := reconnectedThread["params"].(map[string]any)
+	if reconnectedParams["thread"] != "t_release" || reconnectedParams["name"] != "t_release" || reconnectedParams["root"] != rootID {
+		t.Fatalf("reauthentication thread metadata = %#v", reconnectedParams)
+	}
+}
+
+func TestThreadsMoveRemoveAndAuthorize(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	owner := dialTestClient(t, httpServer, "owner", false)
+	other := dialTestClient(t, httpServer, "other", false)
+
+	sendRoot := func(requestID, text string) string {
+		t.Helper()
+		owner.write(t, map[string]any{
+			"method": "send", "id": requestID,
+			"params": map[string]any{"room": "general", "body": map[string]any{"text": text}},
+		})
+		id := resultEventID(t, owner.read(t))
+		_ = eventFromBroadcast(t, owner.read(t))
+		_ = eventFromBroadcast(t, other.read(t))
+		return id
+	}
+	setThread := func(requestID, target, threadID string) {
+		t.Helper()
+		owner.write(t, map[string]any{
+			"method": "update_request", "id": requestID,
+			"params": map[string]any{
+				"room": "general", "target": target,
+				"set": map[string]any{"thread": threadID},
+			},
+		})
+		_ = resultEventID(t, owner.read(t))
+		_ = updateFromBroadcast(t, owner.read(t))
+		_ = owner.read(t) // thread announcement
+		_ = updateFromBroadcast(t, other.read(t))
+		_ = other.read(t) // thread announcement
+	}
+
+	firstRoot := sendRoot("root-1", "first")
+	setThread("thread-1", firstRoot, "t_first")
+	secondRoot := sendRoot("root-2", "second")
+	setThread("thread-2", secondRoot, "t_second")
+
+	other.write(t, map[string]any{
+		"method": "update_request", "id": "forged-thread",
+		"params": map[string]any{
+			"room": "general", "target": firstRoot,
+			"set": map[string]any{"thread": "t_second"},
+		},
+	})
+	denied := other.read(t)
+	if denied["error"].(map[string]any)["code"] != float64(codeDenied) {
+		t.Fatalf("unauthorized thread update = %#v", denied)
+	}
+
+	owner.write(t, map[string]any{
+		"method": "update_request", "id": "move-thread",
+		"params": map[string]any{
+			"room": "general", "target": firstRoot,
+			"set": map[string]any{"thread": "t_second"},
+		},
+	})
+	moveID := resultEventID(t, owner.read(t))
+	move := updateFromBroadcast(t, owner.read(t))
+	if move["event_id"] != moveID || move["set"].(map[string]any)["thread"] != "t_second" {
+		t.Fatalf("thread move = %#v", move)
+	}
+	if updateFromBroadcast(t, other.read(t))["event_id"] != moveID {
+		t.Fatalf("other did not receive thread move")
+	}
+
+	owner.write(t, map[string]any{
+		"method": "update_request", "id": "remove-thread",
+		"params": map[string]any{
+			"room": "general", "target": firstRoot,
+			"set": map[string]any{"thread": nil},
+		},
+	})
+	removeID := resultEventID(t, owner.read(t))
+	remove := updateFromBroadcast(t, owner.read(t))
+	if remove["event_id"] != removeID {
+		t.Fatalf("thread removal = %#v", remove)
+	}
+	if value, exists := remove["set"].(map[string]any)["thread"]; !exists || value != nil {
+		t.Fatalf("thread removal set = %#v", remove["set"])
+	}
+	if updateFromBroadcast(t, other.read(t))["event_id"] != removeID {
+		t.Fatalf("other did not receive thread removal")
+	}
+
+	// Empty thread metadata is retained, so a later reply can still use it.
+	owner.write(t, map[string]any{
+		"method": "send", "id": "empty-thread-reply",
+		"params": map[string]any{
+			"room": "general", "thread": "t_first",
+			"body": map[string]any{"text": "reply in retained thread"},
+		},
+	})
+	retainedReplyID := resultEventID(t, owner.read(t))
+	retainedReply := eventFromBroadcast(t, owner.read(t))
+	if retainedReply["event_id"] != retainedReplyID || retainedReply["thread"] != "t_first" {
+		t.Fatalf("reply in retained thread = %#v", retainedReply)
+	}
+	_ = eventFromBroadcast(t, other.read(t))
+
+	owner.write(t, map[string]any{
+		"method": "send", "id": "unknown-thread",
+		"params": map[string]any{
+			"room": "general", "thread": "t_missing",
+			"body": map[string]any{"text": "should fail"},
+		},
+	})
+	unknown := owner.read(t)
+	if unknown["error"].(map[string]any)["code"] != float64(codeInvalidParams) {
+		t.Fatalf("unknown thread send = %#v", unknown)
+	}
+
+	owner.write(t, map[string]any{
+		"method": "update_request", "id": "empty-thread-id",
+		"params": map[string]any{
+			"room": "general", "target": firstRoot,
+			"set": map[string]any{"thread": ""},
+		},
+	})
+	emptyID := owner.read(t)
+	if emptyID["error"].(map[string]any)["code"] != float64(codeInvalidParams) {
+		t.Fatalf("empty thread ID update = %#v", emptyID)
+	}
+
+	owner.write(t, map[string]any{
+		"method": "history", "id": "move-history",
+		"params": map[string]any{"room": "general", "after": "0", "limit": 20},
+	})
+	history := owner.read(t)["result"].(map[string]any)
+	entries := history["entries"].([]any)
+	if len(entries) != 7 {
+		t.Fatalf("failed thread operations changed history = %#v", entries)
+	}
+
+	reconnected := dialTestClient(t, httpServer, "reconnected", false)
+	threads := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		announcement := reconnected.read(t)
+		if announcement["method"] != "thread" {
+			t.Fatalf("retained thread announcement = %#v", announcement)
+		}
+		params := announcement["params"].(map[string]any)
+		threads[params["thread"].(string)] = true
+	}
+	if !threads["t_first"] || !threads["t_second"] {
+		t.Fatalf("reauthenticated thread metadata = %#v", threads)
+	}
+}
+
+func TestInvalidThreadsLeaveNoMetadataOrHistory(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	owner := dialTestClient(t, httpServer, "owner", false)
+	owner.write(t, map[string]any{
+		"method": "send", "id": "root",
+		"params": map[string]any{"room": "general", "body": map[string]any{"text": "root"}},
+	})
+	rootID := resultEventID(t, owner.read(t))
+	_ = eventFromBroadcast(t, owner.read(t))
+
+	for i, thread := range []any{nil, 42, true, ""} {
+		owner.write(t, map[string]any{
+			"method": "send", "id": fmt.Sprintf("bad-send-%d", i),
+			"params": map[string]any{"room": "general", "thread": thread, "body": map[string]any{"text": "invalid"}},
+		})
+		if frame := owner.read(t); frame["error"].(map[string]any)["code"] != float64(codeInvalidParams) {
+			t.Fatalf("invalid thread send = %#v", frame)
+		}
+	}
+	for i, patch := range []map[string]any{
+		{"thread": 42},
+		{"thread": "t_failed", "body": "invalid"},
+	} {
+		owner.write(t, map[string]any{
+			"method": "update_request", "id": fmt.Sprintf("bad-update-%d", i),
+			"params": map[string]any{"room": "general", "target": rootID, "set": patch},
+		})
+		if frame := owner.read(t); frame["error"].(map[string]any)["code"] != float64(codeInvalidParams) {
+			t.Fatalf("invalid thread update = %#v", frame)
+		}
+	}
+
+	reader := dialTestClient(t, httpServer, "reader", false)
+	reader.write(t, map[string]any{
+		"method": "history", "id": "history",
+		"params": map[string]any{"room": "general", "after": "0"},
+	})
+	frame := reader.read(t)
+	// Any phantom thread announcement would precede this response.
+	if frame["id"] != "history" {
+		t.Fatalf("failed update leaked thread metadata: %#v", frame)
+	}
+	entries := frame["result"].(map[string]any)["entries"].([]any)
+	if len(entries) != 1 || entries[0].(map[string]any)["thread"] != nil {
+		t.Fatalf("failed operations changed history: %#v", entries)
+	}
+}
+
+func TestThreadAnnouncementsUseOneQueueBatch(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	owner := dialTestClient(t, httpServer, "owner", false)
+	const threadCount = 129
+	for i := 0; i < threadCount; i++ {
+		requestID := fmt.Sprintf("root-%d", i)
+		owner.write(t, map[string]any{
+			"method": "send", "id": requestID,
+			"params": map[string]any{"room": "general", "body": map[string]any{"text": requestID}},
+		})
+		rootID := resultEventID(t, owner.read(t))
+		_ = eventFromBroadcast(t, owner.read(t))
+		owner.write(t, map[string]any{
+			"method": "update_request", "id": fmt.Sprintf("thread-%d", i),
+			"params": map[string]any{
+				"room": "general", "target": rootID,
+				"set": map[string]any{"thread": fmt.Sprintf("t_%d", i)},
+			},
+		})
+		_ = resultEventID(t, owner.read(t))
+		_ = updateFromBroadcast(t, owner.read(t))
+		_ = owner.read(t)
+	}
+
+	reconnected := dialTestClient(t, httpServer, "reconnected", false)
+	seen := make(map[string]bool, threadCount)
+	for i := 0; i < threadCount; i++ {
+		announcement := reconnected.read(t)
+		if announcement["method"] != "thread" {
+			t.Fatalf("batched thread announcement %d = %#v", i, announcement)
+		}
+		params := announcement["params"].(map[string]any)
+		seen[params["thread"].(string)] = true
+	}
+	if len(seen) != threadCount {
+		t.Fatalf("received %d distinct thread announcements, want %d", len(seen), threadCount)
+	}
+}
+
 func TestHistoryBoundsAndDeduplication(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
