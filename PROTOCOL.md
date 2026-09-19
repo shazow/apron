@@ -14,9 +14,9 @@ frontend.
 
 - One WebSocket connection. Each WebSocket text message contains exactly one JSON
   object (a **frame**). No batching, no newline-delimited streams.
-- The RECOMMENDED envelope follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification),
-  with §1.1 extensions. Receivers MUST accept omitted `jsonrpc` and request
-  `id`.
+- Receivers MUST accept both the [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
+  envelope and a minimal form omitting `jsonrpc` (§1.1), subject to the field
+  and framing rules below.
 - **Calls** have a string `method` and an object `params` (omission means `{}`).
   Method-specific fields reside in `params`. Frame names denote methods.
 - A call with `id` is a **request**; its reply echoes `id` and contains exactly
@@ -49,7 +49,15 @@ Event/update log IDs reside in `params`.
 ← {"jsonrpc": "2.0", "id": "c42", "result": {"event_id": "1724803200042"}}
 ```
 
-A notification may omit both optional keys:
+Equivalent minimal exchange:
+
+```json
+→ {"method": "send", "id": "c42",
+   "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}}
+← {"id": "c42", "result": {"event_id": "1724803200042"}}
+```
+
+A notification additionally omits `id`:
 
 ```json
 {"method": "send", "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}}
