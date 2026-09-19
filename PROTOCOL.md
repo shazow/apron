@@ -272,8 +272,8 @@ Broadcast (to all clients in the room, including the sender):
 
 - `send` requires string `room` and object `body`. Body fields are optional:
   string `text` defaults to `""`; `format` defaults to `"markdown"`;
-  arrays `attachments` and `embeds` default to `[]`. Attachment-only messages
-  are valid; acceptance of empty messages is backend policy. Defaults apply
+  array `embeds` defaults to `[]`. Messages containing only embeds are valid;
+  acceptance of empty messages is backend policy. Defaults apply
   when interpreting message bodies, not when applying merge patches (§5.3).
 - `body.format` ∈ `"plain" | "markdown"`. Both are mandatory to render.
   Markdown uses CommonMark; fenced code blocks with language-tagged syntax
@@ -288,7 +288,7 @@ Broadcast (to all clients in the room, including the sender):
   Clients MUST also accept the `send` result as confirmation, including when
   deduplication suppresses a retry's broadcast (§1.2).
 - Clients additionally dedup on `event_id`.
-- `body.attachments` and `body.embeds`: see §6. **Clients MUST render entries
+- `body.embeds`: see §6. **Clients MUST render entries
   of unknown `kind` as a labeled fallback card** (kind name + `url` if
   present).
 
@@ -299,7 +299,7 @@ are retained during replay and ignored by renderers):
 |-------------|-------------------------|----------------------------------|
 | `event_id`  | server, at creation     | log ID (§2)                      |
 | `sender`    | server, at creation     | inline identity (§3.3)           |
-| `body`      | sender; mutable         | `text`, `format`, `attachments`, `embeds` |
+| `body`      | sender; mutable         | `text`, `format`, `embeds`        |
 | `thread`    | server or `update`      | thread ID (§6.2)                 |
 | `deleted`   | `update`                | tombstone marker (§5.3)          |
 
@@ -488,8 +488,8 @@ recursively merge objects, replace other values, and delete keys
 whose patch value is `null`. `set` MUST be an object; the target message's
 `event_id` MUST NOT be changed or deleted.
 
-For example, `{"body": {"text": "new", "attachments": null}}` updates text,
-removes attachments, and preserves other body fields such as `format`.
+For example, `{"body": {"text": "new", "embeds": null}}` updates text,
+removes embeds, and preserves other body fields such as `format`.
 
 History rasters use `replace` for full-object replacement, not merge patch;
 an update contains exactly one of `set` or `replace`. Live updates and client
@@ -517,7 +517,7 @@ for edits, deletion, and thread reassignment/creation (§6.2).
 **Deletion is an ordinary update.** A delete request is
 `update_request` with `"set": {"deleted": true}`; the server SHOULD
 broadcast (and store) it as
-`"set": {"deleted": true, "body": null, "attachments": null, "embeds": null}` —
+`"set": {"deleted": true, "body": null}` —
 merge-patch `null` deletion strips the reduced event state. Raw replay may
 still contain earlier content; rastered state after deletion omits it.
 Clients render deleted events as tombstones. Content and media retention
@@ -535,14 +535,14 @@ Media travels over HTTP, not the socket. The client POSTs
 
 ```json
 "body": {"text": "look:", "format": "markdown",
-         "attachments": [{"kind": "image", "url": "...", "mime": "image/png", "w": 800, "h": 600}]}
+         "embeds": [{"kind": "image", "url": "...", "mime": "image/png", "w": 800, "h": 600}]}
 ```
 
 Upload authentication: with `token` auth, the same token as bearer. With
 other schemes there is no reusable credential, so the server SHOULD re-send
 the `server` frame after auth carrying a per-session `upload` URL (§3.1).
 
-Attachment kinds: `image`, `video`, `audio`, `file` (with `name`, `size`).
+Media embed kinds: `image`, `video`, `audio`, `file` (with `name`, `size`).
 Unknown kinds → fallback card rule (§3.5).
 
 ### 6.2 Threads
@@ -606,7 +606,8 @@ membership policy are server-defined.
 
 ### 6.4 Embeds
 
-Embeds are `body.embeds` entries.
+`body.embeds` contains media (§6.1) and rich content in display order;
+`kind` selects the renderer.
 
 ```json
 {"kind": "iframe", "url": "https://backend:8443/term/abc", "h": 300}
@@ -634,15 +635,16 @@ by its push relay:
 → {
   "method": "push_register",
   "id": "c30",
-  "params": {"endpoint": "https://relay.example/p/xyz", "token": "..."}
+  "params": {"url": "https://relay.example/p/xyz", "token": "..."}
 }
-→ {"method": "push_unregister", "id": "c31", "params": {"endpoint": "https://relay.example/p/xyz"}}
+→ {"method": "push_unregister", "id": "c31", "params": {"url": "https://relay.example/p/xyz"}}
 ```
 
 When the user should be woken while disconnected, the server POSTs JSON
-`{room, event_id, sender_name, preview}` to the endpoint with the token as
-bearer. Delivery beyond that POST (APNs/FCM, coalescing) is the relay's
-concern. Wake policy (mentions, all messages) is server-defined.
+`{room, event_id, sender, preview}` to `url` with the token as bearer.
+`sender` uses the inline identity object (§3.3). Delivery beyond that POST
+(APNs/FCM, coalescing) is the relay's concern. Wake policy (mentions, all
+messages) is server-defined.
 
 Note: registered endpoints are client-supplied URLs the server will POST to —
 an SSRF vector into the server's network. Servers SHOULD accept only `https`
@@ -760,7 +762,7 @@ ICE candidates, etc.). WebRTC handles loss and renegotiation.
   "method": "rtc_signal",
   "params": {
     "session": "call_7",
-    "from": {"id": "alice", "name": "Alice"},
+    "sender": {"id": "alice", "name": "Alice"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
