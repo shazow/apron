@@ -42,23 +42,27 @@ fixed bound while buffering live entries; advance checkpoints only through
 processed history, then drain the buffer in order. Re-announcements do not move
 the active bound. Persist checkpoints with cached state; interrupted recovery
 resumes from the processed checkpoint. No additional handshake or server cursor.
-Compacted backfill reconciliation remains question 3.
+Question 3 extends persisted state to include unresolved patches and uses source
+page bounds for checkpoint advancement.
 
-## 3. Compacted history revision and window semantics
+## 3. Replay and optional rastered history
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§5.1, 5.3.
 
-What revision does compacted history represent? Backfill returns current event
-state without identifying which updates that state includes, making its merge
-with live updates ambiguous. An update for an unloaded event may be ignored,
-then a history response generated before that update can arrive and install
-stale content.
+Issue: Mandatory compacted backfill imposes server reduction and leaves snapshot
+revision and reconciliation with live updates unspecified.
 
-Should pages identify their snapshot position, or events carry their latest
-applied update ID? Does `before` restrict event creation only, with later edits
-still applied, or request state as of that bound?
+Decision: Frontends replay the full transition model. Servers may return raw
+log slices or equivalent rastered transitions, independent of query direction.
+Rastered updates carry complete event state in `replace` at an existing
+`update_id`; no future mutations may be included. Clients retain a versioned
+base and ordered patches, including unknown-target updates, and rebuild when
+older transitions arrive. Raw and rastered pages converge to the same state.
+Page `first_id`/`last_id` describe the source slice before compaction; checkpoints
+and continuation use those bounds. Initial replay starts at `"0"`, bounded by
+`latest_id`. The history-contract change bumps `protocol` to `2` under §8.
 
 ## 4. Redaction and retrieval of original content
 
@@ -67,9 +71,8 @@ still applied, or request state as of that bound?
 Reference: PROTOCOL.md §§5.1, 5.3, 6.1.
 
 Does redaction mean hiding content or stopping the server from returning it?
-The specification says content is stripped everywhere, but raw gap-fill still
-contains the original event and previous edits in the append-only log. Uploaded
-media also has its own lifetime.
+Raw replay contains original events and previous edits even after redaction;
+reduced state omits the content. Uploaded media also has its own lifetime.
 
 Is redaction presentation-only? If future retrieval must exclude the content,
 define the additional replay and media-retention rules.
@@ -116,9 +119,10 @@ and `redact` gate UI only, and `threads` can independently produce updates.
 Must every frontend therefore understand `update`, even without those caps?
 Separate mandatory receiving behavior from optional requests.
 
-Which evolution rule takes precedence? Section 3.1 says capabilities never
-cause protocol bumps, while §8 freezes history semantics and requires bumps
-for changes.
+Progress: Full update/replay support is now mandatory (§5.3).
+
+Remaining: §8 freezes history semantics despite `history` being optional.
+Should future capability changes use separate versions or protocol bumps?
 
 ## 8. WebSocket messages versus transport frames
 
@@ -149,6 +153,9 @@ include an example that demonstrates nested merging and deletion.
 Explicitly prohibit changes to `event_id`; reconcile this with the statement
 that updates may set any key.
 
+Progress: Recursive merge semantics and immutable `event_id` are explicit after
+the replay change. The RFC citation update and nested-patch example remain open.
+
 ## 10. Reply envelopes and fire-and-forget exceptions
 
 - [x] Resolved
@@ -170,17 +177,17 @@ separate outer protocol.
 
 ## 11. Pagination progress and compaction limits
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §5.1.
 
-Inclusive continuation repeats the same entry forever with `limit: 1`,
-including when a server clamps the limit to one. Should continuation use
-exclusive bounds, or advance to the last ID plus one / first ID minus one?
+Issue: Inclusive continuation stalls at `limit: 1`; compaction obscures source
+coverage when omitted entries supplied the original page boundaries.
 
-Specify whether backfill applies its limit before or after omitting updates,
-and how `more` and continuation work when a raw log window contains only
-updates. Ensure every nonterminal page permits progress.
+Decision: Apply positive limits before compaction. Report source `first_id` and
+`last_id`; continue at `last_id + 1` forward or `first_id - 1` backward. Preserve
+the opposite bound. `more` describes the remaining source window, independent
+of representation. Empty source slices omit both IDs and return `more: false`.
 
 ## 12. Examples, required fields, and metadata replacement
 

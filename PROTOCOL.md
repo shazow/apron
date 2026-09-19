@@ -153,7 +153,7 @@ unprompted. There is no client hello.
 {
   "method": "server",
   "params": {
-    "protocol": 1,
+    "protocol": 2,
     "name": "impl-name/1.0",
     "caps": ["history", "typing", "upload"],
     "auth": ["token"],
@@ -162,9 +162,9 @@ unprompted. There is no client hello.
 }
 ```
 
-- `protocol`: integer. Bumped only for breaking changes to this mandatory core;
-  never for capabilities. This draft uses `1` for the JSON-RPC envelope;
-  the earlier `type`-based envelope used `0`.
+- `protocol`: integer. Current value `2` replaces mandatory compacted backfill
+  with replayable history (§5.1), a frozen-contract change under §8. Version `1`
+  introduced the JSON-RPC envelope; version `0` used `type`.
 - `caps`: capability identifiers (§4). MAY be empty.
 - `auth`: supported auth methods (§3.2), in server preference order.
 - `upload`: present iff cap `upload` (§6.1).
@@ -235,9 +235,10 @@ never revisits the subject. Join/leave/create are cap `rooms.manage` (§6.3).
 `"0"` denotes an empty log. It is REQUIRED on room announcements when `history`
 is supported, OPTIONAL otherwise. For history-enabled rooms, the first
 announcement after auth MUST establish `latest_id` and live delivery at one
-serialization point: entries through `latest_id` are available via history, and subsequent
-entries MUST be delivered live in log order. No commit may fall between these
-paths. Re-announcements report the current head but MUST NOT advance client
+serialization point: transitions through `latest_id` are recoverable via history
+(raw or equivalent rasters), and subsequent entries MUST be delivered live in
+log order. No commit may fall between these paths. Re-announcements report the
+current head but MUST NOT advance client
 checkpoints or replace an active recovery bound (§5.1).
 
 ### 3.5 Messages
@@ -292,8 +293,8 @@ Broadcast (to all clients in the room, including the sender):
   present). This rule is core; it is the forward-compatibility hook for future
   typed embeds.
 
-The event object's defined fields, for reference (updates may set any key —
-unknown keys are retained and ignored per §1):
+The event object's defined fields (`event_id` is immutable; other unknown keys
+are retained during replay and ignored by renderers):
 
 | field       | set by                  | meaning                          |
 |-------------|-------------------------|----------------------------------|
@@ -319,7 +320,7 @@ deduplication is recommended, not required. That is the entire Level 0 surface.
 ### 3.7 A complete Level 0 session
 
 ```json
-← {"method": "server", "params": {"protocol": 1, "name": "demo/1", "caps": [], "auth": ["token"]}}
+← {"method": "server", "params": {"protocol": 2, "name": "demo/1", "caps": [], "auth": ["token"]}}
 → {"method": "auth", "id": "a", "params": {"method": "token", "token": "hunter2"}}
 ← {"id": "a", "result": {"you": {"id": "alice", "name": "Alice"}}}
 ← {"method": "room", "params": {"room": "general", "name": "General"}}
@@ -372,9 +373,11 @@ client to a defined fallback:
 
 ### 5.1 `history`
 
-Stateless window query over the room's **append-only log**. No server-held
-cursors, no pagination tokens. The log contains two entry kinds — events and
-updates (§5.3) — sharing one ID sequence (§2).
+Stateless window query over the room's **append-only transition log**. Events
+and updates (§5.3) share one ID sequence (§2). Frontends MUST support complete
+transition replay. Servers MAY return raw transitions or equivalent rastered
+transitions (complete event snapshots); no capability negotiation is required.
+A raw implementation only slices the log. Compaction is optional.
 
 ```json
 → {
@@ -382,51 +385,88 @@ updates (§5.3) — sharing one ID sequence (§2).
   "id": "c9",
   "params": {"room": "general", "after": "1724803200000", "before": "1724806800000", "limit": 200}
 }
-← {"id": "c9", "result": {"entries": [...], "more": true}}
+← {"id": "c9", "result": {
+  "entries": [...], "first_id": "1724803200000", "last_id": "1724803200199", "more": true
+}}
 ```
 
 Bounds and ordering:
 
-- `after`/`before` are **inclusive** log-ID bounds; either or both MAY be
-  omitted. IDs are timestamps, so "3pm–4pm yesterday" is client arithmetic.
-- `entries` are **always in chronological order (oldest first)**, ascending by
-  ID. No exceptions.
-- `limit` is a request; servers MAY clamp. When the window holds more entries
-  than the limit, truncation keeps the end nearest the anchor: with `after`
-  present, return the *oldest* entries in the window (forward pagination —
-  the client continues with `after` = last received ID); with only `before`
-  (or no bounds), return the *newest* (backward scrollback — the client
-  continues with `before` = first received ID). Because bounds are inclusive,
-  continuation windows overlap by one entry; ID dedup absorbs this.
-- `more: true` means the window wasn't exhausted.
+- `after`/`before` are **inclusive transition-ID bounds**; either MAY be
+  omitted. They select transitions, not event creation dates or current state.
+- Select a contiguous source-log slice within the bounds. `limit` is a positive
+  source-entry count, applied **before compaction**; servers MAY clamp it to a
+  positive value. An omitted limit uses a server default. With `after`, select
+  the oldest entries; otherwise select the newest entries.
+- `first_id`/`last_id` are the first/last IDs of that source slice, before
+  compaction. Return both for nonempty slices; omit both for an empty slice.
+  `more` indicates additional source entries in the selected direction within
+  the requested bounds. Empty slices return `entries: []` and `more: false`.
+- Forward continuation uses `after = last_id + 1`; backward continuation uses
+  `before = first_id - 1`. Preserve the opposite bound. Arithmetic is numeric;
+  encode the result as a string. Never derive continuation from compacted entries.
+- `entries` are always ascending by transition ID: `event_id` for creation,
+  `update_id` for mutation. Pages may mix raw and rastered transitions; their
+  representation is independent of query direction.
 
-Two response modes, chosen by the query shape:
+**Optional rastering.** For each target touched by a source slice, a server MAY
+replace its selected transitions with one complete snapshot at that target's
+last transition in the slice. If that transition is a creation, return the
+original event object. Otherwise return an update with `replace` instead of
+`set`:
 
-- **Backfill (compacted)** — no `after` bound: `entries` contains only event
-  objects, with all updates **already applied** and update entries omitted.
-  Scrollback therefore renders final state directly — a message moved into a
-  thread arrives already threaded; a redacted message arrives already
-  stripped. Never replay-then-mutate on backfill.
-- **Gap-fill (log replay)** — `after` present: `entries` contains the raw log
-  slice — event objects *and* update objects (distinguished by `event_id` vs
-  `update_id` keys), in log order. The client applies each in sequence. This
-  is how mutations to *old* messages survive reconnection: an edit,
-  redaction, or re-threading of a message the client already rendered arrives
-  as an update entry in the gap.
+```json
+{"update_id": "1724803312007", "target": "1724803200042", "replace": {
+  "event_id": "1724803200042", "sender": {"id": "alice", "name": "Alice"},
+  "body": {"text": "hello world", "format": "plain"}, "edited": true
+}}
+```
+
+`replace` MUST equal the complete event state after replay through `update_id`,
+including unknown fields and deletions. It MUST NOT incorporate later updates.
+`replace.event_id` MUST equal `target`. The update ID is the existing last
+source transition for that target, not a newly allocated ID. Omitted transitions
+remain covered by `first_id`/`last_id`. Raw and rastered replies MUST yield the
+same terminal event state when applied to the source slice's preceding state.
+Replay equivalence concerns stored event state, not intermediate rendering.
+
+**Client reducer.** Use the same reducer for live and historical transitions.
+Per event, retain a full base at revision `B` and pending patches keyed by ID:
+
+- A creation supplies a base at `event_id`; a raster supplies one at `update_id`.
+  Install a base only if newer than the retained base. Replace the entire event
+  object, discard patches through `B`, then replay retained patches above `B`.
+- For `set`, retain patches above `B`, deduplicate by `update_id`, and replay
+  them in ascending order from the base. An older arriving patch above `B`
+  MUST be inserted and replayed; the highest observed update ID alone cannot
+  suppress it. With no base, retain patches until a creation or raster arrives.
+- A raster can supersede a raw patch with the same update ID; ID deduplication
+  MUST NOT discard that newer base. Older bases cannot overwrite newer bases.
+- Pages may arrive in either order. An event is complete through `H` only once
+  its base and all subsequent transitions through `H` are covered. A raw slice
+  containing only updates may require earlier pages to reconstruct targets.
+  Retained transitions MAY be folded or evicted only when equivalent future
+  replay remains possible.
+
+For initial reconstruction, start at `after: "0"`, bounded by `room.latest_id`.
+Backward scrollback MAY fetch recent slices first, retaining unresolved updates
+while fetching preceding slices. A per-event snapshot revision never establishes
+a room-wide checkpoint.
 
 Reconnect recovery for cached room state:
 
 1. Retain checkpoint `C`, the log position through which entries have been
    processed. Receiving a higher live ID MUST NOT advance `C` during recovery.
 2. Re-authenticate; capture `H = room.latest_id`. Buffer live events and updates.
-3. If `C < H`, request `history(after=C, before=H)`. Process each page in log
-   order, deduplicating entries already processed. Advance `C` only after
-   processing the page; paginate with the same `H` until `more: false`.
+3. If `C < H`, request `history(after=C+1, before=H)`. Feed each page to the
+   reducer, retaining unresolved patches. Advance `C` to the source `last_id`
+   only after processing the page; continue at `after=C+1` with the same `H`.
+   Stop when `more: false`; an empty exhausted window also completes recovery.
 4. The exhausted window establishes checkpoint `H`. Drain buffered entries
    above `H` in log order, then resume live processing and checkpoint advancement.
    If `C = H` initially, skip history and drain directly.
 
-Persist checkpoints with their corresponding cached state. On disconnect during
+Persist checkpoints with cached bases and retained patches. On disconnect during
 recovery, discard unprocessed buffered entries and resume from `C` after the
 next room announcement. An announced or buffered maximum is not a checkpoint.
 
@@ -435,15 +475,15 @@ Recovery boundary example:
 ```json
 ← {"method": "room", "params": {"room": "general", "name": "General", "latest_id": "1724803200120"}}
 → {"method": "history", "id": "recover1", "params": {
-  "room": "general", "after": "1724803200100", "before": "1724803200120"
+  "room": "general", "after": "1724803200101", "before": "1724803200120"
 }}
 ```
 
 Recovery adds no handshake round trip or server-held cursor.
 
-Reference storage model: an append-only list per room; backfill reads fold
-updates into their targets (or read a materialized current-state map),
-gap-fill reads slice the list. A dict and a list suffice.
+Reference storage: an append-only list per room; history returns bounded slices.
+An optimizing server may fold target state through a selected update ID to emit
+rasters. A current-state map is usable only if it represents that revision.
 
 ### 5.2 `typing`
 
@@ -464,9 +504,9 @@ when absent. There is deliberately no presence system in this spec.
 
 ### 5.3 `edit`, `redact` — and the `update` frame
 
-All retroactive mutation uses one server→client frame. Updates are log
-entries: each consumes an ID from the room's sequence (§2) and appears in
-gap-fill history (§5.1).
+All retroactive mutation uses one server→client frame. Updates consume room
+log IDs (§2) and appear in history (§5.1), raw or represented by rasters.
+Frontend update/replay support is mandatory regardless of mutation capabilities.
 
 ```json
 {
@@ -480,13 +520,16 @@ gap-fill history (§5.1).
 }
 ```
 
-Client rule: apply `set` to the local copy of event `target` using **JSON
-Merge Patch semantics (RFC 7386)** — each key in `set` replaces the
-corresponding key on the event, and a `null` value **deletes** the key.
-Re-render. Unknown `target` MAY be ignored or lazily fetched via `history`.
-This single rule implements edits, redaction, re-threading (§6.2), reactions,
-and anything a future capability defines; servers MAY `update` any event,
-including ones predating the connection.
+Client rule: replay `set` on event `target` using **JSON Merge Patch semantics
+(RFC 7386)**: recursively merge objects, replace other values, and delete keys
+whose patch value is `null`. `set` MUST be an object; `event_id` MUST NOT be
+changed or deleted.
+History rasters use `replace` for full-object replacement, not merge patch;
+an update contains exactly one of `set` or `replace`. Live updates and client
+`update_request`s use `set`. Retain updates for unknown targets (§5.1).
+Re-render after reduction. Servers MAY update any event, including ones
+predating the connection; the same mechanism covers edits, redaction,
+re-threading (§6.2), and future state mutations.
 
 Client-initiated mutation is one request frame mirroring the server frame:
 
@@ -502,17 +545,19 @@ Client-initiated mutation is one request frame mirroring the server frame:
 The server validates which keys this sender may touch on this target
 (policy is entirely server-defined), replies with `result` or `error/denied`
 when `id` is present, and on success broadcasts the resulting `update`
-(the broadcast is authoritative and MAY
-differ from the request). Capabilities `edit` and `redact` gate client UI
+(the broadcast is authoritative and MAY differ from the request).
+Capabilities `edit` and `redact` gate client UI
 only; both use `update_request`.
 
 **Redaction is an ordinary update.** A delete request is
 `update_request` with `"set": {"redacted": true}`; the server SHOULD
 broadcast (and store) it as
 `"set": {"redacted": true, "body": null, "attachments": null, "embeds": null}` —
-merge-patch `null` deletion strips the content everywhere, including compacted
-history, with no special redaction machinery. Clients render redacted events
-as tombstones.
+merge-patch `null` deletion strips the reduced event state. Raw replay may
+still contain earlier content; rastered state after redaction omits it.
+Clients render redacted events as tombstones.
+
+XXX: Retrieval and media-retention policy remain unresolved (QUESTIONS.md §4).
 
 ---
 
@@ -644,9 +689,9 @@ shape; auth flows; log-ID monotonicity (across events and updates) and
 digit-string encoding under
 burst load; `send`/`event` round-trip including `echo` when a request ID is
 present and its omission otherwise; per-cap behavior
-including RFC 7386 merge semantics, both history modes (chronological
-ordering, inclusive bounds, truncation direction, compaction on backfill,
-update replay on gap-fill), `room.latest_id` (including update-only and empty
+including RFC 7386 merge semantics, raw/rastered replay equivalence (including
+nested object resets and deletions), arbitrary page arrival order, source-span
+pagination with `limit: 1`, `room.latest_id` (including update-only and empty
 logs), gap-free history/live boundaries, and `unsupported` responses for
 undeclared caps. Client recovery checks include interleaved live traffic and
 disconnects between history pages; checkpoints MUST NOT skip unprocessed entries.
@@ -665,9 +710,9 @@ Changing any of these is a `protocol` bump: the frame envelope (§1), the
 identifier scheme (§2 — digit-string log IDs on one per-room sequence, opaque
 string IDs elsewhere), the unsolicited replaceable `server` frame (§3.1),
 inline denormalized senders (§3.3), the RFC 7386 merge-patch `update` rule
-(§5.3), the two-mode history contract (§5.1 — compacted backfill, log-replay
-gap-fill), and the unknown-kind fallback-card rule (§3.5). Everything else
-evolves as capabilities.
+(§5.3), the replayable history contract (§5.1 — source spans, raw transitions,
+optional equivalent rasters), and the unknown-kind fallback-card rule (§3.5).
+Everything else evolves as capabilities.
 
 Additionally reserved: the field name `conn` MUST NOT appear at the top level
 of any core frame. It is reserved for the multiplexing envelope (Appendix A),
