@@ -13,8 +13,12 @@ type Step =
 	| { receive: ObjectValue; echoFrom?: string }
 	| { request: { as: string; match: ObjectValue } }
 	| { reply: { to: string; result?: ObjectValue; error?: ObjectValue } }
-	| { send: { as: string; room: string; text: string; format?: 'plain' | 'markdown'; thread?: string } }
-	| { moveThread: { as: string; room: string; target: string; thread: string | null } }
+	| { send: { as: string; room: string; text: string; format?: 'plain' | 'markdown'; thread_id?: string } }
+	| { moveThread: { as: string; room: string; target: string; thread_id: string | null } }
+	| { createThread: { as: string; room: string; title?: string; summary?: string; root_message_id?: string } }
+	| { editMessage: { as: string; room: string; message_id: string; text: string } }
+	| { deleteMessage: { as: string; room: string; message_id: string } }
+	| { loadThread: { as: string; room: string; thread_id: string } }
 	| { disconnect: true }
 	| { expect: ObjectValue };
 interface Fixture {
@@ -80,9 +84,10 @@ function logicalState(client: ChatClient, operations: Record<string, string>): O
 	const snapshot = client.snapshot();
 	return JSON.parse(JSON.stringify({
 		you: snapshot.you ?? null,
+		typing: snapshot.typing.map((entry) => ({ room_id: entry.room, from: entry.from, active: entry.active })),
 		caps: [...(snapshot.server?.caps ?? [])].sort(),
 		threads: snapshot.rooms.flatMap((room) => room.threads).sort((left, right) =>
-			left.room < right.room ? -1 : left.room > right.room ? 1 : left.thread < right.thread ? -1 : left.thread > right.thread ? 1 : 0),
+			left.room_id < right.room_id ? -1 : left.room_id > right.room_id ? 1 : left.thread_id < right.thread_id ? -1 : left.thread_id > right.thread_id ? 1 : 0),
 		rooms: snapshot.rooms.map((room) => ({
 			id: room.id, name: room.name, topic: room.topic ?? null, events: timelineEvents(room.timeline)
 		})).sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
@@ -118,9 +123,11 @@ for (const fixture of fixtures) {
 							} else if ('request' in step) {
 								const { as, match } = step.request;
 								expect(requests.has(as), `duplicate capture ${as}`).toBe(false);
-								const requestRoom = (match.params as ObjectValue | undefined)?.room;
+								const requestRoom = (match.params as ObjectValue | undefined)?.room_id;
+								const requestThread = (match.params as ObjectValue | undefined)?.thread_id;
 								const selects = (frame: ObjectValue) => frame.method === match.method &&
-									(requestRoom === undefined || (frame.params as ObjectValue | undefined)?.room === requestRoom);
+									(requestRoom === undefined || (frame.params as ObjectValue | undefined)?.room_id === requestRoom) &&
+									(match.method !== 'history' || (frame.params as ObjectValue | undefined)?.thread_id === requestThread);
 								let position = unmatched.findIndex(selects);
 								while (position < 0) {
 									unmatched.push(await (await control(`/connections/${connection}/receive`)).json());
@@ -128,6 +135,7 @@ for (const fixture of fixtures) {
 								}
 								const [frame] = unmatched.splice(position, 1);
 								expect(frame).toMatchObject(match);
+								if (match.method === 'message' || match.method === 'thread') expect(frame.params).toEqual(match.params);
 								if ('jsonrpc' in frame) expect(frame.jsonrpc).toBe('2.0');
 								expect(typeof frame.id).toBe('string');
 								expect([...requests.values()].some((previous) => previous.id === frame.id), 'new operation reuses a request ID').toBe(false);
@@ -138,19 +146,37 @@ for (const fixture of fixtures) {
 								const { to: _, ...result } = step.reply;
 								await control(`/connections/${connection}/send`, wire({ id: request!.id, ...result }));
 							} else if ('send' in step) {
-								const { as, room, text, format, thread } = step.send;
+								const { as, room, text, format, thread_id } = step.send;
 								operations[as] = 'pending';
-								client.sendMessage(room, text, format, thread).promise.then(
+								client.sendMessage(room, text, format, thread_id).promise.then(
 									() => { operations[as] = 'fulfilled'; },
 									() => { operations[as] = 'rejected'; }
 								);
 							} else if ('moveThread' in step) {
-								const { as, room, target, thread } = step.moveThread;
+								const { as, room, target, thread_id } = step.moveThread;
 								operations[as] = 'pending';
-								client.setMessageThread(room, target, thread).promise.then(
+								client.setMessageThread(room, target, thread_id).promise.then(
 									() => { operations[as] = 'fulfilled'; },
 									() => { operations[as] = 'rejected'; }
 								);
+							} else if ('createThread' in step || 'editMessage' in step || 'deleteMessage' in step || 'loadThread' in step) {
+								const action = 'createThread' in step ? step.createThread : 'editMessage' in step ? step.editMessage : 'deleteMessage' in step ? step.deleteMessage : step.loadThread;
+								operations[action.as] = 'pending';
+								let promise: Promise<unknown>;
+								if ('createThread' in step) {
+									const { as: _, room, ...metadata } = step.createThread;
+									promise = client.createThread(room, metadata).promise;
+								} else if ('editMessage' in step) {
+									const { room, message_id, text } = step.editMessage;
+									promise = client.updateMessage(room, message_id, text).promise;
+								} else if ('deleteMessage' in step) {
+									const { room, message_id } = step.deleteMessage;
+									promise = client.deleteMessage(room, message_id).promise;
+								} else {
+									const { room, thread_id } = step.loadThread;
+									promise = client.loadThread(room, thread_id);
+								}
+								promise.then(() => { operations[action.as] = 'fulfilled'; }, () => { operations[action.as] = 'rejected'; });
 							} else if ('disconnect' in step) {
 								await control(`/connections/${connection}/close`);
 								unmatched.length = 0;

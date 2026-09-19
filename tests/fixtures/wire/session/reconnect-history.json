@@ -41,7 +41,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "id": "guest-1"
+                "user_id": "guest-1"
               }
             }
           }
@@ -49,7 +49,7 @@
         {
           "expect": {
             "you": {
-              "id": "guest-1"
+              "user_id": "guest-1"
             }
           }
         },
@@ -57,7 +57,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "latest_id": "1724803200200"
             }
@@ -69,7 +69,7 @@
             "match": {
               "method": "history",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "after": "0",
                 "before": "1724803200200"
               }
@@ -82,13 +82,16 @@
             "result": {
               "entries": [
                 {
-                  "event_id": "1724803200200",
-                  "sender": {
-                    "id": "guest-1"
-                  },
-                  "body": {
-                    "text": "retained",
-                    "format": "plain"
+                  "log_id": "1724803200200",
+                  "message": {
+                    "message_id": "1724803200200",
+                    "from": {
+                      "user_id": "guest-1"
+                    },
+                    "body": {
+                      "text": "retained",
+                      "format": "plain"
+                    }
                   }
                 }
               ],
@@ -107,9 +110,9 @@
                 "topic": null,
                 "events": [
                   {
-                    "event_id": "1724803200200",
-                    "sender": {
-                      "id": "guest-1"
+                    "message_id": "1724803200200",
+                    "from": {
+                      "user_id": "guest-1"
                     },
                     "body": {
                       "text": "retained",
@@ -154,7 +157,7 @@
             "to": "auth-again",
             "result": {
               "you": {
-                "id": "guest-2"
+                "user_id": "guest-2"
               }
             }
           }
@@ -162,7 +165,7 @@
         {
           "expect": {
             "you": {
-              "id": "guest-2"
+              "user_id": "guest-2"
             }
           }
         },
@@ -170,7 +173,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "latest_id": "1724803200200"
             }
@@ -182,7 +185,7 @@
             "match": {
               "method": "history",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "after": "0",
                 "before": "1724803200200"
               }
@@ -195,13 +198,16 @@
             "result": {
               "entries": [
                 {
-                  "event_id": "1724803200200",
-                  "sender": {
-                    "id": "guest-1"
-                  },
-                  "body": {
-                    "text": "retained",
-                    "format": "plain"
+                  "log_id": "1724803200200",
+                  "message": {
+                    "message_id": "1724803200200",
+                    "from": {
+                      "user_id": "guest-1"
+                    },
+                    "body": {
+                      "text": "retained",
+                      "format": "plain"
+                    }
                   }
                 }
               ],
@@ -220,9 +226,9 @@
                 "topic": null,
                 "events": [
                   {
-                    "event_id": "1724803200200",
-                    "sender": {
-                      "id": "guest-1"
+                    "message_id": "1724803200200",
+                    "from": {
+                      "user_id": "guest-1"
                     },
                     "body": {
                       "text": "retained",
@@ -246,9 +252,9 @@
           "request": {
             "as": "send",
             "match": {
-              "method": "send",
+              "method": "message",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "body": {
                   "text": "new connection",
                   "format": "plain"
@@ -261,19 +267,20 @@
           "reply": {
             "to": "send",
             "result": {
-              "event_id": "1724803200201"
+              "message_id": "1724803200201"
             }
           }
         },
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {
-                "event_id": "1724803200201",
-                "sender": {
-                  "id": "guest-2"
+              "room_id": "general",
+              "log_id": "1724803200201",
+              "message": {
+                "message_id": "1724803200201",
+                "from": {
+                  "user_id": "guest-2"
                 },
                 "body": {
                   "text": "new connection",
@@ -289,7 +296,7 @@
   ],
   "expected": {
     "you": {
-      "id": "guest-2"
+      "user_id": "guest-2"
     },
     "rooms": [
       {
@@ -298,9 +305,9 @@
         "topic": null,
         "events": [
           {
-            "event_id": "1724803200200",
-            "sender": {
-              "id": "guest-1"
+            "message_id": "1724803200200",
+            "from": {
+              "user_id": "guest-1"
             },
             "body": {
               "text": "retained",
@@ -308,9 +315,9 @@
             }
           },
           {
-            "event_id": "1724803200201",
-            "sender": {
-              "id": "guest-2"
+            "message_id": "1724803200201",
+            "from": {
+              "user_id": "guest-2"
             },
             "body": {
               "text": "new connection",

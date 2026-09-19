@@ -1,8 +1,8 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "Tombstone survives stale content replay",
-  "description": "Tombstone survives stale content replay.",
+  "name": "Omitted fields are removed rather than merged",
+  "description": "Omitted fields are removed rather than merged.",
   "references": [
     "PROTOCOL.md#35-messages",
     "PROTOCOL.md#51-history"
@@ -24,7 +24,13 @@
                   "user_id": "alice"
                 },
                 "body": {
-                  "text": "original"
+                  "text": "old",
+                  "format": "plain",
+                  "embeds": []
+                },
+                "custom": {
+                  "a": 1,
+                  "b": 2
                 }
               }
             }
@@ -41,24 +47,11 @@
                 "from": {
                   "user_id": "alice"
                 },
-                "deleted": true
-              }
-            }
-          }
-        },
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "room_id": "general",
-              "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
                 "body": {
-                  "text": "original"
+                  "text": "edited"
+                },
+                "custom": {
+                  "a": 3
                 }
               }
             }
@@ -74,7 +67,12 @@
         "from": {
           "user_id": "alice"
         },
-        "deleted": true
+        "body": {
+          "text": "edited"
+        },
+        "custom": {
+          "a": 3
+        }
       }
     ]
   }

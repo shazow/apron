@@ -2,7 +2,7 @@
   "format": 1,
   "kind": "session",
   "name": "History recovery with interleaved live updates",
-  "description": "Forward recovery uses source-log bounds across raw/rastered pages, preserves its original head on re-announcement, and applies an intervening live update after its dependencies.",
+  "description": "Forward recovery uses source-log bounds across raw/compacted pages, preserves its original head on re-announcement, and applies an intervening live update after its dependencies.",
   "references": [
     "PROTOCOL.md#34-rooms",
     "PROTOCOL.md#51-history"
@@ -41,7 +41,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "id": "alice"
+                "user_id": "alice"
               }
             }
           }
@@ -49,7 +49,7 @@
         {
           "expect": {
             "you": {
-              "id": "alice"
+              "user_id": "alice"
             }
           }
         },
@@ -57,7 +57,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "latest_id": "1724803200105"
             }
@@ -69,7 +69,7 @@
             "match": {
               "method": "history",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "after": "0",
                 "before": "1724803200105"
               }
@@ -78,14 +78,18 @@
         },
         {
           "receive": {
-            "method": "update",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event_id": "1724803200106",
-              "target": "1724803200100",
-              "set": {
+              "room_id": "general",
+              "log_id": "1724803200106",
+              "message": {
+                "message_id": "1724803200100",
+                "from": {
+                  "user_id": "alice"
+                },
                 "body": {
-                  "text": "live edit"
+                  "text": "live edit",
+                  "format": "plain"
                 }
               }
             }
@@ -95,7 +99,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "latest_id": "1724803200106"
             }
@@ -107,34 +111,47 @@
             "result": {
               "entries": [
                 {
-                  "event_id": "1724803200100",
-                  "sender": {
-                    "id": "alice"
-                  },
-                  "body": {
-                    "text": "first",
-                    "format": "plain"
-                  }
-                },
-                {
-                  "event_id": "1724803200102",
-                  "sender": {
-                    "id": "alice"
-                  },
-                  "body": {
-                    "text": "second",
-                    "format": "plain"
-                  },
-                  "custom": {
-                    "keep": true
-                  }
-                },
-                {
-                  "event_id": "1724803200104",
-                  "target": "1724803200102",
-                  "set": {
+                  "log_id": "1724803200100",
+                  "message": {
+                    "message_id": "1724803200100",
+                    "from": {
+                      "user_id": "alice"
+                    },
                     "body": {
-                      "text": "second edited"
+                      "text": "first",
+                      "format": "plain"
+                    }
+                  }
+                },
+                {
+                  "log_id": "1724803200102",
+                  "message": {
+                    "message_id": "1724803200102",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "second",
+                      "format": "plain"
+                    },
+                    "custom": {
+                      "keep": true
+                    }
+                  }
+                },
+                {
+                  "log_id": "1724803200104",
+                  "message": {
+                    "message_id": "1724803200102",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "second edited",
+                      "format": "plain"
+                    },
+                    "custom": {
+                      "keep": true
                     }
                   }
                 }
@@ -151,7 +168,7 @@
             "match": {
               "method": "history",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "after": "1724803200105",
                 "before": "1724803200105"
               }
@@ -164,13 +181,16 @@
             "result": {
               "entries": [
                 {
-                  "event_id": "1724803200105",
-                  "sender": {
-                    "id": "alice"
-                  },
-                  "body": {
-                    "text": "third",
-                    "format": "plain"
+                  "log_id": "1724803200105",
+                  "message": {
+                    "message_id": "1724803200105",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "third",
+                      "format": "plain"
+                    }
                   }
                 }
               ],
@@ -183,7 +203,7 @@
       ]
     },
     {
-      "name": "rastered",
+      "name": "compacted",
       "steps": [
         {
           "receive": {
@@ -215,7 +235,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "id": "alice"
+                "user_id": "alice"
               }
             }
           }
@@ -223,7 +243,7 @@
         {
           "expect": {
             "you": {
-              "id": "alice"
+              "user_id": "alice"
             }
           }
         },
@@ -231,7 +251,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "latest_id": "1724803200105"
             }
@@ -243,7 +263,7 @@
             "match": {
               "method": "history",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "after": "0",
                 "before": "1724803200105"
               }
@@ -252,14 +272,18 @@
         },
         {
           "receive": {
-            "method": "update",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event_id": "1724803200106",
-              "target": "1724803200100",
-              "set": {
+              "room_id": "general",
+              "log_id": "1724803200106",
+              "message": {
+                "message_id": "1724803200100",
+                "from": {
+                  "user_id": "alice"
+                },
                 "body": {
-                  "text": "live edit"
+                  "text": "live edit",
+                  "format": "plain"
                 }
               }
             }
@@ -269,7 +293,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "latest_id": "1724803200106"
             }
@@ -281,22 +305,24 @@
             "result": {
               "entries": [
                 {
-                  "event_id": "1724803200100",
-                  "sender": {
-                    "id": "alice"
-                  },
-                  "body": {
-                    "text": "first",
-                    "format": "plain"
+                  "log_id": "1724803200100",
+                  "message": {
+                    "message_id": "1724803200100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "first",
+                      "format": "plain"
+                    }
                   }
                 },
                 {
-                  "event_id": "1724803200104",
-                  "target": "1724803200102",
-                  "replace": {
-                    "event_id": "1724803200102",
-                    "sender": {
-                      "id": "alice"
+                  "log_id": "1724803200104",
+                  "message": {
+                    "message_id": "1724803200102",
+                    "from": {
+                      "user_id": "alice"
                     },
                     "body": {
                       "text": "second edited",
@@ -320,7 +346,7 @@
             "match": {
               "method": "history",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "after": "1724803200105",
                 "before": "1724803200105"
               }
@@ -333,13 +359,16 @@
             "result": {
               "entries": [
                 {
-                  "event_id": "1724803200105",
-                  "sender": {
-                    "id": "alice"
-                  },
-                  "body": {
-                    "text": "third",
-                    "format": "plain"
+                  "log_id": "1724803200105",
+                  "message": {
+                    "message_id": "1724803200105",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "third",
+                      "format": "plain"
+                    }
                   }
                 }
               ],
@@ -354,7 +383,7 @@
   ],
   "expected": {
     "you": {
-      "id": "alice"
+      "user_id": "alice"
     },
     "caps": [
       "history"
@@ -366,9 +395,9 @@
         "topic": null,
         "events": [
           {
-            "event_id": "1724803200100",
-            "sender": {
-              "id": "alice"
+            "message_id": "1724803200100",
+            "from": {
+              "user_id": "alice"
             },
             "body": {
               "text": "live edit",
@@ -376,9 +405,9 @@
             }
           },
           {
-            "event_id": "1724803200102",
-            "sender": {
-              "id": "alice"
+            "message_id": "1724803200102",
+            "from": {
+              "user_id": "alice"
             },
             "body": {
               "text": "second edited",
@@ -389,9 +418,9 @@
             }
           },
           {
-            "event_id": "1724803200105",
-            "sender": {
-              "id": "alice"
+            "message_id": "1724803200105",
+            "from": {
+              "user_id": "alice"
             },
             "body": {
               "text": "third",

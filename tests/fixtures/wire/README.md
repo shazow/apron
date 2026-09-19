@@ -32,7 +32,7 @@ are ordered. All IDs remain JSON strings. Small replay IDs are readable epoch
 millisecond values near the Unix epoch, not opaque identifiers.
 
 Run every variant twice: once with the literal minimal frames, once with
-`jsonrpc: "2.0"` added to each incoming frame. Do not alter nested event data.
+`jsonrpc: "2.0"` added to each incoming frame. Do not alter nested message data.
 Outgoing client frames may use either envelope. Expectations never depend on a
 particular generated request ID or the presence of optional envelope fields.
 
@@ -45,53 +45,53 @@ A replay fixture adds `room` and accepts `receive` and `expect` steps:
   "format": 1,
   "kind": "replay",
   "name": "creation",
-  "description": "Insert an authoritative event.",
+  "description": "Insert an authoritative message.",
   "references": ["PROTOCOL.md#35-messages"],
   "room": "general",
   "variants": [{
     "name": "live",
     "steps": [{"receive": {
-      "method": "event",
-      "params": {"room": "general", "event": {
-        "event_id": "1", "sender": {"id": "alice"}, "body": {"text": "hello"}
+      "method": "message",
+      "params": {"room_id": "general", "log_id": "1", "message": {
+        "message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "hello"}
       }}
     }}]
   }],
   "expected": {"events": [
-    {"event_id": "1", "sender": {"id": "alice"}, "body": {"text": "hello"}}
+    {"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "hello"}}
   ]}
 }
 ```
 
-`receive` contains an actual `event` notification, `update` notification, or
-history response. Fixed history response IDs label already-issued requests;
-this suite tests reduction, not request scheduling. History `entries` may
-contain creations, `set` patches, or `replace` rasters. Live updates use `set`.
-Source bounds describe the source log before rastering, not the returned array.
+`receive` contains a `message` notification or history response. Fixed history
+response IDs label already-issued requests; this suite tests reduction, not
+request scheduling. Every history entry has `{log_id, message}`. Notifications
+add `room_id` and may add `echo`. Source bounds describe the matching log slice
+before compaction, not just the returned entries.
 
-`expected.events` and intermediate `expect.events` contain complete reduced
-wire event objects in numeric creation-ID order. Compare exactly after removing
-implementation metadata. Preserve unknown wire fields and distinguish absent
-keys from null. Do not materialize renderer defaults in this projection.
-Internal maps, caches, DOM elements, and replay checkpoints are not assertions.
+`expected.events` and intermediate `expect.events` contain complete message
+objects in numeric message-ID order. Compare exactly after removing implementation
+metadata. Preserve unknown fields and distinguish absent keys from literal null.
+Do not materialize renderer defaults in this projection. Internal maps, caches,
+DOM elements, and replay checkpoints are not assertions.
 
-The twelve scenarios cover creation, nested patches, null deletion, array
-replacement, tombstones, overlapping replay, loaded/unloaded raster targets,
-raw/rastered/mixed history equivalence, unknown fields including `__proto__`,
-numeric ordering, and thread-field moves. They do not prescribe unknown-target
-buffering, UI thread layout, or retention policy.
+The twelve scenarios cover creation, full replacement and omitted fields,
+literal null, arrays, tombstones, duplicate and stale replay, loaded and unloaded
+snapshots, raw/compacted history equivalence, unknown fields including `__proto__`,
+numeric ordering, and thread moves. Each snapshot stands alone; the greatest
+log ID per message wins regardless of delivery order.
 
 The TypeScript adapter is
 [`clients/web/src/lib/protocol/wire-replay.test.ts`](../../../clients/web/src/lib/protocol/wire-replay.test.ts).
 It decodes the fixture frames and calls the production transition parser and
 reducer. Another client needs only a JSON loader, a frame-to-reducer adapter,
-and the logical event projection above.
+and the logical message projection above.
 
 ## Session scenarios
 
 Session fixtures use `kind: "session"`; room identity comes from frames.
-These scenarios exercise anonymous authentication, text sends, thread metadata,
-metadata replacement, errors, paginated recovery, and reconnects. History scenarios use
+These scenarios exercise anonymous authentication, message saves, thread metadata,
+metadata replacement, errors, paginated room and thread recovery, and reconnects. History scenarios use
 full forward recovery with an initially empty cache. They are a test profile,
 not a requirement that every client use that recovery strategy.
 
@@ -101,20 +101,25 @@ not a requirement that every client use that recovery strategy.
 | `request: {as, match}` | Wait for an outgoing request, assert `match`, and capture its runtime ID under `as`. |
 | `reply: {to, result}` | Reply to the captured request with its runtime ID. |
 | `reply: {to, error}` | Send an error reply using the same binding. |
-| `send: {as, room, text, format, thread?}` | Invoke the client's public send operation; an optional `thread` is sent in `send.params`; track its outcome under `as`. |
-| `moveThread: {as, room, target, thread}` | Invoke the client's thread reassignment operation with a string thread ID or `null`; track its outcome under `as`. |
+| `send: {as, room, text, format, thread_id?}` | Create a message, optionally in a thread; track its outcome under `as`. |
+| `moveThread: {as, room, target, thread_id}` | Invoke the client's thread reassignment operation with a string thread ID or `null`; track its outcome under `as`. |
+| `createThread: {as, room, title?, summary?, root_message_id?}` | Request thread metadata creation with a server-assigned ID. |
+| `editMessage: {as, room, message_id, text}` | Edit text while preserving other editable fields. |
+| `deleteMessage: {as, room, message_id}` | Save a tombstone. |
+| `loadThread: {as, room, thread_id}` | Load filtered history independently of room recovery. |
 | `disconnect: true` | Close the transport and establish a fresh connection for subsequent frames. |
 | `expect: state` | Wait for the specified logical state before proceeding. |
 
-Request matching selects the method and, when specified, room. Unrelated
+Request matching selects the method, room, and history thread filter. Unrelated
 requests may be pipelined or reordered and remain queued. `match` objects are
-recursive subsets; arrays and scalar values match exactly. Extra client fields
-such as `auth.params.client` and history page size are unconstrained. Captured
+recursive subsets; arrays and scalar values match exactly. For `message` and
+`thread` mutations, params compare exactly to detect lost or unwanted fields.
+Extra client fields such as `auth.params.client` and history page size are unconstrained. Captured
 IDs must be strings and distinct for these new operations; fixtures do not
 specify the generator. Capture labels must be unique within a variant.
 
 A receive step may have `echoFrom: "capture-label"`; the adapter inserts that
-request's ID into `receive.params.echo` before delivering the event frame.
+request's ID into `receive.params.echo` before delivering the message frame.
 Bindings are fixture metadata, never protocol fields. No other substitutions
 or executable expressions occur in JSON.
 
@@ -123,32 +128,29 @@ or executable expressions occur in JSON.
 ```
 
 ```json
-{"send": {"as": "reply", "room": "general", "text": "follow-up", "format": "plain", "thread": "t_deploy"}}
+{"send": {"as": "reply", "room": "general", "text": "follow-up", "format": "plain", "thread_id": "t_deploy"}}
 ```
 
 ```json
 {"request": {"as": "send-request", "match": {
-  "method": "send", "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}
+  "method": "message", "params": {"room_id": "general", "body": {"text": "hello", "format": "plain"}}
 }}}
 ```
 
 ```json
-{"reply": {"to": "send-request", "result": {"event_id": "1724803200001"}}}
+{"reply": {"to": "send-request", "result": {"message_id": "1724803200001"}}}
 ```
 
 ```json
-{"moveThread": {"as": "move-root", "room": "general", "target": "1724803200001", "thread": "t_deploy"}}
+{"moveThread": {"as": "move-root", "room": "general", "target": "1724803200001", "thread_id": "t_deploy"}}
 ```
 
-Thread announcements use the protocol's `thread` frames. The normalized
-session state keeps them in an optional top-level `threads` array, flattened
-from each room and sorted by `room`, then `thread`; room projections continue
-to contain only `{id, name, topic, events}`. Each thread object includes
-`room`, `thread`, and the client's resolved `name`, with `summary` and `root`
-present only when announced. An omitted announcement name therefore appears
-as the thread ID. Re-announcing a thread replaces its metadata, while a
-`removed` announcement and room removal remove only metadata in that room;
-message events retain their `thread` field.
+Thread announcements use `thread` frames. The normalized session state keeps
+raw metadata in an optional top-level `threads` array, flattened from each room
+and sorted by `room_id`, then `thread_id`. Optional `title`, `summary`, and
+`root_message_id` appear only when announced. Re-announcing a thread fully
+replaces its metadata. Room removal withdraws its threads; thread staleness is
+a client presentation policy.
 
 The normalized session state has these fields:
 
@@ -157,11 +159,12 @@ The normalized session state has these fields:
 - `rooms`: rooms sorted by ID, each projected as `{id, name, topic, events}`.
   `name` defaults to the room ID; missing `topic` becomes null. Events use the
   exact replay projection above.
-- `operations`: send labels mapped to `pending`, `fulfilled`, or `rejected`.
+- `typing`: active indicators projected as `{room_id, from, active}`.
+- `operations`: action labels mapped to `pending`, `fulfilled`, or `rejected`.
   This describes the public operation outcome, not optimistic display state.
 
 An omitted top-level expected field is unconstrained. Supplied values compare
-exactly, including nested objects, event fields, and array membership/order.
+exactly, including nested objects, message fields, and array membership/order.
 Adapters wait for state changes with bounded deadlines; fixture files contain
 no sleeps, runtime-specific timers, or DOM selectors.
 
@@ -176,7 +179,7 @@ preserves these exchanges and state projections.
 
 Keep fixture expectations explicit and reviewable. Add variants only when they
 must produce the same final state; use intermediate checkpoints when ordering
-matters. Validate source-log boundaries independently of rastered entries.
+matters. Validate source-log boundaries independently of compacted entries.
 Use generated data for volume benchmarks rather than large checked-in logs.
 
 Retention gaps, `nick` response semantics, deduplication lifetime, and optional

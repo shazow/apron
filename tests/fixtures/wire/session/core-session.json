@@ -46,7 +46,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "id": "alice"
+                "user_id": "alice"
               }
             }
           }
@@ -54,7 +54,7 @@
         {
           "expect": {
             "you": {
-              "id": "alice"
+              "user_id": "alice"
             }
           }
         },
@@ -62,10 +62,55 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "topic": "Initial topic"
             }
+          }
+        },
+        {
+          "receive": {
+            "method": "typing",
+            "params": {
+              "room_id": "general",
+              "from": {
+                "user_id": "bob",
+                "name": "Bob"
+              },
+              "active": true
+            }
+          }
+        },
+        {
+          "expect": {
+            "typing": [
+              {
+                "room_id": "general",
+                "from": {
+                  "user_id": "bob",
+                  "name": "Bob"
+                },
+                "active": true
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "typing",
+            "params": {
+              "room_id": "general",
+              "from": {
+                "user_id": "bob",
+                "name": "Bob"
+              },
+              "active": false
+            }
+          }
+        },
+        {
+          "expect": {
+            "typing": []
           }
         },
         {
@@ -92,9 +137,9 @@
           "request": {
             "as": "send",
             "match": {
-              "method": "send",
+              "method": "message",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "body": {
                   "text": "hello",
                   "format": "plain"
@@ -107,19 +152,20 @@
           "reply": {
             "to": "send",
             "result": {
-              "event_id": "1724803200001"
+              "message_id": "1724803200001"
             }
           }
         },
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {
-                "event_id": "1724803200001",
-                "sender": {
-                  "id": "alice"
+              "room_id": "general",
+              "log_id": "1724803200001",
+              "message": {
+                "message_id": "1724803200001",
+                "from": {
+                  "user_id": "alice"
                 },
                 "body": {
                   "text": "hello",
@@ -139,9 +185,9 @@
                 "topic": "Initial topic",
                 "events": [
                   {
-                    "event_id": "1724803200001",
-                    "sender": {
-                      "id": "alice"
+                    "message_id": "1724803200001",
+                    "from": {
+                      "user_id": "alice"
                     },
                     "body": {
                       "text": "hello",
@@ -171,7 +217,7 @@
           "receive": {
             "method": "future_notice",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "text": "not a message"
             }
           }
@@ -180,7 +226,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "Renamed"
             }
           }
@@ -195,9 +241,9 @@
                 "topic": null,
                 "events": [
                   {
-                    "event_id": "1724803200001",
-                    "sender": {
-                      "id": "alice"
+                    "message_id": "1724803200001",
+                    "from": {
+                      "user_id": "alice"
                     },
                     "body": {
                       "text": "hello",
@@ -213,7 +259,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "other"
+              "room_id": "other"
             }
           }
         },
@@ -226,9 +272,9 @@
                 "topic": null,
                 "events": [
                   {
-                    "event_id": "1724803200001",
-                    "sender": {
-                      "id": "alice"
+                    "message_id": "1724803200001",
+                    "from": {
+                      "user_id": "alice"
                     },
                     "body": {
                       "text": "hello",
@@ -250,7 +296,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "other",
+              "room_id": "other",
               "removed": true
             }
           }
@@ -293,7 +339,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "id": "alice"
+                "user_id": "alice"
               }
             }
           }
@@ -301,7 +347,7 @@
         {
           "expect": {
             "you": {
-              "id": "alice"
+              "user_id": "alice"
             }
           }
         },
@@ -309,10 +355,55 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General",
               "topic": "Initial topic"
             }
+          }
+        },
+        {
+          "receive": {
+            "method": "typing",
+            "params": {
+              "room_id": "general",
+              "from": {
+                "user_id": "bob",
+                "name": "Bob"
+              },
+              "active": true
+            }
+          }
+        },
+        {
+          "expect": {
+            "typing": [
+              {
+                "room_id": "general",
+                "from": {
+                  "user_id": "bob",
+                  "name": "Bob"
+                },
+                "active": true
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "typing",
+            "params": {
+              "room_id": "general",
+              "from": {
+                "user_id": "bob",
+                "name": "Bob"
+              },
+              "active": false
+            }
+          }
+        },
+        {
+          "expect": {
+            "typing": []
           }
         },
         {
@@ -339,9 +430,9 @@
           "request": {
             "as": "send",
             "match": {
-              "method": "send",
+              "method": "message",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "body": {
                   "text": "hello",
                   "format": "plain"
@@ -352,13 +443,14 @@
         },
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {
-                "event_id": "1724803200001",
-                "sender": {
-                  "id": "alice"
+              "room_id": "general",
+              "log_id": "1724803200001",
+              "message": {
+                "message_id": "1724803200001",
+                "from": {
+                  "user_id": "alice"
                 },
                 "body": {
                   "text": "hello",
@@ -373,7 +465,7 @@
           "reply": {
             "to": "send",
             "result": {
-              "event_id": "1724803200001"
+              "message_id": "1724803200001"
             }
           }
         },
@@ -386,9 +478,9 @@
                 "topic": "Initial topic",
                 "events": [
                   {
-                    "event_id": "1724803200001",
-                    "sender": {
-                      "id": "alice"
+                    "message_id": "1724803200001",
+                    "from": {
+                      "user_id": "alice"
                     },
                     "body": {
                       "text": "hello",
@@ -418,7 +510,7 @@
           "receive": {
             "method": "future_notice",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "text": "not a message"
             }
           }
@@ -427,7 +519,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "Renamed"
             }
           }
@@ -442,9 +534,9 @@
                 "topic": null,
                 "events": [
                   {
-                    "event_id": "1724803200001",
-                    "sender": {
-                      "id": "alice"
+                    "message_id": "1724803200001",
+                    "from": {
+                      "user_id": "alice"
                     },
                     "body": {
                       "text": "hello",
@@ -460,7 +552,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "other"
+              "room_id": "other"
             }
           }
         },
@@ -473,9 +565,9 @@
                 "topic": null,
                 "events": [
                   {
-                    "event_id": "1724803200001",
-                    "sender": {
-                      "id": "alice"
+                    "message_id": "1724803200001",
+                    "from": {
+                      "user_id": "alice"
                     },
                     "body": {
                       "text": "hello",
@@ -497,7 +589,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "other",
+              "room_id": "other",
               "removed": true
             }
           }
@@ -507,7 +599,7 @@
   ],
   "expected": {
     "you": {
-      "id": "alice"
+      "user_id": "alice"
     },
     "caps": [],
     "rooms": [
@@ -517,9 +609,9 @@
         "topic": null,
         "events": [
           {
-            "event_id": "1724803200001",
-            "sender": {
-              "id": "alice"
+            "message_id": "1724803200001",
+            "from": {
+              "user_id": "alice"
             },
             "body": {
               "text": "hello",
@@ -531,6 +623,7 @@
     ],
     "operations": {
       "message": "fulfilled"
-    }
+    },
+    "typing": []
   }
 }

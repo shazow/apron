@@ -58,9 +58,12 @@ Drafts are kept separately for each room and thread.
 
 The server stores thread metadata in memory and re-announces it on connection.
 Empty threads remain available; deleting or moving their root does not remove
-them. Thread replies use `send.params.thread`; creation and reassignment use
-`update_request` with `set.thread`, with `null` moving a message to the room.
-Thread creation and moves follow the example's sender-only edit policy.
+them. Create metadata through `thread`, then use `message` with the returned
+`thread_id` to add messages. Replies use `message.params.thread_id`. Edits and
+moves submit the complete editable message state with its `message_id`; omitting
+`thread_id` returns it to the room. Moves follow the example's author-only edit
+policy. Opening a thread also requests its history through a separate
+`history` query with `thread_id`.
 
 ## Build and serve
 

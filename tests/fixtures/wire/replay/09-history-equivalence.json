@@ -1,135 +1,161 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "raw raster and mixed history equivalence",
-  "description": "Raw, rastered, and mixed history pages reduce to the same terminal event state.",
-  "references": ["PROTOCOL.md#51-history", "PROTOCOL.md#53-edit--and-the-update-frame"],
+  "name": "Live raw and compacted history converge",
+  "description": "Live raw and compacted history converge.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#51-history"
+  ],
   "room": "general",
   "variants": [
     {
-      "name": "raw-pages",
+      "name": "live",
       "steps": [
         {
           "receive": {
-            "id": "history-raw-1",
-            "result": {
-              "entries": [
-                {
-                  "event_id": "800",
-                  "sender": {"id": "alice"},
-                  "body": {"text": "v0", "format": "plain", "metadata": {"a": 1, "b": 2}},
-                  "custom": {"keep": "yes"}
-                }
-              ],
-              "first_id": "800",
-              "last_id": "800",
-              "more": true
-            }
-          }
-        },
-        {
-          "receive": {
-            "id": "history-raw-2",
-            "result": {
-              "entries": [
-                {"event_id": "810", "target": "800", "set": {"body": {"text": "v1", "metadata": {"b": 3, "c": 4}}, "custom": {"updated": true}}},
-                {"event_id": "820", "target": "800", "set": {"thread": "t_release"}}
-              ],
-              "first_id": "810",
-              "last_id": "820",
-              "more": false
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "rastered-pages",
-      "steps": [
-        {
-          "receive": {
-            "id": "history-raster-1",
-            "result": {
-              "entries": [
-                {
-                  "event_id": "800",
-                  "sender": {"id": "alice"},
-                  "body": {"text": "v0", "format": "plain", "metadata": {"a": 1, "b": 2}},
-                  "custom": {"keep": "yes"}
-                }
-              ],
-              "first_id": "800",
-              "last_id": "800",
-              "more": true
-            }
-          }
-        },
-        {
-          "receive": {
-            "id": "history-raster-2",
-            "result": {
-              "entries": [
-                {
-                  "event_id": "820",
-                  "target": "800",
-                  "replace": {
-                    "event_id": "800",
-                    "sender": {"id": "alice"},
-                    "body": {"text": "v1", "format": "plain", "metadata": {"a": 1, "b": 3, "c": 4}},
-                    "custom": {"keep": "yes", "updated": true},
-                    "thread": "t_release"
-                  }
-                }
-              ],
-              "first_id": "810",
-              "last_id": "820",
-              "more": false
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "mixed-pages",
-      "steps": [
-        {
-          "receive": {
-            "id": "history-mixed-1",
-            "result": {
-              "entries": [
-                {
-                  "event_id": "800",
-                  "sender": {"id": "alice"},
-                  "body": {"text": "v0", "format": "plain", "metadata": {"a": 1, "b": 2}},
-                  "custom": {"keep": "yes"}
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "100",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
                 },
-                {"event_id": "810", "target": "800", "set": {"body": {"text": "v1", "metadata": {"b": 3, "c": 4}}, "custom": {"updated": true}}}
-              ],
-              "first_id": "800",
-              "last_id": "810",
-              "more": true
+                "body": {
+                  "text": "original"
+                }
+              }
             }
           }
         },
         {
           "receive": {
-            "id": "history-mixed-2",
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "105",
+              "message": {
+                "message_id": "105",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "second"
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "110",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "edited"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "raw",
+      "steps": [
+        {
+          "receive": {
+            "id": "history",
             "result": {
               "entries": [
                 {
-                  "event_id": "820",
-                  "target": "800",
-                  "replace": {
-                    "event_id": "800",
-                    "sender": {"id": "alice"},
-                    "body": {"text": "v1", "format": "plain", "metadata": {"a": 1, "b": 3, "c": 4}},
-                    "custom": {"keep": "yes", "updated": true},
-                    "thread": "t_release"
+                  "log_id": "100",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "original"
+                    }
+                  }
+                },
+                {
+                  "log_id": "105",
+                  "message": {
+                    "message_id": "105",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "second"
+                    }
+                  }
+                },
+                {
+                  "log_id": "110",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "edited"
+                    }
                   }
                 }
               ],
-              "first_id": "820",
-              "last_id": "820",
+              "first_id": "100",
+              "last_id": "110",
+              "more": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "compacted",
+      "steps": [
+        {
+          "receive": {
+            "id": "history",
+            "result": {
+              "entries": [
+                {
+                  "log_id": "105",
+                  "message": {
+                    "message_id": "105",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "second"
+                    }
+                  }
+                },
+                {
+                  "log_id": "110",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "edited"
+                    }
+                  }
+                }
+              ],
+              "first_id": "100",
+              "last_id": "110",
               "more": false
             }
           }
@@ -140,11 +166,22 @@
   "expected": {
     "events": [
       {
-        "event_id": "800",
-        "sender": {"id": "alice"},
-        "body": {"text": "v1", "format": "plain", "metadata": {"a": 1, "b": 3, "c": 4}},
-        "custom": {"keep": "yes", "updated": true},
-        "thread": "t_release"
+        "message_id": "100",
+        "from": {
+          "user_id": "alice"
+        },
+        "body": {
+          "text": "edited"
+        }
+      },
+      {
+        "message_id": "105",
+        "from": {
+          "user_id": "alice"
+        },
+        "body": {
+          "text": "second"
+        }
       }
     ]
   }

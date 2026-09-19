@@ -1,45 +1,105 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "unknown fields and prototype-shaped keys",
-  "description": "Unknown event fields survive replay without mutating JavaScript object prototypes.",
-  "references": ["PROTOCOL.md#35-messages", "PROTOCOL.md#53-edit--and-the-update-frame"],
+  "name": "Unknown fields and prototype-like keys survive snapshots",
+  "description": "Unknown fields and prototype-like keys survive snapshots.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#51-history"
+  ],
   "room": "general",
   "variants": [
     {
-      "name": "preserve-unknowns",
+      "name": "live",
       "steps": [
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {
-                "event_id": "900",
-                "sender": {"id": "alice"},
-                "body": {
-                  "text": "unknown fields",
-                  "format": "plain",
-                  "client": {"theme": "blue", "__proto__": {"nested": true}}
+              "room_id": "general",
+              "log_id": "100",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
                 },
-                "__proto__": {"polluted": true},
-                "future": {"kind": "v1", "payload": [1, {"x": 2}]}
+                "body": {
+                  "text": "unknowns",
+                  "extension": null,
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "payload": {
+                        "items": [
+                          1,
+                          null,
+                          false
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "custom": {
+                  "nested": [
+                    true,
+                    null
+                  ]
+                },
+                "__proto__": {
+                  "polluted": true
+                }
               }
             }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
         {
           "receive": {
-            "method": "update",
-            "params": {
-              "room": "general",
-              "event_id": "901",
-              "target": "900",
-              "set": {
-                "__proto__": {"after": true},
-                "body": {"client": {"extra": "kept"}},
-                "future": {"payload": [3]}
-              }
+            "id": "history",
+            "result": {
+              "entries": [
+                {
+                  "log_id": "100",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "unknowns",
+                      "extension": null,
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "payload": {
+                            "items": [
+                              1,
+                              null,
+                              false
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "custom": {
+                      "nested": [
+                        true,
+                        null
+                      ]
+                    },
+                    "__proto__": {
+                      "polluted": true
+                    }
+                  }
+                }
+              ],
+              "first_id": "100",
+              "last_id": "100",
+              "more": false
             }
           }
         }
@@ -49,15 +109,35 @@
   "expected": {
     "events": [
       {
-        "event_id": "900",
-        "sender": {"id": "alice"},
-        "body": {
-          "text": "unknown fields",
-          "format": "plain",
-          "client": {"theme": "blue", "__proto__": {"nested": true}, "extra": "kept"}
+        "message_id": "100",
+        "from": {
+          "user_id": "alice"
         },
-        "__proto__": {"polluted": true, "after": true},
-        "future": {"kind": "v1", "payload": [3]}
+        "body": {
+          "text": "unknowns",
+          "extension": null,
+          "embeds": [
+            {
+              "kind": "future",
+              "payload": {
+                "items": [
+                  1,
+                  null,
+                  false
+                ]
+              }
+            }
+          ]
+        },
+        "custom": {
+          "nested": [
+            true,
+            null
+          ]
+        },
+        "__proto__": {
+          "polluted": true
+        }
       }
     ]
   }

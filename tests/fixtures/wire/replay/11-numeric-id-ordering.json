@@ -1,45 +1,69 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "numeric log ID ordering",
-  "description": "Ordered live creation events remain in numeric event ID order rather than lexical order.",
-  "references": ["PROTOCOL.md#2-identifiers-mandatory"],
+  "name": "Messages sort by permanent numeric ID",
+  "description": "Messages sort by permanent numeric ID.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#51-history"
+  ],
   "room": "general",
   "variants": [
     {
-      "name": "ordered-live-arrival",
+      "name": "out-of-order",
       "steps": [
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {"event_id": "2", "sender": {"id": "alice"}, "body": {"text": "two", "format": "plain"}}
+              "room_id": "general",
+              "log_id": "12",
+              "message": {
+                "message_id": "12",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "second"
+                }
+              }
             }
           }
         },
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {"event_id": "10", "sender": {"id": "alice"}, "body": {"text": "ten", "format": "plain"}}
+              "room_id": "general",
+              "log_id": "20",
+              "message": {
+                "message_id": "2",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "edited first"
+                }
+              }
             }
           }
         },
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {"event_id": "100", "sender": {"id": "alice"}, "body": {"text": "one hundred", "format": "plain"}}
+              "room_id": "general",
+              "log_id": "2",
+              "message": {
+                "message_id": "2",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "first"
+                }
+              }
             }
-          }
-        },
-        {
-          "receive": {
-            "method": "update",
-            "params": {"room": "general", "event_id": "101", "target": "2", "set": {"body": {"text": "two updated"}}}
           }
         }
       ]
@@ -47,9 +71,24 @@
   ],
   "expected": {
     "events": [
-      {"event_id": "2", "sender": {"id": "alice"}, "body": {"text": "two updated", "format": "plain"}},
-      {"event_id": "10", "sender": {"id": "alice"}, "body": {"text": "ten", "format": "plain"}},
-      {"event_id": "100", "sender": {"id": "alice"}, "body": {"text": "one hundred", "format": "plain"}}
+      {
+        "message_id": "2",
+        "from": {
+          "user_id": "alice"
+        },
+        "body": {
+          "text": "edited first"
+        }
+      },
+      {
+        "message_id": "12",
+        "from": {
+          "user_id": "alice"
+        },
+        "body": {
+          "text": "second"
+        }
+      }
     ]
   }
 }

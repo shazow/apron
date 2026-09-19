@@ -39,7 +39,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "id": "alice"
+                "user_id": "alice"
               }
             }
           }
@@ -47,7 +47,7 @@
         {
           "expect": {
             "you": {
-              "id": "alice"
+              "user_id": "alice"
             }
           }
         },
@@ -55,7 +55,7 @@
           "receive": {
             "method": "room",
             "params": {
-              "room": "general",
+              "room_id": "general",
               "name": "General"
             }
           }
@@ -84,9 +84,9 @@
           "request": {
             "as": "denied-request",
             "match": {
-              "method": "send",
+              "method": "message",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "body": {
                   "text": "denied",
                   "format": "plain"
@@ -131,9 +131,9 @@
           "request": {
             "as": "accepted-request",
             "match": {
-              "method": "send",
+              "method": "message",
               "params": {
-                "room": "general",
+                "room_id": "general",
                 "body": {
                   "text": "allowed",
                   "format": "plain"
@@ -144,13 +144,14 @@
         },
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {
-                "event_id": "1724803200300",
-                "sender": {
-                  "id": "alice"
+              "room_id": "general",
+              "log_id": "1724803200300",
+              "message": {
+                "message_id": "1724803200300",
+                "from": {
+                  "user_id": "alice"
                 },
                 "body": {
                   "text": "allowed",
@@ -165,7 +166,7 @@
           "reply": {
             "to": "accepted-request",
             "result": {
-              "event_id": "1724803200300"
+              "message_id": "1724803200300"
             }
           }
         }
@@ -174,7 +175,7 @@
   ],
   "expected": {
     "you": {
-      "id": "alice"
+      "user_id": "alice"
     },
     "rooms": [
       {
@@ -183,9 +184,9 @@
         "topic": null,
         "events": [
           {
-            "event_id": "1724803200300",
-            "sender": {
-              "id": "alice"
+            "message_id": "1724803200300",
+            "from": {
+              "user_id": "alice"
             },
             "body": {
               "text": "allowed",

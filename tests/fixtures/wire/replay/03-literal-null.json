@@ -1,8 +1,8 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "Tombstone survives stale content replay",
-  "description": "Tombstone survives stale content replay.",
+  "name": "Extension null is a stored value",
+  "description": "Extension null is a stored value.",
   "references": [
     "PROTOCOL.md#35-messages",
     "PROTOCOL.md#51-history"
@@ -25,6 +25,9 @@
                 },
                 "body": {
                   "text": "original"
+                },
+                "custom": {
+                  "flag": true
                 }
               }
             }
@@ -41,25 +44,10 @@
                 "from": {
                   "user_id": "alice"
                 },
-                "deleted": true
-              }
-            }
-          }
-        },
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "room_id": "general",
-              "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
                 "body": {
                   "text": "original"
-                }
+                },
+                "custom": null
               }
             }
           }
@@ -74,7 +62,10 @@
         "from": {
           "user_id": "alice"
         },
-        "deleted": true
+        "body": {
+          "text": "original"
+        },
+        "custom": null
       }
     ]
   }

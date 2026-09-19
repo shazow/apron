@@ -1,45 +1,62 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "array replacement",
-  "description": "Merge patch replaces arrays as whole values rather than merging indexes.",
-  "references": ["PROTOCOL.md#53-edit--and-the-update-frame"],
+  "name": "Arrays are replaced in full",
+  "description": "Arrays are replaced in full.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#51-history"
+  ],
   "room": "general",
   "variants": [
     {
-      "name": "replace-embeds-and-tags",
+      "name": "live",
       "steps": [
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {
-                "event_id": "300",
-                "sender": {"id": "alice"},
-                "body": {
-                  "text": "attachments",
-                  "format": "markdown",
-                  "embeds": [
-                    {"kind": "image", "url": "https://example.test/one.png"},
-                    {"kind": "image", "url": "https://example.test/two.png"}
-                  ]
+              "room_id": "general",
+              "log_id": "100",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
                 },
-                "tags": ["old-a", "old-b"]
+                "body": {
+                  "embeds": [
+                    {
+                      "kind": "file",
+                      "url": "https://example.org/a"
+                    },
+                    {
+                      "kind": "image"
+                    }
+                  ]
+                }
               }
             }
           }
         },
         {
           "receive": {
-            "method": "update",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event_id": "301",
-              "target": "300",
-              "set": {
-                "body": {"embeds": [{"kind": "video", "url": "https://example.test/new.mp4"}]},
-                "tags": ["new"]
+              "room_id": "general",
+              "log_id": "110",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "embeds": [
+                    {
+                      "kind": "file",
+                      "url": "https://example.org/b"
+                    }
+                  ]
+                }
               }
             }
           }
@@ -50,14 +67,18 @@
   "expected": {
     "events": [
       {
-        "event_id": "300",
-        "sender": {"id": "alice"},
-        "body": {
-          "text": "attachments",
-          "format": "markdown",
-          "embeds": [{"kind": "video", "url": "https://example.test/new.mp4"}]
+        "message_id": "100",
+        "from": {
+          "user_id": "alice"
         },
-        "tags": ["new"]
+        "body": {
+          "embeds": [
+            {
+              "kind": "file",
+              "url": "https://example.org/b"
+            }
+          ]
+        }
       }
     ]
   }

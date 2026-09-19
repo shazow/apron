@@ -10,19 +10,19 @@
 		type RoomSnapshot
 	} from '$lib/protocol/client';
 	import { formatBytes, renderMarkdown, safeUrl } from '$lib/protocol/markdown';
-	import { isJsonObject, type Embed, type EventRecord, type Sender, type ThreadAnnouncement } from '$lib/protocol/types';
+	import { isJsonObject, type Embed, type MessageRecord, type Identity, type ThreadAnnouncement } from '$lib/protocol/types';
 
 	type Feedback = { kind: 'pending' | 'error'; text: string };
-	type PendingThreadStart = { room: string; thread: string };
+	type PendingThreadStart = { room: string; thread_id: string };
 	type ThreadListEntry = ThreadAnnouncement & {
 		count: number;
 		announced: boolean;
-		participants: Sender[];
+		participants: Identity[];
 		lastReply: string;
 	};
 	type TimelineItem =
 		| { kind: 'date'; key: string; label: string }
-		| { kind: 'message'; key: string; event: EventRecord; grouped: boolean }
+		| { kind: 'message'; key: string; event: MessageRecord; grouped: boolean }
 		| { kind: 'thread'; key: string; entry: ThreadListEntry }
 		| { kind: 'replies'; key: string; count: number };
 	type ProfileStatus = 'idle' | 'saving' | 'altered' | 'declined';
@@ -62,44 +62,44 @@
 
 	let activeRoom = $derived(snapshot.rooms.find((room) => room.id === snapshot.activeRoom));
 	let allMessages = $derived(timelineMessages(activeRoom));
-	let roomMessages = $derived(allMessages.filter((event) => !event.thread));
-	let messages = $derived(activeThread ? allMessages.filter((event) => event.thread === activeThread) : roomMessages);
+	let roomMessages = $derived(allMessages.filter((event) => !event.thread_id));
+	let messages = $derived(activeThread ? allMessages.filter((event) => event.thread_id === activeThread) : roomMessages);
 	let threadEntries = $derived.by((): ThreadListEntry[] => {
 		const entries = new Map<string, ThreadListEntry>();
 		for (const announcement of activeRoom?.threads ?? []) {
-			const root = announcement.root ? activeRoom?.timeline.events[announcement.root] : undefined;
+			const root = announcement.root_message_id ? activeRoom?.timeline.events[announcement.root_message_id] : undefined;
 			const excerpt = root && !root.deleted ? textOf(root).replace(/\s+/g, ' ').trim().slice(0, 60) : '';
-			const name = announcement.name && announcement.name !== announcement.thread
-				? announcement.name : excerpt || announcement.thread;
-			entries.set(announcement.thread, { ...announcement, name, count: 0, announced: true, participants: [], lastReply: '' });
+			const name = announcement.title && announcement.title !== announcement.thread_id
+				? announcement.title : excerpt || announcement.thread_id;
+			entries.set(announcement.thread_id, { ...announcement, title: name, count: 0, announced: true, participants: [], lastReply: '' });
 		}
 		for (const event of allMessages) {
-			if (!event.thread) continue;
-			let entry = entries.get(event.thread);
+			if (!event.thread_id) continue;
+			let entry = entries.get(event.thread_id);
 			if (!entry) {
 				entry = {
-					room: activeRoom?.id ?? '',
-					thread: event.thread,
-					name: event.thread,
+					room_id: activeRoom?.id ?? '',
+					thread_id: event.thread_id,
+					title: event.thread_id,
 					count: 0,
 					announced: false,
 					participants: [],
 					lastReply: ''
 				};
-				entries.set(event.thread, entry);
+				entries.set(event.thread_id, entry);
 			}
 			entry.count += 1;
 			entry.lastReply = eventTime(event);
-			if (event.sender?.id && !event.deleted) {
-				entry.participants = [event.sender, ...entry.participants.filter((sender) => sender.id !== event.sender?.id)].slice(0, 4);
+			if (event.from?.user_id && !event.deleted) {
+				entry.participants = [event.from, ...entry.participants.filter((sender) => sender.user_id !== event.from?.user_id)].slice(0, 4);
 			}
 		}
 		return [...entries.values()];
 	});
-	let threadEntriesById = $derived.by(() => new Map(threadEntries.map((entry) => [entry.thread, entry])));
+	let threadEntriesById = $derived.by(() => new Map(threadEntries.map((entry) => [entry.thread_id, entry])));
 	let threadsByRoot = $derived.by(() => {
 		const byRoot = new Map<string, ThreadListEntry>();
-		for (const entry of threadEntries) if (entry.announced && entry.root) byRoot.set(entry.root, entry);
+		for (const entry of threadEntries) if (entry.announced && entry.root_message_id) byRoot.set(entry.root_message_id, entry);
 		return byRoot;
 	});
 	let activeThreadAnnouncement = $derived.by(() => {
@@ -109,8 +109,8 @@
 	let timeline = $derived.by((): TimelineItem[] => {
 		const items: TimelineItem[] = [];
 		let lastDay = '';
-		let previous: EventRecord | undefined;
-		const pushDate = (event: EventRecord) => {
+		let previous: MessageRecord | undefined;
+		const pushDate = (event: MessageRecord) => {
 			const day = dayKey(event);
 			if (day && day !== lastDay) {
 				items.push({ kind: 'date', key: `date:${day}`, label: dayLabel(event) });
@@ -118,16 +118,16 @@
 				previous = undefined;
 			}
 		};
-		const pushMessage = (event: EventRecord) => {
+		const pushMessage = (event: MessageRecord) => {
 			pushDate(event);
-			items.push({ kind: 'message', key: event.event_id, event, grouped: isGrouped(previous, event) });
+			items.push({ kind: 'message', key: event.message_id, event, grouped: isGrouped(previous, event) });
 			previous = event;
 		};
 		if (activeThread) {
-			const root = activeThreadAnnouncement?.root;
+			const root = activeThreadAnnouncement?.root_message_id;
 			const [first, ...rest] = messages;
-			if (first && first.event_id === root) {
-				items.push({ kind: 'message', key: first.event_id, event: first, grouped: false });
+			if (first && first.message_id === root) {
+				items.push({ kind: 'message', key: first.message_id, event: first, grouped: false });
 				lastDay = dayKey(first);
 				if (rest.length > 0) items.push({ kind: 'replies', key: 'replies', count: rest.length });
 				for (const event of rest) pushMessage(event);
@@ -137,14 +137,14 @@
 			return items;
 		}
 		for (const event of allMessages) {
-			if (!event.thread) {
+			if (!event.thread_id) {
 				pushMessage(event);
 				continue;
 			}
-			const entry = threadsByRoot.get(event.event_id);
+			const entry = threadsByRoot.get(event.message_id);
 			if (entry) {
 				pushDate(event);
-				items.push({ kind: 'thread', key: `thread:${entry.thread}`, entry });
+				items.push({ kind: 'thread', key: `thread:${entry.thread_id}`, entry });
 				previous = undefined;
 			}
 		}
@@ -156,8 +156,8 @@
 	));
 	let canEdit = $derived(snapshot.server?.caps?.includes('edit') === true);
 	let canUpload = $derived(typeof snapshot.server?.upload === 'string' && snapshot.server.upload.length > 0);
-	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.sender.id !== snapshot.you?.id));
-	let typingNames = $derived(roomTyping.map((entry) => entry.sender.name || entry.sender.id));
+	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== snapshot.you?.user_id));
+	let typingNames = $derived(roomTyping.map((entry) => entry.from.name || entry.from.user_id));
 	let backendLabel = $derived(snapshot.server?.name || backendHost(serverInput) || 'Apron');
 	let unseenCount = $derived(stickToBottom ? 0 : Math.max(0, messages.length - seenCount));
 	let connectionState = $derived.by((): 'connected' | 'connecting' | 'reconnecting' | 'offline' | 'error' => {
@@ -180,14 +180,14 @@
 			if (pending.room !== room.id) continue;
 			const event = room.timeline.events[eventId];
 			if (!event) continue;
-			if (event.thread === pending.thread) {
+			if (event.thread_id === pending.thread_id) {
 				const next = { ...pendingThreadStarts };
 				delete next[eventId];
 				pendingThreadStarts = next;
-				setDestination(room.id, pending.thread);
+				setDestination(room.id, pending.thread_id);
 				break;
 			}
-			if (event.thread) {
+			if (event.thread_id) {
 				const next = { ...pendingThreadStarts };
 				delete next[eventId];
 				pendingThreadStarts = next;
@@ -196,7 +196,7 @@
 	});
 
 	$effect(() => {
-		if (editingId && (!activeRoom?.timeline.events[editingId] || activeRoom.timeline.events[editingId].deleted || !messages.some((event) => event.event_id === editingId))) {
+		if (editingId && (!activeRoom?.timeline.events[editingId] || activeRoom.timeline.events[editingId].deleted || !messages.some((event) => event.message_id === editingId))) {
 			editingId = undefined;
 			editDraft = '';
 		}
@@ -348,6 +348,7 @@
 	function chooseThread(thread: string): void {
 		if (!activeRoom) return;
 		setDestination(activeRoom.id, thread);
+		client?.loadThread(activeRoom.id, thread).catch((cause: Error) => { feedback = { kind: 'error', text: cause.message }; });
 		mobilePane = 'main';
 		composer?.focus();
 	}
@@ -399,13 +400,13 @@
 		composer?.focus();
 	}
 
-	function beginEdit(event: EventRecord): void {
-		editingId = event.event_id;
+	function beginEdit(event: MessageRecord): void {
+		editingId = event.message_id;
 		editDraft = typeof event.body?.text === 'string' ? event.body.text : '';
 		moreId = undefined;
 	}
 
-	function editKeydown(event: KeyboardEvent, record: EventRecord): void {
+	function editKeydown(event: KeyboardEvent, record: MessageRecord): void {
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			editingId = undefined;
@@ -415,49 +416,53 @@
 		}
 	}
 
-	function saveEdit(event: EventRecord): void {
+	function saveEdit(event: MessageRecord): void {
 		if (!client || !activeRoom || !canEdit || !editDraft.trim()) return;
-		track(client.updateMessage(activeRoom.id, event.event_id, editDraft), 'Saving edit…');
+		track(client.updateMessage(activeRoom.id, event.message_id, editDraft), 'Saving edit…');
 		editingId = undefined;
 		editDraft = '';
 	}
 
-	function deleteMessage(event: EventRecord): void {
+	function deleteMessage(event: MessageRecord): void {
 		if (!client || !activeRoom || !canEdit) return;
 		moreId = undefined;
 		if (!confirm('Delete this message? This cannot be undone.')) return;
-		track(client.deleteMessage(activeRoom.id, event.event_id), 'Deleting message…');
+		track(client.deleteMessage(activeRoom.id, event.message_id), 'Deleting message…');
 	}
 
-	function makeThreadId(): string {
-		const uuid = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-		return `t_${uuid.replaceAll('-', '')}`;
-	}
-
-	function startThread(event: EventRecord): void {
-		if (!client || !activeRoom || !canEdit || !isOwn(event) || event.deleted || event.thread) return;
-		const thread = makeThreadId();
-		pendingThreadStarts = { ...pendingThreadStarts, [event.event_id]: { room: activeRoom.id, thread } };
-		track(client.setMessageThread(activeRoom.id, event.event_id, thread), 'Starting thread…', () => {
+	async function startThread(event: MessageRecord): Promise<void> {
+		if (!client || !activeRoom || !canEdit || !isOwn(event) || event.deleted || event.thread_id) return;
+		const session = client;
+		const roomId = activeRoom.id;
+		pendingThreadStarts = { ...pendingThreadStarts, [event.message_id]: { room: roomId, thread_id: '' } };
+		feedback = { kind: 'pending', text: 'Starting thread…' };
+		try {
+			const result = await session.createThread(roomId, { root_message_id: event.message_id }).promise;
+			if (typeof result.thread_id !== 'string') throw new Error('Invalid thread response');
+			pendingThreadStarts = { ...pendingThreadStarts, [event.message_id]: { room: roomId, thread_id: result.thread_id } };
+			await session.setMessageThread(roomId, event.message_id, result.thread_id).promise;
+			feedback = undefined;
+		} catch (cause) {
 			const next = { ...pendingThreadStarts };
-			delete next[event.event_id];
+			delete next[event.message_id];
 			pendingThreadStarts = next;
-		});
+			feedback = { kind: 'error', text: cause instanceof Error ? cause.message : 'Unable to start thread' };
+		}
 	}
 
-	function toggleMove(event: EventRecord): void {
-		movingId = movingId === event.event_id ? undefined : event.event_id;
+	function toggleMove(event: MessageRecord): void {
+		movingId = movingId === event.message_id ? undefined : event.message_id;
 		moreId = undefined;
 	}
 
-	function moveMessage(event: EventRecord, value: string, select?: HTMLSelectElement): void {
+	function moveMessage(event: MessageRecord, value: string, select?: HTMLSelectElement): void {
 		if (!client || !activeRoom || !canEdit || !isOwn(event) || event.deleted) return;
 		const thread = value || null;
-		if (thread === event.thread) return;
-		if (thread && !activeRoom.threads.some((entry) => entry.thread === thread)) return;
-		if (select) select.value = event.thread ?? '';
+		if (thread === event.thread_id) return;
+		if (thread && !activeRoom.threads.some((entry) => entry.thread_id === thread)) return;
+		if (select) select.value = event.thread_id ?? '';
 		movingId = undefined;
-		track(client.setMessageThread(activeRoom.id, event.event_id, thread), 'Moving message…');
+		track(client.setMessageThread(activeRoom.id, event.message_id, thread), 'Moving message…');
 	}
 
 	/** Shows "pending" copy only when a request takes noticeably long, and errors until the next request. */
@@ -477,12 +482,12 @@
 			});
 	}
 
-	function isOwn(event: EventRecord): boolean {
-		return Boolean(snapshot.you && event.sender?.id === snapshot.you.id);
+	function isOwn(event: MessageRecord): boolean {
+		return Boolean(snapshot.you && event.from?.user_id === snapshot.you.user_id);
 	}
 
-	function senderName(event: EventRecord): string {
-		return event.sender?.name || event.sender?.id || 'Unknown sender';
+	function senderName(event: MessageRecord): string {
+		return event.from?.name || event.from?.user_id || 'Unknown sender';
 	}
 
 	function initials(name: string): string {
@@ -492,26 +497,26 @@
 		return (first + last).toUpperCase();
 	}
 
-	function eventMillis(event: EventRecord): number | undefined {
-		const millis = Number(event.event_id);
+	function eventMillis(event: MessageRecord): number | undefined {
+		const millis = Number(event.message_id);
 		return Number.isSafeInteger(millis) && millis > 0 ? millis : undefined;
 	}
 
-	function eventTime(event: EventRecord): string {
+	function eventTime(event: MessageRecord): string {
 		const millis = eventMillis(event);
 		return millis
 			? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(millis)
 			: '';
 	}
 
-	function dayKey(event: EventRecord): string {
+	function dayKey(event: MessageRecord): string {
 		const millis = eventMillis(event);
 		if (!millis) return '';
 		const date = new Date(millis);
 		return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 	}
 
-	function dayLabel(event: EventRecord): string {
+	function dayLabel(event: MessageRecord): string {
 		const millis = eventMillis(event);
 		if (!millis) return '';
 		const date = new Date(millis);
@@ -524,27 +529,27 @@
 		return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(date);
 	}
 
-	function isGrouped(previous: EventRecord | undefined, event: EventRecord): boolean {
-		if (!previous || !previous.sender?.id || previous.sender.id !== event.sender?.id) return false;
+	function isGrouped(previous: MessageRecord | undefined, event: MessageRecord): boolean {
+		if (!previous || !previous.from?.user_id || previous.from.user_id !== event.from?.user_id) return false;
 		const before = eventMillis(previous);
 		const after = eventMillis(event);
 		return before !== undefined && after !== undefined && after - before < GROUP_WINDOW_MS;
 	}
 
-	function mentionsMe(event: EventRecord): boolean {
+	function mentionsMe(event: MessageRecord): boolean {
 		const me = snapshot.you;
 		if (!me || isOwn(event)) return false;
 		const text = textOf(event);
 		if (!text) return false;
-		return [me.name, me.id].some((handle) => handle && text.includes(`@${handle}`));
+		return [me.name, me.user_id].some((handle) => handle && text.includes(`@${handle}`));
 	}
 
-	function textOf(event: EventRecord): string {
+	function textOf(event: MessageRecord): string {
 		return typeof event.body?.text === 'string' ? event.body.text : '';
 	}
 
 	function threadTitle(thread: string): string {
-		return threadEntriesById.get(thread)?.name || thread;
+		return threadEntriesById.get(thread)?.title || thread;
 	}
 
 	function threadSummary(thread: string): string | undefined {
@@ -555,7 +560,7 @@
 		return threadEntriesById.get(thread)?.announced === true;
 	}
 
-	function embedsOf(event: EventRecord): Embed[] {
+	function embedsOf(event: MessageRecord): Embed[] {
 		return Array.isArray(event.body?.embeds)
 			? event.body.embeds.filter(isJsonObject).filter((embed): embed is Embed => typeof embed.kind === 'string')
 			: [];
@@ -579,12 +584,12 @@
 		if (messageScroll) messageScroll.scrollTop = messageScroll.scrollHeight;
 	}
 
-	function hasActions(event: EventRecord): boolean {
+	function hasActions(event: MessageRecord): boolean {
 		return canEdit && isOwn(event) && !event.deleted;
 	}
 
-	function canMove(event: EventRecord): boolean {
-		return Boolean(event.thread || (activeRoom && activeRoom.threads.length > 0));
+	function canMove(event: MessageRecord): boolean {
+		return Boolean(event.thread_id || (activeRoom && activeRoom.threads.length > 0));
 	}
 </script>
 
@@ -631,9 +636,9 @@
 							</button>
 							{#if active}
 								<div class="app-threads" data-testid="thread-list" role="group" aria-label={`Threads in ${room.name}`}>
-									{#each threadEntries as entry (entry.thread)}
-										<button class="ap-room ap-room-nested" class:ap-room-active={activeThread === entry.thread} type="button" data-thread={entry.thread} aria-current={activeThread === entry.thread ? 'page' : undefined} onclick={() => chooseThread(entry.thread)}>
-											<span class="ap-room-text"><span class="ap-room-name">{entry.name || entry.thread}</span></span>
+									{#each threadEntries as entry (entry.thread_id)}
+										<button class="ap-room ap-room-nested" class:ap-room-active={activeThread === entry.thread_id} type="button" data-thread={entry.thread_id} aria-current={activeThread === entry.thread_id ? 'page' : undefined} onclick={() => chooseThread(entry.thread_id)}>
+											<span class="ap-room-text"><span class="ap-room-name">{entry.title || entry.thread_id}</span></span>
 											<small class="app-room-meta" aria-label={`${entry.count} ${entry.count === 1 ? 'message' : 'messages'}`}>{entry.count}</small>
 										</button>
 									{/each}
@@ -652,7 +657,7 @@
 							{#if snapshot.you?.avatar && safeUrl(snapshot.you.avatar)}
 								<img class="ap-avatar ap-avatar-lg" src={snapshot.you.avatar} alt="" />
 							{:else}
-								<span class="ap-avatar ap-avatar-lg" aria-hidden="true">{initials(profileDraft || snapshot.you?.id || '?')}</span>
+								<span class="ap-avatar ap-avatar-lg" aria-hidden="true">{initials(profileDraft || snapshot.you?.user_id || '?')}</span>
 							{/if}
 							<div class="ap-profedit-av">
 								<span class="ap-profedit-hint">{canUpload ? 'Avatar uploads are not supported by this client yet.' : 'This backend has no upload URL, so your avatar can’t be set here.'}</span>
@@ -661,7 +666,7 @@
 						<label class="ap-fieldlabel">Handle
 							<input class="ap-field" data-testid="display-name-input" bind:value={profileDraft} disabled={profileStatus === 'saving'} maxlength="64" autocomplete="nickname" spellcheck="false" />
 						</label>
-						<p class="ap-profedit-hint">ID <code>{snapshot.you?.id ?? '—'}</code> · set by the server, can’t be changed</p>
+						<p class="ap-profedit-hint">ID <code>{snapshot.you?.user_id ?? '—'}</code> · set by the server, can’t be changed</p>
 						{#if profileStatus === 'altered'}
 							<p class="ap-profedit-note" role="status">The server saved your handle as “{profileServerName}”.</p>
 						{:else if profileStatus === 'declined'}
@@ -674,14 +679,14 @@
 					</form>
 				</div>
 			{/if}
-			<button class="ap-profile-me" class:ap-profile-open={profileOpen} type="button" aria-haspopup="dialog" aria-expanded={profileOpen} aria-label={`Your profile on ${backendLabel}: ${snapshot.you?.name || snapshot.you?.id || 'not signed in'}. Edit`} onclick={openProfile}>
+			<button class="ap-profile-me" class:ap-profile-open={profileOpen} type="button" aria-haspopup="dialog" aria-expanded={profileOpen} aria-label={`Your profile on ${backendLabel}: ${snapshot.you?.name || snapshot.you?.user_id || 'not signed in'}. Edit`} onclick={openProfile}>
 				{#if snapshot.you?.avatar && safeUrl(snapshot.you.avatar)}
 					<img class="ap-avatar ap-avatar-md" src={snapshot.you.avatar} alt="" />
 				{:else}
-					<span class="ap-avatar ap-avatar-md" aria-hidden="true">{initials(snapshot.you?.name || snapshot.you?.id || '?')}</span>
+					<span class="ap-avatar ap-avatar-md" aria-hidden="true">{initials(snapshot.you?.name || snapshot.you?.user_id || '?')}</span>
 				{/if}
 				<span class="ap-profile-text">
-					<span class="ap-profile-name">{snapshot.you?.name || snapshot.you?.id || 'Not signed in'}</span>
+					<span class="ap-profile-name">{snapshot.you?.name || snapshot.you?.user_id || 'Not signed in'}</span>
 					<span class="ap-profile-sub">on {backendLabel}</span>
 				</span>
 				<span class="ap-profile-edit" aria-hidden="true">Edit</span>
@@ -754,19 +759,19 @@
 						{:else if item.kind === 'thread'}
 							{@const entry = item.entry}
 							<div class="app-thread-row">
-								<button class="ap-thread" type="button" onclick={() => chooseThread(entry.thread)}>
+								<button class="ap-thread" type="button" onclick={() => chooseThread(entry.thread_id)}>
 									{#if entry.participants.length > 0}
 										<span class="ap-thread-faces" aria-hidden="true">
-											{#each entry.participants as participant (participant.id)}
+											{#each entry.participants as participant (participant.user_id)}
 												{#if participant.avatar && safeUrl(participant.avatar)}
 													<img class="ap-avatar ap-avatar-sm" src={participant.avatar} alt="" />
 												{:else}
-													<span class="ap-avatar ap-avatar-sm">{initials(participant.name || participant.id)}</span>
+													<span class="ap-avatar ap-avatar-sm">{initials(participant.name || participant.user_id)}</span>
 												{/if}
 											{/each}
 										</span>
 									{/if}
-									<span class="ap-thread-name">{entry.name}</span>
+									<span class="ap-thread-name">{entry.title}</span>
 									<span class="ap-thread-count">{entry.count} {entry.count === 1 ? 'message' : 'messages'}</span>
 									{#if entry.lastReply}<span class="ap-thread-last">Last reply {entry.lastReply}</span>{/if}
 									{#if entry.summary}<span class="ap-thread-summary">{entry.summary}</span>{/if}
@@ -775,12 +780,12 @@
 						{:else}
 							{@const event = item.event}
 							{@const name = senderName(event)}
-							<article class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} data-message-id={event.event_id} data-event-id={event.event_id} tabindex="-1">
+							<article class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} data-message-id={event.message_id} tabindex="-1">
 								<div class="ap-msg-gutter">
 									{#if item.grouped}
 										<span class="ap-msg-hovertime">{eventTime(event)}</span>
-									{:else if event.sender?.avatar && safeUrl(event.sender.avatar)}
-										<img class="ap-avatar ap-avatar-md" src={event.sender.avatar} alt="" />
+									{:else if event.from?.avatar && safeUrl(event.from.avatar)}
+										<img class="ap-avatar ap-avatar-md" src={event.from.avatar} alt="" />
 									{:else}
 										<span class="ap-avatar ap-avatar-md" aria-hidden="true">{initials(name)}</span>
 									{/if}
@@ -794,7 +799,7 @@
 									{/if}
 									{#if event.deleted}
 										<div class="ap-msg-tomb">Message deleted</div>
-									{:else if editingId === event.event_id}
+									{:else if editingId === event.message_id}
 										<div class="app-edit">
 											<textarea class="ap-field app-edit-field" aria-label="Edit message" bind:value={editDraft} rows="3" onkeydown={(keyEvent) => editKeydown(keyEvent, event)}></textarea>
 											<div class="ap-profedit-actions">
@@ -835,13 +840,13 @@
 												{/each}
 											</div>
 										{/if}
-										{#if movingId === event.event_id}
+										{#if movingId === event.message_id}
 											<div class="app-move">
 												<label class="ap-fieldlabel">Move to
-													<select class="ap-field" value={event.thread ?? ''} aria-label="Move message to" onchange={(change) => moveMessage(event, (change.currentTarget as HTMLSelectElement).value, change.currentTarget as HTMLSelectElement)}>
+													<select class="ap-field" value={event.thread_id ?? ''} aria-label="Move message to" onchange={(change) => moveMessage(event, (change.currentTarget as HTMLSelectElement).value, change.currentTarget as HTMLSelectElement)}>
 														<option value="">Move to room</option>
-														{#if event.thread && !isThreadAnnounced(event.thread)}<option value={event.thread} disabled>Current thread unavailable</option>{/if}
-														{#each activeRoom.threads as thread (thread.thread)}<option value={thread.thread}>{threadTitle(thread.thread)}</option>{/each}
+														{#if event.thread_id && !isThreadAnnounced(event.thread_id)}<option value={event.thread_id} disabled>Current thread unavailable</option>{/if}
+														{#each activeRoom.threads as thread (thread.thread_id)}<option value={thread.thread_id}>{threadTitle(thread.thread_id)}</option>{/each}
 													</select>
 												</label>
 												<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" onclick={() => (movingId = undefined)}>Cancel</button>
@@ -852,17 +857,17 @@
 								{#if hasActions(event)}
 									<div class="ap-msg-actions">
 										<div class="ap-actions" role="toolbar" aria-label="Message actions">
-											{#if !event.thread && !activeThread}
-												<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={Boolean(pendingThreadStarts[event.event_id])} onclick={() => startThread(event)}>{pendingThreadStarts[event.event_id] ? 'Starting…' : 'Start thread'}</button>
+											{#if !event.thread_id && !activeThread}
+												<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={Boolean(pendingThreadStarts[event.message_id])} onclick={() => startThread(event)}>{pendingThreadStarts[event.message_id] ? 'Starting…' : 'Start thread'}</button>
 											{/if}
 											<button class="ap-actions-btn" type="button" aria-label="Edit message" title="Edit" onclick={() => beginEdit(event)}>Edit</button>
-											{#if moreId === event.event_id}
+											{#if moreId === event.message_id}
 												{#if canMove(event)}
 													<button class="ap-actions-btn" type="button" aria-label="Move message" title="Move to thread" onclick={() => toggleMove(event)}>Move</button>
 												{/if}
 												<button class="ap-actions-btn ap-actions-danger" type="button" aria-label="Delete message" title="Delete" onclick={() => deleteMessage(event)}>Delete</button>
 											{:else}
-												<button class="ap-actions-btn" type="button" aria-label="More actions" aria-expanded="false" title="More" onclick={() => (moreId = event.event_id)}>⋯</button>
+												<button class="ap-actions-btn" type="button" aria-label="More actions" aria-expanded="false" title="More" onclick={() => (moreId = event.message_id)}>⋯</button>
 											{/if}
 										</div>
 									</div>
