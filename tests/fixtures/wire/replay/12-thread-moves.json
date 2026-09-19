@@ -1,56 +1,151 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "thread field moves",
-  "description": "Thread assignment and removal are ordinary merge-patch updates to events.",
-  "references": ["PROTOCOL.md#53-edit--and-the-update-frame", "PROTOCOL.md#62-threads"],
+  "name": "Thread departures remove membership without deleting messages",
+  "description": "Thread departures remove membership without deleting messages.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#51-history"
+  ],
   "room": "general",
   "variants": [
     {
-      "name": "assign-and-remove",
+      "name": "live",
       "steps": [
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {"event_id": "1000", "sender": {"id": "alice"}, "body": {"text": "root", "format": "plain"}}
+              "room_id": "general",
+              "log_id": "100",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "original"
+                },
+                "thread_id": "t_a"
+              }
             }
           }
         },
         {
           "receive": {
-            "method": "event",
+            "method": "message",
             "params": {
-              "room": "general",
-              "event": {"event_id": "1001", "sender": {"id": "bob"}, "body": {"text": "reply", "format": "plain"}}
+              "room_id": "general",
+              "log_id": "110",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "original"
+                },
+                "thread_id": "t_b"
+              }
             }
           }
         },
         {
           "receive": {
-            "method": "update",
-            "params": {"room": "general", "event_id": "1010", "target": "1000", "set": {"thread": "t_release"}}
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "120",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice"
+                },
+                "body": {
+                  "text": "original"
+                }
+              }
+            }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "overlapping-history",
+      "steps": [
         {
-          "expect": {
-            "events": [
-              {"event_id": "1000", "sender": {"id": "alice"}, "body": {"text": "root", "format": "plain"}, "thread": "t_release"},
-              {"event_id": "1001", "sender": {"id": "bob"}, "body": {"text": "reply", "format": "plain"}}
-            ]
+          "receive": {
+            "id": "history",
+            "result": {
+              "entries": [
+                {
+                  "log_id": "110",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "original"
+                    },
+                    "thread_id": "t_b"
+                  }
+                },
+                {
+                  "log_id": "120",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "original"
+                    }
+                  }
+                }
+              ],
+              "first_id": "110",
+              "last_id": "120",
+              "more": false
+            }
           }
         },
         {
           "receive": {
-            "method": "update",
-            "params": {"room": "general", "event_id": "1011", "target": "1001", "set": {"thread": "t_release"}}
-          }
-        },
-        {
-          "receive": {
-            "method": "update",
-            "params": {"room": "general", "event_id": "1012", "target": "1000", "set": {"thread": null}}
+            "id": "history",
+            "result": {
+              "entries": [
+                {
+                  "log_id": "100",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "original"
+                    },
+                    "thread_id": "t_a"
+                  }
+                },
+                {
+                  "log_id": "110",
+                  "message": {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "original"
+                    },
+                    "thread_id": "t_b"
+                  }
+                }
+              ],
+              "first_id": "100",
+              "last_id": "110",
+              "more": false
+            }
           }
         }
       ]
@@ -58,8 +153,15 @@
   ],
   "expected": {
     "events": [
-      {"event_id": "1000", "sender": {"id": "alice"}, "body": {"text": "root", "format": "plain"}},
-      {"event_id": "1001", "sender": {"id": "bob"}, "body": {"text": "reply", "format": "plain"}, "thread": "t_release"}
+      {
+        "message_id": "100",
+        "from": {
+          "user_id": "alice"
+        },
+        "body": {
+          "text": "original"
+        }
+      }
     ]
   }
 }

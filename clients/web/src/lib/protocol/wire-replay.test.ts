@@ -85,25 +85,10 @@ function runVariant(fixture: ReplayFixture, variant: ReplayVariant, useJsonRpc: 
 }
 
 function decodeFrame(frame: WireRecord, room: string): Transition[] {
-	if (frame.method === 'event') {
-		const params = requireRecord(frame.params, 'event.params');
-		requireRoom(params, room, 'event.params.room');
-		const transition = requireTransition(params.event, 'event.params.event');
-		if (transition.kind !== 'creation') throw new Error('event notification must contain a creation event');
-		return [transition];
-	}
-
-	if (frame.method === 'update') {
-		const params = requireRecord(frame.params, 'update.params');
-		requireRoom(params, room, 'update.params.room');
-		if (Object.prototype.hasOwnProperty.call(params, 'replace')) {
-			throw new Error('live update notifications must use set; history rasters belong in entries');
-		}
-		const transition = requireTransition(params, 'update.params');
-		if (transition.kind !== 'update' || !transition.set) {
-			throw new Error('live update notification must contain a set patch');
-		}
-		return [transition];
+	if (frame.method === 'message') {
+		const params = requireRecord(frame.params, 'message.params');
+		requireRoom(params, room, 'message.params.room_id');
+		return [requireTransition(params, 'message.params')];
 	}
 
 	if (frame.method === undefined && Object.prototype.hasOwnProperty.call(frame, 'result')) {
@@ -120,7 +105,7 @@ function decodeFrame(frame: WireRecord, room: string): Transition[] {
 
 function requireTransition(value: unknown, label: string): Transition {
 	const transition = toTransition(value);
-	if (!transition) throw new Error(`${label} is not a valid event or update transition`);
+	if (!transition) throw new Error(`${label} is not a valid message snapshot`);
 	return transition;
 }
 
@@ -130,7 +115,7 @@ function requireRecord(value: unknown, label: string): WireRecord {
 }
 
 function requireRoom(record: WireRecord, room: string, label: string): void {
-	if (record.room !== room) throw new Error(`${label} must be ${room}`);
+	if (record.room_id !== room) throw new Error(`${label} must be ${room}`);
 }
 
 function isRecord(value: unknown): value is WireRecord {

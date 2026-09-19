@@ -11,8 +11,8 @@ func TestMalformedFrames(t *testing.T) {
 		{`{`, codeParseError, ""},
 		{`[]`, codeInvalidRequest, ""},
 		{`null`, codeInvalidRequest, ""},
-		{`{"method":"send","id":"x","params":[]}`, codeInvalidParams, "x"},
-		{`{"method":"send","id":1}`, codeInvalidRequest, ""},
+		{`{"method":"message","id":"x","params":[]}`, codeInvalidParams, "x"},
+		{`{"method":"message","id":1}`, codeInvalidRequest, ""},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			req, err := parseRequest([]byte(tc.input))

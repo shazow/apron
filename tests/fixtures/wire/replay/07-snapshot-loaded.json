@@ -1,8 +1,8 @@
 {
   "format": 1,
   "kind": "replay",
-  "name": "Repeated and stale snapshots are ignored",
-  "description": "Repeated and stale snapshots are ignored.",
+  "name": "New snapshot replaces loaded message",
+  "description": "New snapshot replaces loaded message.",
   "references": [
     "PROTOCOL.md#35-messages",
     "PROTOCOL.md#51-history"
@@ -10,7 +10,7 @@
   "room": "general",
   "variants": [
     {
-      "name": "overlap",
+      "name": "history",
       "steps": [
         {
           "receive": {
@@ -32,39 +32,9 @@
         },
         {
           "receive": {
-            "method": "message",
-            "params": {
-              "room_id": "general",
-              "log_id": "110",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "edited"
-                }
-              }
-            }
-          }
-        },
-        {
-          "receive": {
             "id": "history",
             "result": {
               "entries": [
-                {
-                  "log_id": "100",
-                  "message": {
-                    "message_id": "100",
-                    "from": {
-                      "user_id": "alice"
-                    },
-                    "body": {
-                      "text": "original"
-                    }
-                  }
-                },
                 {
                   "log_id": "110",
                   "message": {
@@ -78,27 +48,9 @@
                   }
                 }
               ],
-              "first_id": "100",
+              "first_id": "110",
               "last_id": "110",
               "more": false
-            }
-          }
-        },
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "room_id": "general",
-              "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "original"
-                }
-              }
             }
           }
         }

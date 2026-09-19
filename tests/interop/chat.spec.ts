@@ -51,7 +51,7 @@ test.describe('chat protocol interoperability', () => {
 			const messageA = await waitForMessage(pageA, original);
 			await waitForMessage(pageB, original);
 			const eventId = await messageA.getAttribute('data-message-id');
-			expect(eventId, 'message containers must expose the protocol event ID').toBeTruthy();
+			expect(eventId, 'message containers must expose the protocol message ID').toBeTruthy();
 
 			const stableMessageA = pageA.locator(`article[data-message-id="${eventId}"]`);
 			await editMessage(stableMessageA, replacement);
@@ -128,7 +128,7 @@ test.describe('chat protocol interoperability', () => {
 			const beforeMessageA = await waitForMessage(pageA, beforeReconnect);
 			await waitForMessage(pageB, beforeReconnect);
 			const beforeEventId = await beforeMessageA.getAttribute('data-message-id');
-			expect(beforeEventId, 'message containers must expose the protocol event ID').toBeTruthy();
+			expect(beforeEventId, 'message containers must expose the protocol message ID').toBeTruthy();
 
 			await contextA.setOffline(true);
 			// Chromium does not reliably close an established WebSocket when a

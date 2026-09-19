@@ -4,8 +4,8 @@ export interface JsonObject {
 	[key: string]: JsonValue;
 }
 
-export interface Sender extends JsonObject {
-	id: string;
+export interface Identity extends JsonObject {
+	user_id: string;
 	name?: string;
 	avatar?: string;
 }
@@ -26,28 +26,18 @@ export interface Embed extends JsonObject {
 	h?: number;
 }
 
-export interface EventRecord extends JsonObject {
-	event_id: string;
-	sender?: Sender;
-	body?: MessageBody | null;
-	thread?: string;
+export interface MessageRecord extends JsonObject {
+	message_id: string;
+	from: Identity;
+	body?: MessageBody;
+	thread_id?: string;
 	deleted?: boolean;
 }
 
-export interface CreationTransition {
-	kind: 'creation';
-	event: EventRecord;
+export interface Transition {
+	log_id: string;
+	message: MessageRecord;
 }
-
-export interface UpdateTransition {
-	kind: 'update';
-	event_id: string;
-	target: string;
-	set?: JsonObject;
-	replace?: EventRecord;
-}
-
-export type Transition = CreationTransition | UpdateTransition;
 
 export interface ServerParams {
 	protocol: number;
@@ -58,7 +48,7 @@ export interface ServerParams {
 }
 
 export interface RoomAnnouncement {
-	room: string;
+	room_id: string;
 	name?: string;
 	topic?: string;
 	latest_id?: string;
@@ -66,12 +56,11 @@ export interface RoomAnnouncement {
 }
 
 export interface ThreadAnnouncement {
-	room: string;
-	thread: string;
-	name?: string;
+	room_id: string;
+	thread_id: string;
+	title?: string;
 	summary?: string;
-	root?: string;
-	removed?: boolean;
+	root_message_id?: string;
 }
 
 export interface HistoryResult {
@@ -105,35 +94,14 @@ export function isString(value: unknown): value is string {
 	return typeof value === 'string';
 }
 
-export function isEventRecord(value: unknown): value is EventRecord {
-	return isJsonObject(value) && isLogId(value.event_id);
-}
-
-export function isUpdateTransition(value: unknown): value is UpdateTransition {
-	const hasSet = isJsonObject(value) && isJsonObject(value.set);
-	const hasReplace = isJsonObject(value) && isEventRecord(value.replace);
-	return (
-		isJsonObject(value) &&
-		isLogId(value.event_id) &&
-		isLogId(value.target) &&
-		(hasSet !== hasReplace) &&
-		(!hasReplace || (value.replace as EventRecord).event_id === value.target)
-	);
+export function isMessageRecord(value: unknown): value is MessageRecord {
+	return isJsonObject(value) && isLogId(value.message_id) &&
+		isJsonObject(value.from) && typeof value.from.user_id === 'string';
 }
 
 export function toTransition(value: unknown): Transition | null {
-	if (!isJsonObject(value)) return null;
-	if (isUpdateTransition(value)) {
-		return {
-			kind: 'update',
-			event_id: value.event_id,
-			target: value.target,
-			...(isJsonObject(value.set) ? { set: value.set } : {}),
-			...(isEventRecord(value.replace) ? { replace: value.replace } : {})
-		};
-	}
-	if (isEventRecord(value)) return { kind: 'creation', event: value };
-	return null;
+	if (!isJsonObject(value) || !isLogId(value.log_id) || !isMessageRecord(value.message)) return null;
+	return { log_id: value.log_id, message: value.message };
 }
 
 /** Log IDs are positive decimal strings; "0" is only an empty-log boundary. */

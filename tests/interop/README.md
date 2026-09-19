@@ -2,8 +2,8 @@
 
 These tests exercise the SvelteKit client against the Go server through real
 Chromium browser contexts. They cover cross-session broadcasts and history
-recovery, edit/delete update replay including a deleted-message tombstone,
-safe rendering of untrusted markup, and basic phone viewport layout.
+recovery, edit/delete snapshot replay including a deleted-message tombstone,
+thread creation and moves, safe rendering of untrusted markup, and phone viewport layout.
 The desktop suite also reloads a browser while offline, restores connectivity,
 verifies history replay without duplicates, and sends another message.
 

@@ -1,0 +1,651 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "Message saves preserve unedited fields and extensions",
+  "description": "Message saves preserve unedited fields and extensions.",
+  "references": [
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#51-history",
+    "PROTOCOL.md#62-threads"
+  ],
+  "variants": [
+    {
+      "name": "session",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "edit"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "user_id": "alice"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room_id": "general"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "100",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice",
+                  "name": "Alice"
+                },
+                "body": {
+                  "text": "original",
+                  "format": "plain",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ],
+                  "extra": null
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "general",
+                "topic": null,
+                "events": [
+                  {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice",
+                      "name": "Alice"
+                    },
+                    "body": {
+                      "text": "original",
+                      "format": "plain",
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "data": [
+                            1,
+                            null
+                          ]
+                        }
+                      ],
+                      "extra": null
+                    },
+                    "custom": {
+                      "nested": null
+                    },
+                    "__proto__": {
+                      "opaque": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "createThread": {
+            "as": "create",
+            "room": "general",
+            "title": "Deploy",
+            "summary": "Investigation"
+          }
+        },
+        {
+          "request": {
+            "as": "create-request",
+            "match": {
+              "method": "thread",
+              "params": {
+                "room_id": "general",
+                "title": "Deploy",
+                "summary": "Investigation"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "create-request",
+            "result": {
+              "thread_id": "t_server"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "thread",
+            "params": {
+              "room_id": "general",
+              "thread_id": "t_server",
+              "title": "Deploy",
+              "summary": "Investigation"
+            }
+          }
+        },
+        {
+          "expect": {
+            "operations": {
+              "create": "fulfilled"
+            }
+          }
+        },
+        {
+          "moveThread": {
+            "as": "move",
+            "room": "general",
+            "target": "100",
+            "thread_id": "t_server"
+          }
+        },
+        {
+          "request": {
+            "as": "move-request",
+            "match": {
+              "method": "message",
+              "params": {
+                "room_id": "general",
+                "message_id": "100",
+                "body": {
+                  "text": "original",
+                  "format": "plain",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ],
+                  "extra": null
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                },
+                "thread_id": "t_server"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "move-request",
+            "result": {
+              "message_id": "100"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "110",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice",
+                  "name": "Alice"
+                },
+                "body": {
+                  "text": "original",
+                  "format": "plain",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ],
+                  "extra": null
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                },
+                "thread_id": "t_server"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "general",
+                "topic": null,
+                "events": [
+                  {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice",
+                      "name": "Alice"
+                    },
+                    "body": {
+                      "text": "original",
+                      "format": "plain",
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "data": [
+                            1,
+                            null
+                          ]
+                        }
+                      ],
+                      "extra": null
+                    },
+                    "custom": {
+                      "nested": null
+                    },
+                    "__proto__": {
+                      "opaque": true
+                    },
+                    "thread_id": "t_server"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "editMessage": {
+            "as": "edit",
+            "room": "general",
+            "message_id": "100",
+            "text": "edited"
+          }
+        },
+        {
+          "request": {
+            "as": "edit-request",
+            "match": {
+              "method": "message",
+              "params": {
+                "room_id": "general",
+                "message_id": "100",
+                "body": {
+                  "text": "edited",
+                  "format": "plain",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ],
+                  "extra": null
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                },
+                "thread_id": "t_server"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "edit-request",
+            "result": {
+              "message_id": "100"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "120",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice",
+                  "name": "Alice"
+                },
+                "body": {
+                  "text": "edited",
+                  "format": "plain",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ],
+                  "extra": null
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                },
+                "thread_id": "t_server"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "general",
+                "topic": null,
+                "events": [
+                  {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice",
+                      "name": "Alice"
+                    },
+                    "body": {
+                      "text": "edited",
+                      "format": "plain",
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "data": [
+                            1,
+                            null
+                          ]
+                        }
+                      ],
+                      "extra": null
+                    },
+                    "custom": {
+                      "nested": null
+                    },
+                    "__proto__": {
+                      "opaque": true
+                    },
+                    "thread_id": "t_server"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "moveThread": {
+            "as": "return",
+            "room": "general",
+            "target": "100",
+            "thread_id": null
+          }
+        },
+        {
+          "request": {
+            "as": "return-request",
+            "match": {
+              "method": "message",
+              "params": {
+                "room_id": "general",
+                "message_id": "100",
+                "body": {
+                  "text": "edited",
+                  "format": "plain",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ],
+                  "extra": null
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "return-request",
+            "result": {
+              "message_id": "100"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "130",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice",
+                  "name": "Alice"
+                },
+                "body": {
+                  "text": "edited",
+                  "format": "plain",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ],
+                  "extra": null
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "general",
+                "topic": null,
+                "events": [
+                  {
+                    "message_id": "100",
+                    "from": {
+                      "user_id": "alice",
+                      "name": "Alice"
+                    },
+                    "body": {
+                      "text": "edited",
+                      "format": "plain",
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "data": [
+                            1,
+                            null
+                          ]
+                        }
+                      ],
+                      "extra": null
+                    },
+                    "custom": {
+                      "nested": null
+                    },
+                    "__proto__": {
+                      "opaque": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "deleteMessage": {
+            "as": "delete",
+            "room": "general",
+            "message_id": "100"
+          }
+        },
+        {
+          "request": {
+            "as": "delete-request",
+            "match": {
+              "method": "message",
+              "params": {
+                "room_id": "general",
+                "message_id": "100",
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                },
+                "deleted": true
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "delete-request",
+            "result": {
+              "message_id": "100"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "room_id": "general",
+              "log_id": "140",
+              "message": {
+                "message_id": "100",
+                "from": {
+                  "user_id": "alice",
+                  "name": "Alice"
+                },
+                "custom": {
+                  "nested": null
+                },
+                "__proto__": {
+                  "opaque": true
+                },
+                "deleted": true
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "operations": {
+      "create": "fulfilled",
+      "move": "fulfilled",
+      "edit": "fulfilled",
+      "return": "fulfilled",
+      "delete": "fulfilled"
+    },
+    "rooms": [
+      {
+        "id": "general",
+        "name": "general",
+        "topic": null,
+        "events": [
+          {
+            "message_id": "100",
+            "from": {
+              "user_id": "alice",
+              "name": "Alice"
+            },
+            "custom": {
+              "nested": null
+            },
+            "__proto__": {
+              "opaque": true
+            },
+            "deleted": true
+          }
+        ]
+      }
+    ]
+  }
+}

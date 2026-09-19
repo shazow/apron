@@ -1,5 +1,5 @@
 import {
-	applyTransition,
+	applyTransitions,
 	TimelineReplay,
 	compareLogIds,
 	createTimeline,
@@ -11,11 +11,11 @@ import {
 	isLogId,
 	isString,
 	toTransition,
-	type EventRecord,
+	type MessageRecord,
 	type JsonObject,
 	type RpcError,
 	type ServerParams,
-	type Sender,
+	type Identity,
 	type ThreadAnnouncement,
 	type Transition,
 	type WireFrame
@@ -43,7 +43,7 @@ export interface PendingOperation {
 
 export interface TypingSnapshot {
 	room: string;
-	sender: Sender;
+	from: Identity;
 	active: boolean;
 }
 
@@ -51,7 +51,7 @@ export interface ClientSnapshot {
 	status: ConnectionStatus;
 	error?: string;
 	server?: ServerParams;
-	you?: Sender;
+	you?: Identity;
 	rooms: RoomSnapshot[];
 	activeRoom?: string;
 	pending: PendingOperation[];
@@ -97,7 +97,7 @@ interface PendingRequest<T extends JsonObject = JsonObject> {
 
 interface TypingState {
 	room: string;
-	sender: Sender;
+	from: Identity;
 	active: boolean;
 	timer?: ReturnType<typeof setTimeout>;
 }
@@ -121,7 +121,7 @@ export class ChatClient {
 	private authRequested = false;
 	private activeRoomId?: string;
 	private server?: ServerParams;
-	private you?: Sender;
+	private you?: Identity;
 	private displayName = '';
 	private status: ConnectionStatus = 'idle';
 	private error?: string;
@@ -169,7 +169,7 @@ export class ChatClient {
 		});
 		request.promise
 			.then((result) => {
-				if (isJsonObject(result.you) && typeof result.you.id === 'string') this.you = result.you as Sender;
+				if (isJsonObject(result.you) && typeof result.you.user_id === 'string') this.you = result.you as Identity;
 				this.emit();
 			})
 			.catch(() => {
@@ -250,52 +250,81 @@ export class ChatClient {
 				.map(({ id, method, params, createdAt }) => ({
 					id,
 					method,
-					room: typeof params.room === 'string' ? params.room : undefined,
+					room: typeof params.room_id === 'string' ? params.room_id : undefined,
 					createdAt
 				})),
 			typing: [...this.typing.values()]
 				.filter((entry) => entry.active)
-				.map(({ room, sender, active }) => ({ room, sender, active })),
+				.map(({ room, from, active }) => ({ room, from, active })),
 			showReconnectDivider: this.showReconnectDivider
 		};
 	}
 
 	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string): OperationHandle {
-		return this.enqueueRequest('send', {
-			room,
-			body: { text, format },
-			...(thread !== undefined ? { thread } : {})
-		}, { visible: true, allowBeforeAuth: false });
+		return this.saveMessage({ room_id: room, body: { text, format }, ...(thread ? { thread_id: thread } : {}) });
 	}
 
-	/** A fresh ID proposes a thread; null returns the message to the room. */
-	setMessageThread(room: string, target: string, thread: string | null): OperationHandle {
-		return this.enqueueRequest('update_request', {
-			room,
-			target,
-			set: { thread }
-		}, { visible: true, allowBeforeAuth: false });
+	createThread(room: string, metadata: { title?: string; summary?: string; root_message_id?: string } = {}): OperationHandle {
+		return this.enqueueRequest('thread', { room_id: room, ...metadata }, { visible: true, allowBeforeAuth: false });
 	}
 
-	updateMessage(room: string, target: string, text: string, format: 'plain' | 'markdown' = 'markdown'): OperationHandle {
-		return this.enqueueRequest('update_request', {
-			room,
-			target,
-			set: { body: { text, format } }
-		}, { visible: true, allowBeforeAuth: false });
+	private editableMessage(room: string, messageId: string): JsonObject {
+		const message = this.rooms.get(room)?.timeline.events[messageId];
+		if (!message) throw new Error('Message has not been loaded');
+		const { from: _from, ...editable } = message;
+		return { ...editable, room_id: room };
 	}
 
-	deleteMessage(room: string, target: string): OperationHandle {
-		return this.enqueueRequest('update_request', {
-			room,
-			target,
-			set: { deleted: true, body: null }
-		}, { visible: true, allowBeforeAuth: false });
+	private saveMessage(params: JsonObject): OperationHandle {
+		return this.enqueueRequest('message', params, { visible: true, allowBeforeAuth: false });
+	}
+
+	setMessageThread(room: string, messageId: string, thread: string | null): OperationHandle {
+		const params = this.editableMessage(room, messageId);
+		if (thread === null) delete params.thread_id;
+		else params.thread_id = thread;
+		return this.saveMessage(params);
+	}
+
+	updateMessage(room: string, messageId: string, text: string, format?: 'plain' | 'markdown'): OperationHandle {
+		const params = this.editableMessage(room, messageId);
+		params.body = { ...(isJsonObject(params.body) ? params.body : {}), text, ...(format ? { format } : {}) };
+		return this.saveMessage(params);
+	}
+
+	deleteMessage(room: string, messageId: string): OperationHandle {
+		const params = this.editableMessage(room, messageId);
+		params.deleted = true;
+		delete params.body;
+		return this.saveMessage(params);
 	}
 
 	sendTyping(room: string, active: boolean): void {
 		if (!this.authenticated || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-		this.sendFrame({ method: 'typing', params: { room, active, timeout: 8 } });
+		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: 8 } });
+	}
+
+	/** Fetch a thread independently; its progress never advances room history coverage. */
+	async loadThread(roomId: string, threadId: string): Promise<void> {
+		const room = this.rooms.get(roomId);
+		if (!room || !this.server?.caps?.includes('history')) return;
+		const head = room.latestId;
+		if (!head || head === '0') return;
+		let after = '0';
+		do {
+			const result = await this.enqueueRequest('history', {
+				room_id: roomId, thread_id: threadId, after, before: head, limit: HISTORY_PAGE_SIZE
+			}, { visible: false, allowBeforeAuth: false }).promise;
+			if (this.rooms.get(roomId) !== room) return;
+			if (!Array.isArray(result.entries) || typeof result.more !== 'boolean') throw new Error('Invalid history response');
+			const transitions = result.entries.map(toTransition).filter((entry): entry is Transition => Boolean(entry));
+			this.acceptTransitions(roomId, transitions);
+			if (!result.more) return;
+			if (!isLogId(result.last_id) || compareLogIds(result.last_id, after) < 0 || compareLogIds(result.last_id, head) >= 0) {
+				throw new Error('Invalid history continuation');
+			}
+			after = incrementLogId(result.last_id);
+		} while (compareLogIds(after, head) <= 0);
 	}
 
 	private connectNow(): void {
@@ -372,12 +401,8 @@ export class ChatClient {
 			this.handleThread(frame.params);
 			return;
 		}
-		if (frame.method === 'event') {
-			this.handleEvent(frame.params);
-			return;
-		}
-		if (frame.method === 'update') {
-			this.handleUpdate(frame.params);
+		if (frame.method === 'message') {
+			this.handleSnapshot(frame.params);
 			return;
 		}
 		if (frame.method === 'typing') {
@@ -419,12 +444,12 @@ export class ChatClient {
 
 	private handleAuth(result: JsonObject): void {
 		const identity = result.you;
-		if (!isJsonObject(identity) || typeof identity.id !== 'string') {
+		if (!isJsonObject(identity) || typeof identity.user_id !== 'string') {
 			this.error = 'Server authentication response did not include an identity';
 			this.emit();
 			return;
 		}
-		this.you = identity as Sender;
+		this.you = identity as Identity;
 		this.authenticated = true;
 		this.authRequested = false;
 		this.reconnectAttempt = 0;
@@ -434,8 +459,8 @@ export class ChatClient {
 	}
 
 	private handleRoom(params: JsonObject | undefined): void {
-		if (!params || typeof params.room !== 'string') return;
-		const roomId = params.room;
+		if (!params || typeof params.room_id !== 'string') return;
+		const roomId = params.room_id;
 		if (params.removed === true) {
 			this.rooms.delete(roomId);
 			if (this.activeRoomId === roomId) this.activeRoomId = this.rooms.keys().next().value;
@@ -453,7 +478,7 @@ export class ChatClient {
 		};
 		room.name = typeof params.name === 'string' ? params.name : roomId;
 		room.topic = typeof params.topic === 'string' ? params.topic : undefined;
-		if (isLogId(params.latest_id)) room.latestId = params.latest_id;
+		if (params.latest_id === '0' || isLogId(params.latest_id)) room.latestId = params.latest_id;
 		this.rooms.set(roomId, room);
 		this.activeRoomId ??= roomId;
 		if (this.server?.caps?.includes('history') && isLogId(params.latest_id) && !room.recovery) {
@@ -463,22 +488,16 @@ export class ChatClient {
 	}
 
 	private handleThread(params: JsonObject | undefined): void {
-		if (!params || typeof params.room !== 'string' || typeof params.thread !== 'string') return;
-		const room = this.rooms.get(params.room);
+		if (!params || typeof params.room_id !== 'string' || typeof params.thread_id !== 'string') return;
+		const room = this.rooms.get(params.room_id);
 		if (!room) return;
-		const remaining = room.threads.filter((thread) => thread.thread !== params.thread);
-		if (params.removed === true) {
-			room.threads = remaining;
-		} else {
-			const thread: ThreadAnnouncement = {
-				room: params.room,
-				thread: params.thread,
-				name: typeof params.name === 'string' ? params.name : params.thread,
-				...(typeof params.summary === 'string' ? { summary: params.summary } : {}),
-				...(isLogId(params.root) ? { root: params.root } : {})
-			};
-			room.threads = [...remaining, thread];
-		}
+		const thread: ThreadAnnouncement = {
+			room_id: params.room_id, thread_id: params.thread_id,
+			...(typeof params.title === 'string' ? { title: params.title } : {}),
+			...(typeof params.summary === 'string' ? { summary: params.summary } : {}),
+			...(isLogId(params.root_message_id) ? { root_message_id: params.root_message_id } : {})
+		};
+		room.threads = [...room.threads.filter((entry) => entry.thread_id !== params.thread_id), thread];
 		this.emit();
 	}
 
@@ -497,7 +516,7 @@ export class ChatClient {
 		const recovery = room.recovery;
 		if (!recovery || !this.authenticated) return;
 		const request = this.enqueueRequest('history', {
-			room: room.id,
+			room_id: room.id,
 			after: recovery.nextAfter,
 			before: recovery.head,
 			limit: HISTORY_PAGE_SIZE
@@ -556,34 +575,27 @@ export class ChatClient {
 		this.showReconnectDivider = false;
 	}
 
-	private handleEvent(params: JsonObject | undefined): void {
-		if (!params || typeof params.room !== 'string') return;
-		const transition = toTransition(params.event);
-		if (!transition || transition.kind !== 'creation') return;
-		this.acceptTransition(params.room, transition);
-	}
-
-	private handleUpdate(params: JsonObject | undefined): void {
-		if (!params || typeof params.room !== 'string') return;
+	private handleSnapshot(params: JsonObject | undefined): void {
+		if (!params || typeof params.room_id !== 'string') return;
 		const transition = toTransition(params);
-		if (!transition || transition.kind !== 'update') return;
-		this.acceptTransition(params.room, transition);
+		if (transition) this.acceptTransitions(params.room_id, [transition]);
 	}
 
-	private acceptTransition(roomId: string, transition: Transition): void {
+	private acceptTransitions(roomId: string, transitions: Transition[]): void {
 		const room = this.rooms.get(roomId);
 		if (!room) return;
-		const id = transitionId(transition);
-		if (isLogId(id) && (!room.latestId || compareLogIds(id, room.latestId) > 0)) room.latestId = id;
-		if (room.recovery) room.recovery.buffer.push(transition);
-		else room.timeline = applyTransition(room.timeline, transition);
+		for (const { log_id } of transitions) {
+			if (!room.latestId || compareLogIds(log_id, room.latestId) > 0) room.latestId = log_id;
+		}
+		if (room.recovery) room.recovery.buffer.push(...transitions);
+		else room.timeline = applyTransitions(room.timeline, transitions);
 		this.emit();
 	}
 
 	private handleTyping(params: JsonObject | undefined): void {
-		if (!params || typeof params.room !== 'string' || !isJsonObject(params.sender)) return;
-		if (typeof params.sender.id !== 'string') return;
-		const key = `${params.room}:${params.sender.id}`;
+		if (!params || typeof params.room_id !== 'string' || !isJsonObject(params.from)) return;
+		if (typeof params.from.user_id !== 'string') return;
+		const key = `${params.room_id}:${params.from.user_id}`;
 		const current = this.typing.get(key);
 		if (current?.timer) clearTimeout(current.timer);
 		const active = params.active !== false;
@@ -594,8 +606,8 @@ export class ChatClient {
 		}
 		const timeout = typeof params.timeout === 'number' && params.timeout > 0 ? params.timeout : 10;
 		const state: TypingState = {
-			room: params.room,
-			sender: params.sender as Sender,
+			room: params.room_id,
+			from: params.from as Identity,
 			active: true,
 			timer: setTimeout(() => {
 				this.typing.delete(key);
@@ -731,7 +743,7 @@ export class ChatClient {
 	}
 }
 
-export function timelineMessages(room: RoomSnapshot | undefined): EventRecord[] {
+export function timelineMessages(room: RoomSnapshot | undefined): MessageRecord[] {
 	return room ? timelineEvents(room.timeline) : [];
 }
 
@@ -775,5 +787,5 @@ function incrementLogId(id: string): string {
 }
 
 function transitionId(transition: Transition): string {
-	return transition.kind === 'creation' ? transition.event.event_id : transition.event_id;
+	return transition.log_id;
 }

@@ -30,8 +30,15 @@ system's React components one to one. Re-copy `apron.css` when the design
 system changes rather than editing it here.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol`. History recovery captures the room head, pages raw or
-rastered transitions from the empty-log boundary, buffers live transitions,
-and replays the buffer after the checkpoint. The reducer preserves unknown
-event fields, enforces immutable creation IDs, and applies RFC 7396 merge
-patches.
+`src/lib/protocol`. Room history recovery captures the room head, pages complete
+snapshots from the empty-log boundary, and buffers live snapshots until recovery
+finishes. Opening a thread fetches its history independently with `thread_id` and
+a fixed head. The reducer installs the greatest `log_id` for each `message_id`,
+so overlapping history and live delivery cannot revert newer state.
+
+Edits, moves, and deletion use the same `message` request as creation, with an
+existing `message_id` and complete editable state. The client preserves unknown
+extensions, embeds, and other fields it is not changing. Starting a thread first
+requests server-assigned metadata through `thread`, then saves the message with
+the returned `thread_id`. Thread titles fall back to the root excerpt or ID in
+the UI; empty threads remain available.

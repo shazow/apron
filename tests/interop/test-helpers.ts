@@ -30,7 +30,7 @@ export async function waitForMessage(page: Page, text: string): Promise<Locator>
 
 export async function waitForDeletedMessage(page: Page, eventId: string): Promise<Locator> {
 	const message = page.locator(`article[data-message-id="${eventId}"]`);
-	await expect(message, `deleted message did not appear for event ${eventId}`).toBeVisible();
+	await expect(message, `deleted message did not appear for message ${eventId}`).toBeVisible();
 	await expect(message.getByText('Message deleted', { exact: true })).toBeVisible();
 	return message;
 }
