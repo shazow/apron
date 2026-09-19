@@ -27,6 +27,8 @@ frontend.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications. Unknown *fields* in
   known methods MUST be ignored by both sides.
+- Missing required method fields or incorrect field types yield
+  `error/invalid_params`; notifications receive no reply.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped without a reply. The limit is advisory, not a conformance requirement.
@@ -158,9 +160,11 @@ unprompted. There is no client hello.
 }
 ```
 
-- `protocol`: integer. Current value `2`.
-- `caps`: capability identifiers (§4). MAY be empty.
-- `auth`: supported auth methods (§3.2), in server preference order.
+- `protocol`: required integer. Current value `2`.
+- `name`: optional implementation/version string.
+- `caps`: array of capability strings (§4), default `[]`.
+- `auth`: required nonempty array of supported auth-method strings (§3.2),
+  in server preference order.
 - `upload`: present iff cap `upload` (§6.1).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
@@ -200,8 +204,9 @@ sender inline. There is no user directory and no profile state.
 "sender": {"id": "alice", "name": "Alice", "avatar": "https://..."}
 ```
 
-`id` is stable; `name`/`avatar` are advisory display data, current as of that
-event. Rename request (server MAY comply, decline, or alter):
+`id` is required and stable. `name`/`avatar` are optional advisory strings,
+current as of that event; absent `name` falls back to `id`. Rename request
+(server MAY comply, decline, or alter):
 
 ```json
 → {"method": "nick", "id": "c2", "params": {"name": "Alice ⚙"}}
@@ -223,8 +228,9 @@ these announcements:
 ```
 
 Re-sending `room` fully replaces its metadata; omitted optional fields are
-cleared. Servers MUST emit `removed: true` when a room leaves the client's
-visible set. This withdraws the room and its thread metadata from the current
+cleared. `room` is required; `name` and `topic` are optional strings, with
+`name` defaulting to `room`. Servers MUST emit `removed: true` when a room
+leaves the client's visible set. This withdraws the room and its thread metadata from the current
 view; only `room` and `removed` are required:
 
 ```json
@@ -276,9 +282,14 @@ Broadcast (to all clients in the room, including the sender):
 }
 ```
 
-- `body.format` ∈ `"plain" | "markdown"`. Both are mandatory to render;
-  `markdown` is the expected default (CommonMark; fenced code blocks with
-  language-tagged syntax highlighting are the baseline rich-content path).
+- `send` requires string `room` and object `body`. Body fields are optional:
+  string `text` defaults to `""`; `format` defaults to `"markdown"`;
+  arrays `attachments` and `embeds` default to `[]`. Attachment-only messages
+  are valid; acceptance of empty messages is backend policy. Defaults apply
+  when interpreting message bodies, not when applying merge patches (§5.3).
+- `body.format` ∈ `"plain" | "markdown"`. Both are mandatory to render.
+  Markdown uses CommonMark; fenced code blocks with language-tagged syntax
+  highlighting are the baseline rich-content path.
   Renderers SHOULD disable raw inline HTML passthrough — CommonMark permits it
   by default, and enabling it reopens the sanitization hole that §6.4
   deliberately closes.
@@ -588,8 +599,8 @@ frame:
 }
 ```
 
-`root` is optional advisory metadata (the event the thread grew from), not a
-protocol mechanism.
+`room` and `thread` are required. `name` and `summary` are optional strings;
+`name` defaults to `thread`. `root` is an optional advisory event ID.
 
 Thread announcements fully replace metadata. Servers MUST re-announce current
 visible thread metadata after authentication, following the containing room's

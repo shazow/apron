@@ -180,19 +180,16 @@ of representation. Empty source slices omit both IDs and return `more: false`.
 
 Reference: PROTOCOL.md §§3.1, 3.3–3.5, 6.1–6.3.
 
-The initial `server` example includes `upload` without its capability; align it
-with the stated “present iff” rule.
+Decision: `server` requires `protocol` and nonempty `auth`; `caps` defaults to
+`[]`. Sender and room/thread identifiers are required; display metadata is
+optional, with names defaulting to IDs. `send` requires `room` and object `body`;
+body defaults are `text: ""`, `format: "markdown"`, and empty attachment/embed
+arrays. Attachment-only messages are valid; empty-message acceptance is backend
+policy. Defaults do not modify merge patches. Missing required method fields
+or incorrect types yield `invalid_params`; notifications receive no reply.
+The upload example is corrected; question 6 defines metadata replacement.
 
-Progress: The `upload` capability is now included in that example. The other
-field/default and metadata questions below remain open.
-
-Specify required fields and defaults, whether attachment-only messages may
-omit text, and how malformed requests are handled. Clarify whether re-sent
-room/thread metadata frames merge or replace previous metadata, including how
-optional fields are cleared.
-
-Progress: Question 6 defines replacement, omission, and removal semantics for
-room/thread metadata. Other required-field and default questions remain open.
+Review complete; awaiting confirmation before advancing.
 
 ## 13. Markdown HTML and the content trust model
 
