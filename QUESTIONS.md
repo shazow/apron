@@ -49,9 +49,7 @@ and unknown-target handling remain implementation-defined.
 
 ## 3. Replay and optional rastered history
 
-- [ ] Resolved
-
-Review in progress; recorded design awaits confirmation before advancing.
+- [x] Resolved
 
 Reference: PROTOCOL.md §§5.1, 5.3.
 
