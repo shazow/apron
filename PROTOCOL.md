@@ -118,9 +118,8 @@ Recommended generator: `id = str(max(unix_epoch_ms(), last_id + 1))`.
 - Ordering within a room is by log ID. Cross-room ordering is approximate.
   On a live connection, servers MUST deliver a room's entries (`event` and
   `update` frames) in ascending log-ID order.
-- Log IDs are unique only within a room on a single server. Clients
-  aggregating multiple servers MUST key entries by
-  *(connection, room, log_id)*; two servers are two clocks and WILL collide.
+- Log IDs are unique only within a room on a single server. Log namespacing
+  is client-defined.
 
 **Opaque IDs** (rooms, threads, sessions, sender IDs, client request `id`s)
 are arbitrary strings chosen by whichever side mints them. Servers SHOULD
@@ -746,9 +745,8 @@ The aggregator is a dumb pipe: it never parses inner frames, holds no
 protocol state beyond the `conn`↔upstream-socket mapping, and adds no trust
 surface — the backend remains authoritative end to end, which keeps this layer
 compatible with any future end-to-end encryption of frame contents. Client
-support is a thin demux shim feeding N unmodified protocol sessions; per §2,
-event storage is keyed by *(connection, room, event_id)* regardless of whether
-connections arrive muxed or on separate sockets.
+support is a thin demux shim feeding N unmodified protocol sessions. Log
+namespacing remains client-defined (§2).
 
 ---
 

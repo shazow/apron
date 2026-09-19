@@ -89,8 +89,11 @@ implementation-defined; recommend `str(max(unix_epoch_ms(), last_id + 1))`.
 Derived timestamps are approximate. No separate counter range, overflow rule,
 or restart procedure. Design assumes fewer than 1,000 entries/sec per room.
 
-Open: Does `connection` in storage keys denote stable backend identity across
-reconnects rather than a socket instance?
+Decision: Log namespacing and reconnect association are client-defined. Remove
+the prescribed storage tuple; retain only per-room, per-server ID uniqueness.
+Server IDs and identity proofs are deferred.
+
+Review complete; awaiting confirmation before advancing.
 
 ## 6. Room and thread metadata lifecycle
 
