@@ -533,9 +533,8 @@ broadcast (and store) it as
 `"set": {"redacted": true, "body": null, "attachments": null, "embeds": null}` —
 merge-patch `null` deletion strips the reduced event state. Raw replay may
 still contain earlier content; rastered state after redaction omits it.
-Clients render redacted events as tombstones.
-
-XXX: Retrieval and media-retention policy remain unresolved (QUESTIONS.md §4).
+Clients render redacted events as tombstones. Content and media retention
+policies are implementation-defined.
 
 ---
 

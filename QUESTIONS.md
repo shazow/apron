@@ -73,12 +73,10 @@ and continuation use those bounds. Initial replay starts at `"0"`, bounded by
 
 Reference: PROTOCOL.md §§5.1, 5.3, 6.1.
 
-Does redaction mean hiding content or stopping the server from returning it?
-Raw replay contains original events and previous edits even after redaction;
-reduced state omits the content. Uploaded media also has its own lifetime.
+Decision: Redaction produces a tombstone; raw history may retain earlier content.
+Content and media retention policies are implementation-defined.
 
-Is redaction presentation-only? If future retrieval must exclude the content,
-define the additional replay and media-retention rules.
+Open: retain `redact`/`redacted` or rename them to `delete`/`deleted`?
 
 ## 5. Log timestamps and identity across reconnects
 
