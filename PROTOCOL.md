@@ -15,16 +15,13 @@ frontend.
 - One WebSocket connection. Each WebSocket text message contains exactly one JSON
   object (a **frame**). No batching, no newline-delimited streams.
 - The RECOMMENDED envelope follows [JSON-RPC 2.0](https://www.jsonrpc.org/specification),
-  with the Apron conventions in §1.1. `jsonrpc` and request `id` are optional;
-  receivers MUST accept their omission. Omitting `jsonrpc` is an Apron
-  shorthand, not a standard JSON-RPC 2.0 envelope.
+  with §1.1 extensions. Receivers MUST accept omitted `jsonrpc` and request
+  `id`. Omitted `jsonrpc` is an Apron extension to JSON-RPC 2.0.
 - **Calls** have a string `method` and an object `params` (omission means `{}`).
-  Method-specific fields live in `params`, not at the envelope's top level.
-  The names “`server` frame”, “`event` frame”, etc. refer to these methods.
+  Method-specific fields reside in `params`. Frame names denote methods.
 - A call with `id` is a **request**; its reply echoes `id` and contains exactly
   one of `result` or `error`. A call without `id` is a **notification** and
-  MUST NOT receive a reply, including on failure. A notification can still
-  cause normal effects such as room announcements or message broadcasts.
+  MUST NOT receive a reply, including on failure; method side effects still apply.
 - Requests MAY be pipelined; the server processes them in order but MAY reply
   out of order. Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
@@ -32,18 +29,16 @@ frontend.
   known methods MUST be ignored by both sides.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
-  be dropped without a reply. This is a suggested soft limit,
-  not a conformance requirement.
+  be dropped without a reply. The limit is advisory, not a conformance requirement.
 - Liveness rides on WebSocket ping/pong at the transport layer. There is no
   application-level heartbeat; do not invent one.
 
 ### 1.1 Envelope and replies
 
 `jsonrpc`, when present, MUST be `"2.0"`; senders SHOULD include it. Request
-`id`, when present, MUST be a string (§2). Clients SHOULD include `id` when
-they need a result or want to identify retries, particularly for `auth`,
-`history`, and mutations. Notifications omit `id`; event/update log IDs belong
-in their `params` payloads and do not solicit replies.
+`id`, when present, MUST be a string (§2). Clients SHOULD include `id` for
+result correlation or retries, including `auth`, `history`, and mutations.
+Notifications omit `id`; event/update log IDs reside in `params`.
 
 ```json
 → {"jsonrpc": "2.0", "method": "send", "id": "c42",
@@ -51,24 +46,21 @@ in their `params` payloads and do not solicit replies.
 ← {"jsonrpc": "2.0", "id": "c42", "result": {"event_id": "1724803200042"}}
 ```
 
-The same call without `jsonrpc` is valid Apron. A fire-and-forget send may
-omit both optional keys:
+A notification may omit both optional keys:
 
 ```json
 {"method": "send", "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}}
 ```
 
-Successful replies put all returned fields in a `result` object; an operation
-with no returned fields uses `{}`. Errors have an integer `code`, a human-readable
-string `message`, and optional `data`, following JSON-RPC 2.0:
+Success returns a `result` object (`{}` if empty). Errors contain integer
+`code`, string `message`, and optional `data`:
 
 ```json
 {"jsonrpc": "2.0", "id": "c42", "error": {"code": -32601, "message": "Unsupported method"}}
 {"jsonrpc": "2.0", "id": "c43", "error": {"code": -32002, "message": "Try later", "data": {"ms": 1000}}}
 ```
 
-Names such as `error/unsupported` in this document are shorthand for these
-numeric codes, not additional wire fields:
+`error/<name>` denotes the following numeric codes:
 
 | code   | name             | meaning                                      |
 |--------|------------------|----------------------------------------------|
@@ -88,27 +80,23 @@ still receive no error replies. Examples below omit `jsonrpc` for brevity.
 
 ### 1.2 Retries and recommended deduplication
 
-Clients retrying an operation SHOULD reuse its original `id`, `method`, and
-`params`, including after reconnect. A different operation MUST use a new ID;
-changing parameters is a new operation. `jsonrpc` presence and JSON object key
-order do not change the identity of a retry.
+Retries SHOULD preserve `id`, `method`, and `params` across reconnects. New
+operations, including changed parameters, MUST use new IDs. Deduplication
+ignores `jsonrpc` presence and object key order.
 
-Servers SHOULD deduplicate repeated requests by `id` within the authenticated
-sender's namespace. For a recognized duplicate of an accepted operation, the
-server SHOULD return the original result without performing the operation or
-broadcasting its effects again. Repeated IDs with different methods or
-parameters SHOULD be rejected with `invalid_params`. Implementations following
-this recommendation SHOULD handle concurrent copies as a single operation.
+Servers SHOULD deduplicate by `(authenticated sender, id)`, return the original
+result for accepted duplicates without re-execution or rebroadcast, reject
+conflicting methods/parameters with `invalid_params`, and coalesce concurrent
+duplicates.
 
-Deduplication is best effort: retention duration and survival across reconnects
-or server restarts are implementation-defined. It requires no new handshake,
-capability, or per-client session state; a server may retain accepted request
-IDs with stored operations. Before authentication, IDs are scoped to the
-connection; authentication itself MUST still be performed on each connection.
+Retention and persistence across reconnects/restarts are implementation-defined.
+Request IDs may be stored with accepted operations; no additional handshake or
+capability is required. Pre-authentication IDs are connection-scoped;
+authentication MUST execute on each connection.
 
-Servers MAY process retries again, including assigning fresh event/update IDs.
-Duplicate messages are therefore allowed, and clients MUST NOT assume
-exactly-once delivery. Calls without `id` have no request-level deduplication.
+Servers MAY re-execute retries with fresh log IDs. Duplicates are allowed;
+clients MUST NOT assume exactly-once delivery. Notifications have no
+request-level deduplication.
 
 ---
 

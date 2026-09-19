@@ -1,8 +1,9 @@
 # Protocol review questions
 
 Review of [README.md](README.md) and [PROTOCOL.md](PROTOCOL.md).
-Work through these in order, recording each decision and any corresponding
-specification changes before marking the item resolved.
+Edit scope: `PROTOCOL.md` and `QUESTIONS.md` only. Use technical, dense, brief
+prose for senior implementers. Resolve items sequentially; record decisions
+and specification changes before checking them off.
 
 XXX: Unchecked questions remain unresolved; proposed directions for those items
 are discussion options, not protocol requirements.
@@ -13,28 +14,16 @@ are discussion options, not protocol requirements.
 
 Reference: PROTOCOL.md §§1, 2, 3.5.
 
-Are duplicate messages after reconnect acceptable? `echo` reconciles a pending
-send, but cannot prevent duplicates across clients or history. If the server
-accepts a send, the connection drops before acknowledgement, and the client
-retries, the server may store two events with different IDs. Other clients
-display both.
+Issue: Lost acknowledgements permit retries to create distinct log events;
+`echo` provides correlation, not deduplication.
 
-Should the protocol explicitly allow duplicates, or support a persistent
-idempotency key? The current claim about preventing silent duplicates needs
-narrowing unless the protocol adds a mechanism to guarantee it. If deduplication
-is supported, define its scope and retention period, and how retry identity
-survives reconnects.
-
-Decision: Recommend a JSON-RPC 2.0 envelope with optional `jsonrpc` and request
-`id`. Omitting `jsonrpc` is an Apron shorthand; omitting `id` makes a call a
-notification with no reply. Calls use `method`/`params`; replies use
-`result`/`error`. Retry the same operation with the same ID. Servers SHOULD
-deduplicate by ID within the authenticated sender's namespace and return the
-original result without repeating the operation. Deduplication and its
-retention are best effort; duplicates remain explicitly allowed. No additional
-client-instance handshake or separate message ID is required. Request IDs
-remain distinct from server-assigned log IDs. The revised wire envelope bumps
-the draft protocol to `1` under §8.
+Decision: Recommend JSON-RPC 2.0 `method`/`params` and `result`/`error`, with
+optional `jsonrpc` and request `id`. Omitted `jsonrpc` is an Apron extension;
+omitted `id` means notification/no reply. Retry with the same ID. Servers SHOULD
+deduplicate by `(authenticated sender, id)` and return the original result
+without re-execution. Retention is implementation-defined; duplicates remain
+allowed. No new handshake or message ID. Request IDs remain separate from log
+IDs. Envelope changes bump `protocol` to `1` under §8.
 
 ## 2. Live traffic during history recovery
 
