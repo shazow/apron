@@ -195,9 +195,11 @@ The upload example is corrected; question 6 defines metadata replacement.
 
 Reference: PROTOCOL.md §§3.5, 6.4.
 
-Markdown rendering only recommends disabling raw HTML, while `embed.html`
-requires sanitization. Should raw Markdown HTML be required to be disabled or
-sanitized to enforce the same content trust model?
+Decision: Clients MUST disable raw HTML in Markdown or sanitize rendered HTML
+using the same allowlist policy as `embed.html`. Renderer and sanitizer choice
+remain implementation-defined.
+
+Review complete; awaiting confirmation before advancing.
 
 ## 14. Conformance authority and missing companion artifacts
 

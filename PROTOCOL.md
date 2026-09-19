@@ -290,9 +290,8 @@ Broadcast (to all clients in the room, including the sender):
 - `body.format` ∈ `"plain" | "markdown"`. Both are mandatory to render.
   Markdown uses CommonMark; fenced code blocks with language-tagged syntax
   highlighting are the baseline rich-content path.
-  Renderers SHOULD disable raw inline HTML passthrough — CommonMark permits it
-  by default, and enabling it reopens the sanitization hole that §6.4
-  deliberately closes.
+  Clients MUST disable raw HTML in Markdown or sanitize rendered HTML using
+  the same allowlist policy as `embed.html` (§6.4).
 - **Echo:** the broadcast `event` for a client-originated `send` with `id`
   carries `params.echo` = the originating request `id`. Omit `echo` for sends
   without `id`. Clients match `echo` against their own pending sends to
