@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { composer, deleteMessage, openChat, sendMessage, waitForMessage } from './test-helpers';
+import { composer, deleteMessage, messageAction, openChat, sendMessage, waitForMessage } from './test-helpers';
 
 test('chat remains usable without horizontal overflow on a phone viewport', async ({ page }) => {
 	await openChat(page);
@@ -20,9 +20,12 @@ test('thread replies and deleted roots remain usable on a phone viewport', async
 	await sendMessage(page, text);
 	const root = await waitForMessage(page, text);
 	const rootId = await root.getAttribute('data-message-id');
-	await root.getByTestId('start-thread').click();
+	await (await messageAction(root, 'Start thread')).click();
 	await expect(page.getByRole('button', { name: 'Back to room', exact: true })).toBeVisible();
+	// Under 720px the room list is its own page; open it to read the active thread row.
+	await page.getByRole('button', { name: 'Back to rooms', exact: true }).click();
 	const threadId = await page.locator('[data-thread][aria-current="page"]').getAttribute('data-thread');
+	await page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
 	const rootInThread = page.locator(`article[data-message-id="${rootId}"]`);
 	await expect(rootInThread.locator('.markdown')).toContainText(text.trim());
 	const reply = `mobile-reply-${Date.now()}`;
@@ -37,6 +40,7 @@ test('thread replies and deleted roots remain usable on a phone viewport', async
 	const tombstone = page.locator(`article[data-message-id="${rootId}"]`);
 	await expect(tombstone).toHaveCount(0);
 	await expect(page.locator(`article[data-message-id="${replyId}"]`)).toHaveCount(0);
+	await page.getByRole('button', { name: 'Back to rooms', exact: true }).click();
 	await page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
 	await expect(tombstone.getByText('Message deleted', { exact: true })).toBeVisible();
 	await expect(await waitForMessage(page, reply)).toBeVisible();

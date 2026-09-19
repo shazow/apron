@@ -35,8 +35,22 @@ export async function waitForDeletedMessage(page: Page, eventId: string): Promis
 	return message;
 }
 
+/** The message action toolbar shows on hover or focus, so reveal it before clicking. */
+export async function messageAction(message: Locator, name: string): Promise<Locator> {
+	await message.hover();
+	const button = message.getByRole('button', { name, exact: true });
+	await expect(button).toBeVisible();
+	return button;
+}
+
+/** Opens the toolbar's "More" menu, where Move and Delete live. */
+export async function moreAction(message: Locator, name: string): Promise<Locator> {
+	await (await messageAction(message, 'More actions')).click();
+	return message.getByRole('button', { name, exact: true });
+}
+
 export async function editMessage(message: Locator, text: string): Promise<void> {
-	await message.getByRole('button', { name: 'Edit message', exact: true }).click();
+	await (await messageAction(message, 'Edit message')).click();
 	const editor = message.getByRole('textbox', { name: 'Edit message', exact: true });
 	await expect(editor).toBeVisible();
 	await editor.fill(text);
@@ -45,5 +59,5 @@ export async function editMessage(message: Locator, text: string): Promise<void>
 
 export async function deleteMessage(page: Page, message: Locator): Promise<void> {
 	page.once('dialog', (dialog) => dialog.accept());
-	await message.getByRole('button', { name: 'Delete message', exact: true }).click();
+	await (await moreAction(message, 'Delete message')).click();
 }

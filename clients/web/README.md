@@ -15,10 +15,19 @@ npm run build     # writes the static site to build/
 npm run preview
 ```
 
-The default connection is same-origin `/ws` in a browser. The Connection
-settings panel accepts a WebSocket URL or an HTTP(S) server base URL and stores
-it in local storage. Display names are sent with the protocol `nick` request
-after anonymous authentication.
+The default connection is same-origin `/ws` in a browser. The Connect popover
+in the sidebar header accepts a WebSocket URL or an HTTP(S) server base URL and
+stores it in local storage. The profile bar at the foot of the sidebar edits
+your handle, which is sent with the protocol `nick` request after anonymous
+authentication; the editor shows what the server actually kept.
+
+The UI follows the Apron design system. `src/lib/design/tokens.css` holds its
+color, type, spacing, radius and size tokens as CSS custom properties (dark is
+the reference theme; light follows `prefers-color-scheme`), and
+`src/lib/design/apron.css` is the design system's component stylesheet copied
+verbatim, so every `ap-*` class in `src/routes/+page.svelte` matches the
+system's React components one to one. Re-copy `apron.css` when the design
+system changes rather than editing it here.
 
 Protocol types, replay reduction, and the WebSocket session live under
 `src/lib/protocol`. History recovery captures the room head, pages raw or

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import '$lib/design/tokens.css';
+	import '$lib/design/apron.css';
 	import favicon from '$lib/assets/favicon.svg';
 
 	let { children } = $props();

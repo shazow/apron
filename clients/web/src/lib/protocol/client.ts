@@ -149,14 +149,20 @@ export class ChatClient {
 		if (this.running) this.restart();
 	}
 
-	setDisplayName(displayName: string): void {
+	/**
+	 * Sets the handle sent with the protocol `nick` request. When authenticated
+	 * the request goes out at once and its handle is returned so the caller can
+	 * show what the server actually kept.
+	 */
+	setDisplayName(displayName: string): OperationHandle | undefined {
 		this.displayName = displayName.trim();
 		if (this.authenticated && this.displayName) {
-			this.sendNick();
+			return this.sendNick();
 		}
+		return undefined;
 	}
 
-	private sendNick(): void {
+	private sendNick(): OperationHandle {
 		const request = this.enqueueRequest('nick', { name: this.displayName }, {
 			visible: false,
 			allowBeforeAuth: false
@@ -169,6 +175,7 @@ export class ChatClient {
 			.catch(() => {
 				// Nick is advisory; a server may reject it without affecting the session.
 			});
+		return request;
 	}
 
 	start(): void {

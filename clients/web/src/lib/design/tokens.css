@@ -1,0 +1,105 @@
+/* Apron design tokens (project/tokens.json). Dark is the reference theme; light is its equal.
+   Two hues with jobs: accent (rust) is what you can do, denim is where you can go.
+   Every other color is a status and always carries a word. */
+:root {
+	color-scheme: dark light;
+
+	/* Grounds step by depth: rail < chrome < timeline < raised < hover. */
+	--bg-rail: #0b0b12;
+	--bg-000: #10101a;
+	--bg-100: #15151f;
+	--bg-200: #1d1d29;
+	--bg-300: #282835;
+	--line: #2a2a38;
+	--line-strong: #6d6d80;
+	--ink: #ece9e4;
+	--ink-muted: #a8a6b2;
+	--accent: #f28a3c;
+	--on-accent: #1c0f07;
+	--accent-soft: #3a2820;
+	--denim: #8fb0f5;
+	--denim-soft: #1e2b48;
+	--focus: var(--accent);
+	--danger: #ff6f86;
+	--warn: #d6b24c;
+	--ok: #62c287;
+	--shadow-popover: 0 8px 24px rgba(4, 4, 10, 0.6);
+	--shadow-float: 0 2px 8px rgba(4, 4, 10, 0.55);
+
+	/* Type: system faces only; Apron ships no font files. */
+	--font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+	/* Spacing: the 4px scale. */
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-6: 24px;
+	--space-8: 32px;
+
+	/* Radii: nothing interactive has a sharp corner. */
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 16px;
+	--radius-full: 9999px;
+
+	/* Sizes the client is responsible for. */
+	--avatar-lg: 56px;
+	--avatar-md: 32px;
+	--avatar-sm: 20px;
+	--sidebar-w: 248px;
+	--timeline-max-w: 760px;
+	--embed-max-w: 480px;
+	--embed-max-h: 360px;
+	--iframe-max-h: 480px;
+	--rail-w: 64px;
+	--rail-tile: 40px;
+	--header-h: 48px;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme='dark']) {
+		--bg-rail: #dddad4;
+		--bg-000: #ebe8e3;
+		--bg-100: #f8f6f3;
+		--bg-200: #f0ede8;
+		--bg-300: #e3dfd8;
+		--line: #dfdad2;
+		--line-strong: #7c776f;
+		--ink: #1c1f33;
+		--ink-muted: #5b5d6c;
+		--accent: #a83c14;
+		--on-accent: #ffffff;
+		--accent-soft: #f6e1d0;
+		--denim: #2c56b6;
+		--denim-soft: #e0e8f8;
+		--danger: #b0173f;
+		--warn: #7a5a00;
+		--ok: #1c6c3d;
+		--shadow-popover: 0 8px 24px rgba(28, 31, 51, 0.12);
+		--shadow-float: 0 2px 8px rgba(28, 31, 51, 0.1);
+	}
+}
+
+:root[data-theme='light'] {
+	--bg-rail: #dddad4;
+	--bg-000: #ebe8e3;
+	--bg-100: #f8f6f3;
+	--bg-200: #f0ede8;
+	--bg-300: #e3dfd8;
+	--line: #dfdad2;
+	--line-strong: #7c776f;
+	--ink: #1c1f33;
+	--ink-muted: #5b5d6c;
+	--accent: #a83c14;
+	--on-accent: #ffffff;
+	--accent-soft: #f6e1d0;
+	--denim: #2c56b6;
+	--denim-soft: #e0e8f8;
+	--danger: #b0173f;
+	--warn: #7a5a00;
+	--ok: #1c6c3d;
+	--shadow-popover: 0 8px 24px rgba(28, 31, 51, 0.12);
+	--shadow-float: 0 2px 8px rgba(28, 31, 51, 0.1);
+}
