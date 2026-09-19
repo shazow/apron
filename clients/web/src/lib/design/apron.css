@@ -1,0 +1,239 @@
+/* Apron design system component styles — copied verbatim from the design system bundle (project/components/bundle.css). Do not hand-edit; re-copy when the design system changes. */
+/* Apron — component styles over tokens.css. Every class is ap-*. */
+body { margin: 0; font-family: var(--font-sans); font-size: 15px; line-height: 22px; background: var(--bg-100); color: var(--ink); -webkit-font-smoothing: antialiased; }
+.ap-stack { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); }
+.ap-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-4); }
+:where(.ap-btn, .ap-link, .ap-room, .ap-thread, .ap-composer-field, .ap-embed-card, .ap-embed-url, .ap-actions-btn, .ap-jumpbar-btn, .ap-jumpfab, .ap-sect-toggle, .ap-rail-item, .ap-roomhead-back, .ap-roomhead-crumb, .ap-profile-me, .ap-field):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Button */
+.ap-btn { font: inherit; font-size: 13px; line-height: 18px; font-weight: 600; height: 32px; padding: 0 14px; border-radius: var(--radius-full); border: 1px solid var(--line-strong); background: var(--bg-200); color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.ap-btn:hover:not(:disabled) { background: var(--bg-300); }
+.ap-btn-sm { height: 28px; padding: 0 var(--space-3); }
+.ap-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ap-btn-primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+.ap-btn-ghost { background: transparent; border-color: transparent; color: var(--ink-muted); }
+.ap-btn-ghost:hover:not(:disabled) { color: var(--ink); }
+.ap-btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.ap-btn:disabled { cursor: default; opacity: .45; }
+.ap-link { font: inherit; background: none; border: 0; padding: 0; color: var(--denim); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+/* Avatar */
+.ap-avatar { display: inline-grid; place-items: center; flex: none; border-radius: var(--radius-full); background: var(--denim-soft); color: var(--denim); font-weight: 600; object-fit: cover; overflow: hidden; user-select: none; }
+.ap-avatar-md { width: var(--avatar-md); height: var(--avatar-md); font-size: 12px; }
+.ap-avatar-sm { width: var(--avatar-sm); height: var(--avatar-sm); font-size: 9px; }
+.ap-avatar-lg { width: var(--avatar-lg); height: var(--avatar-lg); font-size: 18px; }
+
+/* Message */
+.ap-msg { position: relative; display: grid; grid-template-columns: var(--avatar-md) minmax(0, 1fr); column-gap: var(--space-3); padding: var(--space-1) var(--space-2); margin: var(--space-3) var(--space-2) 0; border-radius: var(--radius-md); }
+.ap-msg-grouped { margin-top: 0; }
+.ap-msg:hover { background: var(--bg-200); }
+.ap-msg-mention { background: var(--accent-soft); }
+.ap-msg-mention:hover { background: var(--accent-soft); }
+.ap-msg-highlighted, .ap-msg-highlighted:hover { background: var(--bg-300); }
+.ap-msg-actions { position: absolute; top: -14px; right: var(--space-2); z-index: 2; visibility: hidden; }
+.ap-msg:hover .ap-msg-actions, .ap-msg:focus-within .ap-msg-actions, .ap-msg-actions:focus-within { visibility: visible; }
+/* compact density: time | sender + text on one line */
+.ap-msg-compact { grid-template-columns: 40px minmax(0, 1fr); column-gap: var(--space-2); margin-top: 0; padding-top: 1px; padding-bottom: 1px; }
+.ap-msg-compact .ap-msg-ctime { font-size: 11px; line-height: 22px; color: var(--ink-muted); text-align: right; font-variant-numeric: tabular-nums; }
+.ap-msg-compact .ap-msg-sender { margin-right: var(--space-2); }
+.ap-msg-compact .ap-msg-text p { display: inline; }
+.ap-msg-compact .ap-msg-meta { margin-left: var(--space-2); }
+.ap-msg-gutter { padding-top: 2px; }
+.ap-msg-hovertime { display: block; font-size: 11px; line-height: 22px; color: var(--ink-muted); text-align: right; visibility: hidden; font-variant-numeric: tabular-nums; }
+.ap-msg:hover .ap-msg-hovertime { visibility: visible; }
+.ap-msg-main { min-width: 0; max-width: var(--timeline-max-w); }
+.ap-msg-head { display: flex; align-items: baseline; gap: var(--space-2); }
+.ap-msg-sender { font-weight: 600; }
+.ap-msg-meta { display: inline-flex; gap: var(--space-2); font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.ap-msg-text { overflow-wrap: anywhere; }
+.ap-msg-text p { margin: 0; }
+.ap-msg-text p + p { margin-top: var(--space-2); }
+.ap-msg-text a { color: var(--denim); }
+.ap-msg-text code { font-family: var(--font-mono); font-size: 13px; background: var(--bg-300); border-radius: var(--radius-sm); padding: 1px var(--space-1); }
+.ap-msg-text pre { font-family: var(--font-mono); font-size: 13px; line-height: 22px; background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); margin: var(--space-1) 0; overflow-x: auto; }
+.ap-msg-text pre code { background: none; padding: 0; }
+.ap-msg-pending .ap-msg-text { color: var(--ink-muted); }
+.ap-msg-tomb { font-style: italic; color: var(--ink-muted); }
+.ap-msg-failed { font-size: 12px; line-height: 16px; color: var(--danger); margin-top: 2px; }
+.ap-msg-failed .ap-link { color: var(--danger); }
+.ap-msg-embeds { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* Embed */
+.ap-embed { display: block; max-width: min(100%, var(--embed-max-w)); border-radius: var(--radius-lg); box-sizing: border-box; }
+.ap-embed-media { max-height: var(--embed-max-h); width: auto; height: auto; background: var(--bg-200); border: 1px solid var(--line); object-fit: contain; }
+.ap-embed-audio { width: 320px; }
+.ap-embed-card { display: flex; flex-direction: column; gap: 2px; min-width: 240px; padding: var(--space-3) var(--space-4); background: var(--bg-200); border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+a.ap-embed-card:hover { background: var(--bg-300); }
+.ap-embed-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-embed-detail { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.ap-embed-kind { font-family: var(--font-mono); font-size: 13px; line-height: 20px; color: var(--ink); }
+.ap-embed-kind::before { content: "kind: "; color: var(--ink-muted); }
+.ap-embed-url { font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--denim); overflow-wrap: anywhere; }
+.ap-embed-frame { width: var(--embed-max-w); max-height: var(--iframe-max-h); border: 1px solid var(--line); background: var(--bg-200); }
+.ap-embed-paused { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); }
+.ap-embed-html { padding: var(--space-3) var(--space-4); background: var(--bg-200); border: 1px solid var(--line); overflow: auto; }
+.ap-embed-html table { border-collapse: collapse; font-size: 13px; }
+.ap-embed-html th, .ap-embed-html td { text-align: left; padding: var(--space-1) var(--space-3) var(--space-1) 0; border-bottom: 1px solid var(--line); }
+.ap-embed-html th { color: var(--ink-muted); font-weight: 500; }
+
+/* ThreadMarker */
+.ap-thread { font: inherit; display: inline-flex; align-items: baseline; gap: var(--space-2); max-width: 100%; margin-top: var(--space-2); padding: 3px var(--space-3) 3px var(--space-2); border: 0; border-radius: var(--radius-full); background: var(--denim-soft); color: var(--denim); cursor: pointer; font-size: 13px; line-height: 18px; text-align: left; }
+.ap-thread:hover { filter: brightness(1.08); }
+.ap-thread-name { font-weight: 600; }
+.ap-thread-name::before { content: "↳ "; }
+.ap-thread-faces + .ap-thread-name::before { content: none; }
+.ap-thread-count { color: var(--denim); }
+.ap-thread-faces { display: inline-flex; align-self: center; }
+.ap-thread-faces .ap-avatar + .ap-avatar { margin-left: -6px; box-shadow: 0 0 0 2px var(--denim-soft); }
+.ap-thread-last { color: var(--ink-muted); }
+.ap-thread-summary { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ap-thread-moved { background: transparent; padding-left: 0; cursor: default; color: var(--ink-muted); font-size: 12px; line-height: 16px; font-style: italic; }
+.ap-thread-moved:hover { background: transparent; }
+.ap-thread-moved .ap-link { font-style: normal; }
+
+/* TimelineDivider */
+.ap-divider { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-6) var(--space-4) var(--space-2); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-muted); }
+.ap-divider::before, .ap-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.ap-divider-sticky { position: sticky; top: var(--space-2); z-index: 1; }
+.ap-divider-date span { padding: 3px var(--space-3); border-radius: var(--radius-full); background: var(--bg-200); border: 1px solid var(--line); color: var(--ink); }
+.ap-divider-new { color: var(--denim); }
+.ap-divider-new::before, .ap-divider-new::after { background: var(--denim); }
+.ap-divider-gap::before, .ap-divider-gap::after { background: none; border-top: 1px dashed var(--line-strong); height: 0; }
+
+/* TypingIndicator */
+.ap-typing { display: flex; align-items: center; gap: var(--space-2); min-height: 16px; padding: 0 var(--space-4); font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.ap-typing-dots { display: inline-flex; gap: 3px; }
+.ap-typing-dots i { width: 4px; height: 4px; border-radius: var(--radius-full); background: var(--ink-muted); }
+.ap-typing-dots i { animation: ap-bob 1.2s ease-in-out infinite; }
+.ap-typing-dots i:nth-child(2) { animation-delay: .15s; }
+.ap-typing-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes ap-bob { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-3px); opacity: 1; } }
+
+/* Composer */
+.ap-composer { display: flex; align-items: flex-end; container-type: normal; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); margin: var(--space-2) var(--space-4) var(--space-4); background: var(--bg-200); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); }
+.ap-composer:focus-within { border-color: var(--focus); }
+.ap-composer .ap-btn { border-radius: calc(var(--radius-lg) - var(--space-2)); }
+.ap-composer-field { flex: 1; box-sizing: border-box; height: 28px; field-sizing: content; min-height: 28px; max-height: 200px; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; line-height: 22px; padding: 3px var(--space-1); }
+.ap-composer-field::placeholder { color: var(--ink-muted); }
+.ap-composer-field:focus-visible { outline: 0; }
+.ap-composer-disabled { opacity: .6; }
+
+/* RoomItem */
+.ap-room { font: inherit; display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: 7px var(--space-3); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink-muted); text-align: left; cursor: pointer; }
+.ap-room:hover { background: var(--bg-300); }
+.ap-room-active, .ap-room-active:hover { background: var(--accent-soft); color: var(--ink); }
+.ap-room-unread { color: var(--ink); }
+.ap-room-unread .ap-room-name { font-weight: 600; }
+.ap-room-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ap-room-name, .ap-room-topic { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-room-topic { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.ap-count { flex: none; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: var(--radius-full); background: var(--accent); color: var(--on-accent); font-size: 12px; line-height: 20px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* StatusBanner */
+.ap-status { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-full); font-size: 13px; line-height: 18px; color: var(--ink); }
+.ap-status-text { flex: 1; }
+.ap-status-dot { width: 8px; height: 8px; border-radius: var(--radius-full); flex: none; }
+.ap-status-ok { background: var(--ok); }
+.ap-status-warn { background: var(--warn); }
+.ap-status-danger { background: var(--danger); }
+
+/* MessageActions — floating toolbar on message hover/focus */
+.ap-actions { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-full); box-shadow: var(--shadow-float); }
+.ap-actions-btn { font: inherit; font-size: 12px; line-height: 16px; font-weight: 500; min-width: 28px; height: 28px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ink-muted); cursor: pointer; }
+.ap-actions-btn:hover { background: var(--bg-300); color: var(--ink); }
+.ap-actions-danger:hover { color: var(--danger); }
+
+/* JumpBar — bar above the composer, or a floating button */
+.ap-jumpbar { display: flex; align-items: center; gap: var(--space-3); margin: 0 var(--space-4); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3); background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-full); box-shadow: var(--shadow-float); font-size: 13px; line-height: 18px; }
+.ap-jumpbar-text { flex: 1; color: var(--ink-muted); }
+.ap-jumpbar-btn { font: inherit; font-weight: 600; height: 28px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-full); background: transparent; color: var(--denim); cursor: pointer; }
+.ap-jumpbar-btn:hover { background: var(--bg-300); }
+.ap-jumpfab { position: relative; width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--radius-full); border: 1px solid var(--line-strong); background: var(--bg-200); color: var(--ink); font-size: 18px; cursor: pointer; box-shadow: var(--shadow-float); }
+.ap-jumpfab:hover { background: var(--bg-300); }
+.ap-jumpfab-count { position: absolute; top: -8px; left: 50%; transform: translateX(-50%); }
+
+/* RoomHeader */
+.ap-roomhead { display: flex; align-items: center; gap: var(--space-2); height: var(--header-h); box-sizing: border-box; padding: 0 var(--space-4); border-bottom: 1px solid var(--line); background: var(--bg-100); }
+.ap-roomhead-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--space-3); }
+.ap-roomhead-name { margin: 0; font-size: 15px; line-height: 20px; font-weight: 600; white-space: nowrap; }
+.ap-roomhead-sub { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-roomhead-typing { color: var(--denim); }
+.ap-roomhead-actions { display: flex; gap: var(--space-1); }
+.ap-roomhead-back { font: inherit; font-size: 22px; width: 32px; height: 32px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--denim); cursor: pointer; }
+@container (max-width: 560px) { .ap-roomhead-text { flex-direction: column; gap: 0; } }
+
+/* SidebarSection */
+.ap-sect + .ap-sect { margin-top: var(--space-3); }
+.ap-sect-head { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--space-1) var(--space-1); }
+.ap-sect-toggle { font: inherit; display: inline-flex; align-items: center; gap: var(--space-1); padding: 2px var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-muted); font-size: 12px; line-height: 16px; font-weight: 600; cursor: pointer; }
+.ap-sect-toggle:hover { color: var(--ink); }
+.ap-sect-caret { display: inline-block; font-size: 10px; }
+.ap-sect-closed .ap-sect-caret { transform: rotate(-90deg); }
+.ap-sect-body { display: flex; flex-direction: column; gap: 2px; }
+
+/* BackendRail — one tile per connected backend */
+.ap-rail { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); width: var(--rail-w); padding: var(--space-3) 0; box-sizing: border-box; background: var(--bg-rail); }
+.ap-rail-item { position: relative; display: grid; place-items: center; width: 100%; height: var(--rail-tile); padding: 0; border: 0; background: none; cursor: pointer; }
+.ap-rail-tile { display: grid; place-items: center; width: var(--rail-tile); height: var(--rail-tile); border-radius: var(--radius-lg); background: var(--bg-200); color: var(--ink); font-size: 14px; font-weight: 600; object-fit: cover; }
+.ap-rail-item:hover .ap-rail-tile { background: var(--accent-soft); color: var(--accent); border-radius: var(--radius-full); }
+.ap-rail-active .ap-rail-tile, .ap-rail-active:hover .ap-rail-tile { background: var(--accent); color: var(--on-accent); border-radius: var(--radius-full); }
+.ap-rail-offline .ap-rail-tile { opacity: .45; }
+.ap-rail-pip { position: absolute; left: 0; top: 50%; width: 4px; height: 0; transform: translateY(-50%); border-radius: 0 4px 4px 0; background: var(--ink); }
+.ap-rail-unread .ap-rail-pip { height: 8px; }
+.ap-rail-item:hover .ap-rail-pip { height: 20px; }
+.ap-rail-active .ap-rail-pip, .ap-rail-active:hover .ap-rail-pip { height: var(--rail-tile); }
+.ap-rail-count { position: absolute; right: 8px; bottom: -4px; box-shadow: 0 0 0 3px var(--bg-rail); }
+.ap-rail-add .ap-rail-tile { background: transparent; border: 1px dashed var(--line-strong); color: var(--ink-muted); font-size: 18px; font-weight: 400; box-sizing: border-box; }
+.ap-rail-add:hover .ap-rail-tile { border-style: solid; }
+
+/* Layout shell — rail | sidebar | main pane. A thread opens in the main pane; there is no thread pane. */
+.ap-shell { display: grid; grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr); height: 100%; min-height: 0; background: var(--bg-100); }
+.ap-shell-norail { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+.ap-shell-side { position: relative; display: flex; flex-direction: column; min-height: 0; background: var(--bg-000); border-right: 1px solid var(--line); }
+.ap-shell-sidehead { display: flex; align-items: center; height: var(--header-h); padding: 0 var(--space-4); border-bottom: 1px solid var(--line); font-size: 15px; line-height: 20px; font-weight: 600; box-sizing: border-box; }
+.ap-shell-sidebody { flex: 1; overflow: auto; padding: var(--space-3) var(--space-2); }
+.ap-shell-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; container-type: inline-size; }
+.ap-timeline { flex: 1; overflow: auto; padding-bottom: var(--space-2); }
+
+/* Thread rows nested under their room, and the open-thread header breadcrumb */
+.ap-room-nested { padding: 3px var(--space-3) 3px calc(var(--space-3) + var(--space-4)); font-size: 13px; line-height: 18px; }
+.ap-roomhead-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ap-roomhead-crumb { font: inherit; padding: 0; border: 0; background: none; color: var(--ink-muted); cursor: pointer; }
+.ap-roomhead-crumb:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.ap-roomhead-sep { color: var(--ink-muted); font-weight: 400; }
+/* A standalone "Moved to" marker lines up with the message text column */
+.ap-timeline > .ap-thread-moved { margin-left: calc(var(--space-4) + var(--avatar-md) + var(--space-3)); }
+
+/* Text field — profile handle and other single-line inputs */
+.ap-fieldlabel { display: flex; flex-direction: column; gap: var(--space-1); font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-muted); }
+.ap-field { font: inherit; font-size: 14px; line-height: 20px; font-weight: 400; height: 32px; box-sizing: border-box; padding: 0 var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--bg-100); color: var(--ink); }
+.ap-field:focus-visible { outline-offset: 0; border-color: var(--focus); }
+.ap-field:disabled { opacity: .6; }
+
+/* ProfileBar — your identity on the active backend, pinned to the bottom of the sidebar */
+.ap-profile { position: relative; flex: none; height: var(--header-h); box-sizing: border-box; padding: var(--space-1) var(--space-2); border-top: 1px solid var(--line); background: var(--bg-000); }
+.ap-profile-me { font: inherit; display: flex; align-items: center; gap: var(--space-2); width: 100%; height: 100%; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.ap-profile-me:hover, .ap-profile-open { background: var(--bg-300); }
+.ap-profile-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ap-profile-name { font-weight: 600; font-size: 13px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-profile-sub { font-size: 12px; line-height: 16px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-profile-edit { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-muted); visibility: hidden; }
+.ap-profile-me:hover .ap-profile-edit, .ap-profile-me:focus-visible .ap-profile-edit, .ap-profile-open .ap-profile-edit { visibility: visible; }
+.ap-profile-pop { position: absolute; left: var(--space-2); right: var(--space-2); bottom: calc(100% + var(--space-2)); z-index: 5; }
+
+/* ProfileEditor — the popover above the ProfileBar */
+.ap-profedit { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); }
+.ap-profedit-top { display: flex; align-items: center; gap: var(--space-3); }
+.ap-profedit-av { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); min-width: 0; }
+.ap-profedit-hint { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.ap-profedit-hint code { font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+.ap-profedit-note { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink); }
+.ap-profedit-err { color: var(--danger); }
+.ap-profedit-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+/* Motion — short and soft; all of it off when the viewer asks */
+.ap-btn, .ap-room, .ap-thread, .ap-msg, .ap-rail-tile, .ap-actions-btn, .ap-profile-me, .ap-jumpbar-btn, .ap-composer, .ap-field { transition: background-color .12s ease, border-color .12s ease, border-radius .18s ease, color .12s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .ap-btn, .ap-room, .ap-thread, .ap-msg, .ap-rail-tile, .ap-actions-btn, .ap-profile-me, .ap-jumpbar-btn, .ap-composer, .ap-field { transition: none; }
+  .ap-typing-dots i { animation: none; opacity: .7; }
+}

@@ -10,11 +10,24 @@
 		type RoomSnapshot
 	} from '$lib/protocol/client';
 	import { formatBytes, renderMarkdown, safeUrl } from '$lib/protocol/markdown';
-	import { isJsonObject, type Embed, type EventRecord, type ThreadAnnouncement } from '$lib/protocol/types';
+	import { isJsonObject, type Embed, type EventRecord, type Sender, type ThreadAnnouncement } from '$lib/protocol/types';
 
-	type Feedback = { kind: 'pending' | 'sent' | 'error'; text: string };
+	type Feedback = { kind: 'pending' | 'error'; text: string };
 	type PendingThreadStart = { room: string; thread: string };
-	type ThreadListEntry = ThreadAnnouncement & { count: number; announced: boolean };
+	type ThreadListEntry = ThreadAnnouncement & {
+		count: number;
+		announced: boolean;
+		participants: Sender[];
+		lastReply: string;
+	};
+	type TimelineItem =
+		| { kind: 'date'; key: string; label: string }
+		| { kind: 'message'; key: string; event: EventRecord; grouped: boolean }
+		| { kind: 'thread'; key: string; entry: ThreadListEntry }
+		| { kind: 'replies'; key: string; count: number };
+	type ProfileStatus = 'idle' | 'saving' | 'altered' | 'declined';
+
+	const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 	const blankSnapshot = (): ClientSnapshot => ({
 		status: 'idle', rooms: [], pending: [], typing: [], showReconnectDivider: false
@@ -24,7 +37,11 @@
 	let serverInput = $state('');
 	let displayName = $state('');
 	let composerText = $state('');
-	let settingsOpen = $state(false);
+	let connectOpen = $state(false);
+	let profileOpen = $state(false);
+	let profileDraft = $state('');
+	let profileStatus = $state<ProfileStatus>('idle');
+	let profileServerName = $state('');
 	let editingId = $state<string | undefined>();
 	let editDraft = $state('');
 	let feedback = $state<Feedback | undefined>();
@@ -33,10 +50,13 @@
 	let drafts = $state<Record<string, string>>({});
 	let pendingThreadStarts = $state<Record<string, PendingThreadStart>>({});
 	let movingId = $state<string | undefined>();
+	let moreId = $state<string | undefined>();
+	let mobilePane = $state<'rooms' | 'main'>('main');
 	let client: ChatClient | undefined;
 	let composer = $state<HTMLTextAreaElement | undefined>();
 	let messageScroll = $state<HTMLDivElement | undefined>();
 	let stickToBottom = $state(true);
+	let seenCount = $state(0);
 	let typingTimer: ReturnType<typeof setTimeout> | undefined;
 	let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -51,36 +71,102 @@
 			const excerpt = root && !root.deleted ? textOf(root).replace(/\s+/g, ' ').trim().slice(0, 60) : '';
 			const name = announcement.name && announcement.name !== announcement.thread
 				? announcement.name : excerpt || announcement.thread;
-			entries.set(announcement.thread, { ...announcement, name, count: 0, announced: true });
+			entries.set(announcement.thread, { ...announcement, name, count: 0, announced: true, participants: [], lastReply: '' });
 		}
 		for (const event of allMessages) {
 			if (!event.thread) continue;
-			const existing = entries.get(event.thread);
-			if (existing) {
-				existing.count += 1;
-			} else {
-				entries.set(event.thread, {
+			let entry = entries.get(event.thread);
+			if (!entry) {
+				entry = {
 					room: activeRoom?.id ?? '',
 					thread: event.thread,
 					name: event.thread,
-					count: 1,
-					announced: false
-				});
+					count: 0,
+					announced: false,
+					participants: [],
+					lastReply: ''
+				};
+				entries.set(event.thread, entry);
+			}
+			entry.count += 1;
+			entry.lastReply = eventTime(event);
+			if (event.sender?.id && !event.deleted) {
+				entry.participants = [event.sender, ...entry.participants.filter((sender) => sender.id !== event.sender?.id)].slice(0, 4);
 			}
 		}
 		return [...entries.values()];
 	});
 	let threadEntriesById = $derived.by(() => new Map(threadEntries.map((entry) => [entry.thread, entry])));
+	let threadsByRoot = $derived.by(() => {
+		const byRoot = new Map<string, ThreadListEntry>();
+		for (const entry of threadEntries) if (entry.announced && entry.root) byRoot.set(entry.root, entry);
+		return byRoot;
+	});
 	let activeThreadAnnouncement = $derived.by(() => {
 		const entry = activeThread ? threadEntriesById.get(activeThread) : undefined;
 		return entry?.announced ? entry : undefined;
+	});
+	let timeline = $derived.by((): TimelineItem[] => {
+		const items: TimelineItem[] = [];
+		let lastDay = '';
+		let previous: EventRecord | undefined;
+		const pushDate = (event: EventRecord) => {
+			const day = dayKey(event);
+			if (day && day !== lastDay) {
+				items.push({ kind: 'date', key: `date:${day}`, label: dayLabel(event) });
+				lastDay = day;
+				previous = undefined;
+			}
+		};
+		const pushMessage = (event: EventRecord) => {
+			pushDate(event);
+			items.push({ kind: 'message', key: event.event_id, event, grouped: isGrouped(previous, event) });
+			previous = event;
+		};
+		if (activeThread) {
+			const root = activeThreadAnnouncement?.root;
+			const [first, ...rest] = messages;
+			if (first && first.event_id === root) {
+				items.push({ kind: 'message', key: first.event_id, event: first, grouped: false });
+				lastDay = dayKey(first);
+				if (rest.length > 0) items.push({ kind: 'replies', key: 'replies', count: rest.length });
+				for (const event of rest) pushMessage(event);
+			} else {
+				for (const event of messages) pushMessage(event);
+			}
+			return items;
+		}
+		for (const event of allMessages) {
+			if (!event.thread) {
+				pushMessage(event);
+				continue;
+			}
+			const entry = threadsByRoot.get(event.event_id);
+			if (entry) {
+				pushDate(event);
+				items.push({ kind: 'thread', key: `thread:${entry.thread}`, entry });
+				previous = undefined;
+			}
+		}
+		return items;
 	});
 	let canCompose = $derived(Boolean(
 		activeRoom && snapshot.status === 'connected' && snapshot.you &&
 		(!activeThread || Boolean(activeThreadAnnouncement))
 	));
 	let canEdit = $derived(snapshot.server?.caps?.includes('edit') === true);
-	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id));
+	let canUpload = $derived(typeof snapshot.server?.upload === 'string' && snapshot.server.upload.length > 0);
+	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.sender.id !== snapshot.you?.id));
+	let typingNames = $derived(roomTyping.map((entry) => entry.sender.name || entry.sender.id));
+	let backendLabel = $derived(snapshot.server?.name || backendHost(serverInput) || 'Apron');
+	let unseenCount = $derived(stickToBottom ? 0 : Math.max(0, messages.length - seenCount));
+	let connectionState = $derived.by((): 'connected' | 'connecting' | 'reconnecting' | 'offline' | 'error' => {
+		if (snapshot.status === 'connected' && snapshot.you) return 'connected';
+		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'connecting';
+		if (snapshot.status === 'reconnecting') return 'reconnecting';
+		if (snapshot.status === 'offline') return 'offline';
+		return 'connecting';
+	});
 
 	$effect(() => {
 		const roomId = activeRoom?.id;
@@ -143,13 +229,21 @@
 
 	function statusLabel(): string {
 		if (snapshot.status === 'connected' && snapshot.you) return 'Connected';
-		if (snapshot.status === 'connecting') return 'Connecting';
-		if (snapshot.status === 'reconnecting') return 'Reconnecting';
+		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'Connecting…';
+		if (snapshot.status === 'reconnecting') return 'Connection lost. Reconnecting…';
 		if (snapshot.status === 'offline') return 'Offline';
 		return 'Waiting to connect';
 	}
 
-	function applySettings(event: SubmitEvent): void {
+	function backendHost(value: string): string {
+		try {
+			return new URL(value).host;
+		} catch {
+			return '';
+		}
+	}
+
+	function applyConnection(event: SubmitEvent): void {
 		event.preventDefault();
 		if (!client) return;
 		try {
@@ -161,21 +255,65 @@
 			activeThread = undefined;
 			pendingThreadStarts = {};
 			movingId = undefined;
+			moreId = undefined;
 			composerText = '';
 			serverInput = normalized;
 			localStorage.setItem('bottomless.serverUrl', normalized);
-			localStorage.setItem('bottomless.displayName', displayName.trim());
 			client.setUrl(normalized);
-			client.setDisplayName(displayName);
-			settingsOpen = false;
+			connectOpen = false;
 		} catch (cause) {
 			feedback = { kind: 'error', text: cause instanceof Error ? cause.message : 'Invalid server URL' };
 		}
 	}
 
+	function openProfile(): void {
+		if (profileOpen) {
+			closeProfile();
+			return;
+		}
+		profileDraft = snapshot.you?.name || displayName;
+		profileStatus = 'idle';
+		profileServerName = '';
+		profileOpen = true;
+	}
+
+	function closeProfile(): void {
+		profileOpen = false;
+		profileStatus = 'idle';
+	}
+
+	function saveProfile(event: SubmitEvent): void {
+		event.preventDefault();
+		if (!client) return;
+		const requested = profileDraft.trim();
+		if (!requested) return;
+		displayName = requested;
+		localStorage.setItem('bottomless.displayName', requested);
+		const handle = client.setDisplayName(requested);
+		if (!handle) {
+			closeProfile();
+			return;
+		}
+		profileStatus = 'saving';
+		handle.promise
+			.then((result) => {
+				const kept = isJsonObject(result.you) && typeof result.you.name === 'string' ? result.you.name : requested;
+				if (kept === requested) {
+					closeProfile();
+				} else {
+					profileServerName = kept;
+					profileStatus = 'altered';
+				}
+			})
+			.catch(() => {
+				profileStatus = 'declined';
+			});
+	}
+
 	function chooseRoom(room: RoomSnapshot): void {
 		client?.selectRoom(room.id);
 		setDestination(room.id, undefined);
+		mobilePane = 'main';
 		composer?.focus();
 	}
 
@@ -203,11 +341,14 @@
 		editingId = undefined;
 		editDraft = '';
 		movingId = undefined;
+		moreId = undefined;
+		stickToBottom = true;
 	}
 
 	function chooseThread(thread: string): void {
 		if (!activeRoom) return;
 		setDestination(activeRoom.id, thread);
+		mobilePane = 'main';
 		composer?.focus();
 	}
 
@@ -242,7 +383,7 @@
 		const thread = activeThread;
 		const originKey = draftKey(currentServerUrl(), roomId, thread);
 		const handle = client.sendMessage(roomId, draft, 'markdown', thread);
-		track(handle, 'Sending message…', 'Message sent', () => {
+		track(handle, 'Sending…', () => {
 			const currentKey = selectedRoomId ? draftKey(currentServerUrl(), selectedRoomId, activeThread) : undefined;
 			if (!drafts[originKey]) drafts = { ...drafts, [originKey]: draft };
 			if (currentKey === originKey && !composerText) {
@@ -254,24 +395,38 @@
 		drafts = { ...drafts, [originKey]: '' };
 		client.sendTyping(roomId, false);
 		if (typingTimer) clearTimeout(typingTimer);
+		stickToBottom = true;
 		composer?.focus();
 	}
 
 	function beginEdit(event: EventRecord): void {
 		editingId = event.event_id;
 		editDraft = typeof event.body?.text === 'string' ? event.body.text : '';
+		moreId = undefined;
+	}
+
+	function editKeydown(event: KeyboardEvent, record: EventRecord): void {
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			editingId = undefined;
+		} else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+			event.preventDefault();
+			saveEdit(record);
+		}
 	}
 
 	function saveEdit(event: EventRecord): void {
 		if (!client || !activeRoom || !canEdit || !editDraft.trim()) return;
-		track(client.updateMessage(activeRoom.id, event.event_id, editDraft), 'Saving edit…', 'Edit saved');
+		track(client.updateMessage(activeRoom.id, event.event_id, editDraft), 'Saving edit…');
 		editingId = undefined;
 		editDraft = '';
 	}
 
 	function deleteMessage(event: EventRecord): void {
 		if (!client || !activeRoom || !canEdit) return;
-		track(client.deleteMessage(activeRoom.id, event.event_id), 'Deleting message…', 'Message deleted');
+		moreId = undefined;
+		if (!confirm('Delete this message? This cannot be undone.')) return;
+		track(client.deleteMessage(activeRoom.id, event.event_id), 'Deleting message…');
 	}
 
 	function makeThreadId(): string {
@@ -283,11 +438,16 @@
 		if (!client || !activeRoom || !canEdit || !isOwn(event) || event.deleted || event.thread) return;
 		const thread = makeThreadId();
 		pendingThreadStarts = { ...pendingThreadStarts, [event.event_id]: { room: activeRoom.id, thread } };
-		track(client.setMessageThread(activeRoom.id, event.event_id, thread), 'Starting thread…', 'Thread started', () => {
+		track(client.setMessageThread(activeRoom.id, event.event_id, thread), 'Starting thread…', () => {
 			const next = { ...pendingThreadStarts };
 			delete next[event.event_id];
 			pendingThreadStarts = next;
 		});
+	}
+
+	function toggleMove(event: EventRecord): void {
+		movingId = movingId === event.event_id ? undefined : event.event_id;
+		moreId = undefined;
 	}
 
 	function moveMessage(event: EventRecord, value: string, select?: HTMLSelectElement): void {
@@ -296,18 +456,22 @@
 		if (thread === event.thread) return;
 		if (thread && !activeRoom.threads.some((entry) => entry.thread === thread)) return;
 		if (select) select.value = event.thread ?? '';
-		track(client.setMessageThread(activeRoom.id, event.event_id, thread), 'Moving message…', 'Message moved');
+		movingId = undefined;
+		track(client.setMessageThread(activeRoom.id, event.event_id, thread), 'Moving message…');
 	}
 
-	function track(handle: OperationHandle, pendingText: string, sentText: string, onError?: () => void): void {
-		feedback = { kind: 'pending', text: pendingText };
+	/** Shows "pending" copy only when a request takes noticeably long, and errors until the next request. */
+	function track(handle: OperationHandle, pendingText: string, onError?: () => void): void {
 		if (feedbackTimer) clearTimeout(feedbackTimer);
+		feedback = undefined;
+		feedbackTimer = setTimeout(() => (feedback = { kind: 'pending', text: pendingText }), 600);
 		handle.promise
 			.then(() => {
-				feedback = { kind: 'sent', text: sentText };
-				feedbackTimer = setTimeout(() => (feedback = undefined), 3500);
+				if (feedbackTimer) clearTimeout(feedbackTimer);
+				feedback = undefined;
 			})
 			.catch((cause: Error) => {
+				if (feedbackTimer) clearTimeout(feedbackTimer);
 				feedback = { kind: 'error', text: cause.message };
 				onError?.();
 			});
@@ -321,11 +485,58 @@
 		return event.sender?.name || event.sender?.id || 'Unknown sender';
 	}
 
-	function eventTime(event: EventRecord): string {
+	function initials(name: string): string {
+		const parts = name.trim().split(/\s+/);
+		const first = parts[0]?.[0] ?? '?';
+		const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+		return (first + last).toUpperCase();
+	}
+
+	function eventMillis(event: EventRecord): number | undefined {
 		const millis = Number(event.event_id);
-		return Number.isSafeInteger(millis) && millis > 0
-			? new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(millis)
+		return Number.isSafeInteger(millis) && millis > 0 ? millis : undefined;
+	}
+
+	function eventTime(event: EventRecord): string {
+		const millis = eventMillis(event);
+		return millis
+			? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(millis)
 			: '';
+	}
+
+	function dayKey(event: EventRecord): string {
+		const millis = eventMillis(event);
+		if (!millis) return '';
+		const date = new Date(millis);
+		return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+	}
+
+	function dayLabel(event: EventRecord): string {
+		const millis = eventMillis(event);
+		if (!millis) return '';
+		const date = new Date(millis);
+		const today = new Date();
+		const yesterday = new Date(today);
+		yesterday.setDate(today.getDate() - 1);
+		const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+		if (sameDay(date, today)) return 'Today';
+		if (sameDay(date, yesterday)) return 'Yesterday';
+		return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(date);
+	}
+
+	function isGrouped(previous: EventRecord | undefined, event: EventRecord): boolean {
+		if (!previous || !previous.sender?.id || previous.sender.id !== event.sender?.id) return false;
+		const before = eventMillis(previous);
+		const after = eventMillis(event);
+		return before !== undefined && after !== undefined && after - before < GROUP_WINDOW_MS;
+	}
+
+	function mentionsMe(event: EventRecord): boolean {
+		const me = snapshot.you;
+		if (!me || isOwn(event)) return false;
+		const text = textOf(event);
+		if (!text) return false;
+		return [me.name, me.id].some((handle) => handle && text.includes(`@${handle}`));
 	}
 
 	function textOf(event: EventRecord): string {
@@ -350,298 +561,419 @@
 			: [];
 	}
 
+	function aspectRatio(embed: Embed): string | undefined {
+		return typeof embed.w === 'number' && typeof embed.h === 'number' && embed.w > 0 && embed.h > 0
+			? `aspect-ratio: ${embed.w} / ${embed.h}`
+			: undefined;
+	}
+
 	function trackScroll(): void {
 		if (!messageScroll) return;
-		stickToBottom = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 96;
+		const atBottom = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 96;
+		if (!atBottom && stickToBottom) seenCount = messages.length;
+		stickToBottom = atBottom;
+	}
+
+	function jumpToLatest(): void {
+		stickToBottom = true;
+		if (messageScroll) messageScroll.scrollTop = messageScroll.scrollHeight;
+	}
+
+	function hasActions(event: EventRecord): boolean {
+		return canEdit && isOwn(event) && !event.deleted;
+	}
+
+	function canMove(event: EventRecord): boolean {
+		return Boolean(event.thread || (activeRoom && activeRoom.threads.length > 0));
 	}
 </script>
 
 <svelte:head>
-	<title>Bottomless Chat</title>
-	<meta name="description" content="A resilient chat client for the Bottomless Chat protocol." />
+	<title>Apron</title>
+	<meta name="description" content="Apron, a chat frontend for the Bottomless Chat protocol." />
 </svelte:head>
 
-<div class="app-shell">
-	<header class="topbar">
-		<div class="brand-mark" aria-hidden="true">B</div>
-		<div class="brand-copy"><span>Bottomless</span><strong>Chat</strong></div>
-		<div class="spacer"></div>
-		<div class="connection-state">
-			<span class:online={snapshot.status === 'connected'} class:pending={snapshot.status === 'connecting' || snapshot.status === 'reconnecting'} class="status-dot" aria-hidden="true"></span>
-			<span data-testid="connection-status" role="status" aria-live="polite">{statusLabel()}</span>
+<div class="app ap-shell ap-shell-norail" data-pane={mobilePane}>
+	<aside class="ap-shell-side" aria-label="Rooms">
+		<div class="ap-shell-sidehead">
+			<span class="app-backend">{backendLabel}</span>
+			<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Connection settings" aria-expanded={connectOpen} onclick={() => (connectOpen = !connectOpen)}>Connect</button>
 		</div>
-		<button class="icon-button" type="button" aria-label="Connection settings" aria-expanded={settingsOpen} onclick={() => (settingsOpen = !settingsOpen)}>⚙</button>
-	</header>
-
-	{#if settingsOpen}
-		<form class="settings-panel" aria-label="Connection settings" onsubmit={applySettings}>
-			<div class="settings-title"><div><small>SESSION</small><h2>Connection settings</h2></div><button class="link-button" type="button" onclick={() => (settingsOpen = false)}>Close</button></div>
-			<div class="settings-fields">
-				<label><span>Server URL</span><input data-testid="server-url-input" bind:value={serverInput} placeholder="ws://localhost:8080/ws" autocomplete="url" /></label>
-				<label><span>Display name <small>optional</small></span><input data-testid="display-name-input" bind:value={displayName} placeholder="Anonymous" maxlength="80" autocomplete="nickname" /></label>
-			</div>
-			<button class="primary-button" type="submit">Reconnect</button>
-		</form>
-	{/if}
-
-	<div class="workspace">
-		<aside class="sidebar" aria-label="Rooms">
-			<div class="sidebar-title"><div><small>YOUR SPACES</small><h2>Rooms</h2></div><b>{snapshot.rooms.length}</b></div>
-			<div class="room-list" data-testid="room-list">
-				{#if snapshot.rooms.length === 0}
-					<p class="muted">Waiting for rooms…</p>
+		{#if connectOpen}
+			<form class="app-connect ap-profedit" aria-label="Connection settings" onsubmit={applyConnection}>
+				<label class="ap-fieldlabel">Server URL
+					<input class="ap-field" data-testid="server-url-input" bind:value={serverInput} placeholder="ws://localhost:8080/ws" autocomplete="url" spellcheck="false" />
+				</label>
+				<p class="ap-profedit-hint">A WebSocket URL, or the HTTP address of a server that speaks the protocol.</p>
+				<div class="ap-profedit-actions">
+					<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" onclick={() => (connectOpen = false)}>Cancel</button>
+					<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit">Reconnect</button>
+				</div>
+			</form>
+		{/if}
+		<div class="ap-shell-sidebody">
+			<section class="ap-sect">
+				<div class="ap-sect-head">
+					<span class="ap-sect-toggle" role="heading" aria-level="2">Rooms</span>
+				</div>
+				<div class="ap-sect-body" data-testid="room-list">
+					{#if snapshot.rooms.length === 0}
+						<p class="app-muted">{snapshot.status === 'connected' ? 'No rooms yet.' : 'Waiting for rooms…'}</p>
+					{:else}
+						{#each snapshot.rooms as room (room.id)}
+							{@const active = room.id === snapshot.activeRoom}
+							<button class="ap-room" class:ap-room-active={active && !activeThread} type="button" data-room={room.id} aria-current={active && !activeThread ? 'page' : undefined} onclick={() => chooseRoom(room)}>
+								<span class="ap-room-text">
+									<span class="ap-room-name">{room.name}</span>
+									{#if room.topic}<span class="ap-room-topic">{room.topic}</span>{/if}
+								</span>
+								{#if room.recovering}<span class="app-room-meta" aria-label="Loading history">…</span>{/if}
+							</button>
+							{#if active}
+								<div class="app-threads" data-testid="thread-list" role="group" aria-label={`Threads in ${room.name}`}>
+									{#each threadEntries as entry (entry.thread)}
+										<button class="ap-room ap-room-nested" class:ap-room-active={activeThread === entry.thread} type="button" data-thread={entry.thread} aria-current={activeThread === entry.thread ? 'page' : undefined} onclick={() => chooseThread(entry.thread)}>
+											<span class="ap-room-text"><span class="ap-room-name">{entry.name || entry.thread}</span></span>
+											<small class="app-room-meta" aria-label={`${entry.count} ${entry.count === 1 ? 'message' : 'messages'}`}>{entry.count}</small>
+										</button>
+									{/each}
+								</div>
+							{/if}
+						{/each}
+					{/if}
+				</div>
+			</section>
+		</div>
+		<div class="ap-profile">
+			{#if profileOpen}
+				<div class="ap-profile-pop" role="dialog" aria-label="Edit profile">
+					<form class="ap-profedit" onsubmit={saveProfile}>
+						<div class="ap-profedit-top">
+							{#if snapshot.you?.avatar && safeUrl(snapshot.you.avatar)}
+								<img class="ap-avatar ap-avatar-lg" src={snapshot.you.avatar} alt="" />
+							{:else}
+								<span class="ap-avatar ap-avatar-lg" aria-hidden="true">{initials(profileDraft || snapshot.you?.id || '?')}</span>
+							{/if}
+							<div class="ap-profedit-av">
+								<span class="ap-profedit-hint">{canUpload ? 'Avatar uploads are not supported by this client yet.' : 'This backend has no upload URL, so your avatar can’t be set here.'}</span>
+							</div>
+						</div>
+						<label class="ap-fieldlabel">Handle
+							<input class="ap-field" data-testid="display-name-input" bind:value={profileDraft} disabled={profileStatus === 'saving'} maxlength="64" autocomplete="nickname" spellcheck="false" />
+						</label>
+						<p class="ap-profedit-hint">ID <code>{snapshot.you?.id ?? '—'}</code> · set by the server, can’t be changed</p>
+						{#if profileStatus === 'altered'}
+							<p class="ap-profedit-note" role="status">The server saved your handle as “{profileServerName}”.</p>
+						{:else if profileStatus === 'declined'}
+							<p class="ap-profedit-note ap-profedit-err" role="alert">The server declined this handle. Your old one is still in use.</p>
+						{/if}
+						<div class="ap-profedit-actions">
+							<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={profileStatus === 'saving'} onclick={closeProfile}>{profileStatus === 'altered' ? 'Close' : 'Cancel'}</button>
+							<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" disabled={profileStatus === 'saving' || !profileDraft.trim()}>{profileStatus === 'saving' ? 'Saving…' : 'Save'}</button>
+						</div>
+					</form>
+				</div>
+			{/if}
+			<button class="ap-profile-me" class:ap-profile-open={profileOpen} type="button" aria-haspopup="dialog" aria-expanded={profileOpen} aria-label={`Your profile on ${backendLabel}: ${snapshot.you?.name || snapshot.you?.id || 'not signed in'}. Edit`} onclick={openProfile}>
+				{#if snapshot.you?.avatar && safeUrl(snapshot.you.avatar)}
+					<img class="ap-avatar ap-avatar-md" src={snapshot.you.avatar} alt="" />
 				{:else}
-					{#each snapshot.rooms as room (room.id)}
-						<button class:selected={room.id === snapshot.activeRoom} class="room-button" type="button" data-room={room.id} aria-pressed={room.id === snapshot.activeRoom} onclick={() => chooseRoom(room)}>
-							<span aria-hidden="true">#</span><strong>{room.name}</strong>{#if room.recovering}<i aria-label="Loading history"></i>{/if}
-						</button>
+					<span class="ap-avatar ap-avatar-md" aria-hidden="true">{initials(snapshot.you?.name || snapshot.you?.id || '?')}</span>
+				{/if}
+				<span class="ap-profile-text">
+					<span class="ap-profile-name">{snapshot.you?.name || snapshot.you?.id || 'Not signed in'}</span>
+					<span class="ap-profile-sub">on {backendLabel}</span>
+				</span>
+				<span class="ap-profile-edit" aria-hidden="true">Edit</span>
+			</button>
+		</div>
+	</aside>
+
+	<main class="ap-shell-main" aria-label="Conversation">
+		{#if activeRoom}
+			<header class="ap-roomhead">
+				<button class="ap-roomhead-back" type="button" aria-label="Back to rooms" onclick={() => (mobilePane = 'rooms')}>‹</button>
+				<div class="ap-roomhead-text">
+					{#if activeThread}
+						<h1 class="ap-roomhead-name">
+							<button class="ap-roomhead-crumb" type="button" aria-label="Back to room" onclick={backToRoom}>{activeRoom.name}</button>
+							<span class="ap-roomhead-sep" aria-hidden="true"> › </span>
+							{threadTitle(activeThread)}
+						</h1>
+					{:else}
+						<h1 class="ap-roomhead-name">{activeRoom.name}</h1>
+					{/if}
+					{#if typingNames.length > 0}
+						<p class="ap-roomhead-sub ap-roomhead-typing app-typing-head">{typingNames.length === 1 ? `${typingNames[0]} is typing…` : `${typingNames.length} people are typing…`}</p>
+					{:else if activeThread ? threadSummary(activeThread) : activeRoom.topic}
+						<p class="ap-roomhead-sub">{activeThread ? threadSummary(activeThread) : activeRoom.topic}</p>
+					{/if}
+				</div>
+				{#if activeRoom.recovering}
+					<span class="ap-roomhead-sub" role="status">Loading history…</span>
+				{:else if activeRoom.recoveryError}
+					<span class="ap-roomhead-sub" role="status">History unavailable</span>
+				{/if}
+			</header>
+
+			{#if connectionState !== 'connected'}
+				<div class="app-banner">
+					<div class="ap-status" role="status">
+						<span class="ap-status-dot" class:ap-status-warn={connectionState === 'connecting' || connectionState === 'reconnecting'} class:ap-status-danger={connectionState === 'offline' || connectionState === 'error'} aria-hidden="true"></span>
+						<span class="ap-status-text" data-testid="connection-status" aria-live="polite">{statusLabel()}</span>
+					</div>
+				</div>
+			{:else}
+				<span class="app-sr" data-testid="connection-status" role="status" aria-live="polite">Connected</span>
+			{/if}
+			{#if activeThread && !activeThreadAnnouncement}
+				<div class="app-banner">
+					<div class="ap-status" role="status">
+						<span class="ap-status-dot ap-status-danger" aria-hidden="true"></span>
+						<span class="ap-status-text">This thread is no longer available on the server.</span>
+						<button class="ap-btn ap-btn-sm" type="button" onclick={backToRoom}>Back to room</button>
+					</div>
+				</div>
+			{/if}
+
+			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.name} messages`}>
+				{#if snapshot.showReconnectDivider}
+					<div class="ap-divider ap-divider-gap" role="separator" data-testid="reconnect-divider"><span>Reconnected · earlier messages aren’t available</span></div>
+				{/if}
+				{#if messages.length === 0 && !activeRoom.recovering}
+					<div class="app-empty">
+						<h2>{activeThread ? 'No replies yet' : 'Nothing here yet'}</h2>
+						<p>{activeThread ? 'Reply below to continue the thread.' : `Start the conversation in ${activeRoom.name}.`}</p>
+					</div>
+				{:else}
+					{#each timeline as item (item.key)}
+						{#if item.kind === 'date'}
+							<div class="ap-divider ap-divider-date ap-divider-sticky" role="separator"><span>{item.label}</span></div>
+						{:else if item.kind === 'replies'}
+							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count} {item.count === 1 ? 'reply' : 'replies'}</span></div>
+						{:else if item.kind === 'thread'}
+							{@const entry = item.entry}
+							<div class="app-thread-row">
+								<button class="ap-thread" type="button" onclick={() => chooseThread(entry.thread)}>
+									{#if entry.participants.length > 0}
+										<span class="ap-thread-faces" aria-hidden="true">
+											{#each entry.participants as participant (participant.id)}
+												{#if participant.avatar && safeUrl(participant.avatar)}
+													<img class="ap-avatar ap-avatar-sm" src={participant.avatar} alt="" />
+												{:else}
+													<span class="ap-avatar ap-avatar-sm">{initials(participant.name || participant.id)}</span>
+												{/if}
+											{/each}
+										</span>
+									{/if}
+									<span class="ap-thread-name">{entry.name}</span>
+									<span class="ap-thread-count">{entry.count} {entry.count === 1 ? 'message' : 'messages'}</span>
+									{#if entry.lastReply}<span class="ap-thread-last">Last reply {entry.lastReply}</span>{/if}
+									{#if entry.summary}<span class="ap-thread-summary">{entry.summary}</span>{/if}
+								</button>
+							</div>
+						{:else}
+							{@const event = item.event}
+							{@const name = senderName(event)}
+							<article class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} data-message-id={event.event_id} data-event-id={event.event_id} tabindex="-1">
+								<div class="ap-msg-gutter">
+									{#if item.grouped}
+										<span class="ap-msg-hovertime">{eventTime(event)}</span>
+									{:else if event.sender?.avatar && safeUrl(event.sender.avatar)}
+										<img class="ap-avatar ap-avatar-md" src={event.sender.avatar} alt="" />
+									{:else}
+										<span class="ap-avatar ap-avatar-md" aria-hidden="true">{initials(name)}</span>
+									{/if}
+								</div>
+								<div class="ap-msg-main">
+									{#if !item.grouped}
+										<header class="ap-msg-head">
+											<span class="ap-msg-sender">{name}</span>
+											<span class="ap-msg-meta">{#if eventTime(event)}<time>{eventTime(event)}</time>{/if}</span>
+										</header>
+									{/if}
+									{#if event.deleted}
+										<div class="ap-msg-tomb">Message deleted</div>
+									{:else if editingId === event.event_id}
+										<div class="app-edit">
+											<textarea class="ap-field app-edit-field" aria-label="Edit message" bind:value={editDraft} rows="3" onkeydown={(keyEvent) => editKeydown(keyEvent, event)}></textarea>
+											<div class="ap-profedit-actions">
+												<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" onclick={() => (editingId = undefined)}>Cancel</button>
+												<button class="ap-btn ap-btn-primary ap-btn-sm" type="button" onclick={() => saveEdit(event)}>Save changes</button>
+											</div>
+										</div>
+									{:else}
+										{#if textOf(event)}
+											{#if event.body?.format === 'plain'}
+												<div class="ap-msg-text app-plain">{textOf(event)}</div>
+											{:else}
+												<div class="ap-msg-text markdown">{@html renderMarkdown(textOf(event))}</div>
+											{/if}
+										{/if}
+										{#if embedsOf(event).length > 0}
+											<div class="ap-msg-embeds">
+												{#each embedsOf(event) as embed}
+													{@const url = safeUrl(embed.url)}
+													{#if embed.kind === 'image' && url}
+														<img class="ap-embed ap-embed-media" src={url} alt={embed.name || ''} loading="lazy" style={aspectRatio(embed)} />
+													{:else if embed.kind === 'video' && url}
+														<!-- svelte-ignore a11y_media_has_caption -->
+														<video class="ap-embed ap-embed-media" src={url} controls preload="metadata" style={aspectRatio(embed)}></video>
+													{:else if embed.kind === 'audio' && url}
+														<audio class="ap-embed ap-embed-audio" src={url} controls preload="none"></audio>
+													{:else if embed.kind === 'file' && url}
+														<a class="ap-embed ap-embed-card" href={url} download={embed.name || true}>
+															<span class="ap-embed-title">{embed.name || 'File'}</span>
+															<span class="ap-embed-detail">{[embed.mime, formatBytes(embed.size)].filter(Boolean).join(' · ')}</span>
+														</a>
+													{:else}
+														<div class="ap-embed ap-embed-card ap-embed-fallback">
+															<span class="ap-embed-kind">{embed.kind || 'unknown'}</span>
+															{#if url}<a class="ap-embed-url" href={url} rel="noreferrer noopener" target="_blank">{url}</a>{:else}<span class="ap-embed-detail">This client can’t display this embed.</span>{/if}
+														</div>
+													{/if}
+												{/each}
+											</div>
+										{/if}
+										{#if movingId === event.event_id}
+											<div class="app-move">
+												<label class="ap-fieldlabel">Move to
+													<select class="ap-field" value={event.thread ?? ''} aria-label="Move message to" onchange={(change) => moveMessage(event, (change.currentTarget as HTMLSelectElement).value, change.currentTarget as HTMLSelectElement)}>
+														<option value="">Move to room</option>
+														{#if event.thread && !isThreadAnnounced(event.thread)}<option value={event.thread} disabled>Current thread unavailable</option>{/if}
+														{#each activeRoom.threads as thread (thread.thread)}<option value={thread.thread}>{threadTitle(thread.thread)}</option>{/each}
+													</select>
+												</label>
+												<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" onclick={() => (movingId = undefined)}>Cancel</button>
+											</div>
+										{/if}
+									{/if}
+								</div>
+								{#if hasActions(event)}
+									<div class="ap-msg-actions">
+										<div class="ap-actions" role="toolbar" aria-label="Message actions">
+											{#if !event.thread && !activeThread}
+												<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={Boolean(pendingThreadStarts[event.event_id])} onclick={() => startThread(event)}>{pendingThreadStarts[event.event_id] ? 'Starting…' : 'Start thread'}</button>
+											{/if}
+											<button class="ap-actions-btn" type="button" aria-label="Edit message" title="Edit" onclick={() => beginEdit(event)}>Edit</button>
+											{#if moreId === event.event_id}
+												{#if canMove(event)}
+													<button class="ap-actions-btn" type="button" aria-label="Move message" title="Move to thread" onclick={() => toggleMove(event)}>Move</button>
+												{/if}
+												<button class="ap-actions-btn ap-actions-danger" type="button" aria-label="Delete message" title="Delete" onclick={() => deleteMessage(event)}>Delete</button>
+											{:else}
+												<button class="ap-actions-btn" type="button" aria-label="More actions" aria-expanded="false" title="More" onclick={() => (moreId = event.event_id)}>⋯</button>
+											{/if}
+										</div>
+									</div>
+								{/if}
+							</article>
+						{/if}
 					{/each}
 				{/if}
 			</div>
-			<div class="identity"><div class="avatar">{(snapshot.you?.name || snapshot.you?.id || '?')[0]?.toUpperCase()}</div><div><strong>{snapshot.you?.name || snapshot.you?.id || 'Guest'}</strong><small>{snapshot.server?.name || 'Anonymous session'}</small></div></div>
-		</aside>
 
-		<main class="conversation" aria-label="Conversation">
-			{#if activeRoom}
-				<header class="conversation-header">
-					<div class="conversation-heading-row">
-						{#if activeThread}<button class="back-button" type="button" aria-label="Back to room" onclick={backToRoom}>← Back to room</button>{/if}
-						<div class="room-heading"><span aria-hidden="true">{activeThread ? '↳' : '#'}</span><div><h2>{activeThread ? threadTitle(activeThread) : activeRoom.name}</h2><p>{activeThread ? (threadSummary(activeThread) || `Thread in #${activeRoom.name}`) : (activeRoom.topic || 'Open conversation')}</p></div></div>
-						{#if activeRoom.recovering}<span class="history-state" role="status"><i></i>Loading history</span>{:else if activeRoom.recoveryError}<span class="history-state warning" role="status">History unavailable</span>{/if}
+			{#if unseenCount > 0 || !stickToBottom}
+				<div class="app-jump">
+					<div class="ap-jumpbar" role="status">
+						<span class="ap-jumpbar-text">{unseenCount ? (unseenCount === 1 ? '1 new message' : `${unseenCount} new messages`) : 'You’re viewing older messages'}</span>
+						<button class="ap-jumpbar-btn" type="button" onclick={jumpToLatest}>{unseenCount ? 'Jump to new' : 'Jump to latest'}</button>
 					</div>
-					<nav class="thread-list" data-testid="thread-list" aria-label="Threads">
-						<button class:active={!activeThread} class="thread-tab" type="button" aria-label="Room" aria-current={!activeThread ? 'page' : undefined} onclick={backToRoom}>
-							<span aria-hidden="true">#</span><strong>Room</strong><small>{roomMessages.length}</small>
-						</button>
-						{#each threadEntries as entry (entry.thread)}
-							<button class:active={activeThread === entry.thread} class="thread-tab" type="button" data-thread={entry.thread} aria-current={activeThread === entry.thread ? 'page' : undefined} aria-label={`Open thread ${entry.name || entry.thread}`} onclick={() => chooseThread(entry.thread)}>
-								<span aria-hidden="true">↳</span><strong>{entry.name || entry.thread}</strong><small>{entry.count}</small>
-							</button>
-						{/each}
-					</nav>
-				</header>
-				<div class="message-scroll" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeRoom.name} messages`}>
-					{#if snapshot.showReconnectDivider}<div class="divider" data-testid="reconnect-divider"><span>New session</span></div>{/if}
-					{#if messages.length === 0 && !activeRoom.recovering}
-						<div class="empty"><div class="empty-symbol" aria-hidden="true">✦</div><h3>{activeThread ? 'An empty thread' : 'A quiet beginning'}</h3><p>{#if activeThread}Reply here when you are ready.{:else}Start the conversation in <strong>#{activeRoom.name}</strong>.{/if}</p></div>
-					{:else}
-						<div class="message-stack">
-							{#each messages as event (event.event_id)}
-								<article class:own={isOwn(event)} class="message" data-message-id={event.event_id} data-event-id={event.event_id}>
-									<div class="message-avatar" aria-hidden="true">{senderName(event)[0]?.toUpperCase()}</div>
-									<div class="message-body">
-										<div class="message-meta"><strong>{senderName(event)}</strong>{#if isOwn(event)}<em>you</em>{/if}<time>{eventTime(event)}</time></div>
-										{#if event.deleted}
-											<p class="deleted">Message deleted</p>
-										{:else if editingId === event.event_id}
-											<div class="edit-form"><textarea aria-label="Edit message" bind:value={editDraft} rows="3"></textarea><div><button class="primary-button small" type="button" onclick={() => saveEdit(event)}>Save changes</button><button class="link-button" type="button" onclick={() => (editingId = undefined)}>Cancel</button></div></div>
-										{:else}
-											{#if textOf(event)}
-												{#if event.body?.format === 'plain'}<p class="plain">{textOf(event)}</p>{:else}<div class="markdown">{@html renderMarkdown(textOf(event))}</div>{/if}
-											{/if}
-											{#each embedsOf(event) as embed}
-												{@const url = safeUrl(embed.url)}
-												<div class="embed">
-													{#if embed.kind === 'image' && url}<img src={url} alt={embed.name || 'Shared image'} loading="lazy" />
-													{:else if embed.kind === 'video' && url}<!-- svelte-ignore a11y_media_has_caption --><video src={url} controls preload="metadata" aria-label={embed.name || 'Shared video'}></video>
-													{:else if embed.kind === 'audio' && url}<audio src={url} controls preload="metadata" aria-label={embed.name || 'Shared audio'}></audio>
-													{:else if embed.kind === 'file' && url}<a href={url} target="_blank" rel="noopener noreferrer">↗ <strong>{embed.name || 'Download file'}</strong>{#if embed.size}<small> · {formatBytes(embed.size)}</small>{/if}</a>
-													{:else}<div class="unknown-embed"><strong>Unsupported attachment: {embed.kind || 'unknown'}</strong>{#if url}<a href={url} target="_blank" rel="noopener noreferrer">Open attachment</a>{/if}</div>
-													{/if}
-												</div>
-											{/each}
-										{/if}
-										{#if canEdit && isOwn(event) && !event.deleted}
-											<div class="message-actions">
-												<button type="button" aria-label="Edit message" onclick={() => beginEdit(event)}>Edit</button>
-												<button type="button" aria-label="Delete message" onclick={() => deleteMessage(event)}>Delete</button>
-												{#if !event.thread}<button class="start-thread-button" type="button" data-testid="start-thread" disabled={Boolean(pendingThreadStarts[event.event_id])} onclick={() => startThread(event)}>{pendingThreadStarts[event.event_id] ? 'Starting…' : 'Start thread'}</button>{/if}
-												{#if event.thread || activeRoom.threads.length > 0}
-													<button type="button" class="move-button" aria-label="Move message" onclick={() => (movingId = movingId === event.event_id ? undefined : event.event_id)}>Move</button>
-													{#if movingId === event.event_id}<label class="move-control"><span class="sr-only">Move to</span><select value={event.thread ?? ''} aria-label="Move message to" onchange={(change) => moveMessage(event, (change.currentTarget as HTMLSelectElement).value, change.currentTarget as HTMLSelectElement)}>
-														<option value="">Move to room</option>
-														{#if event.thread && !isThreadAnnounced(event.thread)}<option value={event.thread} disabled>Current thread unavailable</option>{/if}
-														{#each activeRoom.threads as thread}<option value={thread.thread}>{threadTitle(thread.thread)}</option>{/each}
-													</select></label>{/if}
-												{/if}
-											</div>
-										{/if}
-									</div>
-								</article>
-							{/each}
-						</div>
-					{/if}
 				</div>
-				{#if roomTyping.length > 0}<div class="typing" role="status"><span>•••</span> {roomTyping.map((entry) => entry.sender.name || entry.sender.id).join(', ')} {roomTyping.length === 1 ? 'is' : 'are'} typing</div>{/if}
-				<form class="composer" aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); sendMessage(); }}>
-					<label class="sr-only" for="message-input">Message</label>
-					<textarea id="message-input" data-testid="message-input" aria-label="Message" bind:this={composer} bind:value={composerText} oninput={composerInput} onkeydown={composerKeydown} disabled={!canCompose} placeholder={canCompose ? (activeThread ? 'Reply in this thread…' : 'Write a message…') : (activeThread && !activeThreadAnnouncement ? 'Thread unavailable; return to room…' : 'Connecting to the room…')} rows="1" aria-describedby="composer-help"></textarea>
-					<button class="send-button" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || !composerText.trim()}>↑</button>
-					<span id="composer-help">Enter to send · Shift + Enter for a new line</span>
-				</form>
-			{:else}
-				<div class="no-room"><p>Connect to a server to see its rooms.</p><button class="link-button" type="button" onclick={() => (settingsOpen = true)}>Open connection settings</button></div>
 			{/if}
-		</main>
-	</div>
-	{#if feedback}<div class="feedback {feedback.kind}" role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.text}</div>{/if}
-	{#if snapshot.error}<div class="connection-error" role="alert">{snapshot.error}</div>{/if}
+
+			<div class="ap-typing app-typing-row" aria-live="polite">
+				{#if typingNames.length > 0}
+					<span class="ap-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+					{typingNames.length === 1 ? `${typingNames[0]} is typing` : typingNames.length === 2 ? `${typingNames[0]} and ${typingNames[1]} are typing` : 'Several people are typing'}…
+				{/if}
+			</div>
+
+			<form class="ap-composer" class:ap-composer-disabled={!canCompose} aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+				<textarea class="ap-composer-field" id="message-input" data-testid="message-input" aria-label="Message" bind:this={composer} bind:value={composerText} oninput={composerInput} onkeydown={composerKeydown} disabled={!canCompose} placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.name}`} rows="1"></textarea>
+				<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || !composerText.trim()}>Send</button>
+			</form>
+		{:else}
+			<div class="app-empty app-empty-room">
+				{#if connectionState !== 'connected'}
+					<div class="ap-status" role="status">
+						<span class="ap-status-dot" class:ap-status-warn={connectionState === 'connecting' || connectionState === 'reconnecting'} class:ap-status-danger={connectionState === 'offline' || connectionState === 'error'} aria-hidden="true"></span>
+						<span class="ap-status-text" data-testid="connection-status" aria-live="polite">{statusLabel()}</span>
+					</div>
+				{:else}
+					<span class="app-sr" data-testid="connection-status" role="status" aria-live="polite">Connected</span>
+					<h2>No room open</h2>
+					<p>Pick a room from the list.</p>
+				{/if}
+				<button class="ap-btn ap-btn-sm" type="button" onclick={() => (connectOpen = true)}>Connect to a backend</button>
+			</div>
+		{/if}
+	</main>
+
+	{#if feedback}
+		<div class="app-toast">
+			<div class="ap-status" role={feedback.kind === 'error' ? 'alert' : 'status'}>
+				<span class="ap-status-dot" class:ap-status-warn={feedback.kind === 'pending'} class:ap-status-danger={feedback.kind === 'error'} aria-hidden="true"></span>
+				<span class="ap-status-text">{feedback.text}</span>
+			</div>
+		</div>
+	{/if}
+	{#if snapshot.error}
+		<div class="app-toast app-toast-right">
+			<div class="ap-status" role="alert">
+				<span class="ap-status-dot ap-status-danger" aria-hidden="true"></span>
+				<span class="ap-status-text">{snapshot.error}</span>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
-	:global(*) { box-sizing: border-box; }
-	:global(html) { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #17202d; background: #f4f6f9; }
-	:global(body) { margin: 0; min-width: 320px; background: #f4f6f9; }
-	:global(button), :global(input), :global(textarea) { font: inherit; }
-	:global(button) { cursor: pointer; }
-	.app-shell { min-height: 100vh; background: #f4f6f9; }
-	.topbar { height: 76px; display: flex; align-items: center; gap: 12px; padding: 0 28px; background: #fff; border-bottom: 1px solid #e6eaf0; }
-	.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 12px; background: #1e5eff; color: #fff; font-weight: 800; box-shadow: 0 5px 14px #1e5eff38; }
-	.brand-copy { display: flex; flex-direction: column; gap: 1px; line-height: 1; }
-	.brand-copy span { color: #7d8798; font-size: 10px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
-	.brand-copy strong { font-size: 17px; letter-spacing: -.02em; }
-	.spacer { flex: 1; }
-	.connection-state { display: inline-flex; align-items: center; gap: 8px; color: #667085; font-size: 12px; font-weight: 650; }
-	.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #98a2b3; }
-	.status-dot.online { background: #13b978; box-shadow: 0 0 0 4px #13b9781c; }
-	.status-dot.pending { background: #f0a524; animation: pulse 1.4s ease-in-out infinite; }
-	.icon-button { width: 34px; height: 34px; border: 0; border-radius: 9px; background: transparent; color: #667085; font-size: 17px; }
-	.icon-button:hover, .icon-button:focus-visible { background: #f0f3f8; color: #1e5eff; }
-	.workspace { max-width: 1440px; height: calc(100vh - 76px); min-height: 560px; margin: 0 auto; display: grid; grid-template-columns: 244px minmax(0, 1fr); background: #fff; box-shadow: 0 22px 60px #1e2d4b14; }
-	.sidebar { min-width: 0; display: flex; flex-direction: column; padding: 26px 13px 14px; background: #f8f9fb; border-right: 1px solid #e8ebf0; }
-	.sidebar-title { display: flex; justify-content: space-between; align-items: flex-start; padding: 0 11px 16px; }
-	.sidebar-title small, .settings-title small { color: #7d8798; font-size: 10px; font-weight: 750; letter-spacing: .13em; }
-	.sidebar-title h2, .settings-title h2 { margin: 4px 0 0; font-size: 19px; letter-spacing: -.025em; }
-	.sidebar-title b { min-width: 24px; padding: 4px 7px; border-radius: 8px; background: #edf1f7; color: #697586; font-size: 11px; text-align: center; }
-	.room-list { display: flex; flex-direction: column; gap: 3px; }
-	.room-button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 11px; border: 0; border-radius: 9px; background: transparent; color: #667085; text-align: left; transition: 140ms ease; }
-	.room-button:hover { background: #eef2f8; color: #344054; }
-	.room-button.selected { background: #e9efff; color: #1e5eff; font-weight: 700; }
-	.room-button > span { color: #98a2b3; font-size: 18px; }
-	.room-button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-	.room-button i, .history-state i { width: 12px; height: 12px; margin-left: auto; border: 2px solid #d5dce8; border-top-color: #1e5eff; border-radius: 50%; animation: spin .7s linear infinite; }
-	.muted { padding: 4px 11px; color: #98a2b3; font-size: 12px; }
-	.identity { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 12px 10px 2px; border-top: 1px solid #e6eaf0; }
-	.avatar, .message-avatar { flex: 0 0 auto; display: grid; place-items: center; border-radius: 10px; background: #dce6ff; color: #2856cf; font-weight: 750; }
-	.avatar { width: 29px; height: 29px; font-size: 12px; }
-	.identity > div:last-child { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-	.identity strong, .identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.identity strong { font-size: 12px; }
-	.identity small { color: #98a2b3; font-size: 10px; }
-	.conversation { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #fff; }
-	.conversation-header { min-height: 83px; display: flex; flex-direction: column; align-items: stretch; gap: 13px; padding: 18px 32px 12px; border-bottom: 1px solid #edf0f4; }
-	.conversation-heading-row { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-	.back-button { flex: 0 0 auto; padding: 7px 9px; border: 1px solid #dfe5ef; border-radius: 8px; background: #fff; color: #667085; font-size: 11px; }
-	.back-button:hover, .back-button:focus-visible { border-color: #aebde0; color: #1e5eff; background: #f7f9ff; }
-	.room-heading { display: flex; align-items: center; gap: 13px; }
-	.room-heading > span { color: #8293b3; font-size: 28px; }
-	.room-heading h2, .room-heading p { margin: 0; }
-	.room-heading h2 { font-size: 18px; letter-spacing: -.02em; }
-	.room-heading p { margin-top: 4px; color: #98a2b3; font-size: 12px; }
-	.history-state { display: inline-flex; align-items: center; gap: 7px; color: #6680be; font-size: 11px; font-weight: 650; }
-	.history-state.warning { color: #aa7110; }
-	.thread-list { min-width: 0; display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding: 1px 1px 2px; scrollbar-width: thin; }
-	.thread-tab { min-width: max-content; display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid transparent; border-radius: 8px; background: #f7f8fb; color: #667085; text-align: left; }
-	.thread-tab:hover, .thread-tab:focus-visible { border-color: #d8e0ef; background: #f0f4fc; color: #344054; }
-	.thread-tab.active { border-color: #c9d7ff; background: #edf2ff; color: #1e5eff; }
-	.thread-tab > span { color: #8b9abc; font-size: 14px; }
-	.thread-tab strong { max-width: min(240px, 34vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-	.thread-tab small { min-width: 16px; padding: 2px 4px; border-radius: 5px; background: #e9edf4; color: #7b8799; font-size: 9px; text-align: center; }
-	.thread-tab.active small { background: #dbe5ff; color: #5276d7; }
-	.message-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 25px 32px 18px; scroll-behavior: smooth; }
-	.message-stack { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
-	.message { display: flex; align-items: flex-start; gap: 12px; }
-	.message-avatar { width: 34px; height: 34px; background: #eff1f5; color: #667085; font-size: 13px; }
-	.message.own .message-avatar { background: #dfe8ff; color: #1e5eff; }
-	.message-body { min-width: 0; flex: 1; padding-top: 1px; }
-	.message-meta { display: flex; align-items: baseline; gap: 7px; margin-bottom: 6px; }
-	.message-meta strong { font-size: 13px; }
-	.message-meta em { padding: 2px 5px; border-radius: 4px; background: #edf2ff; color: #5276d7; font-size: 9px; font-style: normal; font-weight: 750; text-transform: uppercase; }
-	.message-meta time { color: #a2aab8; font-size: 10px; }
-	.plain, .markdown, .deleted { margin: 0; color: #475467; font-size: 14px; line-height: 1.65; word-break: break-word; }
-	.plain { white-space: pre-wrap; }
-	.deleted { color: #98a2b3; font-style: italic; }
-	:global(.markdown p) { margin: 0 0 8px; }
-	:global(.markdown p:last-child) { margin-bottom: 0; }
-	:global(.markdown a) { color: #1e5eff; text-decoration: underline; text-underline-offset: 2px; }
-	:global(.markdown pre) { margin: 10px 0; overflow-x: auto; padding: 12px 14px; border-radius: 8px; background: #192235; color: #dce5f7; font-size: 12px; }
-	:global(.markdown code) { padding: 2px 4px; border-radius: 4px; background: #f0f2f6; font-size: .9em; }
-	:global(.markdown pre code) { padding: 0; background: transparent; }
-	:global(.markdown blockquote) { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d6def0; color: #667085; }
-	.message-actions { display: flex; gap: 10px; margin-top: 7px; opacity: 0; transition: opacity 120ms ease; }
-	.message:hover .message-actions, .message:focus-within .message-actions { opacity: 1; }
-	.message-actions button { padding: 0; border: 0; background: transparent; color: #8290a6; font-size: 10px; }
-	.message-actions button:hover, .message-actions button:focus-visible { color: #1e5eff; text-decoration: underline; }
-	.start-thread-button { color: #5276d7 !important; }
-	.start-thread-button:disabled { color: #a2aab8 !important; cursor: wait; text-decoration: none !important; }
-	.move-button { color: #5276d7 !important; }
-	.move-control { display: inline-flex; align-items: center; gap: 4px; color: #8290a6; font-size: 10px; }
-	.move-control select { max-width: 170px; padding: 2px 4px; border: 1px solid #dbe2ee; border-radius: 5px; background: #fff; color: #667085; font-size: 10px; }
-	.edit-form { max-width: 620px; }
-	.edit-form textarea, .composer textarea, .settings-panel input { width: 100%; border: 1px solid #d9e0eb; border-radius: 9px; background: #fff; color: #344054; outline: none; }
-	.edit-form textarea:focus, .composer textarea:focus, .settings-panel input:focus { border-color: #6b8eeb; box-shadow: 0 0 0 3px #1e5eff1c; }
-	.edit-form textarea { padding: 10px; resize: vertical; font-size: 13px; line-height: 1.5; }
-	.edit-form > div { display: flex; gap: 10px; align-items: center; margin-top: 7px; }
-	.embed { max-width: 520px; margin-top: 9px; overflow: hidden; border: 1px solid #e1e6ef; border-radius: 10px; background: #fbfcfe; }
-	.embed img, .embed video { display: block; max-width: 100%; max-height: 360px; object-fit: contain; background: #eef1f6; }
-	.embed audio { display: block; width: min(100%, 450px); padding: 8px; }
-	.embed a, .unknown-embed { display: flex; align-items: center; gap: 8px; padding: 11px 13px; color: #475467; font-size: 12px; text-decoration: none; }
-	.embed a:hover { background: #f2f5fb; }
-	.embed small { color: #98a2b3; }
-	.unknown-embed { justify-content: space-between; flex-wrap: wrap; }
-	.unknown-embed a { padding: 0; color: #1e5eff; text-decoration: underline; }
-	.divider { max-width: 820px; display: flex; align-items: center; gap: 13px; margin: 0 auto 20px; color: #95a0b2; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-	.divider::before, .divider::after { content: ''; height: 1px; flex: 1; background: #e6eaf0; }
-	.empty, .no-room { min-height: 250px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; color: #98a2b3; text-align: center; }
-	.empty-symbol { width: 48px; height: 48px; display: grid; place-items: center; margin-bottom: 5px; border-radius: 15px; background: #edf2ff; color: #6e8ce0; font-size: 22px; }
-	.empty h3, .empty p, .no-room p { margin: 0; }
-	.empty h3 { color: #475467; font-size: 16px; }
-	.empty p, .no-room p { font-size: 13px; }
-	.typing { min-height: 25px; padding: 0 32px; color: #8290a6; font-size: 11px; }
-	.typing span { letter-spacing: 2px; }
-	.composer { position: relative; max-width: 884px; width: calc(100% - 64px); margin: 6px auto 20px; }
-	.composer textarea { min-height: 53px; max-height: 170px; padding: 16px 56px 25px 16px; resize: vertical; font-size: 13px; line-height: 1.45; }
-	.composer textarea:disabled { background: #f8f9fb; cursor: not-allowed; }
-	.send-button { position: absolute; right: 10px; top: 10px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: #1e5eff; color: #fff; font-size: 18px; }
-	.send-button:hover:not(:disabled), .send-button:focus-visible:not(:disabled) { background: #1449d0; }
-	.send-button:disabled { background: #d9e0eb; cursor: not-allowed; }
-	#composer-help { position: absolute; left: 16px; bottom: 5px; color: #a2aab8; font-size: 9px; }
-	.link-button { padding: 4px 0; border: 0; background: transparent; color: #1e5eff; font-size: 12px; }
-	.link-button:hover, .link-button:focus-visible { text-decoration: underline; }
-	.primary-button { padding: 9px 13px; border: 0; border-radius: 8px; background: #1e5eff; color: #fff; font-size: 12px; font-weight: 700; }
-	.primary-button:hover, .primary-button:focus-visible { background: #1449d0; }
-	.primary-button.small { padding: 6px 10px; font-size: 11px; }
-	.settings-panel { position: absolute; z-index: 5; top: 88px; right: 28px; width: min(520px, calc(100% - 32px)); padding: 21px; border: 1px solid #e0e6f0; border-radius: 13px; background: #fff; box-shadow: 0 17px 45px #20304f29; }
-	.settings-title { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
-	.settings-title h2 { margin: 4px 0 0; font-size: 19px; }
-	.settings-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-	.settings-fields label { display: flex; flex-direction: column; gap: 7px; color: #475467; font-size: 11px; font-weight: 700; }
-	.settings-fields label small { color: #98a2b3; font-weight: 500; }
-	.settings-panel input { padding: 10px 11px; font-size: 12px; }
-	.settings-panel > .primary-button { margin-top: 16px; }
-	.feedback, .connection-error { position: fixed; z-index: 10; bottom: 22px; padding: 10px 14px; border-radius: 8px; font-size: 12px; font-weight: 650; box-shadow: 0 8px 22px #20304f26; }
-	.feedback { left: 50%; transform: translateX(-50%); }
-	.feedback.pending { background: #fff7e6; color: #99650d; }
-	.feedback.sent { background: #e8fbf3; color: #11784f; }
-	.feedback.error, .connection-error { background: #fff0f0; color: #bd3434; }
-	.connection-error { right: 22px; max-width: min(390px, calc(100% - 44px)); }
-	.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-	:global(:focus-visible) { outline: 3px solid #1e5eff59; outline-offset: 2px; }
-	@keyframes spin { to { transform: rotate(360deg); } }
-	@keyframes pulse { 50% { opacity: .4; } }
-	@media (max-width: 700px) {
-		.topbar { padding: 0 17px; }
-		.workspace { height: calc(100vh - 76px); grid-template-columns: 76px minmax(0, 1fr); }
-		.sidebar { padding: 22px 9px 12px; }
-		.sidebar-title { justify-content: center; padding: 0 0 15px; }
-		.sidebar-title > div, .room-button strong, .room-button i, .identity > div:last-child { display: none; }
-		.room-button { justify-content: center; padding: 11px 4px; }
-		.room-button > span { font-size: 21px; }
-		.identity { justify-content: center; padding: 12px 0 2px; }
-		.conversation-header, .message-scroll { padding-left: 18px; padding-right: 18px; }
-		.typing { padding: 0 18px; }
-		.composer { width: calc(100% - 36px); }
-		.settings-panel { top: 84px; right: 16px; }
-		.settings-fields { grid-template-columns: 1fr; }
+	/* App glue over the Apron design system: layout height, mobile panes and the few
+	   surfaces the component bundle doesn't cover. Everything else is ap-* from apron.css. */
+	:global(html), :global(body) { height: 100%; }
+	:global(*), :global(*::before), :global(*::after) { box-sizing: border-box; }
+	:global(button), :global(input), :global(textarea), :global(select) { font: inherit; }
+	.app { height: 100dvh; min-height: 100%; }
+	.app-backend { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.ap-shell-sidehead { gap: var(--space-2); }
+	.app-connect { margin: var(--space-2) var(--space-2) 0; }
+	.app-muted { margin: 0; padding: var(--space-1) var(--space-3); color: var(--ink-muted); font-size: 13px; line-height: 18px; }
+	.app-threads { display: flex; flex-direction: column; gap: 2px; }
+	.app-room-meta { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+	.ap-room-active .app-room-meta { color: var(--ink); }
+	.ap-roomhead-back { display: none; }
+	.app-banner { padding: var(--space-2) var(--space-4) 0; }
+	.app-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+	.app-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }
+	.app-empty h2 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 600; color: var(--ink); }
+	.app-empty p { margin: 0; }
+	.app-empty .ap-btn { margin-top: var(--space-2); }
+	.app-thread-row { margin: var(--space-2) var(--space-4) 0 calc(var(--space-4) + var(--avatar-md) + var(--space-3)); }
+	.app-thread-row .ap-thread { margin-top: 0; flex-wrap: wrap; row-gap: 0; }
+	.app-plain { white-space: pre-wrap; }
+	.app-edit { display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--timeline-max-w); }
+	.app-edit-field { height: auto; min-height: 66px; padding: var(--space-2); resize: vertical; font-size: 15px; line-height: 22px; }
+	.app-move { display: flex; align-items: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+	.app-move .ap-field { max-width: 240px; }
+	.app-jump { display: flex; justify-content: center; margin-bottom: var(--space-2); }
+	.app-jump .ap-jumpbar { width: min(100%, var(--timeline-max-w)); }
+	.app-typing-row { min-height: 20px; padding-top: var(--space-1); }
+	.app-typing-head { display: none; }
+	.app-toast { position: fixed; z-index: 10; left: 50%; bottom: calc(var(--space-4) + 64px); transform: translateX(-50%); max-width: min(480px, calc(100% - var(--space-8))); }
+	.app-toast .ap-status { box-shadow: var(--shadow-float); }
+	.app-toast-right { left: auto; right: var(--space-4); transform: none; }
+
+	/* Under 720px it's one pane at a time: rooms, then the room or thread, pushed like pages. */
+	@media (max-width: 719px) {
+		.app { grid-template-columns: minmax(0, 1fr); }
+		.app[data-pane='main'] .ap-shell-side { display: none; }
+		.app[data-pane='rooms'] .ap-shell-main { display: none; }
+		.ap-shell-side { border-right: 0; }
+		.ap-roomhead-back { display: block; }
+		.app-typing-head { display: block; }
+		.app-typing-row { display: none; }
+		.app-thread-row { margin-left: var(--space-4); }
+		.app-toast-right { right: var(--space-4); left: var(--space-4); max-width: none; }
 	}
 </style>

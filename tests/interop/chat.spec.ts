@@ -3,7 +3,9 @@ import {
 	composer,
 	deleteMessage,
 	editMessage,
+	messageAction,
 	messageByText,
+	moreAction,
 	openChat,
 	sendMessage,
 	waitForDeletedMessage,
@@ -62,7 +64,7 @@ test.describe('chat protocol interoperability', () => {
 			await expect(await waitForMessage(pageC, replacement)).toContainText(replacement);
 			await contextC.close();
 
-			await stableMessageA.getByRole('button', { name: 'Edit message', exact: true }).click();
+			await (await messageAction(stableMessageA, 'Edit message')).click();
 			const editor = stableMessageA.getByRole('textbox', { name: 'Edit message', exact: true });
 			await expect(editor).toHaveValue(replacement);
 			await editor.fill('unsaved draft to discard');
@@ -164,7 +166,7 @@ test.describe('chat protocol interoperability', () => {
 			expect(rootEventId).toBeTruthy();
 			await waitForMessage(pageB, rootText);
 
-			await rootA.getByTestId('start-thread').click();
+			await (await messageAction(rootA, 'Start thread')).click();
 			const threadTab = pageA.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
 			await expect(threadTab).toBeVisible();
 			const threadId = await threadTab.getAttribute('data-thread');
@@ -173,14 +175,14 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageA.getByRole('button', { name: 'Back to room', exact: true })).toBeVisible();
 			const rootB = pageB.locator(`article[data-message-id="${rootEventId}"]`);
 			await expect(rootB).toHaveCount(0);
-			const roomCount = pageB.getByRole('button', { name: 'Room', exact: true }).locator('small');
-			const countBeforeReply = await roomCount.textContent();
+			const roomB = pageB.getByRole('main', { name: 'Conversation' });
+			const roomArticlesBefore = await roomB.locator('article[data-message-id]').count();
 
 			await threadButton.click();
 			await expect(pageA.getByRole('button', { name: 'Back to room', exact: true })).toBeVisible();
 			await expect(await waitForMessage(pageA, rootText)).toContainText(rootText);
 			await composer(pageA).fill('draft kept in thread');
-			await pageA.getByRole('button', { name: 'Room', exact: true }).click();
+			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
 			await expect(composer(pageA)).toHaveValue('');
 			await composer(pageA).fill('draft kept in room');
 			await threadButton.click();
@@ -192,13 +194,13 @@ test.describe('chat protocol interoperability', () => {
 			const threadButtonB = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
 			await expect(threadButtonB.locator('small')).toHaveText('2');
 			await expect(pageB.locator(`article[data-message-id="${replyId}"]`)).toHaveCount(0);
-			await expect(roomCount).toHaveText(countBeforeReply!);
+			expect(await roomB.locator('article[data-message-id]').count()).toBe(roomArticlesBefore);
 
 			await threadButtonB.click();
 			await expect(await waitForMessage(pageB, replyText)).toContainText(replyText);
 
 			const rootInThread = pageA.locator(`article[data-message-id="${rootEventId}"]`);
-			await rootInThread.getByRole('button', { name: 'Move message', exact: true }).click();
+			await (await moreAction(rootInThread, 'Move message')).click();
 			const moveSelect = rootInThread.getByRole('combobox', { name: 'Move message to', exact: true });
 			await moveSelect.selectOption({ label: 'Move to room' });
 			await expect(rootInThread).toHaveCount(0);
