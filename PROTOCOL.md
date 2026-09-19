@@ -8,6 +8,33 @@ degrade gracefully when they are unavailable.
 Terminology per RFC 2119. "Server" = the WebSocket backend. "Client" = the chat
 frontend.
 
+After the WebSocket opens, the server announces itself, accepts authentication,
+and announces visible rooms. The client can then send messages; the server
+broadcasts them to all clients in the room, including the sender.
+`// ->` denotes client → server; `// <-` denotes server → client.
+
+```jsonc
+// <-
+{"method": "server", "params": {"protocol": 2, "auth": ["anonymous"]}}
+// ->
+{"method": "auth", "id": "c1", "params": {"scheme": "anonymous"}}
+// <-
+{"id": "c1", "result": {"you": {"id": "guest_1"}}}
+// <-
+{"method": "room", "params": {"room": "general"}}
+// ->
+{"method": "send", "id": "c2", "params": {"room": "general", "body": {"text": "Hello"}}}
+// <-
+{"id": "c2", "result": {"event_id": "1724803200042"}}
+// <-
+{"method": "event", "params": {"room": "general", "echo": "c2", "event": {
+  "event_id": "1724803200042", "sender": {"id": "guest_1"}, "body": {"text": "Hello"}
+}}}
+```
+
+Request `id` correlates replies; `echo` links the broadcast to the send request.
+The server-assigned `event_id` identifies the message in the room log.
+
 ---
 
 ## 1. Transport & framing
