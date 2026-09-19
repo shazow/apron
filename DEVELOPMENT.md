@@ -10,6 +10,8 @@ server keeps rooms and history in memory; restarting it clears messages.
 - `servers/go`: Go module; `cmd/aprond` is the executable and `internal`
   contains implementation packages.
 - `tests/interop`: Playwright tests against real clients and the Go server.
+- `tests/fixtures/wire`: portable JSON replay and session scenarios with
+  expected protocol state; see its README for adapter requirements.
 
 Each implementation owns its manifest, lockfile, and unit tests. Add other
 clients or servers as sibling directories. Extract shared libraries only when
@@ -60,6 +62,10 @@ See `servers/go/README.md` for server flags and origin configuration.
 make check
 make test
 ```
+
+`make test` includes shared replay fixtures in the frontend unit suite and
+session fixtures over real loopback WebSockets. Run the latter alone with
+`make test-wire`; it needs Node.js and Go, but no browser or running dev server.
 
 Install Chromium once for browser tests:
 

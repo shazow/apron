@@ -31,3 +31,18 @@ The UI contract used by the tests is an accessible textbox named `Message`, a
 `Save changes`, and `Delete message`; the editor textbox is named `Edit
 message`. A deleted container remains visible with the exact text `Message
 deleted`.
+
+## Shared session fixtures
+
+`npm run test:wire` runs `../fixtures/wire/session` against the actual
+TypeScript `ChatClient` using Node.js WebSockets. It requires Node.js 24 and
+Go; no browser, Vite process, or example backend is started. The runner builds
+`wire-peer.go` using the existing Go module dependencies and starts it on a
+random loopback port. HTTP control endpoints deliver fixture frames and capture
+client requests; protocol traffic uses a real WebSocket.
+
+The peer is a transport utility, not a protocol implementation or test oracle.
+Expected state resides exclusively in JSON fixtures. The runner normalizes
+client state and asserts it without querying UI elements or private fields.
+Both envelope forms run for every scenario variant. See
+[`../fixtures/wire/README.md`](../fixtures/wire/README.md) for the portable format.

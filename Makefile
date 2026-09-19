@@ -1,4 +1,4 @@
-.PHONY: install dev-web dev-server check test test-web test-go test-interop build serve run
+.PHONY: install dev-web dev-server check test test-web test-go test-wire test-interop build serve run
 
 install:
 	npm --prefix clients/web ci
@@ -15,7 +15,7 @@ check:
 	npm --prefix clients/web run check
 	cd servers/go && go vet ./...
 
-test: test-web test-go
+test: test-web test-go test-wire
 
 test-web:
 	npm --prefix clients/web test
@@ -25,6 +25,9 @@ test-go:
 
 test-interop:
 	npm --prefix tests/interop test
+
+test-wire:
+	npm --prefix tests/interop run test:wire
 
 build:
 	npm --prefix clients/web run build

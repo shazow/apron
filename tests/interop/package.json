@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"test": "playwright test --config=playwright.config.ts",
+		"test:wire": "playwright test --config=wire.config.ts",
 		"test:ui": "playwright test --config=playwright.config.ts --ui",
 		"test:headed": "playwright test --config=playwright.config.ts --headed",
 		"install:browsers": "playwright install chromium"
