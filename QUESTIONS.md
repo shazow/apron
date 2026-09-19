@@ -85,7 +85,7 @@ Reference: PROTOCOL.md §§2, 5.1, Appendix A.
 
 Decision: Decimal-string IDs based on Unix epoch milliseconds; one strictly
 increasing room sequence across events and updates. Generation is
-implementation-defined; recommend `str(max(last_id + 1, unix_epoch_ms()))`.
+implementation-defined; recommend `str(max(unix_epoch_ms(), last_id + 1))`.
 Derived timestamps are approximate. No separate counter range, overflow rule,
 or restart procedure. Design assumes fewer than 1,000 entries/sec per room.
 

@@ -108,7 +108,7 @@ unidentifiable invalid requests (§1.1). They come in two flavors:
 **Log IDs** (event IDs and update IDs) are decimal strings based on Unix epoch
 milliseconds — e.g. `"1724803200042"`. Events and updates MUST share one
 strictly increasing sequence per room. Generation is implementation-defined.
-Recommended generator: `id = str(max(last_id + 1, unix_epoch_ms()))`.
+Recommended generator: `id = str(max(unix_epoch_ms(), last_id + 1))`.
 `"0"` is reserved for the empty-log boundary; entries MUST use positive IDs.
 
 - Compare numerically. Values are below `2^53`; clients MAY parse them as
