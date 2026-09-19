@@ -40,6 +40,13 @@ import { isJsonObject, type Embed, type EventRecord } from '$lib/protocol/types'
 	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id));
 
 	$effect(() => {
+		if (editingId && activeRoom?.timeline.events[editingId]?.deleted) {
+			editingId = undefined;
+			editDraft = '';
+		}
+	});
+
+	$effect(() => {
 		messages.length;
 		activeRoom?.id;
 		if (!stickToBottom || !messageScroll) return;
@@ -247,10 +254,10 @@ import { isJsonObject, type Embed, type EventRecord } from '$lib/protocol/types'
 									<div class="message-avatar" aria-hidden="true">{senderName(event)[0]?.toUpperCase()}</div>
 									<div class="message-body">
 										<div class="message-meta"><strong>{senderName(event)}</strong>{#if isOwn(event)}<em>you</em>{/if}<time>{eventTime(event)}</time></div>
-										{#if editingId === event.event_id}
-											<div class="edit-form"><textarea aria-label="Edit message" bind:value={editDraft} rows="3"></textarea><div><button class="primary-button small" type="button" onclick={() => saveEdit(event)}>Save changes</button><button class="link-button" type="button" onclick={() => (editingId = undefined)}>Cancel</button></div></div>
-										{:else if event.deleted}
+										{#if event.deleted}
 											<p class="deleted">Message deleted</p>
+										{:else if editingId === event.event_id}
+											<div class="edit-form"><textarea aria-label="Edit message" bind:value={editDraft} rows="3"></textarea><div><button class="primary-button small" type="button" onclick={() => saveEdit(event)}>Save changes</button><button class="link-button" type="button" onclick={() => (editingId = undefined)}>Cancel</button></div></div>
 										{:else}
 											{#if textOf(event)}
 												{#if event.body?.format === 'plain'}<p class="plain">{textOf(event)}</p>{:else}<div class="markdown">{@html renderMarkdown(textOf(event))}</div>{/if}

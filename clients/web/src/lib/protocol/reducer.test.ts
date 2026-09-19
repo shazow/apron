@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyTransition, applyTransitions, createTimeline, mergePatch, timelineEvents } from './reducer';
-import { toTransition, type EventRecord } from './types';
+import { applyTransition, applyTransitions, createTimeline, mergePatch, timelineEvents, TimelineReplay } from './reducer';
+import { toTransition, type EventRecord, type Transition } from './types';
 
 const creation = (event: Partial<EventRecord> & Pick<EventRecord, 'event_id'>): EventRecord => ({
 	sender: { id: 'alice', name: 'Alice' },
@@ -10,6 +10,52 @@ const creation = (event: Partial<EventRecord> & Pick<EventRecord, 'event_id'>): 
 });
 
 describe('timeline reducer', () => {
+	it.each([5_000, 50_000])('replays %i messages in pages, then applies live updates', (count) => {
+		const original = createTimeline('general');
+		const replay = new TimelineReplay(original);
+		const base = 1_724_803_200_000;
+		for (let offset = 0; offset < count; offset += 200) {
+			const page: Transition[] = Array.from({ length: Math.min(200, count - offset) }, (_, index) => ({
+				kind: 'creation',
+				event: creation({ event_id: String(base + offset + index) })
+			}));
+			replay.apply(page);
+		}
+		replay.apply([
+			{ kind: 'update', event_id: String(base + count), target: String(base), set: { body: { text: 'edited' } } },
+			{ kind: 'update', event_id: String(base + count + 1), target: String(base + 1), set: { deleted: true, body: null } },
+			{ kind: 'creation', event: creation({ event_id: String(base), body: { text: 'duplicate' } }) }
+		]);
+		const result = replay.finish();
+		expect(result.order).toEqual(Array.from({ length: count }, (_, index) => String(base + index)));
+		expect(result.events[String(base)].body?.text).toBe('edited');
+		expect(result.events[String(base + 1)].deleted).toBe(true);
+		expect(result.events[String(base + 1)].body).toBeUndefined();
+		expect(original).toEqual(createTimeline('general'));
+	});
+
+	it('orders raster targets across pages without mutating prior snapshots or pending updates', () => {
+		const initial = applyTransitions(createTimeline('general'), [
+			{ kind: 'creation', event: creation({ event_id: '10' }) },
+			{ kind: 'update', event_id: '35', target: '20', set: { body: { text: 'pending edit' } } }
+		]);
+		const before = structuredClone(initial);
+		const replay = new TimelineReplay(initial);
+		replay.apply([
+			{ kind: 'update', event_id: '30', target: '20', replace: creation({ event_id: '20' }) }
+		]);
+		replay.apply([
+			{ kind: 'update', event_id: '40', target: '2', replace: creation({ event_id: '2' }) },
+			{ kind: 'update', event_id: '50', target: '10', set: { body: { text: 'changed' } } },
+			{ kind: 'creation', event: creation({ event_id: '20' }) }
+		]);
+		const result = replay.finish();
+		expect(result.order).toEqual(['2', '10', '20']);
+		expect(result.events['20'].body?.text).toBe('pending edit');
+		expect(result.events['10'].body?.text).toBe('changed');
+		expect(initial).toEqual(before);
+	});
+
 	it('applies merge patches, including null deletion, without changing creation ids', () => {
 		let timeline = createTimeline('general');
 		timeline = applyTransitions(timeline, [

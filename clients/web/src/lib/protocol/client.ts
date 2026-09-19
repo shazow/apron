@@ -1,6 +1,6 @@
 import {
 	applyTransition,
-	applyTransitions,
+	TimelineReplay,
 	compareLogIds,
 	createTimeline,
 	timelineEvents,
@@ -76,6 +76,7 @@ interface RecoveryState {
 	head: string;
 	nextAfter: string;
 	buffer: Transition[];
+	replay: TimelineReplay;
 	requestId?: string;
 }
 
@@ -439,7 +440,7 @@ export class ChatClient {
 
 	private startRecovery(room: RoomState, head: string): void {
 		room.timeline = createTimeline(room.id);
-		room.recovery = { head, nextAfter: '0', buffer: [] };
+		room.recovery = { head, nextAfter: '0', buffer: [], replay: new TimelineReplay(room.timeline) };
 		room.recoveryError = undefined;
 		if (head === '0') {
 			room.recovery = undefined;
@@ -480,7 +481,7 @@ export class ChatClient {
 		}
 		const entries = result.entries;
 		const transitions = entries.map(toTransition).filter((entry): entry is Transition => Boolean(entry));
-		room.timeline = applyTransitions(room.timeline, transitions);
+		recovery.replay.apply(transitions);
 		const more = result.more;
 		const lastId = typeof result.last_id === 'string' ? result.last_id : undefined;
 		if (more && lastId && isLogId(lastId)) {
@@ -503,10 +504,10 @@ export class ChatClient {
 	private finishRecovery(room: RoomState): void {
 		const recovery = room.recovery;
 		if (!recovery) return;
-		room.timeline = applyTransitions(
-			room.timeline,
+		recovery.replay.apply(
 			recovery.buffer.sort((a, b) => compareLogIds(transitionId(a), transitionId(b)))
 		);
+		room.timeline = recovery.replay.finish();
 		room.recovery = undefined;
 		this.showReconnectDivider = false;
 	}

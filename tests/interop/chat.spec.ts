@@ -61,9 +61,14 @@ test.describe('chat protocol interoperability', () => {
 			await expect(await waitForMessage(pageC, replacement)).toContainText(replacement);
 			await contextC.close();
 
-			const editedMessageA = await waitForMessage(pageA, replacement);
-			await deleteMessage(pageA, editedMessageA);
+			await stableMessageA.getByRole('button', { name: 'Edit message', exact: true }).click();
+			const editor = stableMessageA.getByRole('textbox', { name: 'Edit message', exact: true });
+			await expect(editor).toHaveValue(replacement);
+			await editor.fill('unsaved draft to discard');
+			await deleteMessage(pageA, stableMessageA);
 			await waitForDeletedMessage(pageA, eventId as string);
+			await expect(editor).toHaveCount(0);
+			await expect(stableMessageA.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
 			await waitForDeletedMessage(pageB, eventId as string);
 			await expect(pageA.getByText(replacement, { exact: true })).toHaveCount(0);
 			await expect(pageB.getByText(replacement, { exact: true })).toHaveCount(0);

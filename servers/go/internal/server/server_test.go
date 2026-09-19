@@ -25,11 +25,36 @@ func newTestServer(t *testing.T, config Config) (*Server, *httptest.Server) {
 	httpServer := httptest.NewServer(app.Handler())
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		_ = app.Shutdown(ctx)
+		if err := app.Shutdown(ctx); err != nil {
+			t.Errorf("shutdown: %v", err)
+		}
 		cancel()
 		httpServer.Close()
 	})
 	return app, httpServer
+}
+
+func TestShutdownClosesConnections(t *testing.T) {
+	app, httpServer := newTestServer(t, DefaultConfig())
+	closed := dialTestClient(t, httpServer, "closed", false)
+	_ = closed.ws.Close(websocket.StatusNormalClosure, "finished")
+	active := dialTestClient(t, httpServer, "active", false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := app.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown with accepted connections: %v", err)
+	}
+	if _, _, err := active.ws.Read(ctx); err == nil {
+		t.Fatal("active connection remained open after shutdown")
+	}
+	if err := app.Shutdown(ctx); err != nil {
+		t.Fatalf("repeated shutdown: %v", err)
+	}
+	_, response, err := websocket.Dial(ctx, "ws"+httpServer.URL[len("http"):]+"/ws", nil)
+	if err == nil || response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("connection after shutdown: response=%v, error=%v", response, err)
+	}
 }
 
 func dialTestClient(t *testing.T, httpServer *httptest.Server, id string, full bool) *testClient {

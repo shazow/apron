@@ -36,51 +36,87 @@ export function mergePatch(target: JsonValue | undefined, patch: JsonValue): Jso
 	return result;
 }
 
+/** Owns a mutable draft until finish transfers the completed timeline to its caller. */
+export class TimelineReplay {
+	private readonly draft: TimelineState;
+	private orderDirty = false;
+	private finished = false;
+
+	constructor(state: TimelineState) {
+		this.draft = {
+			room: state.room,
+			events: { ...state.events },
+			order: [...state.order],
+			seenTransitions: { ...state.seenTransitions },
+			pendingUpdates: copyPending(state.pendingUpdates)
+		};
+	}
+
+	apply(transitions: Transition[]): void {
+		if (this.finished) throw new Error('Replay already finished');
+		for (const transition of transitions) this.applyOne(transition);
+	}
+
+	finish(): TimelineState {
+		if (this.finished) throw new Error('Replay already finished');
+		this.finished = true;
+		// Ordered creations append in O(1). Rasters can introduce older targets;
+		// sort once at publication instead of shifting the array per insertion.
+		if (this.orderDirty) this.draft.order.sort(compareLogIds);
+		return this.draft;
+	}
+
+	private insert(event: EventRecord, id = event.event_id): void {
+		this.draft.events[id] = cloneEvent(event, id);
+		const order = this.draft.order;
+		if (order.length && compareLogIds(order[order.length - 1], id) > 0) this.orderDirty = true;
+		order.push(id);
+	}
+
+	private applyOne(transition: Transition): void {
+		const id = transitionId(transition);
+		if (!isLogId(id)) return;
+		if (transition.kind === 'update' && !isLogId(transition.target)) return;
+		const next = this.draft;
+		if (next.seenTransitions[id]) return;
+		next.seenTransitions[id] = true;
+
+		if (transition.kind === 'creation') {
+			// A raster may already establish authoritative state for this target.
+			if (!next.events[id]) this.insert(transition.event);
+			const pending = next.pendingUpdates[id];
+			if (pending) {
+				for (const update of pending.sort(compareTransitions)) applyUpdate(next, update);
+				delete next.pendingUpdates[id];
+			}
+			return;
+		}
+
+		if (!next.events[transition.target]) {
+			if (transition.replace) {
+				this.insert(transition.replace, transition.target);
+				applyNewerPending(next, transition.target, id);
+			} else {
+				(next.pendingUpdates[transition.target] ??= []).push(cloneUpdate(transition));
+			}
+			return;
+		}
+		applyUpdate(next, transition);
+	}
+}
+
 export function applyTransition(state: TimelineState, transition: Transition): TimelineState {
 	if (!isLogId(transitionId(transition))) return state;
 	if (transition.kind === 'update' && !isLogId(transition.target)) return state;
 	if (state.seenTransitions[transitionId(transition)]) return state;
-
-	const next: TimelineState = {
-		room: state.room,
-		events: { ...state.events } as Record<string, EventRecord>,
-		order: [...state.order],
-		seenTransitions: { ...state.seenTransitions, [transitionId(transition)]: true } as Record<string, true>,
-		pendingUpdates: copyPending(state.pendingUpdates)
-	};
-
-	if (transition.kind === 'creation') {
-		const id = transition.event.event_id;
-		// A raster can establish a complete target before its original creation
-		// arrives. Keep that authoritative state and only replay the missing set
-		// transitions queued for the target.
-		if (!next.events[id]) next.events[id] = cloneEvent(transition.event);
-		insertOrdered(next.order, id);
-		const pending = next.pendingUpdates[id];
-		if (pending) {
-			for (const update of pending.sort(compareTransitions)) applyUpdate(next, update);
-			delete next.pendingUpdates[id];
-		}
-		return next;
-	}
-
-	if (!next.events[transition.target]) {
-		if (transition.replace) {
-			next.events[transition.target] = cloneEvent(transition.replace, transition.target);
-			insertOrdered(next.order, transition.target);
-			applyNewerPending(next, transition.target, transition.event_id);
-		} else {
-			(next.pendingUpdates[transition.target] ??= []).push(cloneUpdate(transition));
-		}
-		return next;
-	}
-
-	applyUpdate(next, transition);
-	return next;
+	return applyTransitions(state, [transition]);
 }
 
 export function applyTransitions(state: TimelineState, transitions: Transition[]): TimelineState {
-	return transitions.reduce(applyTransition, state);
+	if (!transitions.length) return state;
+	const replay = new TimelineReplay(state);
+	replay.apply(transitions);
+	return replay.finish();
 }
 
 export function timelineEvents(state: TimelineState): EventRecord[] {
@@ -146,13 +182,6 @@ function applyNewerPending(state: TimelineState, target: string, snapshotId: str
 		.sort(compareTransitions)) {
 		applyUpdate(state, update);
 	}
-}
-
-function insertOrdered(order: string[], id: string): void {
-	if (order.includes(id)) return;
-	const index = order.findIndex((existing) => compareLogIds(id, existing) < 0);
-	if (index === -1) order.push(id);
-	else order.splice(index, 0, id);
 }
 
 function compareTransitions(a: UpdateTransition, b: UpdateTransition): number {

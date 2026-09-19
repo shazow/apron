@@ -263,7 +263,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clients[c] = struct{}{}
-	s.connections.Add(1)
 	s.mu.Unlock()
 
 	defer func() {
