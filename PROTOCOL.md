@@ -32,6 +32,8 @@ frontend.
   be dropped without a reply. The limit is advisory, not a conformance requirement.
 - Liveness rides on WebSocket ping/pong at the transport layer. There is no
   application-level heartbeat; do not invent one.
+- Top-level `conn` is reserved for the multiplexing envelope (Appendix A) and
+  MUST NOT appear in core frames.
 
 ### 1.1 Envelope and replies
 
@@ -156,9 +158,7 @@ unprompted. There is no client hello.
 }
 ```
 
-- `protocol`: integer. Current value `2` replaces mandatory compacted backfill
-  with replayable history (§5.1), a frozen-contract change under §8. Version `1`
-  introduced the JSON-RPC envelope; version `0` used `type`.
+- `protocol`: integer. Current value `2`.
 - `caps`: capability identifiers (§4). MAY be empty.
 - `auth`: supported auth methods (§3.2), in server preference order.
 - `upload`: present iff cap `upload` (§6.1).
@@ -697,20 +697,6 @@ conformance.** The harness plus a Level 0 reference backend (~80 lines,
 Python/`websockets`) ship with the spec; the acceptance test for this
 document is that an LLM given only SPEC.md one-shots a Level 0 backend that
 passes.
-
-## 8. Design commitments (frozen)
-
-Changing any of these is a `protocol` bump: the frame envelope (§1), the
-identifier scheme (§2 — digit-string log IDs on one per-room sequence, opaque
-string IDs elsewhere), the unsolicited replaceable `server` frame (§3.1),
-inline denormalized senders (§3.3), the RFC 7386 merge-patch `update` rule
-(§5.3), the replayable history contract (§5.1 — source spans, raw transitions,
-optional equivalent rasters), and the unknown-kind fallback-card rule (§3.5).
-Everything else evolves as capabilities.
-
-Additionally reserved: the field name `conn` MUST NOT appear at the top level
-of any core frame. It is reserved for the multiplexing envelope (Appendix A),
-which is a layer *beneath* this protocol, not a frame field within it.
 
 ---
 

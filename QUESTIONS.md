@@ -25,7 +25,7 @@ omitted `id` means notification/no reply. Retry with the same ID. Servers SHOULD
 deduplicate by `(authenticated sender, id)` and return the original result
 without re-execution. Retention is implementation-defined; duplicates remain
 allowed. No new handshake or message ID. Request IDs remain separate from log
-IDs. Envelope changes bump `protocol` to `1` under §8.
+IDs.
 
 ## 2. Live traffic during history recovery
 
@@ -65,7 +65,7 @@ implementation; leave caching, eviction, unknown-target handling, and scheduling
 unspecified. Partial-history clients obtain required replay dependencies.
 Page `first_id`/`last_id` describe the source slice before compaction; checkpoints
 and continuation use those bounds. Initial replay starts at `"0"`, bounded by
-`latest_id`. The history-contract change bumps `protocol` to `2` under §8.
+`latest_id`.
 
 ## 4. Deletion and retrieval of original content
 
@@ -109,17 +109,14 @@ access, and client cache policy are implementation-defined.
 
 - [ ] Resolved
 
-Reference: PROTOCOL.md §§3.1, 4, 5.3, 6.2, 8.
+Reference: PROTOCOL.md §§3.1, 4, 5.3, 6.2.
 
-Which receive-side behaviors are mandatory regardless of capabilities? `edit`
-and `delete` gate UI only, and `threads` can independently produce updates.
-Must every frontend therefore understand `update`, even without those caps?
-Separate mandatory receiving behavior from optional requests.
+Decision: Frontend update/replay support is mandatory regardless of mutation
+capabilities. Change policy is deferred until the specification stabilizes;
+there are no existing consumers. Removed frozen commitments and version-bump
+rules; retained the wire `protocol` field and the `conn` reservation.
 
-Progress: Full update/replay support is now mandatory (§5.3).
-
-Remaining: §8 freezes history semantics despite `history` being optional.
-Should future capability changes use separate versions or protocol bumps?
+Review complete; awaiting confirmation before advancing.
 
 ## 8. WebSocket messages versus transport frames
 
@@ -139,7 +136,7 @@ application-level name for its JSON object. Corrected during the envelope change
 
 - [ ] Resolved
 
-Reference: PROTOCOL.md §§3.5, 5.3, 7, 8;
+Reference: PROTOCOL.md §§3.5, 5.3, 7;
 [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396.html).
 
 Correct the merge-patch explanation: object values merge recursively rather
