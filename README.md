@@ -16,7 +16,8 @@ We aim to substantially simplify the chat protocol by taking advantage of severa
 - Any frontend, many backends: Aspiring to have many Apron-compatible chat frontends and backends.
 - Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases.
 - Stateless protocol: Server is not required to hold per-client state between requests.
-- One websocket to start, additional signaling bootstrapped from there (e.g. WebRTC).
+- One websocket to start, additional signaling bootstrapped from there (e.g. HTTP upload target, WebRTC, etc).
+- Multimedia-friendly: Upload images, audio, whatever.
 
 ## License
 
