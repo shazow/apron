@@ -191,15 +191,13 @@ The upload example is corrected; question 6 defines metadata replacement.
 
 ## 13. Markdown HTML and the content trust model
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§3.5, 6.4.
 
 Decision: Clients MUST disable raw HTML in Markdown or sanitize rendered HTML
 using the same allowlist policy as `embed.html`. Renderer and sanitizer choice
 remain implementation-defined.
-
-Review complete; awaiting confirmation before advancing.
 
 ## 14. Conformance authority and missing companion artifacts
 
