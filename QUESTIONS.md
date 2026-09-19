@@ -3,7 +3,9 @@
 Review of [README.md](README.md) and [PROTOCOL.md](PROTOCOL.md).
 Edit scope: `PROTOCOL.md` and `QUESTIONS.md` only. Use technical, dense, brief
 prose for senior implementers. Resolve items sequentially; record decisions
-and specification changes before checking them off.
+and specification changes before checking them off. Obtain explicit user
+confirmation before advancing to the next question. Specify wire semantics and
+correctness invariants; leave implementation strategies unspecified.
 
 XXX: Unchecked questions remain unresolved; proposed directions for those items
 are discussion options, not protocol requirements.
@@ -42,12 +44,14 @@ fixed bound while buffering live entries; advance checkpoints only through
 processed history, then drain the buffer in order. Re-announcements do not move
 the active bound. Persist checkpoints with cached state; interrupted recovery
 resumes from the processed checkpoint. No additional handshake or server cursor.
-Question 3 extends persisted state to include unresolved patches and uses source
-page bounds for checkpoint advancement.
+Question 3 uses source page bounds for checkpoint advancement; client storage
+and unknown-target handling remain implementation-defined.
 
 ## 3. Replay and optional rastered history
 
-- [x] Resolved
+- [ ] Resolved
+
+Review in progress; recorded design awaits confirmation before advancing.
 
 Reference: PROTOCOL.md §§5.1, 5.3.
 
@@ -57,9 +61,10 @@ revision and reconciliation with live updates unspecified.
 Decision: Frontends replay the full transition model. Servers may return raw
 log slices or equivalent rastered transitions, independent of query direction.
 Rastered updates carry complete event state in `replace` at an existing
-`update_id`; no future mutations may be included. Clients retain a versioned
-base and ordered patches, including unknown-target updates, and rebuild when
-older transitions arrive. Raw and rastered pages converge to the same state.
+`update_id`; no future mutations may be included. Raw and rastered replay MUST
+produce equivalent terminal state. Document ordered full replay as the naive
+implementation; leave caching, eviction, unknown-target handling, and scheduling
+unspecified. Partial-history clients obtain required replay dependencies.
 Page `first_id`/`last_id` describe the source slice before compaction; checkpoints
 and continuation use those bounds. Initial replay starts at `"0"`, bounded by
 `latest_id`. The history-contract change bumps `protocol` to `2` under §8.

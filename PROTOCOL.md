@@ -238,8 +238,8 @@ announcement after auth MUST establish `latest_id` and live delivery at one
 serialization point: transitions through `latest_id` are recoverable via history
 (raw or equivalent rasters), and subsequent entries MUST be delivered live in
 log order. No commit may fall between these paths. Re-announcements report the
-current head but MUST NOT advance client
-checkpoints or replace an active recovery bound (§5.1).
+current head but MUST NOT advance client checkpoints or replace an active
+recovery bound (§5.1).
 
 ### 3.5 Messages
 
@@ -430,45 +430,23 @@ remain covered by `first_id`/`last_id`. Raw and rastered replies MUST yield the
 same terminal event state when applied to the source slice's preceding state.
 Replay equivalence concerns stored event state, not intermediate rendering.
 
-**Client reducer.** Use the same reducer for live and historical transitions.
-Per event, retain a full base at revision `B` and pending patches keyed by ID:
+**Replay.** Clients MUST support ordered transition replay: creations insert
+events, `set` applies merge patch, and `replace` installs complete event state
+whether or not the target is loaded. Clients loading partial history MUST
+obtain the dependencies required for correct replay. Caching, eviction,
+unknown-target handling, and replay scheduling are implementation-defined.
 
-- A creation supplies a base at `event_id`; a raster supplies one at `update_id`.
-  Install a base only if newer than the retained base. Replace the entire event
-  object, discard patches through `B`, then replay retained patches above `B`.
-- For `set`, retain patches above `B`, deduplicate by `update_id`, and replay
-  them in ascending order from the base. An older arriving patch above `B`
-  MUST be inserted and replayed; the highest observed update ID alone cannot
-  suppress it. With no base, retain patches until a creation or raster arrives.
-- A raster can supersede a raw patch with the same update ID; ID deduplication
-  MUST NOT discard that newer base. Older bases cannot overwrite newer bases.
-- Pages may arrive in either order. An event is complete through `H` only once
-  its base and all subsequent transitions through `H` are covered. A raw slice
-  containing only updates may require earlier pages to reconstruct targets.
-  Retained transitions MAY be folded or evicted only when equivalent future
-  replay remains possible.
+Naive recovery:
 
-For initial reconstruction, start at `after: "0"`, bounded by `room.latest_id`.
-Backward scrollback MAY fetch recent slices first, retaining unresolved updates
-while fetching preceding slices. A per-event snapshot revision never establishes
-a room-wide checkpoint.
+1. Capture `H = room.latest_id`; buffer live transitions above `H`.
+2. From empty state, page forward from `after: "0"` through `before: H`.
+   With state checkpointed through `C`, resume at `after: C+1` instead.
+3. Replay pages in order until `more: false`, then apply buffered live entries.
 
-Reconnect recovery for cached room state:
-
-1. Retain checkpoint `C`, the log position through which entries have been
-   processed. Receiving a higher live ID MUST NOT advance `C` during recovery.
-2. Re-authenticate; capture `H = room.latest_id`. Buffer live events and updates.
-3. If `C < H`, request `history(after=C+1, before=H)`. Feed each page to the
-   reducer, retaining unresolved patches. Advance `C` to the source `last_id`
-   only after processing the page; continue at `after=C+1` with the same `H`.
-   Stop when `more: false`; an empty exhausted window also completes recovery.
-4. The exhausted window establishes checkpoint `H`. Drain buffered entries
-   above `H` in log order, then resume live processing and checkpoint advancement.
-   If `C = H` initially, skip history and drain directly.
-
-Persist checkpoints with cached bases and retained patches. On disconnect during
-recovery, discard unprocessed buffered entries and resume from `C` after the
-next room announcement. An announced or buffered maximum is not a checkpoint.
+Checkpoints MUST represent processed source-log coverage and corresponding
+recoverable client state. Neither an announced head, a received live maximum,
+nor a per-event snapshot alone establishes a room checkpoint. Interrupted
+recovery resumes from the last valid checkpoint.
 
 Recovery boundary example:
 
@@ -526,7 +504,7 @@ whose patch value is `null`. `set` MUST be an object; `event_id` MUST NOT be
 changed or deleted.
 History rasters use `replace` for full-object replacement, not merge patch;
 an update contains exactly one of `set` or `replace`. Live updates and client
-`update_request`s use `set`. Retain updates for unknown targets (§5.1).
+`update_request`s use `set`. Partial-history replay follows §5.1.
 Re-render after reduction. Servers MAY update any event, including ones
 predating the connection; the same mechanism covers edits, redaction,
 re-threading (§6.2), and future state mutations.
@@ -690,7 +668,7 @@ digit-string encoding under
 burst load; `send`/`event` round-trip including `echo` when a request ID is
 present and its omission otherwise; per-cap behavior
 including RFC 7386 merge semantics, raw/rastered replay equivalence (including
-nested object resets and deletions), arbitrary page arrival order, source-span
+nested object resets and deletions), source-span
 pagination with `limit: 1`, `room.latest_id` (including update-only and empty
 logs), gap-free history/live boundaries, and `unsupported` responses for
 undeclared caps. Client recovery checks include interleaved live traffic and
