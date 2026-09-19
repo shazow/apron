@@ -1,0 +1,405 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "History recovery with interleaved live updates",
+  "description": "Forward recovery uses source-log bounds across raw/rastered pages, preserves its original head on re-announcement, and applies an intervening live update after its dependencies.",
+  "references": [
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#51-history"
+  ],
+  "variants": [
+    {
+      "name": "raw",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "history"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "id": "alice"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "alice"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "latest_id": "1724803200105"
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "history-1",
+            "match": {
+              "method": "history",
+              "params": {
+                "room": "general",
+                "after": "0",
+                "before": "1724803200105"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "1724803200106",
+              "target": "1724803200100",
+              "set": {
+                "body": {
+                  "text": "live edit"
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "latest_id": "1724803200106"
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "history-1",
+            "result": {
+              "entries": [
+                {
+                  "event_id": "1724803200100",
+                  "sender": {
+                    "id": "alice"
+                  },
+                  "body": {
+                    "text": "first",
+                    "format": "plain"
+                  }
+                },
+                {
+                  "event_id": "1724803200102",
+                  "sender": {
+                    "id": "alice"
+                  },
+                  "body": {
+                    "text": "second",
+                    "format": "plain"
+                  },
+                  "custom": {
+                    "keep": true
+                  }
+                },
+                {
+                  "event_id": "1724803200104",
+                  "target": "1724803200102",
+                  "set": {
+                    "body": {
+                      "text": "second edited"
+                    }
+                  }
+                }
+              ],
+              "first_id": "1724803200100",
+              "last_id": "1724803200104",
+              "more": true
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "history-2",
+            "match": {
+              "method": "history",
+              "params": {
+                "room": "general",
+                "after": "1724803200105",
+                "before": "1724803200105"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "history-2",
+            "result": {
+              "entries": [
+                {
+                  "event_id": "1724803200105",
+                  "sender": {
+                    "id": "alice"
+                  },
+                  "body": {
+                    "text": "third",
+                    "format": "plain"
+                  }
+                }
+              ],
+              "first_id": "1724803200105",
+              "last_id": "1724803200105",
+              "more": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "rastered",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "history"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "id": "alice"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "alice"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "latest_id": "1724803200105"
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "history-1",
+            "match": {
+              "method": "history",
+              "params": {
+                "room": "general",
+                "after": "0",
+                "before": "1724803200105"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "1724803200106",
+              "target": "1724803200100",
+              "set": {
+                "body": {
+                  "text": "live edit"
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "latest_id": "1724803200106"
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "history-1",
+            "result": {
+              "entries": [
+                {
+                  "event_id": "1724803200100",
+                  "sender": {
+                    "id": "alice"
+                  },
+                  "body": {
+                    "text": "first",
+                    "format": "plain"
+                  }
+                },
+                {
+                  "event_id": "1724803200104",
+                  "target": "1724803200102",
+                  "replace": {
+                    "event_id": "1724803200102",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "second edited",
+                      "format": "plain"
+                    },
+                    "custom": {
+                      "keep": true
+                    }
+                  }
+                }
+              ],
+              "first_id": "1724803200100",
+              "last_id": "1724803200104",
+              "more": true
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "history-2",
+            "match": {
+              "method": "history",
+              "params": {
+                "room": "general",
+                "after": "1724803200105",
+                "before": "1724803200105"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "history-2",
+            "result": {
+              "entries": [
+                {
+                  "event_id": "1724803200105",
+                  "sender": {
+                    "id": "alice"
+                  },
+                  "body": {
+                    "text": "third",
+                    "format": "plain"
+                  }
+                }
+              ],
+              "first_id": "1724803200105",
+              "last_id": "1724803200105",
+              "more": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "you": {
+      "id": "alice"
+    },
+    "caps": [
+      "history"
+    ],
+    "rooms": [
+      {
+        "id": "general",
+        "name": "General",
+        "topic": null,
+        "events": [
+          {
+            "event_id": "1724803200100",
+            "sender": {
+              "id": "alice"
+            },
+            "body": {
+              "text": "live edit",
+              "format": "plain"
+            }
+          },
+          {
+            "event_id": "1724803200102",
+            "sender": {
+              "id": "alice"
+            },
+            "body": {
+              "text": "second edited",
+              "format": "plain"
+            },
+            "custom": {
+              "keep": true
+            }
+          },
+          {
+            "event_id": "1724803200105",
+            "sender": {
+              "id": "alice"
+            },
+            "body": {
+              "text": "third",
+              "format": "plain"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

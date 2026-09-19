@@ -1,0 +1,63 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "nested merge patch",
+  "description": "A nested set patch merges objects while preserving untouched fields.",
+  "references": ["PROTOCOL.md#53-edit--and-the-update-frame"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "creation-and-update",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "100",
+                "sender": {"id": "alice", "name": "Alice"},
+                "body": {
+                  "text": "before",
+                  "format": "plain",
+                  "meta": {"keep": "yes", "nested": {"one": 1, "two": 2}},
+                  "embeds": [{"kind": "file", "url": "https://example.test/before"}]
+                },
+                "labels": {"source": "client", "flags": {"a": true, "b": false}}
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "101",
+              "target": "100",
+              "set": {
+                "body": {"text": "after", "meta": {"nested": {"two": 3, "three": 4}}},
+                "labels": {"flags": {"b": null}}
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {
+        "event_id": "100",
+        "sender": {"id": "alice", "name": "Alice"},
+        "body": {
+          "text": "after",
+          "format": "plain",
+          "meta": {"keep": "yes", "nested": {"one": 1, "two": 3, "three": 4}},
+          "embeds": [{"kind": "file", "url": "https://example.test/before"}]
+        },
+        "labels": {"source": "client", "flags": {"a": true}}
+      }
+    ]
+  }
+}

@@ -1,0 +1,203 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "Request errors preserve a usable session",
+  "description": "A denied send rejects its operation without creating an authoritative event; another operation with a new request ID can succeed.",
+  "references": [
+    "PROTOCOL.md#11-envelope-and-replies",
+    "PROTOCOL.md#12-retries-and-recommended-deduplication"
+  ],
+  "variants": [
+    {
+      "name": "denied-then-accepted",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": []
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "id": "alice"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "alice"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": null,
+                "events": []
+              }
+            ]
+          }
+        },
+        {
+          "send": {
+            "as": "denied",
+            "room": "general",
+            "text": "denied",
+            "format": "plain"
+          }
+        },
+        {
+          "request": {
+            "as": "denied-request",
+            "match": {
+              "method": "send",
+              "params": {
+                "room": "general",
+                "body": {
+                  "text": "denied",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "denied-request",
+            "error": {
+              "code": -32001,
+              "message": "Denied by fixture policy"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": null,
+                "events": []
+              }
+            ],
+            "operations": {
+              "denied": "rejected"
+            }
+          }
+        },
+        {
+          "send": {
+            "as": "accepted",
+            "room": "general",
+            "text": "allowed",
+            "format": "plain"
+          }
+        },
+        {
+          "request": {
+            "as": "accepted-request",
+            "match": {
+              "method": "send",
+              "params": {
+                "room": "general",
+                "body": {
+                  "text": "allowed",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "1724803200300",
+                "sender": {
+                  "id": "alice"
+                },
+                "body": {
+                  "text": "allowed",
+                  "format": "plain"
+                }
+              }
+            }
+          },
+          "echoFrom": "accepted-request"
+        },
+        {
+          "reply": {
+            "to": "accepted-request",
+            "result": {
+              "event_id": "1724803200300"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "you": {
+      "id": "alice"
+    },
+    "rooms": [
+      {
+        "id": "general",
+        "name": "General",
+        "topic": null,
+        "events": [
+          {
+            "event_id": "1724803200300",
+            "sender": {
+              "id": "alice"
+            },
+            "body": {
+              "text": "allowed",
+              "format": "plain"
+            }
+          }
+        ]
+      }
+    ],
+    "operations": {
+      "denied": "rejected",
+      "accepted": "fulfilled"
+    }
+  }
+}

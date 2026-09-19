@@ -1,0 +1,17 @@
+node_modules/
+.svelte-kit/
+build/
+dist/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# devenv state and local overrides
+.devenv*
+.direnv/
+devenv.local.nix
+devenv.local.yaml

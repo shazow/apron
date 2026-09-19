@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "tombstone deletion",
+  "description": "Deletion marks an event and removes its body through a null merge patch.",
+  "references": ["PROTOCOL.md#53-edit--and-the-update-frame"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "delete-message",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "400",
+                "sender": {"id": "alice", "name": "Alice"},
+                "body": {"text": "secret", "format": "plain", "embeds": []},
+                "audit": {"retained": true}
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "401",
+              "target": "400",
+              "set": {"deleted": true, "body": null}
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {
+        "event_id": "400",
+        "sender": {"id": "alice", "name": "Alice"},
+        "deleted": true,
+        "audit": {"retained": true}
+      }
+    ]
+  }
+}

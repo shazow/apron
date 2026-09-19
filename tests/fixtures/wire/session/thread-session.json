@@ -1,0 +1,736 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "Thread metadata and message lifecycle",
+  "description": "Thread announcements replace metadata, scope by room, survive message moves and removals, and are rebuilt after reconnect.",
+  "references": [
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#53-edit--and-the-update-frame",
+    "PROTOCOL.md#62-threads"
+  ],
+  "variants": [
+    {
+      "name": "metadata-and-moves",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "edit"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "id": "alice"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "alice"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "topic": "Thread room"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "other",
+              "name": "Other"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "thread",
+            "params": {
+              "room": "general",
+              "thread": "t_deploy",
+              "summary": "Deploy discussion",
+              "root": "1724803200400"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "thread",
+            "params": {
+              "room": "general",
+              "thread": "t_keep",
+              "name": "Keep",
+              "summary": "Room-only metadata"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "thread",
+            "params": {
+              "room": "other",
+              "thread": "t_deploy",
+              "name": "Other deploy",
+              "summary": "Other room",
+              "root": "1724803200500"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "1724803200400",
+                "sender": {
+                  "id": "alice"
+                },
+                "body": {
+                  "text": "root",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "other",
+              "event": {
+                "event_id": "1724803200500",
+                "sender": {
+                  "id": "bob"
+                },
+                "body": {
+                  "text": "other root",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "threads": [
+              {
+                "room": "general",
+                "thread": "t_deploy",
+                "name": "t_deploy",
+                "summary": "Deploy discussion",
+                "root": "1724803200400"
+              },
+              {
+                "room": "general",
+                "thread": "t_keep",
+                "name": "Keep",
+                "summary": "Room-only metadata"
+              },
+              {
+                "room": "other",
+                "thread": "t_deploy",
+                "name": "Other deploy",
+                "summary": "Other room",
+                "root": "1724803200500"
+              }
+            ],
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Thread room",
+                "events": [
+                  {
+                    "event_id": "1724803200400",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "root",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "other",
+                "name": "Other",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200500",
+                    "sender": {
+                      "id": "bob"
+                    },
+                    "body": {
+                      "text": "other root",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "thread",
+            "params": {
+              "room": "general",
+              "thread": "t_deploy",
+              "name": "Deploy (renamed)"
+            }
+          }
+        },
+        {
+          "expect": {
+            "threads": [
+              {
+                "room": "general",
+                "thread": "t_deploy",
+                "name": "Deploy (renamed)"
+              },
+              {
+                "room": "general",
+                "thread": "t_keep",
+                "name": "Keep",
+                "summary": "Room-only metadata"
+              },
+              {
+                "room": "other",
+                "thread": "t_deploy",
+                "name": "Other deploy",
+                "summary": "Other room",
+                "root": "1724803200500"
+              }
+            ]
+          }
+        },
+        {
+          "send": {
+            "as": "thread-reply",
+            "room": "general",
+            "text": "replying",
+            "format": "plain",
+            "thread": "t_deploy"
+          }
+        },
+        {
+          "request": {
+            "as": "thread-send-request",
+            "match": {
+              "method": "send",
+              "params": {
+                "room": "general",
+                "body": {
+                  "text": "replying",
+                  "format": "plain"
+                },
+                "thread": "t_deploy"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "thread-send-request",
+            "result": {
+              "event_id": "1724803200401"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "1724803200401",
+                "sender": {
+                  "id": "alice"
+                },
+                "body": {
+                  "text": "replying",
+                  "format": "plain"
+                },
+                "thread": "t_deploy"
+              }
+            }
+          },
+          "echoFrom": "thread-send-request"
+        },
+        {
+          "expect": {
+            "operations": {
+              "thread-reply": "fulfilled"
+            },
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Thread room",
+                "events": [
+                  {
+                    "event_id": "1724803200400",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "root",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "event_id": "1724803200401",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "replying",
+                      "format": "plain"
+                    },
+                    "thread": "t_deploy"
+                  }
+                ]
+              },
+              {
+                "id": "other",
+                "name": "Other",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200500",
+                    "sender": {
+                      "id": "bob"
+                    },
+                    "body": {
+                      "text": "other root",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "moveThread": {
+            "as": "move-root",
+            "room": "general",
+            "target": "1724803200400",
+            "thread": "t_deploy"
+          }
+        },
+        {
+          "request": {
+            "as": "move-root-request",
+            "match": {
+              "method": "update_request",
+              "params": {
+                "room": "general",
+                "target": "1724803200400",
+                "set": {
+                  "thread": "t_deploy"
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "move-root-request",
+            "result": {
+              "event_id": "1724803200402"
+            }
+          }
+        },
+        {
+          "expect": {
+            "operations": {
+              "thread-reply": "fulfilled",
+              "move-root": "fulfilled"
+            },
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Thread room",
+                "events": [
+                  {
+                    "event_id": "1724803200400",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "root",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "event_id": "1724803200401",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "replying",
+                      "format": "plain"
+                    },
+                    "thread": "t_deploy"
+                  }
+                ]
+              },
+              {
+                "id": "other",
+                "name": "Other",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200500",
+                    "sender": {
+                      "id": "bob"
+                    },
+                    "body": {
+                      "text": "other root",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "1724803200402",
+              "target": "1724803200400",
+              "set": {
+                "thread": "t_deploy"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Thread room",
+                "events": [
+                  {
+                    "event_id": "1724803200400",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "root",
+                      "format": "plain"
+                    },
+                    "thread": "t_deploy"
+                  },
+                  {
+                    "event_id": "1724803200401",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "replying",
+                      "format": "plain"
+                    },
+                    "thread": "t_deploy"
+                  }
+                ]
+              },
+              {
+                "id": "other",
+                "name": "Other",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200500",
+                    "sender": {
+                      "id": "bob"
+                    },
+                    "body": {
+                      "text": "other root",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "thread",
+            "params": {
+              "room": "general",
+              "thread": "t_deploy",
+              "removed": true
+            }
+          }
+        },
+        {
+          "expect": {
+            "threads": [
+              {
+                "room": "general",
+                "thread": "t_keep",
+                "name": "Keep",
+                "summary": "Room-only metadata"
+              },
+              {
+                "room": "other",
+                "thread": "t_deploy",
+                "name": "Other deploy",
+                "summary": "Other room",
+                "root": "1724803200500"
+              }
+            ],
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": "Thread room",
+                "events": [
+                  {
+                    "event_id": "1724803200400",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "root",
+                      "format": "plain"
+                    },
+                    "thread": "t_deploy"
+                  },
+                  {
+                    "event_id": "1724803200401",
+                    "sender": {
+                      "id": "alice"
+                    },
+                    "body": {
+                      "text": "replying",
+                      "format": "plain"
+                    },
+                    "thread": "t_deploy"
+                  }
+                ]
+              },
+              {
+                "id": "other",
+                "name": "Other",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200500",
+                    "sender": {
+                      "id": "bob"
+                    },
+                    "body": {
+                      "text": "other root",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "removed": true
+            }
+          }
+        },
+        {
+          "expect": {
+            "threads": [
+              {
+                "room": "other",
+                "thread": "t_deploy",
+                "name": "Other deploy",
+                "summary": "Other room",
+                "root": "1724803200500"
+              }
+            ],
+            "rooms": [
+              {
+                "id": "other",
+                "name": "Other",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200500",
+                    "sender": {
+                      "id": "bob"
+                    },
+                    "body": {
+                      "text": "other root",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "disconnect": true
+        },
+        {
+          "expect": {
+            "rooms": [],
+            "threads": []
+          }
+        },
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "edit"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth-again",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth-again",
+            "result": {
+              "you": {
+                "id": "alice-reconnected"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "other",
+              "name": "Other reconnected"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "thread",
+            "params": {
+              "room": "other",
+              "thread": "t_deploy",
+              "summary": "Reannounced"
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "alice-reconnected"
+            },
+            "threads": [
+              {
+                "room": "other",
+                "thread": "t_deploy",
+                "name": "t_deploy",
+                "summary": "Reannounced"
+              }
+            ],
+            "rooms": [
+              {
+                "id": "other",
+                "name": "Other reconnected",
+                "topic": null,
+                "events": []
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "you": {
+      "id": "alice-reconnected"
+    },
+    "caps": [
+      "edit"
+    ],
+    "threads": [
+      {
+        "room": "other",
+        "thread": "t_deploy",
+        "name": "t_deploy",
+        "summary": "Reannounced"
+      }
+    ],
+    "rooms": [
+      {
+        "id": "other",
+        "name": "Other reconnected",
+        "topic": null,
+        "events": []
+      }
+    ],
+    "operations": {
+      "thread-reply": "fulfilled",
+      "move-root": "fulfilled"
+    }
+  }
+}

@@ -1,0 +1,327 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "Anonymous reconnect and retained history",
+  "description": "A fresh anonymous identity authenticates after transport loss; full recovery retains the original sender and yields each message once. This variant exercises recovery without persistent checkpoints.",
+  "references": [
+    "PROTOCOL.md#32-authentication",
+    "PROTOCOL.md#51-history"
+  ],
+  "variants": [
+    {
+      "name": "full-recovery",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "history"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "id": "guest-1"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "guest-1"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "latest_id": "1724803200200"
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "history-before",
+            "match": {
+              "method": "history",
+              "params": {
+                "room": "general",
+                "after": "0",
+                "before": "1724803200200"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "history-before",
+            "result": {
+              "entries": [
+                {
+                  "event_id": "1724803200200",
+                  "sender": {
+                    "id": "guest-1"
+                  },
+                  "body": {
+                    "text": "retained",
+                    "format": "plain"
+                  }
+                }
+              ],
+              "first_id": "1724803200200",
+              "last_id": "1724803200200",
+              "more": false
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200200",
+                    "sender": {
+                      "id": "guest-1"
+                    },
+                    "body": {
+                      "text": "retained",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "disconnect": true
+        },
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 2,
+              "auth": [
+                "anonymous"
+              ],
+              "caps": [
+                "history"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth-again",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "anonymous"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth-again",
+            "result": {
+              "you": {
+                "id": "guest-2"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "you": {
+              "id": "guest-2"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room": "general",
+              "name": "General",
+              "latest_id": "1724803200200"
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "history-after",
+            "match": {
+              "method": "history",
+              "params": {
+                "room": "general",
+                "after": "0",
+                "before": "1724803200200"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "history-after",
+            "result": {
+              "entries": [
+                {
+                  "event_id": "1724803200200",
+                  "sender": {
+                    "id": "guest-1"
+                  },
+                  "body": {
+                    "text": "retained",
+                    "format": "plain"
+                  }
+                }
+              ],
+              "first_id": "1724803200200",
+              "last_id": "1724803200200",
+              "more": false
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "id": "general",
+                "name": "General",
+                "topic": null,
+                "events": [
+                  {
+                    "event_id": "1724803200200",
+                    "sender": {
+                      "id": "guest-1"
+                    },
+                    "body": {
+                      "text": "retained",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "send": {
+            "as": "after-reconnect",
+            "room": "general",
+            "text": "new connection",
+            "format": "plain"
+          }
+        },
+        {
+          "request": {
+            "as": "send",
+            "match": {
+              "method": "send",
+              "params": {
+                "room": "general",
+                "body": {
+                  "text": "new connection",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "send",
+            "result": {
+              "event_id": "1724803200201"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "1724803200201",
+                "sender": {
+                  "id": "guest-2"
+                },
+                "body": {
+                  "text": "new connection",
+                  "format": "plain"
+                }
+              }
+            }
+          },
+          "echoFrom": "send"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "you": {
+      "id": "guest-2"
+    },
+    "rooms": [
+      {
+        "id": "general",
+        "name": "General",
+        "topic": null,
+        "events": [
+          {
+            "event_id": "1724803200200",
+            "sender": {
+              "id": "guest-1"
+            },
+            "body": {
+              "text": "retained",
+              "format": "plain"
+            }
+          },
+          {
+            "event_id": "1724803200201",
+            "sender": {
+              "id": "guest-2"
+            },
+            "body": {
+              "text": "new connection",
+              "format": "plain"
+            }
+          }
+        ]
+      }
+    ],
+    "operations": {
+      "after-reconnect": "fulfilled"
+    }
+  }
+}

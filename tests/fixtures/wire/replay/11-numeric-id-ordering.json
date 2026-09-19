@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "numeric log ID ordering",
+  "description": "Ordered live creation events remain in numeric event ID order rather than lexical order.",
+  "references": ["PROTOCOL.md#2-identifiers-mandatory"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "ordered-live-arrival",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {"event_id": "2", "sender": {"id": "alice"}, "body": {"text": "two", "format": "plain"}}
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {"event_id": "10", "sender": {"id": "alice"}, "body": {"text": "ten", "format": "plain"}}
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {"event_id": "100", "sender": {"id": "alice"}, "body": {"text": "one hundred", "format": "plain"}}
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {"room": "general", "event_id": "101", "target": "2", "set": {"body": {"text": "two updated"}}}
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {"event_id": "2", "sender": {"id": "alice"}, "body": {"text": "two updated", "format": "plain"}},
+      {"event_id": "10", "sender": {"id": "alice"}, "body": {"text": "ten", "format": "plain"}},
+      {"event_id": "100", "sender": {"id": "alice"}, "body": {"text": "one hundred", "format": "plain"}}
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "thread field moves",
+  "description": "Thread assignment and removal are ordinary merge-patch updates to events.",
+  "references": ["PROTOCOL.md#53-edit--and-the-update-frame", "PROTOCOL.md#62-threads"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "assign-and-remove",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {"event_id": "1000", "sender": {"id": "alice"}, "body": {"text": "root", "format": "plain"}}
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {"event_id": "1001", "sender": {"id": "bob"}, "body": {"text": "reply", "format": "plain"}}
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {"room": "general", "event_id": "1010", "target": "1000", "set": {"thread": "t_release"}}
+          }
+        },
+        {
+          "expect": {
+            "events": [
+              {"event_id": "1000", "sender": {"id": "alice"}, "body": {"text": "root", "format": "plain"}, "thread": "t_release"},
+              {"event_id": "1001", "sender": {"id": "bob"}, "body": {"text": "reply", "format": "plain"}}
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {"room": "general", "event_id": "1011", "target": "1001", "set": {"thread": "t_release"}}
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {"room": "general", "event_id": "1012", "target": "1000", "set": {"thread": null}}
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {"event_id": "1000", "sender": {"id": "alice"}, "body": {"text": "root", "format": "plain"}},
+      {"event_id": "1001", "sender": {"id": "bob"}, "body": {"text": "reply", "format": "plain"}, "thread": "t_release"}
+    ]
+  }
+}

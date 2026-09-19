@@ -1,0 +1,84 @@
+{
+  "format": 1,
+  "kind": "replay",
+  "name": "overlapping history replay",
+  "description": "A history page overlapping an already-applied creation and update is idempotent, preserving the newer update.",
+  "references": ["PROTOCOL.md#12-retries-and-recommended-deduplication", "PROTOCOL.md#2-identifiers-mandatory"],
+  "room": "general",
+  "variants": [
+    {
+      "name": "overlapping-history",
+      "steps": [
+        {
+          "receive": {
+            "method": "event",
+            "params": {
+              "room": "general",
+              "event": {
+                "event_id": "500",
+                "sender": {"id": "alice"},
+                "body": {"text": "original", "format": "plain"},
+                "client_note": "first"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "501",
+              "target": "500",
+              "set": {"body": {"text": "edited"}}
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "update",
+            "params": {
+              "room": "general",
+              "event_id": "502",
+              "target": "500",
+              "set": {"body": {"text": "newer"}}
+            }
+          }
+        },
+        {
+          "receive": {
+            "id": "history-overlap-1",
+            "result": {
+              "entries": [
+                {
+                  "event_id": "500",
+                  "sender": {"id": "alice"},
+                  "body": {"text": "original", "format": "plain"},
+                  "client_note": "first"
+                },
+                {
+                  "event_id": "501",
+                  "target": "500",
+                  "set": {"body": {"text": "edited"}}
+                }
+              ],
+              "first_id": "500",
+              "last_id": "501",
+              "more": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "events": [
+      {
+        "event_id": "500",
+        "sender": {"id": "alice"},
+        "body": {"text": "newer", "format": "plain"},
+        "client_note": "first"
+      }
+    ]
+  }
+}
