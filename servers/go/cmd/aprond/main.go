@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8080", "HTTP and WebSocket listen address")
+	addr := flag.String("addr", ":8080", "HTTP and WebSocket listen address")
 	staticDir := flag.String("static-dir", "", "directory containing the built frontend")
 	origins := flag.String("origin", "", "comma-separated allowed WebSocket origins; empty uses localhost defaults")
 	allowAnyOrigin := flag.Bool("allow-any-origin", false, "disable WebSocket origin checks")
