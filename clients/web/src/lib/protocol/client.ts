@@ -16,6 +16,7 @@ import {
 	type RpcError,
 	type ServerParams,
 	type Sender,
+	type ThreadAnnouncement,
 	type Transition,
 	type WireFrame
 } from './types';
@@ -28,6 +29,7 @@ export interface RoomSnapshot {
 	topic?: string;
 	latestId?: string;
 	timeline: TimelineState;
+	threads: ThreadAnnouncement[];
 	recovering: boolean;
 	recoveryError?: string;
 }
@@ -251,10 +253,20 @@ export class ChatClient {
 		};
 	}
 
-	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown'): OperationHandle {
+	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string): OperationHandle {
 		return this.enqueueRequest('send', {
 			room,
-			body: { text, format }
+			body: { text, format },
+			...(thread !== undefined ? { thread } : {})
+		}, { visible: true, allowBeforeAuth: false });
+	}
+
+	/** A fresh ID proposes a thread; null returns the message to the room. */
+	setMessageThread(room: string, target: string, thread: string | null): OperationHandle {
+		return this.enqueueRequest('update_request', {
+			room,
+			target,
+			set: { thread }
 		}, { visible: true, allowBeforeAuth: false });
 	}
 
@@ -349,6 +361,10 @@ export class ChatClient {
 			this.handleRoom(frame.params);
 			return;
 		}
+		if (frame.method === 'thread') {
+			this.handleThread(frame.params);
+			return;
+		}
 		if (frame.method === 'event') {
 			this.handleEvent(frame.params);
 			return;
@@ -425,6 +441,7 @@ export class ChatClient {
 			id: roomId,
 			name: roomId,
 			timeline: createTimeline(roomId),
+			threads: [],
 			recovering: false
 		};
 		room.name = typeof params.name === 'string' ? params.name : roomId;
@@ -434,6 +451,26 @@ export class ChatClient {
 		this.activeRoomId ??= roomId;
 		if (this.server?.caps?.includes('history') && isLogId(params.latest_id) && !room.recovery) {
 			this.startRecovery(room, params.latest_id);
+		}
+		this.emit();
+	}
+
+	private handleThread(params: JsonObject | undefined): void {
+		if (!params || typeof params.room !== 'string' || typeof params.thread !== 'string') return;
+		const room = this.rooms.get(params.room);
+		if (!room) return;
+		const remaining = room.threads.filter((thread) => thread.thread !== params.thread);
+		if (params.removed === true) {
+			room.threads = remaining;
+		} else {
+			const thread: ThreadAnnouncement = {
+				room: params.room,
+				thread: params.thread,
+				name: typeof params.name === 'string' ? params.name : params.thread,
+				...(typeof params.summary === 'string' ? { summary: params.summary } : {}),
+				...(isLogId(params.root) ? { root: params.root } : {})
+			};
+			room.threads = [...remaining, thread];
 		}
 		this.emit();
 	}

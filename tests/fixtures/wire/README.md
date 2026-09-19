@@ -90,8 +90,8 @@ and the logical event projection above.
 ## Session scenarios
 
 Session fixtures use `kind: "session"`; room identity comes from frames.
-These scenarios exercise anonymous authentication, text sends, metadata
-replacement, errors, paginated recovery, and reconnects. History scenarios use
+These scenarios exercise anonymous authentication, text sends, thread metadata,
+metadata replacement, errors, paginated recovery, and reconnects. History scenarios use
 full forward recovery with an initially empty cache. They are a test profile,
 not a requirement that every client use that recovery strategy.
 
@@ -101,7 +101,8 @@ not a requirement that every client use that recovery strategy.
 | `request: {as, match}` | Wait for an outgoing request, assert `match`, and capture its runtime ID under `as`. |
 | `reply: {to, result}` | Reply to the captured request with its runtime ID. |
 | `reply: {to, error}` | Send an error reply using the same binding. |
-| `send: {as, room, text, format}` | Invoke the client's public send operation; track its outcome under `as`. |
+| `send: {as, room, text, format, thread?}` | Invoke the client's public send operation; an optional `thread` is sent in `send.params`; track its outcome under `as`. |
+| `moveThread: {as, room, target, thread}` | Invoke the client's thread reassignment operation with a string thread ID or `null`; track its outcome under `as`. |
 | `disconnect: true` | Close the transport and establish a fresh connection for subsequent frames. |
 | `expect: state` | Wait for the specified logical state before proceeding. |
 
@@ -122,6 +123,10 @@ or executable expressions occur in JSON.
 ```
 
 ```json
+{"send": {"as": "reply", "room": "general", "text": "follow-up", "format": "plain", "thread": "t_deploy"}}
+```
+
+```json
 {"request": {"as": "send-request", "match": {
   "method": "send", "params": {"room": "general", "body": {"text": "hello", "format": "plain"}}
 }}}
@@ -130,6 +135,20 @@ or executable expressions occur in JSON.
 ```json
 {"reply": {"to": "send-request", "result": {"event_id": "1724803200001"}}}
 ```
+
+```json
+{"moveThread": {"as": "move-root", "room": "general", "target": "1724803200001", "thread": "t_deploy"}}
+```
+
+Thread announcements use the protocol's `thread` frames. The normalized
+session state keeps them in an optional top-level `threads` array, flattened
+from each room and sorted by `room`, then `thread`; room projections continue
+to contain only `{id, name, topic, events}`. Each thread object includes
+`room`, `thread`, and the client's resolved `name`, with `summary` and `root`
+present only when announced. An omitted announcement name therefore appears
+as the thread ID. Re-announcing a thread replaces its metadata, while a
+`removed` announcement and room removal remove only metadata in that room;
+message events retain their `thread` field.
 
 The normalized session state has these fields:
 

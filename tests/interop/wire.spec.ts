@@ -13,7 +13,8 @@ type Step =
 	| { receive: ObjectValue; echoFrom?: string }
 	| { request: { as: string; match: ObjectValue } }
 	| { reply: { to: string; result?: ObjectValue; error?: ObjectValue } }
-	| { send: { as: string; room: string; text: string; format?: 'plain' | 'markdown' } }
+	| { send: { as: string; room: string; text: string; format?: 'plain' | 'markdown'; thread?: string } }
+	| { moveThread: { as: string; room: string; target: string; thread: string | null } }
 	| { disconnect: true }
 	| { expect: ObjectValue };
 interface Fixture {
@@ -80,6 +81,8 @@ function logicalState(client: ChatClient, operations: Record<string, string>): O
 	return JSON.parse(JSON.stringify({
 		you: snapshot.you ?? null,
 		caps: [...(snapshot.server?.caps ?? [])].sort(),
+		threads: snapshot.rooms.flatMap((room) => room.threads).sort((left, right) =>
+			left.room < right.room ? -1 : left.room > right.room ? 1 : left.thread < right.thread ? -1 : left.thread > right.thread ? 1 : 0),
 		rooms: snapshot.rooms.map((room) => ({
 			id: room.id, name: room.name, topic: room.topic ?? null, events: timelineEvents(room.timeline)
 		})).sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
@@ -135,9 +138,16 @@ for (const fixture of fixtures) {
 								const { to: _, ...result } = step.reply;
 								await control(`/connections/${connection}/send`, wire({ id: request!.id, ...result }));
 							} else if ('send' in step) {
-								const { as, room, text, format } = step.send;
+								const { as, room, text, format, thread } = step.send;
 								operations[as] = 'pending';
-								client.sendMessage(room, text, format).promise.then(
+								client.sendMessage(room, text, format, thread).promise.then(
+									() => { operations[as] = 'fulfilled'; },
+									() => { operations[as] = 'rejected'; }
+								);
+							} else if ('moveThread' in step) {
+								const { as, room, target, thread } = step.moveThread;
+								operations[as] = 'pending';
+								client.setMessageThread(room, target, thread).promise.then(
 									() => { operations[as] = 'fulfilled'; },
 									() => { operations[as] = 'rejected'; }
 								);
