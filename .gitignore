@@ -9,3 +9,9 @@ test-results/
 .env.*
 !.env.example
 .DS_Store
+
+# devenv state and local overrides
+.devenv*
+.direnv/
+devenv.local.nix
+devenv.local.yaml

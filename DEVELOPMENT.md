@@ -19,21 +19,26 @@ there is another consumer.
 
 ## Run locally
 
-Use Node.js 24 LTS, npm, Go 1.26+, and Make. From the repository root:
+With Nix and [devenv](https://devenv.sh/getting-started/) 2.3+, from the
+repository root:
 
 ```sh
-make install
+devenv shell -- make install
+devenv up
 ```
 
-Run these in separate terminals:
+The locked environment provides Node.js 24, npm, Go 1.26, Make, a C compiler
+for Go race tests, and Chromium on Linux. `devenv up` starts the Go backend and
+Vite frontend; Ctrl-C stops both. Use `devenv shell` for an interactive shell
+with the same tools. Dependency installation is explicit; rerun `make install`
+after manifest or lockfile changes.
+For background processes, use `devenv up --detach` and stop them with
+`devenv down`.
 
-```sh
-make dev-server
-```
-
-```sh
-make dev-web
-```
+Without Nix, install Node.js 24 LTS, npm, Go 1.26+, Make, and a C compiler.
+Run `make install`, then `make dev-server` and `make dev-web` in separate
+terminals. All Make commands below work inside `devenv shell` or with those
+tools installed directly.
 
 Open `http://127.0.0.1:5173`. The development server proxies `/ws` to
 `127.0.0.1:8080`. Open another browser tab to chat with a second client.
@@ -58,6 +63,14 @@ See `servers/go/README.md` for server flags and origin configuration.
 
 ## Validate
 
+Run the full validation suite, including builds and browser tests:
+
+```sh
+devenv test
+```
+
+Run individual checks inside `devenv shell`:
+
 ```sh
 make check
 make test
@@ -67,7 +80,8 @@ make test
 session fixtures over real loopback WebSockets. Run the latter alone with
 `make test-wire`; it needs Node.js and Go, but no browser or running dev server.
 
-Install Chromium once for browser tests:
+The devenv environment supplies Chromium on Linux. Outside that environment,
+or on macOS, install Chromium once for browser tests:
 
 ```sh
 cd tests/interop
@@ -83,10 +97,17 @@ make test-interop
 The browser tests start their own server and frontend. Stop existing processes
 on ports 8080 and 5173 before running them. On Linux, Playwright may also need
 system libraries (`npx playwright install --with-deps chromium` on supported
-distributions). On NixOS, use a Nix-provided Chromium executable:
+distributions). For a custom browser installation, set:
 
 ```sh
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chromium make test-interop
 ```
 
 No root JavaScript workspace or Go workspace is needed for this initial pair.
+
+## Environment updates
+
+`devenv.lock` pins Nix inputs. Run `devenv update`, validate with `devenv test`,
+and commit the lockfile when updating the toolchain. Keep Node and Go versions
+aligned with `.node-version`, `go.mod`, and CI. Machine-specific overrides go
+in ignored `devenv.local.nix` or `devenv.local.yaml` files.
