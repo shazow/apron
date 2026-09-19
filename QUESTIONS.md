@@ -83,15 +83,14 @@ policies are implementation-defined.
 
 Reference: PROTOCOL.md §§2, 5.1, Appendix A.
 
-Are log-derived timestamps deliberately approximate? Borrowing future time
-under sustained throughput above 1,000 entries/second, or absorbing clock
-corrections, can separate IDs from actual creation time. History nevertheless
-describes wall-clock windows as straightforward arithmetic.
+Decision: Decimal-string IDs based on Unix epoch milliseconds; one strictly
+increasing room sequence across events and updates. Generation is
+implementation-defined; recommend `str(max(last_id + 1, unix_epoch_ms()))`.
+Derived timestamps are approximate. No separate counter range, overflow rule,
+or restart procedure. Design assumes fewer than 1,000 entries/sec per room.
 
-Is this tradeoff acceptable? Document its effect on time-window queries and
-specify monotonicity across server restarts. Does `connection` in the storage
-key mean a stable configured backend identity across reconnects, rather than a
-particular socket instance?
+Open: Does `connection` in storage keys denote stable backend identity across
+reconnects rather than a socket instance?
 
 ## 6. Room and thread metadata lifecycle
 

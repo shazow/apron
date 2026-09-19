@@ -105,21 +105,16 @@ request-level deduplication.
 All IDs on the wire are **strings**, except the `null` response ID used for
 unidentifiable invalid requests (§1.1). They come in two flavors:
 
-**Log IDs** (event IDs and update IDs) are strings of decimal digits encoding
-`unix_seconds * 1000 + counter`, where `counter` is a per-second sequence
-(0–999) — e.g. `"1724803200042"`. Servers MUST guarantee log IDs are
-**strictly monotonic per room** across events *and* updates, which share one
-sequence (a `max(last+1, now_ms)` ratchet suffices; >1000 entries/sec borrows
-into the next second, and backward clock steps are absorbed).
+**Log IDs** (event IDs and update IDs) are decimal strings based on Unix epoch
+milliseconds — e.g. `"1724803200042"`. Events and updates MUST share one
+strictly increasing sequence per room. Generation is implementation-defined.
+Recommended generator: `id = str(max(last_id + 1, unix_epoch_ms()))`.
 `"0"` is reserved for the empty-log boundary; entries MUST use positive IDs.
 
-- Comparison is numeric (or equivalently, as strings after zero-padding —
-  raw ms timestamps are 13 digits until the year 2286). Values fit exactly in
-  float64 (< 2^53), so clients MAY parse them as integers for window
-  arithmetic.
-- Log IDs are *not* opaque: clients MAY derive timestamps from them, sort by
-  them, and construct history windows arithmetically. There is no separate
-  timestamp field.
+- Compare numerically. Values are below `2^53`; clients MAY parse them as
+  integers for window arithmetic.
+- Derived timestamps and time-window bounds are approximate. There is no
+  separate timestamp field.
 - Ordering within a room is by log ID. Cross-room ordering is approximate.
   On a live connection, servers MUST deliver a room's entries (`event` and
   `update` frames) in ascending log-ID order.
