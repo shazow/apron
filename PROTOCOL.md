@@ -2,8 +2,8 @@
 
 A chat frontend/backend protocol over a single WebSocket, designed so that a
 minimal conforming backend ("Level 0") is implementable in under ~100 lines in
-any language, and every feature beyond the core is an independently optional
-capability. Frontends MUST degrade gracefully in the absence of any capability.
+any language. Server features beyond the core are optional; frontends MUST
+degrade gracefully when they are unavailable.
 
 Terminology per RFC 2119. "Server" = the WebSocket backend. "Client" = the chat
 frontend.
@@ -126,8 +126,8 @@ Request IDs identify operations, not positions in the server's room log.
 
 ## 3. Level 0 — mandatory core
 
-A Level 0 server implements this section. Additional features are optional
-capabilities (§4).
+A Level 0 server implements this section. Selected optional features are
+advertised through capabilities (§4).
 
 ### 3.1 `server` frame
 
@@ -140,7 +140,7 @@ unprompted. There is no client hello.
   "params": {
     "protocol": 2,
     "name": "impl-name/1.0",
-    "caps": ["history", "typing", "upload"],
+    "caps": ["history", "edit", "rooms"],
     "auth": ["token"],
     "upload": "https://example/upload"
   }
@@ -152,7 +152,7 @@ unprompted. There is no client hello.
 - `caps`: array of capability strings (§4), default `[]`.
 - `auth`: required nonempty array of supported authentication schemes (§3.2),
   in server preference order.
-- `upload`: present iff cap `upload` (§6.1).
+- `upload`: optional upload URL; its presence enables uploads (§6.1).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. On receipt, clients re-evaluate feature UI but MUST
@@ -226,7 +226,7 @@ Only `room` and `removed` are required:
 Omitted `removed` means false. History retention and access after room removal,
 including client cache policy, are implementation-defined. Servers MUST
 announce a room before delivering entries in it. A Level 0 server announces
-one room. Join/leave/create are cap `rooms.manage` (§6.3).
+one room. Join/leave/create require cap `rooms` (§6.3).
 
 `latest_id` is the maximum committed room log ID, including events and updates;
 `"0"` denotes an empty log. It is REQUIRED on active room announcements when
@@ -276,7 +276,7 @@ Broadcast (to all clients in the room, including the sender):
   Markdown uses CommonMark; fenced code blocks with language-tagged syntax
   highlighting are the baseline rich-content path.
   Clients MUST disable raw HTML in Markdown or sanitize rendered HTML using
-  the same allowlist policy as `embed.html` (§6.4).
+  the same allowlist policy as HTML embeds (§6.4).
 - **Echo:** the broadcast `event` for a client-originated `send` with `id`
   carries `params.echo` = the originating request `id`. Omit `echo` for sends
   without `id`. Clients match `echo` against their own pending sends to
@@ -341,26 +341,25 @@ notifications. Framing and retries follow §1.
 
 ## 4. Capabilities
 
-Capability identifiers are flat strings, dot-namespaced by convention. The
-client learns them only from `server` frames. Absence of a cap obligates the
-client to a defined fallback:
+`server.caps` advertises optional requests. Absence of a cap obligates the
+client to the corresponding fallback:
 
 | cap            | fallback behavior                              |
 |----------------|------------------------------------------------|
 | `history`      | session-only scrollback; divider on reconnect  |
-| `typing`       | no indicators                                  |
-| `edit`         | edit UI hidden                                 |
-| `delete`       | delete UI hidden                               |
-| `threads`      | flat message list                              |
-| `rooms.manage` | fixed room list                                |
-| `upload`       | attach button disabled                         |
-| `embed.iframe` | fallback card                                  |
-| `embed.html`   | fallback card                                  |
+| `edit`         | edit, delete, and thread reassignment/creation UI hidden |
+| `rooms`        | fixed room list                                |
 | `push`         | no mobile wake-ups                             |
+
+`typing`, thread metadata, and embeds require no capability flags. Clients
+handle supported notifications and content when received; unknown methods and
+kinds follow §1 and §3.5. Upload availability follows `server.upload` (§6.1).
+Capabilities advertise support, not authorization; servers apply local policy
+to each request.
 
 ---
 
-## 5. Level 1 capabilities
+## 5. Level 1 features
 
 ### 5.1 `history`
 
@@ -448,7 +447,8 @@ Recovery boundary example:
 
 ### 5.2 `typing`
 
-Ephemeral notifications; servers MAY drop them.
+Ephemeral notifications; clients MAY send them without capability discovery.
+Servers MAY drop them.
 
 ```json
 → {"method": "typing", "params": {"room": "general", "active": true, "timeout": 8}}
@@ -462,11 +462,11 @@ Ephemeral notifications; servers MAY drop them.
 refresh; clients expire remote typing state after `timeout`, defaulting to 10s
 when absent. There is no presence system.
 
-### 5.3 `edit`, `delete` — and the `update` frame
+### 5.3 `edit` — and the `update` frame
 
 All retroactive mutation uses one server→client frame. Updates consume room
 log IDs (§2) and appear in history (§5.1), raw or represented by rasters.
-Frontend update/replay support is mandatory regardless of mutation capabilities.
+Frontend update/replay support is mandatory regardless of cap `edit`.
 
 ```json
 {
@@ -509,8 +509,8 @@ Clients submit mutations with `update_request`:
 
 The server authorizes changes according to local policy, replies to requests
 with `result` or `error/denied`, and on success broadcasts an authoritative
-`update` that MAY differ from the request. Capabilities `edit` and `delete`
-gate client UI only.
+`update` that MAY differ from the request. Cap `edit` advertises `update_request`
+for edits, deletion, and thread reassignment/creation (§6.2).
 
 **Deletion is an ordinary update.** A delete request is
 `update_request` with `"set": {"deleted": true}`; the server SHOULD
@@ -523,7 +523,7 @@ policies are implementation-defined.
 
 ---
 
-## 6. Level 2 capabilities
+## 6. Level 2 features
 
 ### 6.1 `upload`
 
@@ -543,7 +543,7 @@ the `server` frame after auth carrying a per-session `upload` URL (§3.1).
 Attachment kinds: `image`, `video`, `audio`, `file` (with `name`, `size`).
 Unknown kinds → fallback card rule (§3.5).
 
-### 6.2 `threads`
+### 6.2 Threads
 
 `thread` is an optional opaque ID on events (§2). Metadata uses a `thread`
 frame:
@@ -590,7 +590,7 @@ Client participation:
   accepts (broadcasting the `update` and an authoritative `thread` metadata
   frame) or replies `denied`.
 
-### 6.3 `rooms.manage`
+### 6.3 `rooms`
 
 ```json
 → {"method": "room_create", "id": "c20", "params": {"name": "Ops"}}
@@ -602,7 +602,7 @@ Server confirms requests with `result: {}` and emits the corresponding `room`
 notification; successful `room_leave` emits `removed: true`. Visibility and
 membership policy are server-defined.
 
-### 6.4 `embed.iframe`, `embed.html`
+### 6.4 Embeds
 
 Embeds are `body.embeds` entries.
 
