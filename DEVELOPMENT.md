@@ -51,8 +51,8 @@ identity that created the message.
 ## Threads
 
 Start a thread from one of your messages, then open it to reply. The room
-timeline retains a link at each threaded message's original position; thread
-views show the current membership after replaying edits and moves. Use the
+timeline shows only unthreaded messages; each thread shows its current members
+after replaying edits and moves. Open threads through the thread list. Use the
 message controls to move your messages to another thread or back to the room.
 Drafts are kept separately for each room and thread.
 

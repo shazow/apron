@@ -172,8 +172,9 @@ test.describe('chat protocol interoperability', () => {
 			expect(threadId).toMatch(/^t_/);
 			await expect(pageA.getByRole('button', { name: 'Back to room', exact: true })).toBeVisible();
 			const rootB = pageB.locator(`article[data-message-id="${rootEventId}"]`);
-			await expect(rootB.getByText('Moved to thread', { exact: true })).toBeVisible();
-			await expect(rootB.locator('.markdown, .plain')).toHaveCount(0);
+			await expect(rootB).toHaveCount(0);
+			const roomCount = pageB.getByRole('button', { name: 'Room', exact: true }).locator('small');
+			const countBeforeReply = await roomCount.textContent();
 
 			await threadButton.click();
 			await expect(pageA.getByRole('button', { name: 'Back to room', exact: true })).toBeVisible();
@@ -186,10 +187,14 @@ test.describe('chat protocol interoperability', () => {
 			await expect(composer(pageA)).toHaveValue('draft kept in thread');
 
 			await sendMessage(pageA, replyText);
-			await expect(await waitForMessage(pageA, replyText)).toContainText(replyText);
-			await expect(pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`)).toBeVisible();
+			const replyA = await waitForMessage(pageA, replyText);
+			const replyId = await replyA.getAttribute('data-message-id');
+			const threadButtonB = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+			await expect(threadButtonB.locator('small')).toHaveText('2');
+			await expect(pageB.locator(`article[data-message-id="${replyId}"]`)).toHaveCount(0);
+			await expect(roomCount).toHaveText(countBeforeReply!);
 
-			await pageB.locator(`button.thread-link[data-thread="${threadId}"]`).first().click();
+			await threadButtonB.click();
 			await expect(await waitForMessage(pageB, replyText)).toContainText(replyText);
 
 			const rootInThread = pageA.locator(`article[data-message-id="${rootEventId}"]`);
@@ -197,6 +202,7 @@ test.describe('chat protocol interoperability', () => {
 			const moveSelect = rootInThread.getByRole('combobox', { name: 'Move message to', exact: true });
 			await moveSelect.selectOption({ label: 'Move to room' });
 			await expect(rootInThread).toHaveCount(0);
+			await expect(rootB).toHaveCount(0);
 			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
 			await expect(await waitForMessage(pageA, rootText)).toContainText(rootText);
 
@@ -207,8 +213,12 @@ test.describe('chat protocol interoperability', () => {
 			await contextA.setOffline(false);
 			await pageA.reload({ waitUntil: 'domcontentloaded' });
 			await expect(pageA.getByTestId('connection-status')).toHaveText('Connected', { timeout: 20_000 });
-			await expect(pageA.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`)).toBeVisible();
-			await expect(pageA.locator(`button.thread-link[data-thread="${threadId}"]`).first()).toBeVisible();
+			await expect(threadButton.locator('small')).toHaveText('1');
+			await expect(pageA.locator(`article[data-message-id="${replyId}"]`)).toHaveCount(0);
+			await expect(pageA.locator(`article[data-message-id="${rootEventId}"]`)).toBeVisible();
+			await threadButton.click();
+			await expect(pageA.locator(`article[data-message-id="${replyId}"]`)).toBeVisible();
+			await expect(pageA.locator(`article[data-message-id="${rootEventId}"]`)).toHaveCount(0);
 		} finally {
 			await contextA.setOffline(false).catch(() => undefined);
 			await Promise.all([contextA.close(), contextB.close()]);

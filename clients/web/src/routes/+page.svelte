@@ -41,8 +41,9 @@
 	let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let activeRoom = $derived(snapshot.rooms.find((room) => room.id === snapshot.activeRoom));
-	let roomMessages = $derived(timelineMessages(activeRoom));
-	let messages = $derived(activeThread ? roomMessages.filter((event) => event.thread === activeThread) : roomMessages);
+	let allMessages = $derived(timelineMessages(activeRoom));
+	let roomMessages = $derived(allMessages.filter((event) => !event.thread));
+	let messages = $derived(activeThread ? allMessages.filter((event) => event.thread === activeThread) : roomMessages);
 	let threadEntries = $derived.by((): ThreadListEntry[] => {
 		const entries = new Map<string, ThreadListEntry>();
 		for (const announcement of activeRoom?.threads ?? []) {
@@ -52,7 +53,7 @@
 				? announcement.name : excerpt || announcement.thread;
 			entries.set(announcement.thread, { ...announcement, name, count: 0, announced: true });
 		}
-		for (const event of roomMessages) {
+		for (const event of allMessages) {
 			if (!event.thread) continue;
 			const existing = entries.get(event.thread);
 			if (existing) {
@@ -91,7 +92,7 @@
 		if (!room) return;
 		for (const [eventId, pending] of Object.entries(pendingThreadStarts)) {
 			if (pending.room !== room.id) continue;
-			const event = roomMessages.find((candidate) => candidate.event_id === eventId);
+			const event = room.timeline.events[eventId];
 			if (!event) continue;
 			if (event.thread === pending.thread) {
 				const next = { ...pendingThreadStarts };
@@ -430,9 +431,7 @@
 									<div class="message-avatar" aria-hidden="true">{senderName(event)[0]?.toUpperCase()}</div>
 									<div class="message-body">
 										<div class="message-meta"><strong>{senderName(event)}</strong>{#if isOwn(event)}<em>you</em>{/if}<time>{eventTime(event)}</time></div>
-										{#if event.thread && !activeThread}
-											<div class="thread-placeholder">{#if event.deleted}<span class="deleted">Message deleted</span>{/if}<span>Moved to thread</span><button class="thread-link" type="button" data-thread={event.thread} aria-label={`Open thread ${threadTitle(event.thread)}`} onclick={() => chooseThread(event.thread as string)}>{threadTitle(event.thread)}</button></div>
-										{:else if event.deleted}
+										{#if event.deleted}
 											<p class="deleted">Message deleted</p>
 										{:else if editingId === event.event_id}
 											<div class="edit-form"><textarea aria-label="Edit message" bind:value={editDraft} rows="3"></textarea><div><button class="primary-button small" type="button" onclick={() => saveEdit(event)}>Save changes</button><button class="link-button" type="button" onclick={() => (editingId = undefined)}>Cancel</button></div></div>
@@ -454,7 +453,7 @@
 										{/if}
 										{#if canEdit && isOwn(event) && !event.deleted}
 											<div class="message-actions">
-												{#if !event.thread || activeThread}<button type="button" aria-label="Edit message" onclick={() => beginEdit(event)}>Edit</button>{/if}
+												<button type="button" aria-label="Edit message" onclick={() => beginEdit(event)}>Edit</button>
 												<button type="button" aria-label="Delete message" onclick={() => deleteMessage(event)}>Delete</button>
 												{#if !event.thread}<button class="start-thread-button" type="button" data-testid="start-thread" disabled={Boolean(pendingThreadStarts[event.event_id])} onclick={() => startThread(event)}>{pendingThreadStarts[event.event_id] ? 'Starting…' : 'Start thread'}</button>{/if}
 												{#if event.thread || activeRoom.threads.length > 0}
@@ -559,9 +558,6 @@
 	.message-meta strong { font-size: 13px; }
 	.message-meta em { padding: 2px 5px; border-radius: 4px; background: #edf2ff; color: #5276d7; font-size: 9px; font-style: normal; font-weight: 750; text-transform: uppercase; }
 	.message-meta time { color: #a2aab8; font-size: 10px; }
-	.thread-placeholder { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 7px 10px; border: 1px solid #e1e7f1; border-radius: 8px; background: #f8faff; color: #7d8aa1; font-size: 11px; }
-	.thread-link { max-width: min(360px, 60vw); overflow: hidden; padding: 0; border: 0; background: transparent; color: #1e5eff; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-	.thread-link:hover, .thread-link:focus-visible { text-decoration: underline; }
 	.plain, .markdown, .deleted { margin: 0; color: #475467; font-size: 14px; line-height: 1.65; word-break: break-word; }
 	.plain { white-space: pre-wrap; }
 	.deleted { color: #98a2b3; font-style: italic; }
