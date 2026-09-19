@@ -137,16 +137,11 @@ application-level name for its JSON object. Corrected during the envelope change
 Reference: PROTOCOL.md §§3.5, 5.3, 7;
 [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396.html).
 
-Correct the merge-patch explanation: object values merge recursively rather
-than simply replacing the corresponding object. Updating `body.text` therefore
-preserves existing attachments. Cite RFC 7396, which replaces RFC 7386, and
-include an example that demonstrates nested merging and deletion.
+Decision: Reference RFC 7396; objects merge recursively, other values replace,
+and `null` deletes keys. `event_id` is immutable. Added one nested-patch example;
+history `replace` retains full-object replacement semantics.
 
-Explicitly prohibit changes to `event_id`; reconcile this with the statement
-that updates may set any key.
-
-Progress: Recursive merge semantics and immutable `event_id` are explicit after
-the replay change. The RFC citation update and nested-patch example remain open.
+Review complete; awaiting confirmation before advancing.
 
 ## 10. Reply envelopes and fire-and-forget exceptions
 

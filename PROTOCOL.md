@@ -503,10 +503,15 @@ Frontend update/replay support is mandatory regardless of mutation capabilities.
 }
 ```
 
-Client rule: replay `set` on event `target` using **JSON Merge Patch semantics
-(RFC 7386)**: recursively merge objects, replace other values, and delete keys
+Client rule: replay `set` on event `target` using
+[JSON Merge Patch (RFC 7396)](https://www.rfc-editor.org/rfc/rfc7396.html):
+recursively merge objects, replace other values, and delete keys
 whose patch value is `null`. `set` MUST be an object; `event_id` MUST NOT be
 changed or deleted.
+
+For example, `{"body": {"text": "new", "attachments": null}}` updates text,
+removes attachments, and preserves other body fields such as `format`.
+
 History rasters use `replace` for full-object replacement, not merge patch;
 an update contains exactly one of `set` or `replace`. Live updates and client
 `update_request`s use `set`. Partial-history replay follows §5.1.
@@ -682,7 +687,7 @@ shape; auth flows; log-ID monotonicity (across events and updates) and
 digit-string encoding under
 burst load; `send`/`event` round-trip including `echo` when a request ID is
 present and its omission otherwise; per-cap behavior
-including RFC 7386 merge semantics, raw/rastered replay equivalence (including
+including RFC 7396 merge semantics, raw/rastered replay equivalence (including
 nested object resets and deletions), source-span
 pagination with `limit: 1`, `room.latest_id` (including update-only and empty
 logs), metadata replacement/removal and re-announcement after authentication,
