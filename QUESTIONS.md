@@ -107,7 +107,7 @@ access, and client cache policy are implementation-defined.
 
 ## 7. Mandatory receiving behavior and capability evolution
 
-- [ ] Resolved
+- [x] Resolved
 
 Reference: PROTOCOL.md §§3.1, 4, 5.3, 6.2.
 
@@ -115,8 +115,6 @@ Decision: Frontend update/replay support is mandatory regardless of mutation
 capabilities. Change policy is deferred until the specification stabilizes;
 there are no existing consumers. Removed frozen commitments and version-bump
 rules; retained the wire `protocol` field and the `conn` reservation.
-
-Review complete; awaiting confirmation before advancing.
 
 ## 8. WebSocket messages versus transport frames
 
