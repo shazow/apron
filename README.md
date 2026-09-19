@@ -10,7 +10,6 @@ We aim to substantially simplify the chat protocol by taking advantage of severa
 
 - Trusted deployments: Small groups where members are mostly known to each other. No sybil resistance, no spam defense, no public federation. Permission policy is whatever the backend decides.
 - Backend is authoritative: Identity, membership, history, threading, mutation. The frontend generally acts as a dumb renderer.
-Content flowing through a backend is not trusted, even though the backend operator is. Bridged text, URLs, and HTML get frontend-side sanitization and sandboxing regardless of source.
 - Backends can be trivial: An afternoon or one-shot LLM prompt should implement a working backend provider.
 - Any frontend, many backends: Aspiring to have many Apron-compatible chat frontends and backends.
 - Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases.
