@@ -6,7 +6,9 @@ What is "bottomless"? It's the opposite of "headless", bottomless apps are front
 
 We aim to substantially simplify the chat protocol by taking advantage of several trust assumptions.
 
-**Status**: v0 draft, protocol changes will continue as implementations improve
+**Status**: v0 alpha, protocol is stabilizing but expect some minor changes.
+
+<img width="721.5" height="536" alt="Screenshot of the Sveltekit Apron Chat implementation" src="https://github.com/user-attachments/assets/bdd4b15c-485e-4c19-838b-75c748dd2890" />
 
 ## Assumptions & Goals
 
