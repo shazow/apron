@@ -1,3 +1,4 @@
+import { requestPasskey } from './webauthn';
 import {
 	applyTransitions,
 	TimelineReplay,
@@ -49,6 +50,8 @@ export interface TypingSnapshot {
 
 export interface ClientSnapshot {
 	status: ConnectionStatus;
+	authBusy?: boolean;
+	passkeySession?: boolean;
 	error?: string;
 	server?: ServerParams;
 	you?: Identity;
@@ -119,6 +122,10 @@ export class ChatClient {
 	private running = false;
 	private authenticated = false;
 	private authRequested = false;
+	private passkeyAbort?: AbortController;
+	// Keep bearer credentials in memory, scoped to this server and mounted client.
+	private sessionToken?: string;
+	private passkeyRequired = false;
 	private activeRoomId?: string;
 	private server?: ServerParams;
 	private you?: Identity;
@@ -145,6 +152,8 @@ export class ChatClient {
 		const nextUrl = serverUrl.trim();
 		if (!nextUrl || nextUrl === this.serverUrl) return;
 		this.serverUrl = nextUrl;
+		this.sessionToken = undefined;
+		this.passkeyRequired = false;
 		this.resetSession('Server URL changed; pending requests were cancelled');
 		if (this.running) this.restart();
 	}
@@ -186,6 +195,7 @@ export class ChatClient {
 	}
 
 	stop(): void {
+		this.cancelPasskey();
 		this.running = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
@@ -209,6 +219,7 @@ export class ChatClient {
 
 	restart(): void {
 		if (!this.running) return;
+		this.cancelPasskey();
 		const socket = this.socket;
 		this.socket = undefined;
 		this.authenticated = false;
@@ -240,6 +251,8 @@ export class ChatClient {
 	snapshot(): ClientSnapshot {
 		return {
 			status: this.status,
+			authBusy: Boolean(this.passkeyAbort),
+			passkeySession: Boolean(this.sessionToken && this.authenticated),
 			error: this.error,
 			server: this.server,
 			you: this.you,
@@ -258,6 +271,57 @@ export class ChatClient {
 				.map(({ room, from, active }) => ({ room, from, active })),
 			showReconnectDivider: this.showReconnectDivider
 		};
+	}
+
+	async usePasskey(action: 'register' | 'login'): Promise<void> {
+		if (!this.server?.auth.includes('webauthn')) throw new Error('This server does not support passkeys');
+		if (this.passkeyAbort || this.authRequested || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
+		if (this.status !== 'connected') throw new Error('Connect to the server first');
+		const controller = new AbortController();
+		this.passkeyAbort = controller;
+		const connection = this.connectionId;
+		this.emit();
+		try {
+			const options = await this.passkeyRequest(`${action}_begin`);
+			const credential = await requestPasskey(action, options, controller.signal);
+			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
+			const result = await this.passkeyRequest(`${action}_finish`, { credential });
+			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
+			this.cancelPasskey();
+			this.handleAuth(result);
+		} finally {
+			if (this.passkeyAbort === controller) this.cancelPasskey();
+			this.emit();
+		}
+	}
+
+	async signOut(): Promise<void> {
+		if (this.passkeyAbort || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
+		const controller = new AbortController();
+		this.passkeyAbort = controller;
+		this.emit();
+		try {
+			await this.passkeyRequest('logout');
+			if (controller.signal.aborted) throw new Error('Connection changed; try again');
+			this.sessionToken = undefined;
+			this.passkeyRequired = false;
+			this.resetSession('Signed out');
+			this.restart();
+		} finally {
+			if (this.passkeyAbort === controller) this.cancelPasskey();
+			this.emit();
+		}
+	}
+
+	private passkeyRequest(action: string, params: JsonObject = {}): Promise<JsonObject> {
+		return this.enqueueRequest('auth', { scheme: 'webauthn', action, ...params }, {
+			visible: false, allowBeforeAuth: true
+		}).promise;
+	}
+
+	private cancelPasskey(): void {
+		this.passkeyAbort?.abort(new DOMException('Connection changed; try again', 'AbortError'));
+		this.passkeyAbort = undefined;
 	}
 
 	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string, replyMessageId?: string): OperationHandle {
@@ -373,6 +437,7 @@ export class ChatClient {
 		};
 		socket.onclose = () => {
 			if (!this.isCurrentSocket(id, socket)) return;
+			this.cancelPasskey();
 			this.showReconnectDivider = this.rooms.size > 0 || this.showReconnectDivider;
 			this.socket = undefined;
 			this.authenticated = false;
@@ -444,14 +509,25 @@ export class ChatClient {
 			this.emit();
 			return;
 		}
-		const scheme = auth.includes('anonymous') ? 'anonymous' : auth[0];
+		const resume = Boolean(this.sessionToken && auth.includes('webauthn'));
+		if (!resume && (this.passkeyRequired || !auth.includes('anonymous'))) {
+			this.error = auth.includes('webauthn') ? 'Sign in with a passkey from your profile.' : 'No supported authentication scheme';
+			this.emit();
+			return;
+		}
 		this.authRequested = true;
+		const socket = this.socket;
 		const request = this.enqueueRequest('auth', {
-			scheme,
+			...(resume ? { scheme: 'webauthn', action: 'resume', token: this.sessionToken } : { scheme: 'anonymous' }),
 			client: 'bottomless-web/0.1'
 		}, { visible: false, allowBeforeAuth: true });
-		request.promise.then((result) => this.handleAuth(result)).catch((cause: Error) => {
+		request.promise.then((result) => {
+			if (socket === this.socket) this.handleAuth(result);
+		}).catch((cause: Error) => {
+			if (socket !== this.socket) return;
 			this.authRequested = false;
+			// Never silently downgrade a passkey session to a different guest identity.
+			if (resume) this.sessionToken = undefined;
 			this.error = cause.message;
 			this.emit();
 		});
@@ -465,6 +541,11 @@ export class ChatClient {
 			return;
 		}
 		this.you = identity as Identity;
+		if (typeof result.token === 'string') {
+			this.sessionToken = result.token;
+			this.passkeyRequired = true;
+		}
+		this.error = undefined;
 		this.authenticated = true;
 		this.authRequested = false;
 		this.reconnectAttempt = 0;
@@ -484,6 +565,9 @@ export class ChatClient {
 		}
 
 		const existing = this.rooms.get(roomId);
+		// Authentication can re-announce an already current room. Preserve its
+		// timeline instead of replacing visible messages with an identical replay.
+		const needsRecovery = !existing || existing.latestId !== params.latest_id || Boolean(existing.recoveryError);
 		const room: RoomState = existing ?? {
 			id: roomId,
 			name: roomId,
@@ -496,7 +580,7 @@ export class ChatClient {
 		if (params.latest_id === '0' || isLogId(params.latest_id)) room.latestId = params.latest_id;
 		this.rooms.set(roomId, room);
 		this.activeRoomId ??= roomId;
-		if (this.server?.caps?.includes('history') && isLogId(params.latest_id) && !room.recovery) {
+		if (needsRecovery && this.server?.caps?.includes('history') && isLogId(params.latest_id) && !room.recovery) {
 			this.startRecovery(room, params.latest_id);
 		}
 		this.emit();
@@ -649,6 +733,9 @@ export class ChatClient {
 		options: { visible: boolean; allowBeforeAuth: boolean }
 	): OperationHandle<T> {
 		const id = makeRequestId(method);
+		if (this.passkeyAbort && method !== 'auth') {
+			return { id, promise: Promise.reject(new Error('Finish signing in before sending requests')) };
+		}
 		let resolvePromise!: (result: T) => void;
 		let rejectPromise!: (error: Error) => void;
 		const promise = new Promise<T>((resolve, reject) => {
@@ -707,6 +794,7 @@ export class ChatClient {
 	}
 
 	private resetSession(reason: string): void {
+		this.cancelPasskey();
 		for (const request of this.requests.values()) {
 			clearTimeout(request.timer);
 			request.reject(new Error(reason));

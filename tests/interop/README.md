@@ -6,6 +6,10 @@ recovery, edit/delete snapshot replay including a deleted-message tombstone,
 thread creation and moves, safe rendering of untrusted markup, and phone viewport layout.
 The desktop suite also reloads a browser while offline, restores connectivity,
 verifies history replay without duplicates, and sends another message.
+The WebAuthn suite uses Chromium's virtual authenticator against the real Go
+verifier. It covers passkey registration, login, sign-out, session resumption,
+message ownership, and recovery from an invalid signature. These tests use
+`localhost` to match the default RP ID; other browser tests use `127.0.0.1`.
 
 Install and run from the repository root:
 

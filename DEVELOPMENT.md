@@ -40,13 +40,17 @@ Run `make install`, then `make dev-server` and `make dev-web` in separate
 terminals. All Make commands below work inside `devenv shell` or with those
 tools installed directly.
 
-Open `http://127.0.0.1:5173`. The development server proxies `/ws` to
+Open `http://localhost:5173`. The development server proxies `/ws` to
 `127.0.0.1:8080`. Open another browser tab to chat with a second client.
 
-The example uses anonymous identities. Reconnecting assigns a new identity;
-history is replayed from the current server, and messages belonging to the
-previous identity remain readable. Edit and delete permissions belong to the
-identity that created the message.
+The example starts with an anonymous identity. Use **Add passkey** in the profile
+panel to retain that identity and its message ownership, and **Sign in with
+passkey** to return to it. Passkey sessions resume after transport disconnects;
+page reloads require signing in again. Anonymous reconnects receive a new identity.
+Edit and delete permissions belong to the identity that created the message.
+Messages and passkey registrations are held in memory and lost on server restart.
+Use `localhost` for the default passkey configuration; see
+[`servers/go/README.md`](servers/go/README.md#passkeys) for deployment settings.
 
 ## Threads
 
@@ -90,7 +94,7 @@ policy. Opening a thread also requests its history through a separate
 make run
 ```
 
-Open `http://127.0.0.1:8080`. The Go process serves the static SvelteKit build
+Open `http://localhost:8080`. The Go process serves the static SvelteKit build
 and WebSocket endpoint from the same origin; no Node.js process is needed.
 `make run` builds the frontend, builds the Go executable, then starts it.
 Use `make serve` to run the existing build. Re-run `make run` after source changes;

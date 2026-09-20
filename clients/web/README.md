@@ -21,6 +21,29 @@ stores it in local storage. The profile bar at the foot of the sidebar edits
 your handle, which is sent with the protocol `nick` request after anonymous
 authentication; the editor shows what the server actually kept.
 
+The profile panel also offers **Add passkey**, **Sign in with passkey**, and
+**Sign out** when the server advertises WebAuthn. With the Go example, open
+`http://localhost:5173` (or `http://localhost:8080` for a static build); other
+deployments need HTTPS and configured RP/frontend origins. Adding a passkey
+keeps your guest identity and message ownership. Signing in restores the
+identity attached to your chosen passkey.
+
+Passkeys use the browser's native WebAuthn JSON APIs, with no frontend dependency.
+An up-to-date browser is required; unsupported browsers can still chat as guests.
+Browser cancellation and verification errors appear in the profile panel. A
+connection change cancels the active ceremony. Chat requests pause while a
+ceremony is active, preventing edits from crossing an identity change.
+
+The session token stays in memory, scoped to this mounted client and server URL,
+and automatically resumes the same identity after a transport disconnect. A page
+reload requires signing in again. Expired sessions require another passkey login;
+the client does not automatically replace them with a guest identity. Signing out
+revokes the current token and reconnects as a guest. The Go example's credentials
+are also in memory and are lost on backend restart.
+
+The implementation-specific WebAuthn exchange is documented in
+[`servers/go/README.md`](../../servers/go/README.md#example-webauthn-exchange).
+
 The UI follows the Apron design system. `src/lib/design/tokens.css` holds its
 color, type, spacing, radius and size tokens as CSS custom properties (dark is
 the reference theme; light follows `prefers-color-scheme`), and

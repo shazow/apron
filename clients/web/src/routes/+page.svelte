@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { passkeySupportError } from '$lib/protocol/webauthn';
 	import {
 		ChatClient,
 		defaultWebSocketUrl,
@@ -43,6 +44,9 @@
 	let profileDraft = $state('');
 	let profileStatus = $state<ProfileStatus>('idle');
 	let profileServerName = $state('');
+	let passkeyError = $state('');
+	let passkeyNotice = $state('');
+	let passkeyUnavailable = $state<string | undefined>();
 	let editingId = $state<string | undefined>();
 	let editDraft = $state('');
 	let threadEditor = $state<{ room: string; thread: string; title: string; initialTitle: string; text: string; saving: boolean; error?: string }>();
@@ -157,7 +161,7 @@
 		return items;
 	});
 	let canCompose = $derived(Boolean(
-		activeRoom && snapshot.status === 'connected' && snapshot.you &&
+		activeRoom && snapshot.status === 'connected' && snapshot.you && !snapshot.authBusy &&
 		(!activeThread || Boolean(activeThreadAnnouncement))
 	));
 	let canEdit = $derived(snapshot.server?.caps?.includes('edit') === true);
@@ -244,6 +248,7 @@
 	});
 
 	onMount(() => {
+		passkeyUnavailable = passkeySupportError();
 		const savedUrl = localStorage.getItem('bottomless.serverUrl') ?? defaultWebSocketUrl(window.location);
 		const savedName = localStorage.getItem('bottomless.displayName') ?? '';
 		serverInput = savedUrl;
@@ -308,12 +313,31 @@
 		profileDraft = snapshot.you?.name || displayName;
 		profileStatus = 'idle';
 		profileServerName = '';
+		passkeyError = '';
+		passkeyNotice = '';
 		profileOpen = true;
 	}
 
 	function closeProfile(): void {
 		profileOpen = false;
 		profileStatus = 'idle';
+	}
+
+	async function authenticateWithPasskey(action: 'register' | 'login' | 'logout'): Promise<void> {
+		if (!client) return;
+		passkeyError = '';
+		passkeyNotice = '';
+		try {
+			if (action === 'logout') await client.signOut();
+			else await client.usePasskey(action);
+			profileDraft = snapshot.you?.name || displayName;
+			passkeyNotice = action === 'register' ? 'Passkey added. You can use it to return to this identity.'
+				: action === 'login' ? 'Signed in with your passkey.' : 'Signed out.';
+		} catch (cause) {
+			passkeyError = cause instanceof DOMException && cause.name === 'NotAllowedError'
+				? 'Passkey request cancelled or timed out. You can try again.'
+				: cause instanceof Error ? cause.message : 'Unable to use passkey';
+		}
 	}
 
 	function saveProfile(event: SubmitEvent): void {
@@ -788,6 +812,23 @@
 							<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" disabled={profileStatus === 'saving' || !profileDraft.trim()}>{profileStatus === 'saving' ? 'Saving…' : 'Save'}</button>
 						</div>
 					</form>
+					{#if snapshot.server?.auth.includes('webauthn')}
+						<div class="ap-profedit" aria-label="Passkeys">
+							<p class="ap-profedit-hint">{snapshot.passkeySession ? 'Signed in with a passkey.' : 'Add a passkey to keep this identity, or sign in with an existing one.'}</p>
+							{#if passkeyUnavailable}<p class="ap-profedit-note">{passkeyUnavailable}</p>{/if}
+							{#if snapshot.authBusy}<p role="status">Follow your browser’s passkey prompt…</p>{/if}
+							{#if passkeyError}<p class="ap-profedit-note ap-profedit-err" role="alert">{passkeyError}</p>{/if}
+							{#if passkeyNotice}<p class="ap-profedit-note" role="status">{passkeyNotice}</p>{/if}
+							<div class="ap-profedit-actions">
+								<button class="ap-btn ap-btn-sm" type="button" disabled={!!passkeyUnavailable || snapshot.authBusy || !snapshot.you || snapshot.status !== 'connected'} onclick={() => authenticateWithPasskey('register')}>Add passkey</button>
+								{#if snapshot.passkeySession}
+									<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={snapshot.authBusy || snapshot.status !== 'connected'} onclick={() => authenticateWithPasskey('logout')}>Sign out</button>
+								{:else}
+									<button class="ap-btn ap-btn-primary ap-btn-sm" type="button" disabled={!!passkeyUnavailable || snapshot.authBusy || snapshot.status !== 'connected'} onclick={() => authenticateWithPasskey('login')}>Sign in with passkey</button>
+								{/if}
+							</div>
+						</div>
+					{/if}
 				</div>
 			{/if}
 			<button class="ap-profile-me" class:ap-profile-open={profileOpen} type="button" aria-haspopup="dialog" aria-expanded={profileOpen} aria-label={`Your profile on ${backendLabel}: ${snapshot.you?.name || snapshot.you?.user_id || 'not signed in'}. Edit`} onclick={openProfile}>
@@ -1111,6 +1152,8 @@
 	.app-backend { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.ap-shell-sidehead { gap: var(--space-2); }
 	.app-connect { margin: var(--space-2) var(--space-2) 0; }
+	.ap-profile-pop { max-height: calc(100dvh - 96px); overflow-y: auto; }
+	.ap-profile-pop .ap-profedit-actions { flex-wrap: wrap; }
 	.app-muted { margin: 0; padding: var(--space-1) var(--space-3); color: var(--ink-muted); font-size: 13px; line-height: 18px; }
 	.app-threads { display: flex; flex-direction: column; gap: 2px; }
 	.app-room-meta { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
