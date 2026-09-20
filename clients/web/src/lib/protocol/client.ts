@@ -279,6 +279,10 @@ export class ChatClient {
 		return this.enqueueRequest('thread', { room_id: room, ...metadata }, { visible: true, allowBeforeAuth: false });
 	}
 
+	updateThreadSummary(room: string, thread: string, summary: string): OperationHandle {
+		return this.enqueueRequest('thread', { room_id: room, thread_id: thread, summary }, { visible: true, allowBeforeAuth: false });
+	}
+
 	private editableMessage(room: string, messageId: string): JsonObject {
 		const message = this.rooms.get(room)?.timeline.events[messageId];
 		if (!message) throw new Error('Message has not been loaded');

@@ -13,6 +13,72 @@ import {
 } from './test-helpers';
 
 test.describe('chat protocol interoperability', () => {
+	test('previews latest thread messages and edits shared summaries without changing messages', async ({ browser }) => {
+		const owner = await browser.newContext();
+		const reader = await browser.newContext();
+		try {
+			const pageA = await owner.newPage();
+			const pageB = await reader.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const token = `summary-${Date.now()}`;
+			await sendMessage(pageA, `${token}-root`);
+			await (await messageAction(await waitForMessage(pageA, `${token}-root`), 'Start thread')).click();
+			const selected = pageA.locator('[data-testid="thread-list"] button[aria-current="page"]');
+			await expect(selected).toBeVisible();
+			const threadId = await selected.getAttribute('data-thread');
+			const cardA = pageA.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
+			const cardB = pageB.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
+			await expect(cardB.getByTestId('thread-preview')).toContainText(`${token}-root`);
+			await sendMessage(pageA, `${token}-latest`);
+			const latest = await waitForMessage(pageA, `${token}-latest`);
+			const latestId = await latest.getAttribute('data-message-id');
+			await expect(cardB.getByTestId('thread-preview')).toContainText(`${token}-latest`);
+			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
+			await expect(cardA).toContainText('Last reply');
+			await expect(cardA.getByTestId('thread-preview')).toContainText(`${token}-latest`);
+			await cardA.click();
+			await pageA.getByRole('button', { name: 'Add summary', exact: true }).click();
+			const summary = `${token} first line\nSecond line\nThird line\nFourth line\nFifth line <b>plain text</b>`;
+			await pageA.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(summary);
+			await pageA.getByRole('button', { name: 'Save summary', exact: true }).click();
+			await expect(pageA.getByTestId('thread-summary')).toHaveText(summary);
+			await expect(cardB.getByTestId('thread-preview')).toHaveText(summary);
+			const previewBounds = await cardB.getByTestId('thread-preview').evaluate((node) => ({
+				height: node.clientHeight, fullHeight: node.scrollHeight, lineHeight: Number.parseFloat(getComputedStyle(node).lineHeight)
+			}));
+			expect(previewBounds.height).toBeLessThanOrEqual(previewBounds.lineHeight * 3 + 1);
+			expect(previewBounds.fullHeight).toBeGreaterThan(previewBounds.height);
+			await pageB.reload();
+			await expect(cardB.getByTestId('thread-preview')).toHaveText(summary);
+			await cardB.click();
+			await expect(pageB.getByTestId('thread-summary')).toHaveText(summary);
+			await expect(pageB.getByTestId('thread-summary')).toBeInViewport();
+			await expect(pageB.getByTestId('thread-summary').locator('b')).toHaveCount(0);
+			await pageB.getByRole('button', { name: 'Edit summary', exact: true }).click();
+			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('Cancelled draft');
+			await pageB.getByRole('region', { name: 'Thread summary', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
+			await expect(pageB.getByTestId('thread-summary')).toHaveText(summary);
+			await pageB.getByRole('button', { name: 'Edit summary', exact: true }).click();
+			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('Updated by another participant');
+			await pageB.getByRole('button', { name: 'Save summary', exact: true }).click();
+			await expect(pageA.getByTestId('thread-summary')).toHaveText('Updated by another participant');
+			await expect(pageA.getByRole('heading', { level: 1 })).toContainText(`${token}-root`);
+			await pageB.getByRole('button', { name: 'Edit summary', exact: true }).click();
+			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('');
+			await pageB.getByRole('button', { name: 'Save summary', exact: true }).click();
+			await expect(pageB.getByRole('button', { name: 'Add summary', exact: true })).toBeVisible();
+			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
+			await expect(cardB.getByTestId('thread-preview')).toContainText(`${token}-latest`);
+			const stableLatest = pageA.locator(`article[data-message-id="${latestId}"]`);
+			await editMessage(stableLatest, `${token}-edited`);
+			await expect(cardB.getByTestId('thread-preview')).toContainText(`${token}-edited`);
+			await deleteMessage(pageA, stableLatest);
+			await expect(cardB.getByTestId('thread-preview')).toHaveText('Message deleted');
+		} finally {
+			await Promise.all([owner.close(), reader.close()]);
+		}
+	});
+
 	test('replies to another sender, preserves references on edits, and replays deleted targets', async ({ browser }) => {
 		const owner = await browser.newContext();
 		const reader = await browser.newContext();

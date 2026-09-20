@@ -19,6 +19,7 @@
 		announced: boolean;
 		participants: Identity[];
 		lastReply: string;
+		latestMessage?: MessageRecord;
 	};
 	type TimelineItem =
 		| { kind: 'date'; key: string; label: string }
@@ -44,6 +45,7 @@
 	let profileServerName = $state('');
 	let editingId = $state<string | undefined>();
 	let editDraft = $state('');
+	let summaryEditor = $state<{ room: string; thread: string; text: string; saving: boolean; error?: string }>();
 	let feedback = $state<Feedback | undefined>();
 	let activeThread = $state<string | undefined>();
 	let selectedRoomId = $state<string | undefined>();
@@ -92,6 +94,7 @@
 			}
 			entry.count += 1;
 			entry.lastReply = eventTime(event);
+			entry.latestMessage = event;
 			if (event.from?.user_id && !event.deleted) {
 				entry.participants = [event.from, ...entry.participants.filter((sender) => sender.user_id !== event.from?.user_id)].slice(0, 4);
 			}
@@ -262,6 +265,7 @@
 			moreId = undefined;
 			composerText = '';
 			replyId = undefined;
+			summaryEditor = undefined;
 			serverInput = normalized;
 			localStorage.setItem('bottomless.serverUrl', normalized);
 			client.setUrl(normalized);
@@ -347,6 +351,7 @@
 		replyId = replyDrafts[key];
 		editingId = undefined;
 		editDraft = '';
+		summaryEditor = undefined;
 		movingId = undefined;
 		moreId = undefined;
 		stickToBottom = true;
@@ -355,6 +360,9 @@
 	function chooseThread(thread: string): void {
 		if (!activeRoom) return;
 		setDestination(activeRoom.id, thread);
+		stickToBottom = false;
+		seenCount = messages.length;
+		requestAnimationFrame(() => { if (messageScroll) messageScroll.scrollTop = 0; });
 		client?.loadThread(activeRoom.id, thread).catch((cause: Error) => { feedback = { kind: 'error', text: cause.message }; });
 		mobilePane = 'main';
 		composer?.focus();
@@ -593,8 +601,34 @@
 		return threadEntriesById.get(thread)?.title || thread;
 	}
 
-	function threadSummary(thread: string): string | undefined {
-		return threadEntriesById.get(thread)?.summary;
+	function latestMessagePreview(event: MessageRecord): string {
+		if (event.deleted) return 'Message deleted';
+		const text = textOf(event).replace(/\s+/g, ' ').trim();
+		return `${senderName(event)}: ${text || (embedsOf(event).length ? 'Attachment' : 'Empty message')}`;
+	}
+
+	function editSummary(): void {
+		if (!activeRoom || !activeThreadAnnouncement || !canEdit || !canCompose) return;
+		summaryEditor = {
+			room: activeRoom.id, thread: activeThreadAnnouncement.thread_id,
+			text: activeThreadAnnouncement.summary ?? '', saving: false
+		};
+	}
+
+	async function saveSummary(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+		if (!client || !summaryEditor || summaryEditor.saving || !canEdit || !canCompose) return;
+		const editor = summaryEditor;
+		editor.saving = true;
+		editor.error = undefined;
+		try {
+			await client.updateThreadSummary(editor.room, editor.thread, editor.text.trim() ? editor.text : '').promise;
+			if (summaryEditor === editor) summaryEditor = undefined;
+		} catch (cause) {
+			if (summaryEditor !== editor) return;
+			editor.saving = false;
+			editor.error = cause instanceof Error ? cause.message : 'Unable to save summary';
+		}
 	}
 
 	function isThreadAnnounced(thread: string): boolean {
@@ -755,8 +789,8 @@
 					{/if}
 					{#if typingNames.length > 0}
 						<p class="ap-roomhead-sub ap-roomhead-typing app-typing-head">{typingNames.length === 1 ? `${typingNames[0]} is typing…` : `${typingNames.length} people are typing…`}</p>
-					{:else if activeThread ? threadSummary(activeThread) : activeRoom.topic}
-						<p class="ap-roomhead-sub">{activeThread ? threadSummary(activeThread) : activeRoom.topic}</p>
+					{:else if !activeThread && activeRoom.topic}
+						<p class="ap-roomhead-sub">{activeRoom.topic}</p>
 					{/if}
 				</div>
 				{#if activeRoom.recovering}
@@ -787,10 +821,36 @@
 			{/if}
 
 			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.name} messages`}>
+				{#if activeThreadAnnouncement && (activeThreadAnnouncement.summary !== undefined || canEdit)}
+					<section class="app-thread-summary" aria-label="Thread summary">
+						<div class="app-summary-heading">
+							<h2>Summary</h2>
+							{#if canEdit && !summaryEditor}
+								<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={!canCompose} onclick={editSummary}>{activeThreadAnnouncement.summary !== undefined ? 'Edit summary' : 'Add summary'}</button>
+							{/if}
+						</div>
+						{#if summaryEditor}
+							<form onsubmit={saveSummary}>
+								<label class="ap-fieldlabel">Thread summary
+									<textarea class="ap-field app-summary-editor" bind:value={summaryEditor.text} rows="5" disabled={summaryEditor.saving}></textarea>
+								</label>
+								{#if summaryEditor.error}<p role="alert">{summaryEditor.error}</p>{/if}
+								<div class="ap-profedit-actions">
+									<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={summaryEditor.saving} onclick={() => (summaryEditor = undefined)}>Cancel</button>
+									<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" disabled={summaryEditor.saving || !canCompose || !canEdit}>{summaryEditor.saving ? 'Saving…' : 'Save summary'}</button>
+								</div>
+							</form>
+						{:else if activeThreadAnnouncement.summary !== undefined}
+							<div class="app-summary-text" data-testid="thread-summary">{activeThreadAnnouncement.summary}</div>
+						{:else}
+							<p class="app-muted">No summary yet.</p>
+						{/if}
+					</section>
+				{/if}
 				{#if snapshot.showReconnectDivider}
 					<div class="ap-divider ap-divider-gap" role="separator" data-testid="reconnect-divider"><span>Reconnected · earlier messages aren’t available</span></div>
 				{/if}
-				{#if messages.length === 0 && !activeRoom.recovering}
+				{#if timeline.length === 0 && !activeRoom.recovering}
 					<div class="app-empty">
 						<h2>{activeThread ? 'No replies yet' : 'Nothing here yet'}</h2>
 						<p>{activeThread ? 'Reply below to continue the thread.' : `Start the conversation in ${activeRoom.name}.`}</p>
@@ -804,7 +864,7 @@
 						{:else if item.kind === 'thread'}
 							{@const entry = item.entry}
 							<div class="app-thread-row">
-								<button class="ap-thread" type="button" onclick={() => chooseThread(entry.thread_id)}>
+								<button class="ap-thread" data-testid="thread-card" data-thread={entry.thread_id} type="button" onclick={() => chooseThread(entry.thread_id)}>
 									{#if entry.participants.length > 0}
 										<span class="ap-thread-faces" aria-hidden="true">
 											{#each entry.participants as participant (participant.user_id)}
@@ -819,7 +879,11 @@
 									<span class="ap-thread-name">{entry.title}</span>
 									<span class="ap-thread-count">{entry.count} {entry.count === 1 ? 'message' : 'messages'}</span>
 									{#if entry.lastReply}<span class="ap-thread-last">Last reply {entry.lastReply}</span>{/if}
-									{#if entry.summary}<span class="ap-thread-summary">{entry.summary}</span>{/if}
+									{#if entry.summary !== undefined}
+										<span class="ap-thread-summary app-summary-preview" data-testid="thread-preview">{entry.summary}</span>
+									{:else if entry.latestMessage}
+										<span class="ap-thread-summary app-message-preview" data-testid="thread-preview">{latestMessagePreview(entry.latestMessage)}</span>
+									{/if}
 								</button>
 							</div>
 						{:else}
@@ -1017,6 +1081,7 @@
 	.app-room-meta { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 	.ap-room-active .app-room-meta { color: var(--ink); }
 	.ap-roomhead-back { display: none; }
+	.ap-roomhead-name { max-width: 100%; }
 	.app-banner { padding: var(--space-2) var(--space-4) 0; }
 	.app-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 	.app-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }
@@ -1024,7 +1089,15 @@
 	.app-empty p { margin: 0; }
 	.app-empty .ap-btn { margin-top: var(--space-2); }
 	.app-thread-row { margin: var(--space-2) var(--space-4) 0 calc(var(--space-4) + var(--avatar-md) + var(--space-3)); }
-	.app-thread-row .ap-thread { margin-top: 0; flex-wrap: wrap; row-gap: 0; }
+	.app-thread-row .ap-thread { margin-top: 0; flex-wrap: wrap; row-gap: var(--space-1); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+	.app-thread-row .ap-thread-summary { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; }
+	.app-summary-preview { -webkit-line-clamp: 3; line-clamp: 3; }
+	.app-message-preview { -webkit-line-clamp: 1; line-clamp: 1; }
+	.app-thread-summary { margin: var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); }
+	.app-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+	.app-summary-heading h2 { font-size: 14px; margin: 0; }
+	.app-summary-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.app-summary-editor { width: 100%; height: auto; min-height: 120px; padding: var(--space-2); resize: vertical; }
 	.app-plain { white-space: pre-wrap; }
 	.app-edit { display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--timeline-max-w); }
 	.app-edit-field { height: auto; min-height: 66px; padding: var(--space-2); resize: vertical; font-size: 15px; line-height: 22px; }

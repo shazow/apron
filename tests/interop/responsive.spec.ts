@@ -14,6 +14,33 @@ test('chat remains usable without horizontal overflow on a phone viewport', asyn
 	expect(dimensions.bodyWidth).toBeLessThanOrEqual(dimensions.innerWidth + 1);
 });
 
+test('thread summary previews and the full editor fit a phone viewport', async ({ page }) => {
+	await page.setViewportSize({ width: 320, height: 740 });
+	await openChat(page);
+	const token = `mobile-summary-${Date.now()}`;
+	await sendMessage(page, token);
+	await (await messageAction(await waitForMessage(page, token), 'Start thread')).click();
+	await page.getByRole('button', { name: 'Add summary', exact: true }).click();
+	const summary = `${'longword'.repeat(30)}\nSecond line\nThird line\nFourth line\nLast line`;
+	await page.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(summary);
+	await page.getByRole('button', { name: 'Save summary', exact: true }).click();
+	await expect(page.getByTestId('thread-summary')).toHaveText(summary);
+	await page.getByRole('button', { name: 'Back to room', exact: true }).click();
+	const card = page.getByTestId('thread-card').filter({ hasText: token });
+	await expect(card).toBeVisible();
+	const preview = card.getByTestId('thread-preview');
+	const height = await preview.evaluate((node) => ({ height: node.clientHeight, line: Number.parseFloat(getComputedStyle(node).lineHeight) }));
+	expect(height.height).toBeLessThanOrEqual(height.line * 3 + 1);
+	await card.click();
+	await expect(page.getByTestId('thread-summary')).toBeInViewport();
+	await page.getByRole('button', { name: 'Edit summary', exact: true }).click();
+	await expect(page.getByRole('textbox', { name: 'Thread summary', exact: true })).toHaveValue(summary);
+	const editorBounds = await page.getByRole('textbox', { name: 'Thread summary', exact: true }).boundingBox();
+	expect(editorBounds!.height).toBeGreaterThanOrEqual(120);
+	const width = await page.evaluate(() => document.documentElement.scrollWidth);
+	expect(width).toBeLessThanOrEqual(321);
+});
+
 test('thread replies and deleted roots remain usable on a phone viewport', async ({ page }) => {
 	await openChat(page);
 	const text = `mobile-thread-${Date.now()}-${'long topic '.repeat(12)}`;

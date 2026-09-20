@@ -56,6 +56,14 @@ after replaying edits and moves. Open threads through the thread list. Use the
 message controls to move your messages to another thread or back to the room.
 Drafts are kept separately for each room and thread.
 
+Thread cards in the room feed preview up to three lines of the summary, or the
+latest loaded message when no summary is present. Open a thread to read the
+full summary at the top. Add or edit it there; saving an empty summary removes
+it and restores the message preview. Summaries are plain text. Any authenticated
+participant can edit them in the example server. A `thread` request with an
+existing `thread_id` and `summary` updates only the summary and broadcasts the
+complete metadata; the title, root, and messages stay intact.
+
 Use a message's Reply action to reference it in a new message. Reply references
 are restricted to the same room and thread (or two unthreaded messages). The
 composer keeps the reply target with the destination's draft. Edits preserve
