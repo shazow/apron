@@ -24,14 +24,14 @@ broadcasts them to all clients in the room, including the sender.
 // <- Server confirms message ID
 {"id": "c2", "result": {"message_id": "1724803200042"}}
 // <- Server broadcasts the message to everyone
-{"method": "message", "params": {"room_id": "general", "log_id": "1724803200042", "echo": "c2", "message": {
+{"method": "message", "params": {"room_id": "general", "log_id": "1724803200042", "message": {
   "message_id": "1724803200042", "from": {"user_id": "guest_1", "name": "Ada"}, "body": {"text": "Hello"}
 }}}
 ```
 
-Request `id` correlates replies; `echo` links the broadcast to the `message`
-request. The server-assigned `message_id` identifies the message; `log_id`
-identifies a change in the room log.
+Request `id` correlates replies. The server-assigned `message_id` identifies
+the message in both the result and the broadcast; `log_id` identifies a change
+in the room log.
 
 ---
 
@@ -323,7 +323,6 @@ Broadcast (to all clients in the room, including the sender):
   "params": {
     "room_id": "general",
     "log_id": "1724803200042",
-    "echo": "c3",
     "message": {
       "message_id": "1724803200042",
       "from": {"user_id": "alice", "name": "Alice"},
@@ -353,14 +352,10 @@ including ones predating the connection.
   Clients MUST disable raw HTML in Markdown or sanitize rendered HTML using
   the same allowlist policy as HTML embeds (§6.4).
 - **Result:** `message` returns `{"message_id": "..."}`, the message's permanent
-  ID, whether newly created or replaced.
-- **Echo:** the server's `message` notification for a client-originated save
-  with `id` carries `params.echo` = the originating request `id`. Omit `echo`
-  for requests without `id`. Clients match `echo` against their own pending
-  saves to reconcile local echo. Servers MAY include it on all copies of the
-  broadcast; clients MUST ignore values that do not match their own pending
-  requests. Clients MUST also accept the `message` result as confirmation,
-  including when deduplication suppresses a retry's broadcast (§1.2).
+  ID, whether newly created or replaced. Clients reconcile their own saves by
+  this `message_id`, which also appears in the broadcast. The result is the
+  confirmation: the broadcast MAY arrive before or after it, and a
+  deduplicated retry produces no broadcast at all (§1.2).
 - Clients deduplicate replayed transitions by their log IDs (§2).
 - `body.embeds`: see §6. **Clients MUST render entries
   of unknown `kind` as a labeled fallback card** (kind name + `url` if
@@ -415,7 +410,7 @@ For example, reply to the message created above:
 {"id": "c4", "result": {"message_id": "1724803200043"}}
 // <- (broadcast)
 {"method": "message", "params": {
-  "room_id": "general", "log_id": "1724803200043", "echo": "c4",
+  "room_id": "general", "log_id": "1724803200043",
   "message": {
     "message_id": "1724803200043", "from": {"user_id": "bob", "name": "Bob"},
     "reply_message_id": "1724803200042",
@@ -454,7 +449,6 @@ follow §1.
   "params": {
     "room_id": "general",
     "log_id": "1724803200000",
-    "echo": "b",
     "message": {
       "message_id": "1724803200000",
       "from": {"user_id": "alice", "name": "Alice"},
@@ -496,8 +490,8 @@ to each request.
 
 Stateless window query over the room's **append-only transition log** (§2).
 Every entry has the form `{"log_id": "...", "message": {...}}`: the same
-complete snapshot as a server `message` notification (§3.5), without delivery
-fields such as `room_id` or `echo`. Servers MAY return all source transitions
+complete snapshot as a server `message` notification (§3.5), without the
+`room_id` delivery field. Servers MAY return all source transitions
 or compact them as described below.
 
 ```jsonc
@@ -679,7 +673,6 @@ policy:
   "params": {
     "room_id": "general",
     "log_id": "1724803312007",
-    "echo": "c12",
     "message": {
       "message_id": "1724803200042",
       "from": {"user_id": "alice", "name": "Alice"},
@@ -706,7 +699,7 @@ For example, delete a message while retaining its thread assignment:
 {"id": "c14", "result": {"message_id": "1724803200042"}}
 // <- (broadcast)
 {"method": "message", "params": {
-  "room_id": "general", "log_id": "1724803312009", "echo": "c14",
+  "room_id": "general", "log_id": "1724803312009",
   "message": {
     "message_id": "1724803200042", "from": {"user_id": "alice", "name": "Alice"},
     "thread_id": "t_deploy", "deleted": true
@@ -827,7 +820,7 @@ server update its title and summary:
 // <-
 {"id": "c15", "result": {"message_id": "1724801100007"}}
 // <- (broadcast)
-{"method": "message", "params": {"room_id": "general", "log_id": "1724803312010", "echo": "c15", "message": {
+{"method": "message", "params": {"room_id": "general", "log_id": "1724803312010", "message": {
   "message_id": "1724801100007", "from": {"user_id": "alice", "name": "Alice"},
   "body": {"text": "Is the deployment broken?", "format": "plain"}, "thread_id": "t_deploy"
 }}}
