@@ -143,11 +143,11 @@ func (s *Server) authenticatePasskey(c *client, req request) (any, *rpcError) {
 			user = s.users[c.identity.ID]
 			if user == nil {
 				user = ceremony.user
+				user.identity = c.identity
 			}
 			if !bytes.Equal(user.handle, ceremony.user.handle) || len(user.credentials) >= 10 {
 				return denied("Registration changed; try again")
 			}
-			user.identity = c.identity
 			user.credentials = append(user.credentials, *credential)
 			s.users[user.identity.ID] = user
 			s.credentials[string(credential.ID)] = user

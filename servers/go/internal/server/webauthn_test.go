@@ -195,6 +195,61 @@ func TestPasskeyRegistrationLoginAndSession(t *testing.T) {
 	passkeyDenied(t, passkeyCall(t, resumed, "expired", "resume", map[string]any{"token": registered["token"]}))
 }
 
+func TestAddingPasskeyPreservesStoredNickname(t *testing.T) {
+	for _, renameDuringRegistration := range []bool{false, true} {
+		name := "rename before registration"
+		if renameDuringRegistration {
+			name = "rename during registration"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, httpServer := passkeyTestServer(t)
+			owner := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+			original := newTestAuthenticator(t)
+			registered := registerTestPasskey(t, owner, original)
+			other := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+			passkeyResult(t, passkeyCall(t, other, "resume", "resume", map[string]any{"token": registered["token"]}))
+			other.read(t)
+			rename := func() {
+				owner.write(t, map[string]any{"method": "nick", "id": "rename", "params": map[string]any{"name": "Updated nickname"}})
+				result := passkeyResult(t, owner.read(t))
+				if result["you"].(map[string]any)["name"] != "Updated nickname" {
+					t.Fatalf("rename was not accepted: %#v", result)
+				}
+			}
+			if !renameDuringRegistration {
+				rename()
+			}
+			options := passkeyResult(t, passkeyCall(t, other, "begin", "register_begin", nil))
+			if renameDuringRegistration {
+				rename()
+			}
+			additional := newTestAuthenticator(t)
+			result := passkeyResult(t, passkeyCall(t, other, "finish", "register_finish", map[string]any{
+				"credential": additional.registration(t, options, testPasskeyOrigin),
+			}))
+			other.read(t)
+			assertIdentity := func(result map[string]any) {
+				t.Helper()
+				you := result["you"].(map[string]any)
+				if you["user_id"] != registered["you"].(map[string]any)["user_id"] || you["name"] != "Updated nickname" {
+					t.Fatalf("registration lost the stored identity: %#v", you)
+				}
+			}
+			assertIdentity(result)
+			// Both credentials must restore the accepted nickname on fresh connections.
+			for _, authenticator := range []*testAuthenticator{original, additional} {
+				fresh := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+				options := passkeyResult(t, passkeyCall(t, fresh, "login-begin", "login_begin", nil))
+				result := passkeyResult(t, passkeyCall(t, fresh, "login-finish", "login_finish", map[string]any{
+					"credential": authenticator.assertion(t, options, testPasskeyOrigin, "localhost", 0x05),
+				}))
+				fresh.read(t)
+				assertIdentity(result)
+			}
+		})
+	}
+}
+
 func TestPasskeyRejectsInvalidProofs(t *testing.T) {
 	app, httpServer := passkeyTestServer(t)
 	a := newTestAuthenticator(t)
