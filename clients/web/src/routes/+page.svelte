@@ -48,6 +48,8 @@
 	let activeThread = $state<string | undefined>();
 	let selectedRoomId = $state<string | undefined>();
 	let drafts = $state<Record<string, string>>({});
+	let replyDrafts = $state<Record<string, string | undefined>>({});
+	let replyId = $state<string | undefined>();
 	let pendingThreadStarts = $state<Record<string, PendingThreadStart>>({});
 	let movingId = $state<string | undefined>();
 	let moreId = $state<string | undefined>();
@@ -155,6 +157,8 @@
 		(!activeThread || Boolean(activeThreadAnnouncement))
 	));
 	let canEdit = $derived(snapshot.server?.caps?.includes('edit') === true);
+	let replyTarget = $derived(replyId ? activeRoom?.timeline.events[replyId] : undefined);
+	let replyTargetMoved = $derived(Boolean(replyTarget && replyTarget.thread_id !== activeThread));
 	let canUpload = $derived(typeof snapshot.server?.upload === 'string' && snapshot.server.upload.length > 0);
 	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== snapshot.you?.user_id));
 	let typingNames = $derived(roomTyping.map((entry) => entry.from.name || entry.from.user_id));
@@ -257,6 +261,7 @@
 			movingId = undefined;
 			moreId = undefined;
 			composerText = '';
+			replyId = undefined;
 			serverInput = normalized;
 			localStorage.setItem('bottomless.serverUrl', normalized);
 			client.setUrl(normalized);
@@ -329,6 +334,7 @@
 		if (!selectedRoomId) return;
 		const key = draftKey(currentServerUrl(), selectedRoomId, activeThread);
 		drafts = { ...drafts, [key]: composerText };
+		replyDrafts = { ...replyDrafts, [key]: replyId };
 	}
 
 	function setDestination(roomId: string, thread: string | undefined): void {
@@ -338,6 +344,7 @@
 		activeThread = thread;
 		const key = draftKey(currentServerUrl(), roomId, thread);
 		composerText = drafts[key] ?? '';
+		replyId = replyDrafts[key];
 		editingId = undefined;
 		editDraft = '';
 		movingId = undefined;
@@ -378,26 +385,60 @@
 	}
 
 	function sendMessage(): void {
-		if (!client || !activeRoom || !canCompose || !composerText.trim()) return;
+		if (!client || !activeRoom || !canCompose || replyTargetMoved || !composerText.trim()) return;
 		const draft = composerText;
 		const roomId = activeRoom.id;
 		const thread = activeThread;
+		const reply = replyId;
 		const originKey = draftKey(currentServerUrl(), roomId, thread);
-		const handle = client.sendMessage(roomId, draft, 'markdown', thread);
+		const handle = client.sendMessage(roomId, draft, 'markdown', thread, reply);
 		track(handle, 'Sending…', () => {
 			const currentKey = selectedRoomId ? draftKey(currentServerUrl(), selectedRoomId, activeThread) : undefined;
-			if (!drafts[originKey]) drafts = { ...drafts, [originKey]: draft };
-			if (currentKey === originKey && !composerText) {
+			if (!drafts[originKey] && !replyDrafts[originKey] && !(currentKey === originKey && (composerText || replyId))) {
+				drafts = { ...drafts, [originKey]: draft };
+				replyDrafts = { ...replyDrafts, [originKey]: reply };
+			}
+			if (currentKey === originKey && !composerText && !replyId) {
 				composerText = drafts[originKey];
+				replyId = replyDrafts[originKey];
 				composer?.focus();
 			}
 		});
 		composerText = '';
+		replyId = undefined;
 		drafts = { ...drafts, [originKey]: '' };
+		replyDrafts = { ...replyDrafts, [originKey]: undefined };
 		client.sendTyping(roomId, false);
 		if (typingTimer) clearTimeout(typingTimer);
 		stickToBottom = true;
 		composer?.focus();
+	}
+
+	function beginReply(event: MessageRecord): void {
+		if (!canCompose || event.deleted || event.thread_id !== activeThread) return;
+		replyId = event.message_id;
+		moreId = undefined;
+		saveCurrentDraft();
+		composer?.focus();
+	}
+
+	function cancelReply(): void {
+		replyId = undefined;
+		saveCurrentDraft();
+		composer?.focus();
+	}
+
+	function replyPreview(id: string): string {
+		const target = activeRoom?.timeline.events[id];
+		if (!target) return 'Message unavailable';
+		if (target.deleted) return 'Message deleted';
+		return `${senderName(target)}: ${textOf(target).replace(/\s+/g, ' ').trim().slice(0, 160) || 'Attachment'}`;
+	}
+
+	function removeReply(event: MessageRecord): void {
+		if (!client || !activeRoom || !canEdit || !isOwn(event)) return;
+		moreId = undefined;
+		track(client.setMessageReply(activeRoom.id, event.message_id, null), 'Removing reply reference…');
 	}
 
 	function beginEdit(event: MessageRecord): void {
@@ -586,6 +627,10 @@
 
 	function hasActions(event: MessageRecord): boolean {
 		return canEdit && isOwn(event) && !event.deleted;
+	}
+
+	function canRemoveReply(event: MessageRecord): boolean {
+		return canEdit && isOwn(event) && Boolean(event.reply_message_id);
 	}
 
 	function canMove(event: MessageRecord): boolean {
@@ -797,6 +842,9 @@
 											<span class="ap-msg-meta">{#if eventTime(event)}<time>{eventTime(event)}</time>{/if}</span>
 										</header>
 									{/if}
+									{#if event.reply_message_id && !event.deleted}
+										<div class="app-reply-reference" data-testid="reply-reference">Replying to {replyPreview(event.reply_message_id)}</div>
+									{/if}
 									{#if event.deleted}
 										<div class="ap-msg-tomb">Message deleted</div>
 									{:else if editingId === event.message_id}
@@ -854,20 +902,31 @@
 										{/if}
 									{/if}
 								</div>
-								{#if hasActions(event)}
+								{#if hasActions(event) || canRemoveReply(event) || (canCompose && !event.deleted)}
 									<div class="ap-msg-actions">
 										<div class="ap-actions" role="toolbar" aria-label="Message actions">
-											{#if !event.thread_id && !activeThread}
-												<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={Boolean(pendingThreadStarts[event.message_id])} onclick={() => startThread(event)}>{pendingThreadStarts[event.message_id] ? 'Starting…' : 'Start thread'}</button>
+											{#if event.deleted && canRemoveReply(event)}
+												<button class="ap-actions-btn" type="button" aria-label="Remove reply reference" onclick={() => removeReply(event)}>Remove reply</button>
 											{/if}
-											<button class="ap-actions-btn" type="button" aria-label="Edit message" title="Edit" onclick={() => beginEdit(event)}>Edit</button>
-											{#if moreId === event.message_id}
-												{#if canMove(event)}
-													<button class="ap-actions-btn" type="button" aria-label="Move message" title="Move to thread" onclick={() => toggleMove(event)}>Move</button>
+											{#if canCompose && !event.deleted}
+												<button class="ap-actions-btn" type="button" aria-label="Reply to message" onclick={() => beginReply(event)}>Reply</button>
+											{/if}
+											{#if hasActions(event)}
+												{#if !event.thread_id && !activeThread}
+													<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={Boolean(pendingThreadStarts[event.message_id])} onclick={() => startThread(event)}>{pendingThreadStarts[event.message_id] ? 'Starting…' : 'Start thread'}</button>
 												{/if}
-												<button class="ap-actions-btn ap-actions-danger" type="button" aria-label="Delete message" title="Delete" onclick={() => deleteMessage(event)}>Delete</button>
-											{:else}
-												<button class="ap-actions-btn" type="button" aria-label="More actions" aria-expanded="false" title="More" onclick={() => (moreId = event.message_id)}>⋯</button>
+												<button class="ap-actions-btn" type="button" aria-label="Edit message" title="Edit" onclick={() => beginEdit(event)}>Edit</button>
+												{#if moreId === event.message_id}
+													{#if event.reply_message_id}
+														<button class="ap-actions-btn" type="button" aria-label="Remove reply reference" onclick={() => removeReply(event)}>Remove reply</button>
+													{/if}
+													{#if canMove(event)}
+														<button class="ap-actions-btn" type="button" aria-label="Move message" title="Move to thread" onclick={() => toggleMove(event)}>Move</button>
+													{/if}
+													<button class="ap-actions-btn ap-actions-danger" type="button" aria-label="Delete message" title="Delete" onclick={() => deleteMessage(event)}>Delete</button>
+												{:else}
+													<button class="ap-actions-btn" type="button" aria-label="More actions" aria-expanded="false" title="More" onclick={() => (moreId = event.message_id)}>⋯</button>
+												{/if}
 											{/if}
 										</div>
 									</div>
@@ -894,9 +953,15 @@
 				{/if}
 			</div>
 
+			{#if replyId}
+				<div class="app-reply-draft" data-testid="reply-draft" role="status">
+					<span>{replyTargetMoved ? 'This message moved to another thread. Cancel this reply to continue.' : `Replying to ${replyPreview(replyId)}`}</span>
+					<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Cancel reply" onclick={cancelReply}>Cancel reply</button>
+				</div>
+			{/if}
 			<form class="ap-composer" class:ap-composer-disabled={!canCompose} aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); sendMessage(); }}>
 				<textarea class="ap-composer-field" id="message-input" data-testid="message-input" aria-label="Message" bind:this={composer} bind:value={composerText} oninput={composerInput} onkeydown={composerKeydown} disabled={!canCompose} placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.name}`} rows="1"></textarea>
-				<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || !composerText.trim()}>Send</button>
+				<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || replyTargetMoved || !composerText.trim()}>Send</button>
 			</form>
 		{:else}
 			<div class="app-empty app-empty-room">
@@ -940,6 +1005,10 @@
 	:global(*), :global(*::before), :global(*::after) { box-sizing: border-box; }
 	:global(button), :global(input), :global(textarea), :global(select) { font: inherit; }
 	.app { height: 100dvh; min-height: 100%; }
+	.ap-actions { max-width: calc(100vw - 32px); flex-wrap: wrap; }
+	.app-reply-reference { border-left: 2px solid currentColor; padding-left: var(--space-2); margin-bottom: var(--space-2); opacity: .75; font-size: .85em; overflow-wrap: anywhere; }
+	.app-reply-draft { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4); font-size: .85em; }
+	.app-reply-draft span { min-width: 0; overflow-wrap: anywhere; }
 	.app-backend { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.ap-shell-sidehead { gap: var(--space-2); }
 	.app-connect { margin: var(--space-2) var(--space-2) 0; }

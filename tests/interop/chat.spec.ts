@@ -13,6 +13,87 @@ import {
 } from './test-helpers';
 
 test.describe('chat protocol interoperability', () => {
+	test('replies to another sender, preserves references on edits, and replays deleted targets', async ({ browser }) => {
+		const owner = await browser.newContext();
+		const reader = await browser.newContext();
+		try {
+			const pageA = await owner.newPage();
+			const pageB = await reader.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const token = `reply-${Date.now()}`;
+			await sendMessage(pageA, `${token}-target`);
+			const targetA = await waitForMessage(pageA, `${token}-target`);
+			const targetB = await waitForMessage(pageB, `${token}-target`);
+			await (await messageAction(targetB, 'Reply to message')).click();
+			await expect(pageB.getByTestId('reply-draft')).toContainText(`${token}-target`);
+			await pageB.getByRole('button', { name: 'Cancel reply', exact: true }).click();
+			await expect(pageB.getByTestId('reply-draft')).toHaveCount(0);
+			await (await messageAction(targetB, 'Reply to message')).click();
+			await sendMessage(pageB, `${token}-answer`);
+			const reply = await waitForMessage(pageB, `${token}-answer`);
+			const replyId = await reply.getAttribute('data-message-id');
+			const stableReply = pageB.locator(`article[data-message-id="${replyId}"]`);
+			await expect(stableReply.getByTestId('reply-reference')).toContainText(`${token}-target`);
+			await expect(pageB.getByTestId('reply-draft')).toHaveCount(0);
+			await editMessage(stableReply, `${token}-edited`);
+			await expect(stableReply).toContainText(`${token}-edited`);
+			await expect(stableReply.getByTestId('reply-reference')).toContainText(`${token}-target`);
+			await deleteMessage(pageA, targetA);
+			await expect(stableReply.getByTestId('reply-reference')).toContainText('Message deleted');
+			const history = await reader.newPage();
+			await openChat(history);
+			const replayed = history.locator(`article[data-message-id="${replyId}"]`);
+			await expect(replayed).toContainText(`${token}-edited`);
+			await expect(replayed.getByTestId('reply-reference')).toContainText('Message deleted');
+			await (await moreAction(stableReply, 'Remove reply reference')).click();
+			await expect(stableReply.getByTestId('reply-reference')).toHaveCount(0);
+			await expect(replayed.getByTestId('reply-reference')).toHaveCount(0);
+		} finally {
+			await Promise.all([owner.close(), reader.close()]);
+		}
+	});
+
+	test('keeps reply drafts in their thread and rejects moves that separate replies', async ({ page }) => {
+		await openChat(page);
+		const token = `thread-reply-${Date.now()}`;
+		await sendMessage(page, `${token}-target`);
+		const target = await waitForMessage(page, `${token}-target`);
+		const targetId = await target.getAttribute('data-message-id');
+		await (await messageAction(target, 'Start thread')).click();
+		const selected = page.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
+		await expect(selected).toBeVisible();
+		const threadId = await selected.getAttribute('data-thread');
+		const thread = page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+		const stableTarget = page.locator(`article[data-message-id="${targetId}"]`);
+		await (await messageAction(stableTarget, 'Reply to message')).click();
+		await composer(page).fill(`${token}-answer`);
+		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
+		await expect(page.getByTestId('reply-draft')).toHaveCount(0);
+		await expect(composer(page)).toHaveValue('');
+		await thread.click();
+		await expect(page.getByTestId('reply-draft')).toContainText(`${token}-target`);
+		await expect(composer(page)).toHaveValue(`${token}-answer`);
+		await page.getByRole('button', { name: 'Send message', exact: true }).click();
+		const reply = await waitForMessage(page, `${token}-answer`);
+		await expect(reply.getByTestId('reply-reference')).toContainText(`${token}-target`);
+		await (await moreAction(stableTarget, 'Move message')).click();
+		await stableTarget.getByRole('combobox', { name: 'Move message to', exact: true }).selectOption('');
+		await expect(page.getByRole('alert')).toContainText('Cannot move a message with replies');
+		await expect(stableTarget).toBeVisible();
+		await (await moreAction(reply, 'Remove reply reference')).click();
+		await expect(reply.getByTestId('reply-reference')).toHaveCount(0);
+		await (await messageAction(stableTarget, 'Reply to message')).click();
+		await composer(page).fill(`${token}-unsent`);
+		await (await moreAction(stableTarget, 'Move message')).click();
+		await stableTarget.getByRole('combobox', { name: 'Move message to', exact: true }).selectOption('');
+		await expect(stableTarget).toHaveCount(0);
+		await expect(page.getByTestId('reply-draft')).toContainText('moved to another thread');
+		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
+		await page.getByRole('button', { name: 'Cancel reply', exact: true }).click();
+		await expect(composer(page)).toHaveValue(`${token}-unsent`);
+		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+	});
+
 	test('broadcasts across independent sessions and recovers history for a new reader', async ({ browser }) => {
 		const contextA = await browser.newContext();
 		const contextB = await browser.newContext();

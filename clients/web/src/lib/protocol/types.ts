@@ -30,6 +30,7 @@ export interface MessageRecord extends JsonObject {
 	message_id: string;
 	from: Identity;
 	body?: MessageBody;
+	reply_message_id?: string;
 	thread_id?: string;
 	deleted?: boolean;
 }

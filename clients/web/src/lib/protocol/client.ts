@@ -260,8 +260,19 @@ export class ChatClient {
 		};
 	}
 
-	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string): OperationHandle {
-		return this.saveMessage({ room_id: room, body: { text, format }, ...(thread ? { thread_id: thread } : {}) });
+	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string, replyMessageId?: string): OperationHandle {
+		return this.saveMessage({
+			room_id: room, body: { text, format },
+			...(thread ? { thread_id: thread } : {}),
+			...(replyMessageId !== undefined ? { reply_message_id: replyMessageId } : {})
+		});
+	}
+
+	setMessageReply(room: string, messageId: string, replyMessageId: string | null): OperationHandle {
+		const params = this.editableMessage(room, messageId);
+		if (replyMessageId === null) delete params.reply_message_id;
+		else params.reply_message_id = replyMessageId;
+		return this.saveMessage(params);
 	}
 
 	createThread(room: string, metadata: { title?: string; summary?: string; root_message_id?: string } = {}): OperationHandle {

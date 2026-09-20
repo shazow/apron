@@ -52,6 +52,16 @@ describe('timeline snapshots', () => {
 		expect(result.events['12'].body?.text).toBe('original');
 	});
 
+	it('replays replies without their target and removes references on replacement', () => {
+		const initial = applyTransition(createTimeline('general'), snapshot(20, 20, { reply_message_id: '10' }));
+		expect(initial.events['20'].reply_message_id).toBe('10');
+		expect(initial.events['20'].body?.text).toBe('original');
+		const deletedTarget = applyTransition(initial, snapshot(30, 10, { deleted: true, body: undefined }));
+		expect(deletedTarget.events['20'].reply_message_id).toBe('10');
+		const removed = applyTransitions(deletedTarget, [snapshot(40, 20), snapshot(20, 20, { reply_message_id: '10' })]);
+		expect(removed.events['20'].reply_message_id).toBeUndefined();
+	});
+
 	it('preserves unknown prototype-like keys without polluting objects', () => {
 		const message = JSON.parse('{"message_id":"700","from":{"user_id":"alice"},"__proto__":{"polluted":true},"body":{"text":"safe"}}');
 		const result = applyTransition(createTimeline('general'), { log_id: '700', message });

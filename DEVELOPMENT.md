@@ -56,10 +56,18 @@ after replaying edits and moves. Open threads through the thread list. Use the
 message controls to move your messages to another thread or back to the room.
 Drafts are kept separately for each room and thread.
 
+Use a message's Reply action to reference it in a new message. Reply references
+are restricted to the same room and thread (or two unthreaded messages). The
+composer keeps the reply target with the destination's draft. Edits preserve
+references; More → Remove reply removes one. A message with replies cannot move
+to another thread until those references are removed. Deleted targets display
+as “Message deleted”; targets outside loaded history display as “Message unavailable”.
+
 The server stores thread metadata in memory and re-announces it on connection.
 Empty threads remain available; deleting or moving their root does not remove
 them. Create metadata through `thread`, then use `message` with the returned
-`thread_id` to add messages. Replies use `message.params.thread_id`. Edits and
+`thread_id` to add messages. Messages in a thread use `message.params.thread_id`;
+replies to a specific message also set `message.params.reply_message_id`. Edits and
 moves submit the complete editable message state with its `message_id`; omitting
 `thread_id` returns it to the room. Moves follow the example's author-only edit
 policy. Opening a thread also requests its history through a separate
