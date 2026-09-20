@@ -39,12 +39,11 @@ in the room log.
 
 - One WebSocket connection. Each WebSocket text message contains exactly one JSON
   object (a **frame**).
-- Frames use the [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
-  request, response, and notification shapes (`method`, `params`, `id`,
-  `result`, `error`) without the `jsonrpc` member. Because unknown members
-  are ignored (below), frames from a JSON-RPC 2.0 sender are accepted as-is;
-  frames emitted by this protocol are not JSON-RPC 2.0, since they omit
-  that member.
+- Frames look like [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
+  requests, responses, and notifications (`method`, `params`, `id`, `result`,
+  `error`), minus the `"jsonrpc": "2.0"` key. Since unknown keys are ignored,
+  a JSON-RPC 2.0 client can talk to an Apron server without changes, but it
+  should not expect the `jsonrpc` key in what comes back.
 - Requests MAY be pipelined; the server processes them in order but MAY reply
   out of order. Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
