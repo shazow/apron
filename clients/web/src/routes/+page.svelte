@@ -11,7 +11,7 @@
 		type RoomSnapshot
 	} from '$lib/protocol/client';
 	import { formatBytes, renderMarkdown, safeUrl } from '$lib/protocol/markdown';
-	import { isJsonObject, type Embed, type MessageRecord, type Identity, type ThreadAnnouncement } from '$lib/protocol/types';
+	import { isJsonObject, type Embed, type JsonObject, type MessageRecord, type Identity, type ThreadAnnouncement } from '$lib/protocol/types';
 
 	type Feedback = { kind: 'pending' | 'error'; text: string };
 	type PendingThreadStart = { room: string; thread_id: string };
@@ -28,8 +28,15 @@
 		| { kind: 'thread'; key: string; entry: ThreadListEntry }
 		| { kind: 'replies'; key: string; count: number };
 	type ProfileStatus = 'idle' | 'saving' | 'altered' | 'declined';
+	type ConnectScheme = 'anonymous' | 'webauthn';
+	type RecentServer = { url: string; label?: string };
 
 	const GROUP_WINDOW_MS = 5 * 60 * 1000;
+	const RECENT_SERVERS_MAX = 5;
+	const SCHEMES: Record<ConnectScheme, { label: string; hint: string }> = {
+		anonymous: { label: 'Guest', hint: 'No token needed; the server picks a guest identity.' },
+		webauthn: { label: 'Passkey', hint: 'Your device will ask you to confirm.' }
+	};
 
 	const blankSnapshot = (): ClientSnapshot => ({
 		status: 'idle', rooms: [], pending: [], typing: [], showReconnectDivider: false
@@ -40,6 +47,11 @@
 	let displayName = $state('');
 	let composerText = $state('');
 	let connectOpen = $state(false);
+	let connectScheme = $state<ConnectScheme>('anonymous');
+	let connectPending = $state(false);
+	let connectError = $state('');
+	let recentServers = $state<RecentServer[]>([]);
+	let highlightedId = $state<string | undefined>();
 	let profileOpen = $state(false);
 	let profileDraft = $state('');
 	let profileStatus = $state<ProfileStatus>('idle');
@@ -67,6 +79,7 @@
 	let latestVisible = $state(true);
 	let seenCount = $state(0);
 	let typingTimer: ReturnType<typeof setTimeout> | undefined;
+	let highlightTimer: ReturnType<typeof setTimeout> | undefined;
 	let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let activeRoom = $derived(snapshot.rooms.find((room) => room.id === snapshot.activeRoom));
@@ -171,6 +184,32 @@
 	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== snapshot.you?.user_id));
 	let typingNames = $derived(roomTyping.map((entry) => entry.from.name || entry.from.user_id));
 	let backendLabel = $derived(snapshot.server?.name || backendHost(serverInput) || 'Apron');
+	let threadReplyCount = $derived(activeThreadAnnouncement
+		? messages.filter((event) => event.message_id !== activeThreadAnnouncement?.root_message_id).length
+		: 0);
+	/** Sign-in schemes this client can drive, narrowed to what the connected server offers once it is the one in the field. */
+	let connectSchemes = $derived.by((): ConnectScheme[] => {
+		const supported: ConnectScheme[] = passkeyUnavailable ? ['anonymous'] : ['anonymous', 'webauthn'];
+		const offered = snapshot.server?.auth;
+		if (!offered || !client || serverInput.trim() !== client.url) return supported;
+		const narrowed = supported.filter((scheme) => offered.includes(scheme));
+		return narrowed.length ? narrowed : supported;
+	});
+	let connectStatus = $derived.by((): 'idle' | 'connecting' | 'authing' => {
+		if (!connectPending) return 'idle';
+		if (snapshot.authBusy) return 'authing';
+		if (snapshot.error) return 'idle';
+		if (snapshot.status === 'connected') return snapshot.you ? 'idle' : 'authing';
+		if (snapshot.status === 'connecting' || snapshot.status === 'reconnecting') return 'connecting';
+		return 'idle';
+	});
+	let connectBusy = $derived(connectStatus !== 'idle');
+	let connectErrorText = $derived.by(() => {
+		if (connectError) return connectError;
+		if (!connectPending || !snapshot.error) return '';
+		return snapshot.error === 'WebSocket connection error' ? 'Can’t reach the server. Check the address and try again.' : snapshot.error;
+	});
+	let canCancelConnect = $derived(snapshot.rooms.length > 0 || (snapshot.status === 'connected' && Boolean(snapshot.you)));
 	let unseenCount = $derived(stickToBottom ? 0 : Math.max(0, messages.length - seenCount));
 	let connectionState = $derived.by((): 'connected' | 'connecting' | 'reconnecting' | 'offline' | 'error' => {
 		if (snapshot.status === 'connected' && snapshot.you) return 'connected';
@@ -183,6 +222,17 @@
 	$effect(() => {
 		const roomId = activeRoom?.id;
 		if (roomId && selectedRoomId !== roomId) setDestination(roomId, undefined);
+	});
+
+	$effect(() => {
+		if (!connectPending || snapshot.authBusy || snapshot.status !== 'connected' || !snapshot.you) return;
+		if (!connectSchemes.includes(connectScheme)) connectScheme = connectSchemes[0];
+		if (connectScheme === 'webauthn' && !snapshot.passkeySession) {
+			connectPending = false;
+			void finishPasskeyConnect();
+			return;
+		}
+		finishConnect();
 	});
 
 	$effect(() => {
@@ -253,12 +303,14 @@
 		const savedName = localStorage.getItem('bottomless.displayName') ?? '';
 		serverInput = savedUrl;
 		displayName = savedName;
+		recentServers = loadRecentServers();
 		client = new ChatClient(normalizeWebSocketUrl(savedUrl, window.location), savedName);
 		const unsubscribe = client.subscribe((next) => (snapshot = next));
 		client.start();
 		return () => {
 			if (typingTimer) clearTimeout(typingTimer);
 			if (feedbackTimer) clearTimeout(feedbackTimer);
+			if (highlightTimer) clearTimeout(highlightTimer);
 			unsubscribe();
 			client?.stop();
 		};
@@ -280,9 +332,49 @@
 		}
 	}
 
+	function loadRecentServers(): RecentServer[] {
+		try {
+			const parsed: unknown = JSON.parse(localStorage.getItem('bottomless.recentServers') ?? '[]');
+			if (!Array.isArray(parsed)) return [];
+			return parsed
+				.filter(isJsonObject)
+				.filter((entry): entry is RecentServer & JsonObject => typeof entry.url === 'string')
+				.map((entry) => ({ url: entry.url, ...(typeof entry.label === 'string' ? { label: entry.label } : {}) }))
+				.slice(0, RECENT_SERVERS_MAX);
+		} catch {
+			return [];
+		}
+	}
+
+	function rememberServer(url: string, label: string | undefined): void {
+		const entry: RecentServer = { url, ...(label ? { label } : {}) };
+		recentServers = [entry, ...recentServers.filter((recent) => recent.url !== url)].slice(0, RECENT_SERVERS_MAX);
+		localStorage.setItem('bottomless.recentServers', JSON.stringify(recentServers));
+	}
+
+	function openConnect(): void {
+		connectError = '';
+		connectPending = false;
+		connectScheme = snapshot.passkeySession && !passkeyUnavailable ? 'webauthn' : 'anonymous';
+		connectOpen = true;
+	}
+
+	function closeConnect(): void {
+		connectOpen = false;
+		connectPending = false;
+		connectError = '';
+	}
+
+	function pickRecent(recent: RecentServer): void {
+		serverInput = recent.url;
+		connectError = '';
+	}
+
+	/** Opens the socket to the server in the form; the effect above signs in with the chosen scheme once the server answers. */
 	function applyConnection(event: SubmitEvent): void {
 		event.preventDefault();
 		if (!client) return;
+		connectError = '';
 		try {
 			const normalized = normalizeWebSocketUrl(serverInput, window.location);
 			const parsed = new URL(normalized);
@@ -296,13 +388,51 @@
 			composerText = '';
 			replyId = undefined;
 			threadEditor = undefined;
+			profileOpen = false;
 			serverInput = normalized;
+			displayName = displayName.trim();
 			localStorage.setItem('bottomless.serverUrl', normalized);
-			client.setUrl(normalized);
-			connectOpen = false;
+			localStorage.setItem('bottomless.displayName', displayName);
+			client.setDisplayName(displayName);
+			connectPending = true;
+			if (normalized !== client.url) client.setUrl(normalized);
+			else client.restart();
 		} catch (cause) {
-			feedback = { kind: 'error', text: cause instanceof Error ? cause.message : 'Invalid server URL' };
+			connectError = cause instanceof Error ? cause.message : 'Invalid server URL';
 		}
+	}
+
+	function finishConnect(): void {
+		if (client) rememberServer(client.url, snapshot.server?.name || backendHost(client.url) || undefined);
+		connectPending = false;
+		connectOpen = false;
+	}
+
+	/** Guest auth is already done; upgrade to the passkey identity, waiting out the nick request that follows auth. */
+	async function finishPasskeyConnect(): Promise<void> {
+		if (!client) return;
+		const session = client;
+		for (let attempt = 0; ; attempt += 1) {
+			try {
+				await session.usePasskey('login');
+				break;
+			} catch (cause) {
+				if (attempt < 20 && cause instanceof Error && cause.message.startsWith('Wait for pending requests')) {
+					await new Promise((resolve) => setTimeout(resolve, 250));
+					continue;
+				}
+				connectError = passkeyMessage(cause);
+				return;
+			}
+		}
+		if (displayName) session.setDisplayName(displayName);
+		if (connectOpen) finishConnect();
+	}
+
+	function passkeyMessage(cause: unknown): string {
+		return cause instanceof DOMException && cause.name === 'NotAllowedError'
+			? 'Cancelled. You’re still signed in as before.'
+			: cause instanceof Error ? cause.message : 'Unable to use passkey';
 	}
 
 	function openProfile(): void {
@@ -331,12 +461,10 @@
 			if (action === 'logout') await client.signOut();
 			else await client.usePasskey(action);
 			profileDraft = snapshot.you?.name || displayName;
-			passkeyNotice = action === 'register' ? 'Passkey added. You can use it to return to this identity.'
+			passkeyNotice = action === 'register' ? 'Passkey saved · this backend will ask your device next time'
 				: action === 'login' ? 'Signed in with your passkey.' : 'Signed out.';
 		} catch (cause) {
-			passkeyError = cause instanceof DOMException && cause.name === 'NotAllowedError'
-				? 'Passkey request cancelled or timed out. You can try again.'
-				: cause instanceof Error ? cause.message : 'Unable to use passkey';
+			passkeyError = passkeyMessage(cause);
 		}
 	}
 
@@ -489,7 +617,26 @@
 		const target = activeRoom?.timeline.events[id];
 		if (!target) return 'Message unavailable';
 		if (target.deleted) return 'Message deleted';
-		return `${senderName(target)}: ${textOf(target).replace(/\s+/g, ' ').trim().slice(0, 160) || 'Attachment'}`;
+		return `${senderName(target)}: ${replySnippet(target)}`;
+	}
+
+	/** One line of the quoted message, shortened here: the first line, plain text, about 120 characters. */
+	function replySnippet(target: MessageRecord): string {
+		const line = textOf(target).split('\n').find((part) => part.trim())?.trim() ?? '';
+		const short = line.length > 120 ? `${line.slice(0, 119).trimEnd()}…` : line;
+		return short || (embedsOf(target).length ? 'Attachment' : 'Empty message');
+	}
+
+	/** Scrolls the timeline to a message and highlights it for a moment. */
+	function jumpToMessage(id: string): void {
+		const node = messageScroll?.querySelector<HTMLElement>(`article[data-message-id="${CSS.escape(id)}"]`);
+		if (!node) return;
+		stickToBottom = false;
+		node.scrollIntoView({ block: 'center' });
+		node.focus({ preventScroll: true });
+		highlightedId = id;
+		if (highlightTimer) clearTimeout(highlightTimer);
+		highlightTimer = setTimeout(() => (highlightedId = undefined), 1600);
 	}
 
 	function removeReply(event: MessageRecord): void {
@@ -650,10 +797,14 @@
 		return threadEntriesById.get(thread)?.title || thread;
 	}
 
-	function latestMessagePreview(event: MessageRecord): string {
-		if (event.deleted) return 'Message deleted';
+	/** The preview line under a thread's root: its summary, else the newest reply as "Dana: text". */
+	function threadPreview(entry: ThreadListEntry): { label: string; text: string; summary: boolean } | undefined {
+		if (entry.summary !== undefined) return { label: 'Summary', text: entry.summary, summary: true };
+		const event = entry.latestMessage;
+		if (!event) return undefined;
+		if (event.deleted) return { label: '', text: 'Message deleted', summary: false };
 		const text = textOf(event).replace(/\s+/g, ' ').trim();
-		return `${senderName(event)}: ${text || (embedsOf(event).length ? 'Attachment' : 'Empty message')}`;
+		return { label: senderName(event), text: text || (embedsOf(event).length ? 'Attachment' : 'Empty message'), summary: false };
 	}
 
 	function editThread(): void {
@@ -664,8 +815,6 @@
 			initialTitle: activeThreadAnnouncement.title ?? activeThreadAnnouncement.thread_id,
 			text: activeThreadAnnouncement.summary ?? '', saving: false
 		};
-		stickToBottom = false;
-		requestAnimationFrame(() => { if (messageScroll) messageScroll.scrollTop = 0; });
 	}
 
 	async function saveThread(event: SubmitEvent): Promise<void> {
@@ -733,24 +882,56 @@
 	<meta name="description" content="Apron, a chat frontend for the Bottomless Chat protocol." />
 </svelte:head>
 
+{#if connectOpen}
+<div class="app ap-connect">
+	<form class="ap-connect-card" aria-label="Connect to a backend" onsubmit={applyConnection}>
+		<h1 class="ap-connect-title">Apron</h1>
+		<p class="ap-connect-tag">Connect to a backend</p>
+		<label class="ap-fieldlabel">Server
+			<input class="ap-field ap-field-mono" data-testid="server-url-input" type="text" inputmode="url" bind:value={serverInput} placeholder="wss://chat.example/ws" disabled={connectBusy} autocomplete="url" spellcheck="false" />
+		</label>
+		<label class="ap-fieldlabel">Display name
+			<input class="ap-field" bind:value={displayName} placeholder="How others see you" disabled={connectBusy} maxlength="64" autocomplete="nickname" />
+		</label>
+		<div class="ap-fieldlabel">Sign in with
+			<div class="ap-seg" role="radiogroup" aria-label="Sign in with">
+				{#each connectSchemes as scheme (scheme)}
+					<button class="ap-seg-item" class:ap-seg-on={connectScheme === scheme} type="button" role="radio" aria-checked={connectScheme === scheme} disabled={connectBusy} onclick={() => (connectScheme = scheme)}>{SCHEMES[scheme].label}</button>
+				{/each}
+			</div>
+		</div>
+		<p class="ap-profedit-hint">{SCHEMES[connectSchemes.includes(connectScheme) ? connectScheme : connectSchemes[0]].hint}</p>
+		{#if connectErrorText}<p class="ap-profedit-note ap-profedit-err" role="alert">{connectErrorText}</p>{/if}
+		<div class="ap-connect-actions">
+			{#if connectBusy}<span class="ap-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>{/if}
+			{#if canCancelConnect}
+				<button class="ap-btn ap-btn-ghost" type="button" onclick={closeConnect}>Cancel</button>
+			{/if}
+			<button class="ap-btn ap-btn-primary" type="submit" disabled={connectBusy}>{connectStatus === 'connecting' ? 'Connecting…' : connectStatus === 'authing' ? 'Signing in…' : 'Connect'}</button>
+		</div>
+	</form>
+	{#if recentServers.length > 0}
+		<div class="ap-connect-recent" role="group" aria-label="Recent backends">
+			<span class="ap-fieldlabel">Recent</span>
+			{#each recentServers as recent (recent.url)}
+				<button class="ap-connect-recent-item" type="button" disabled={connectBusy} onclick={() => pickRecent(recent)}>
+					<span class="ap-rail-tile ap-connect-tile" aria-hidden="true">{initials(recent.label || recent.url)}</span>
+					<span class="ap-room-text">
+						<span class="ap-room-name">{recent.label || recent.url}</span>
+						<span class="ap-room-topic">{recent.url}</span>
+					</span>
+				</button>
+			{/each}
+		</div>
+	{/if}
+</div>
+{:else}
 <div class="app ap-shell ap-shell-norail" data-pane={mobilePane}>
 	<aside class="ap-shell-side" aria-label="Rooms">
 		<div class="ap-shell-sidehead">
 			<span class="app-backend">{backendLabel}</span>
-			<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Connection settings" aria-expanded={connectOpen} onclick={() => (connectOpen = !connectOpen)}>Connect</button>
+			<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Connection settings" onclick={openConnect}>Connect</button>
 		</div>
-		{#if connectOpen}
-			<form class="app-connect ap-profedit" aria-label="Connection settings" onsubmit={applyConnection}>
-				<label class="ap-fieldlabel">Server URL
-					<input class="ap-field" data-testid="server-url-input" bind:value={serverInput} placeholder="ws://localhost:8080/ws" autocomplete="url" spellcheck="false" />
-				</label>
-				<p class="ap-profedit-hint">A WebSocket URL, or the HTTP address of a server that speaks the protocol.</p>
-				<div class="ap-profedit-actions">
-					<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" onclick={() => (connectOpen = false)}>Cancel</button>
-					<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit">Reconnect</button>
-				</div>
-			</form>
-		{/if}
 		<div class="ap-shell-sidebody">
 			<section class="ap-sect">
 				<div class="ap-sect-head">
@@ -807,28 +988,39 @@
 						{:else if profileStatus === 'declined'}
 							<p class="ap-profedit-note ap-profedit-err" role="alert">The server declined this handle. Your old one is still in use.</p>
 						{/if}
+						{#if snapshot.server?.auth.includes('webauthn')}
+							<div class="ap-profedit-signin" role="group" aria-label="Sign-in">
+								<span class="ap-fieldlabel">Sign-in</span>
+								{#if snapshot.authBusy}
+									<span class="ap-profedit-hint" role="status"><span class="ap-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span> Confirm on your device…</span>
+								{:else}
+									<span class="ap-profedit-row">
+										<span class="app-signin-actions">
+											<button class="ap-btn ap-btn-sm" type="button" disabled={!!passkeyUnavailable || !snapshot.you || snapshot.status !== 'connected' || profileStatus === 'saving'} onclick={() => authenticateWithPasskey('register')}>Add passkey</button>
+											{#if snapshot.passkeySession}
+												<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={snapshot.status !== 'connected' || profileStatus === 'saving'} onclick={() => authenticateWithPasskey('logout')}>Sign out</button>
+											{:else}
+												<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={!!passkeyUnavailable || snapshot.status !== 'connected' || profileStatus === 'saving'} onclick={() => authenticateWithPasskey('login')}>Sign in with passkey</button>
+											{/if}
+										</span>
+										{#if passkeyError}
+											<span class="ap-profedit-hint ap-profedit-err" role="alert">{passkeyError}</span>
+										{:else if passkeyNotice}
+											<span class="ap-profedit-hint ap-profedit-ok" role="status">{passkeyNotice}</span>
+										{:else if passkeyUnavailable}
+											<span class="ap-profedit-hint">{passkeyUnavailable}</span>
+										{:else}
+											<span class="ap-profedit-hint">{snapshot.passkeySession ? 'Signed in with a passkey' : 'Signed in as a guest'}</span>
+										{/if}
+									</span>
+								{/if}
+							</div>
+						{/if}
 						<div class="ap-profedit-actions">
 							<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={profileStatus === 'saving'} onclick={closeProfile}>{profileStatus === 'altered' ? 'Close' : 'Cancel'}</button>
 							<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" disabled={profileStatus === 'saving' || !profileDraft.trim()}>{profileStatus === 'saving' ? 'Saving…' : 'Save'}</button>
 						</div>
 					</form>
-					{#if snapshot.server?.auth.includes('webauthn')}
-						<div class="ap-profedit" aria-label="Passkeys">
-							<p class="ap-profedit-hint">{snapshot.passkeySession ? 'Signed in with a passkey.' : 'Add a passkey to keep this identity, or sign in with an existing one.'}</p>
-							{#if passkeyUnavailable}<p class="ap-profedit-note">{passkeyUnavailable}</p>{/if}
-							{#if snapshot.authBusy}<p role="status">Follow your browser’s passkey prompt…</p>{/if}
-							{#if passkeyError}<p class="ap-profedit-note ap-profedit-err" role="alert">{passkeyError}</p>{/if}
-							{#if passkeyNotice}<p class="ap-profedit-note" role="status">{passkeyNotice}</p>{/if}
-							<div class="ap-profedit-actions">
-								<button class="ap-btn ap-btn-sm" type="button" disabled={!!passkeyUnavailable || snapshot.authBusy || !snapshot.you || snapshot.status !== 'connected'} onclick={() => authenticateWithPasskey('register')}>Add passkey</button>
-								{#if snapshot.passkeySession}
-									<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={snapshot.authBusy || snapshot.status !== 'connected'} onclick={() => authenticateWithPasskey('logout')}>Sign out</button>
-								{:else}
-									<button class="ap-btn ap-btn-primary ap-btn-sm" type="button" disabled={!!passkeyUnavailable || snapshot.authBusy || snapshot.status !== 'connected'} onclick={() => authenticateWithPasskey('login')}>Sign in with passkey</button>
-								{/if}
-							</div>
-						</div>
-					{/if}
 				</div>
 			{/if}
 			<button class="ap-profile-me" class:ap-profile-open={profileOpen} type="button" aria-haspopup="dialog" aria-expanded={profileOpen} aria-label={`Your profile on ${backendLabel}: ${snapshot.you?.name || snapshot.you?.user_id || 'not signed in'}. Edit`} onclick={openProfile}>
@@ -852,21 +1044,18 @@
 				<button class="ap-roomhead-back" type="button" aria-label="Back to rooms" onclick={() => (mobilePane = 'rooms')}>‹</button>
 				<div class="ap-roomhead-text">
 					{#if activeThread}
-						<div class="app-thread-heading">
-							<h1 class="ap-roomhead-name">
-								<button class="ap-roomhead-crumb" type="button" aria-label="Back to room" onclick={backToRoom}>{activeRoom.name}</button>
-								<span class="ap-roomhead-sep" aria-hidden="true"> › </span>
-								{threadTitle(activeThread)}
-							</h1>
-							{#if canEdit && activeThreadAnnouncement}
-								<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Edit thread" aria-expanded={Boolean(threadEditor)} disabled={!canCompose || Boolean(threadEditor?.saving)} onclick={editThread}>Edit</button>
-							{/if}
-						</div>
+						<h1 class="ap-roomhead-name">
+							<button class="ap-roomhead-crumb" type="button" aria-label="Back to room" onclick={backToRoom}>{activeRoom.name}</button>
+							<span class="ap-roomhead-sep" aria-hidden="true"> › </span>
+							{threadTitle(activeThread)}
+						</h1>
 					{:else}
 						<h1 class="ap-roomhead-name">{activeRoom.name}</h1>
 					{/if}
 					{#if typingNames.length > 0}
 						<p class="ap-roomhead-sub ap-roomhead-typing app-typing-head">{typingNames.length === 1 ? `${typingNames[0]} is typing…` : `${typingNames.length} people are typing…`}</p>
+					{:else if activeThread && activeThreadAnnouncement}
+						<p class="ap-roomhead-sub">{threadReplyCount} {threadReplyCount === 1 ? 'reply' : 'replies'}</p>
 					{:else if !activeThread && activeRoom.topic}
 						<p class="ap-roomhead-sub">{activeRoom.topic}</p>
 					{/if}
@@ -876,7 +1065,29 @@
 				{:else if activeRoom.recoveryError}
 					<span class="ap-roomhead-sub" role="status">History unavailable</span>
 				{/if}
+				{#if activeThread && canEdit && activeThreadAnnouncement}
+					<div class="ap-roomhead-actions">
+						<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Edit thread" aria-expanded={Boolean(threadEditor)} disabled={!canCompose || Boolean(threadEditor?.saving)} onclick={editThread}>Edit</button>
+					</div>
+				{/if}
 			</header>
+			{#if threadEditor}
+				<section class="ap-roomhead-pop" aria-label="Edit thread">
+					<form class="ap-tedit" onsubmit={saveThread}>
+						<label class="ap-fieldlabel">Name
+							<input class="ap-field" aria-label="Thread name" bind:value={threadEditor.title} disabled={threadEditor.saving} maxlength="120" />
+						</label>
+						<label class="ap-fieldlabel"><span class="ap-fieldlabel-row">Summary<span class="ap-fieldlabel-hint">Markdown</span></span>
+							<textarea class="ap-field ap-field-multi" aria-label="Thread summary" bind:value={threadEditor.text} rows="6" disabled={threadEditor.saving} placeholder="What this thread settled. Lists, links and code are fine."></textarea>
+						</label>
+						{#if threadEditor.error}<p class="ap-profedit-note ap-profedit-err" role="alert">{threadEditor.error}</p>{/if}
+						<div class="ap-profedit-actions">
+							<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={threadEditor.saving} onclick={() => (threadEditor = undefined)}>Cancel</button>
+							<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" aria-label="Save thread" disabled={threadEditor.saving || !canCompose || !canEdit}>{threadEditor.saving ? 'Saving…' : 'Save'}</button>
+						</div>
+					</form>
+				</section>
+			{/if}
 
 			{#if connectionState !== 'connected'}
 				<div class="app-banner">
@@ -899,28 +1110,10 @@
 			{/if}
 
 			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.name} messages`}>
-				{#if activeThreadAnnouncement && (activeThreadAnnouncement.summary?.trim() || threadEditor)}
-					<section class="app-thread-summary" aria-label={threadEditor ? 'Edit thread' : 'Thread summary'}>
-						<div class="app-summary-heading">
-							<h2>{threadEditor ? 'Edit thread' : 'Summary'}</h2>
-						</div>
-						{#if threadEditor}
-							<form onsubmit={saveThread}>
-								<label class="ap-fieldlabel">Thread title
-									<input class="ap-field" bind:value={threadEditor.title} disabled={threadEditor.saving} />
-								</label>
-								<label class="ap-fieldlabel">Thread summary
-									<textarea class="ap-field app-summary-editor" bind:value={threadEditor.text} rows="5" disabled={threadEditor.saving}></textarea>
-								</label>
-								{#if threadEditor.error}<p role="alert">{threadEditor.error}</p>{/if}
-								<div class="ap-profedit-actions">
-									<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={threadEditor.saving} onclick={() => (threadEditor = undefined)}>Cancel</button>
-									<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" disabled={threadEditor.saving || !canCompose || !canEdit}>{threadEditor.saving ? 'Saving…' : 'Save thread'}</button>
-								</div>
-							</form>
-						{:else if activeThreadAnnouncement.summary !== undefined}
-							<div class="app-summary-text" data-testid="thread-summary">{activeThreadAnnouncement.summary}</div>
-						{/if}
+				{#if activeThreadAnnouncement?.summary?.trim()}
+					<section class="ap-summary" aria-label="Thread summary">
+						<span class="ap-summary-label">Summary</span>
+						<div class="ap-summary-text ap-msg-text markdown" data-testid="thread-summary">{@html renderMarkdown(activeThreadAnnouncement.summary)}</div>
 					</section>
 				{/if}
 				{#if snapshot.showReconnectDivider}
@@ -939,33 +1132,36 @@
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count} {item.count === 1 ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
 							{@const entry = item.entry}
+							{@const preview = threadPreview(entry)}
 							<div class="app-thread-row">
-								<button class="ap-thread" data-timeline-item data-testid="thread-card" data-thread={entry.thread_id} type="button" onclick={() => chooseThread(entry.thread_id)}>
-									{#if entry.participants.length > 0}
-										<span class="ap-thread-faces" aria-hidden="true">
-											{#each entry.participants as participant (participant.user_id)}
-												{#if participant.avatar && safeUrl(participant.avatar)}
-													<img class="ap-avatar ap-avatar-sm" src={participant.avatar} alt="" />
-												{:else}
-													<span class="ap-avatar ap-avatar-sm">{initials(participant.name || participant.user_id)}</span>
-												{/if}
-											{/each}
+								<button class="ap-thread" class:ap-thread-2={preview} data-timeline-item data-testid="thread-card" data-thread={entry.thread_id} type="button" onclick={() => chooseThread(entry.thread_id)}>
+									<span class="ap-thread-head">
+										{#if entry.participants.length > 0}
+											<span class="ap-thread-faces" aria-hidden="true">
+												{#each entry.participants as participant (participant.user_id)}
+													{#if participant.avatar && safeUrl(participant.avatar)}
+														<img class="ap-avatar ap-avatar-sm" src={participant.avatar} alt="" />
+													{:else}
+														<span class="ap-avatar ap-avatar-sm">{initials(participant.name || participant.user_id)}</span>
+													{/if}
+												{/each}
+											</span>
+										{/if}
+										<span class="ap-thread-name">{entry.title}</span>
+										<span class="ap-thread-count">{entry.count} {entry.count === 1 ? 'message' : 'messages'}</span>
+										{#if entry.lastReply}<span class="ap-thread-last">Last reply {entry.lastReply}</span>{/if}
+									</span>
+									{#if preview}
+										<span class="ap-thread-preview" class:app-preview-summary={preview.summary}>
+											{#if preview.label}<span class="ap-thread-plabel">{`${preview.label}: `}</span>{/if}<span class="ap-thread-ptext" data-testid="thread-preview">{preview.text}</span>
 										</span>
-									{/if}
-									<span class="ap-thread-name">{entry.title}</span>
-									<span class="ap-thread-count">{entry.count} {entry.count === 1 ? 'message' : 'messages'}</span>
-									{#if entry.lastReply}<span class="ap-thread-last">Last reply {entry.lastReply}</span>{/if}
-									{#if entry.summary !== undefined}
-										<span class="ap-thread-summary app-summary-preview" data-testid="thread-preview">{entry.summary}</span>
-									{:else if entry.latestMessage}
-										<span class="ap-thread-summary app-message-preview" data-testid="thread-preview">{latestMessagePreview(entry.latestMessage)}</span>
 									{/if}
 								</button>
 							</div>
 						{:else}
 							{@const event = item.event}
 							{@const name = senderName(event)}
-							<article data-timeline-item class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} data-message-id={event.message_id} tabindex="-1">
+							<article data-timeline-item class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} class:ap-msg-highlighted={highlightedId === event.message_id} data-message-id={event.message_id} tabindex="-1">
 								<div class="ap-msg-gutter">
 									{#if item.grouped}
 										<span class="ap-msg-hovertime">{eventTime(event)}</span>
@@ -983,7 +1179,25 @@
 										</header>
 									{/if}
 									{#if event.reply_message_id && !event.deleted}
-										<div class="app-reply-reference" data-testid="reply-reference">Replying to {replyPreview(event.reply_message_id)}</div>
+										{@const target = activeRoom.timeline.events[event.reply_message_id]}
+										{#if target}
+											{@const targetName = senderName(target)}
+											<button class="ap-reply" data-testid="reply-reference" type="button" aria-label={`Replying to ${targetName}. Jump to their message`} onclick={() => jumpToMessage(target.message_id)}>
+												<span class="ap-reply-who">
+													{#if target.from?.avatar && safeUrl(target.from.avatar)}
+														<img class="ap-avatar ap-avatar-sm" src={target.from.avatar} alt="" />
+													{:else}
+														<span class="ap-avatar ap-avatar-sm" aria-hidden="true">{initials(targetName)}</span>
+													{/if}
+													{targetName}
+												</span>
+												<span class="ap-reply-text">{#if target.deleted}<em>Message deleted</em>{:else}{replySnippet(target)}{/if}</span>
+											</button>
+										{:else}
+											<div class="ap-reply app-reply-static" data-testid="reply-reference">
+												<span class="ap-reply-text"><em>Message unavailable</em></span>
+											</div>
+										{/if}
 									{/if}
 									{#if event.deleted}
 										<div class="ap-msg-tomb">Message deleted</div>
@@ -1115,7 +1329,7 @@
 					<h2>No room open</h2>
 					<p>Pick a room from the list.</p>
 				{/if}
-				<button class="ap-btn ap-btn-sm" type="button" onclick={() => (connectOpen = true)}>Connect to a backend</button>
+				<button class="ap-btn ap-btn-sm" type="button" onclick={openConnect}>Connect to a backend</button>
 			</div>
 		{/if}
 	</main>
@@ -1137,6 +1351,7 @@
 		</div>
 	{/if}
 </div>
+{/if}
 
 <style>
 	/* App glue over the Apron design system: layout height, mobile panes and the few
@@ -1146,23 +1361,23 @@
 	:global(button), :global(input), :global(textarea), :global(select) { font: inherit; }
 	.app { height: 100dvh; min-height: 100%; }
 	.ap-actions { max-width: calc(100vw - 32px); flex-wrap: wrap; }
-	.app-reply-reference { border-left: 2px solid currentColor; padding-left: var(--space-2); margin-bottom: var(--space-2); opacity: .75; font-size: .85em; overflow-wrap: anywhere; }
-	.app-reply-draft { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4); font-size: .85em; }
+	.app-reply-static { cursor: default; }
+	.app-reply-static:hover { background: var(--bg-200); }
+	.app-reply-draft { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4); font-size: 13px; line-height: 18px; color: var(--ink-muted); }
 	.app-reply-draft span { min-width: 0; overflow-wrap: anywhere; }
 	.app-backend { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.ap-shell-sidehead { gap: var(--space-2); }
-	.app-connect { margin: var(--space-2) var(--space-2) 0; }
+	.ap-connect .ap-btn-ghost { border-radius: calc(var(--radius-lg) - var(--space-2)); }
 	.ap-profile-pop { max-height: calc(100dvh - 96px); overflow-y: auto; }
 	.ap-profile-pop .ap-profedit-actions { flex-wrap: wrap; }
+	.app-signin-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 	.app-muted { margin: 0; padding: var(--space-1) var(--space-3); color: var(--ink-muted); font-size: 13px; line-height: 18px; }
 	.app-threads { display: flex; flex-direction: column; gap: 2px; }
 	.app-room-meta { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 	.ap-room-active .app-room-meta { color: var(--ink); }
 	.ap-roomhead-back { display: none; }
 	.ap-roomhead-name { max-width: 100%; }
-	.app-thread-heading { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: var(--space-1); }
-	.app-thread-heading .ap-btn { flex: none; }
-	.app-thread-summary form { display: flex; flex-direction: column; gap: var(--space-3); }
+	.ap-roomhead-actions { flex: none; }
 	.app-banner { padding: var(--space-2) var(--space-4) 0; }
 	.app-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 	.app-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }
@@ -1170,15 +1385,14 @@
 	.app-empty p { margin: 0; }
 	.app-empty .ap-btn { margin-top: var(--space-2); }
 	.app-thread-row { margin: var(--space-2) var(--space-4) 0 calc(var(--space-4) + var(--avatar-md) + var(--space-3)); }
-	.app-thread-row .ap-thread { margin-top: 0; flex-wrap: wrap; row-gap: var(--space-1); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
-	.app-thread-row .ap-thread-summary { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; }
-	.app-summary-preview { -webkit-line-clamp: 3; line-clamp: 3; }
-	.app-message-preview { -webkit-line-clamp: 1; line-clamp: 1; }
-	.app-thread-summary { margin: var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); }
-	.app-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
-	.app-summary-heading h2 { font-size: 14px; margin: 0; }
-	.app-summary-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-	.app-summary-editor { width: 100%; height: auto; min-height: 120px; padding: var(--space-2); resize: vertical; }
+	.app-thread-row .ap-thread { margin-top: 0; }
+	.app-thread-row .ap-thread-head { flex-wrap: wrap; row-gap: 2px; }
+	/* A summary preview keeps its line breaks and shows up to three lines; a latest-reply preview stays one line. */
+	.app-preview-summary { white-space: normal; }
+	.app-preview-summary .ap-thread-plabel { display: block; }
+	.app-preview-summary .ap-thread-ptext { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.ap-summary-text :global(p) { margin: 0; }
+	.ap-summary-text :global(p + p) { margin-top: var(--space-1); }
 	.app-plain { white-space: pre-wrap; }
 	.app-edit { display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--timeline-max-w); }
 	.app-edit-field { height: auto; min-height: 66px; padding: var(--space-2); resize: vertical; font-size: 15px; line-height: 22px; }
@@ -1202,6 +1416,7 @@
 		.app-typing-head { display: block; }
 		.app-typing-row { display: none; }
 		.app-thread-row { margin-left: var(--space-4); }
+		.ap-roomhead-pop { left: var(--space-4); }
 		.app-toast-right { right: var(--space-4); left: var(--space-4); max-width: none; }
 	}
 </style>

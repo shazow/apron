@@ -44,8 +44,9 @@ Open `http://localhost:5173`. The development server proxies `/ws` to
 `127.0.0.1:8080`. Open another browser tab to chat with a second client.
 
 The example starts with an anonymous identity. Use **Add passkey** in the profile
-panel to retain that identity and its message ownership, and **Sign in with
-passkey** to return to it. Passkey sessions resume after transport disconnects;
+editor's Sign-in row to retain that identity and its message ownership, and
+**Sign in with passkey** to return to it (or choose Passkey on the connect
+screen). Passkey sessions resume after transport disconnects;
 page reloads require signing in again. Anonymous reconnects receive a new identity.
 Edit and delete permissions belong to the identity that created the message.
 Messages and passkey registrations are held in memory and lost on server restart.
@@ -62,10 +63,11 @@ Drafts are kept separately for each room and thread.
 
 Thread cards in the room feed preview up to three lines of the summary, or the
 latest loaded message when no summary is present. Open a thread to read the
-full summary at the top. The Edit button beside the thread name opens a form for
-its title and summary. Without a summary, no summary section is shown until the
-editor is opened. Saving an empty summary removes it and restores the message
-preview. Summaries are plain text. Any authenticated participant can edit thread
+full summary pinned under the header. The Edit button in the header opens a
+popover for the thread's name and summary. Without a summary, no summary
+section is shown. Saving an empty summary removes it and restores the message
+preview. Summaries are Markdown, rendered and sanitized like message bodies;
+the card previews the source. Any authenticated participant can edit thread
 metadata in the example server. A `thread` request with an existing `thread_id`
 and `title` and/or `summary` updates only the supplied fields and broadcasts the
 complete metadata; the root and messages stay intact. The jump prompt is hidden
@@ -73,8 +75,10 @@ when the latest timeline item is already visible.
 
 Use a message's Reply action to reference it in a new message. Reply references
 are restricted to the same room and thread (or two unthreaded messages). The
-composer keeps the reply target with the destination's draft. Edits preserve
-references; More → Remove reply removes one. A message with replies cannot move
+composer keeps the reply target with the destination's draft. A reply shows the
+quoted message above its body; clicking the quote scrolls to the original and
+highlights it briefly. Edits preserve references; More → Remove reply removes
+one. A message with replies cannot move
 to another thread until those references are removed. Deleted targets display
 as “Message deleted”; targets outside loaded history display as “Message unavailable”.
 
