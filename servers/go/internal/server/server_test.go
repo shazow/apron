@@ -257,6 +257,80 @@ func TestMessageSnapshotsReplaceEditableState(t *testing.T) {
 	}
 }
 
+func TestRepliesStayWithinRoomAndThread(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	c := dialTestClient(t, httpServer, "a", false)
+	body := map[string]any{"text": "hello"}
+	root, _ := save(t, c, "root", map[string]any{"body": body})
+	thread := createThread(t, c, "thread", map[string]any{})
+	other := createThread(t, c, "other", map[string]any{})
+	threadRoot, _ := save(t, c, "thread-root", map[string]any{"body": body, "thread_id": thread})
+	reply, created := save(t, c, "reply", map[string]any{"body": body, "reply_message_id": root})
+	if created["message"].(map[string]any)["reply_message_id"] != root {
+		t.Fatalf("broadcast lost reply reference: %#v", created)
+	}
+	threadReply, _ := save(t, c, "thread-reply", map[string]any{"body": body, "thread_id": thread, "reply_message_id": threadRoot})
+
+	before := historyPage(t, c, map[string]any{"after": "0"})
+	cases := []map[string]any{
+		{"reply_message_id": nil}, {"reply_message_id": 123}, {"reply_message_id": ""},
+		{"reply_message_id": "0"}, {"reply_message_id": "bad"}, {"reply_message_id": "999"},
+		{"message_id": root, "reply_message_id": root},
+		{"reply_message_id": root, "room_id": "another-room"},
+		{"reply_message_id": root, "thread_id": thread},
+		{"reply_message_id": threadRoot},
+		{"reply_message_id": threadRoot, "thread_id": other},
+		{"message_id": reply, "reply_message_id": threadRoot},
+		{"message_id": reply, "reply_message_id": root, "thread_id": thread},
+		{"message_id": root, "thread_id": thread},
+		{"message_id": threadRoot, "thread_id": other},
+		{"message_id": threadRoot, "deleted": true}, // Tombstones must retain the target's thread too.
+	}
+	for i, params := range cases {
+		if _, ok := params["room_id"]; !ok {
+			params["room_id"] = "general"
+		}
+		params["body"] = body
+		c.write(t, map[string]any{"method": "message", "id": fmt.Sprint("bad-reply-", i), "params": params})
+		frame := c.read(t)
+		failure, ok := frame["error"].(map[string]any)
+		if !ok || failure["code"] != float64(codeInvalidParams) {
+			t.Fatalf("case %d: %#v", i, frame)
+		}
+	}
+	after := historyPage(t, c, map[string]any{"after": "0"})
+	if before["last_id"] != after["last_id"] {
+		t.Fatal("rejected reply changed history")
+	}
+
+	_, edited := save(t, c, "edit-reply", map[string]any{"message_id": reply, "body": map[string]any{"text": "edited"}, "reply_message_id": root})
+	if edited["message"].(map[string]any)["reply_message_id"] != root {
+		t.Fatal("edit lost reply reference")
+	}
+	_, _ = save(t, c, "delete-target", map[string]any{"message_id": threadRoot, "deleted": true, "thread_id": thread})
+	_, _ = save(t, c, "reply-to-tombstone", map[string]any{"body": body, "thread_id": thread, "reply_message_id": threadRoot})
+	_, removed := save(t, c, "remove-and-move", map[string]any{"message_id": reply, "body": body, "thread_id": other})
+	if _, present := removed["message"].(map[string]any)["reply_message_id"]; present {
+		t.Fatal("omitted reference was retained")
+	}
+	_, _ = save(t, c, "move-detached-target", map[string]any{"message_id": root, "body": body, "thread_id": thread})
+	page := historyPage(t, c, map[string]any{"after": "0"})
+	var foundOriginal, foundThreadReply bool
+	for _, raw := range page["entries"].([]any) {
+		entry := raw.(map[string]any)
+		message := entry["message"].(map[string]any)
+		if entry["log_id"] == created["log_id"] {
+			foundOriginal = message["reply_message_id"] == root
+		}
+		if message["message_id"] == threadReply {
+			foundThreadReply = message["reply_message_id"] == threadRoot
+		}
+	}
+	if !foundOriginal || !foundThreadReply {
+		t.Fatal("history lost reply references")
+	}
+}
+
 func TestThreadCreationAndFilteredHistory(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)

@@ -363,13 +363,14 @@ including ones predating the connection.
 The message object's defined fields (`message_id` is immutable; unknown keys are
 retained in stored snapshots and ignored by renderers):
 
-| field        | meaning                                      |
-|--------------|----------------------------------------------|
-| `message_id` | permanent server-assigned message ID (§2)     |
-| `from`       | server-assigned inline identity (§3.3)        |
-| `body`       | `text`, `format`, `embeds`                    |
-| `thread_id`  | optional thread reference (§6.2)             |
-| `deleted`    | boolean tombstone marker, default false (§5.3) |
+| field                 | meaning                                      |
+|-----------------------|----------------------------------------------|
+| `message_id`          | permanent server-assigned message ID (§2)     |
+| `from`                | server-assigned inline identity (§3.3)        |
+| `body`                | `text`, `format`, `embeds`                    |
+| `reply_message_id`     | optional reply target message ID in the same room and thread |
+| `thread_id`           | optional thread reference (§6.2)             |
+| `deleted`             | boolean tombstone marker, default false (§5.3) |
 
 Message fields supplied in client requests sit in **`message.params`**, alongside
 `room_id`. It is routing information; `message_id`, when present, selects an
@@ -380,6 +381,43 @@ editable state. Servers MAY normalize or reject them according to local
 policy; additional server-owned extension fields remain server-controlled.
 Clients MUST retain and resubmit extension fields they do not understand
 when saving an existing message, so those fields are not lost.
+
+`reply_message_id`, when present, MUST be a string identifying the message
+being replied to in the same room and thread (§2). Both messages MUST have the
+same `thread_id`, or both omit it. The target MUST exist and MUST NOT be the
+reply itself; invalid references MUST be rejected with `invalid_params`.
+Clients supply it in `params`; server notifications carry it in `params.message`,
+and history entries carry it in their `message` snapshots.
+Omitting it means the message has no reply reference. It is editable state:
+omitting it on replacement removes the reference (§5.3). Reply references
+require no capability flag and do not create threads or change thread membership;
+`thread_id` is set independently. Clients MUST tolerate a referenced message
+being unavailable or deleted and still render the reply's own content.
+Deleted targets remain valid references. Servers MUST reject thread moves
+that would leave a reply and its target in different threads, including moves
+of a target with existing replies. Remove the affected reply references before
+moving; a reply's own reference MAY be removed in the same save as its move.
+
+For example, reply to the message created above:
+
+```jsonc
+// ->
+{"method": "message", "id": "c4", "params": {
+  "room_id": "general", "reply_message_id": "1724803200042",
+  "body": {"text": "Hello back!", "format": "plain"}
+}}
+// <-
+{"id": "c4", "result": {"message_id": "1724803200043"}}
+// <- (broadcast)
+{"method": "message", "params": {
+  "room_id": "general", "log_id": "1724803200043", "echo": "c4",
+  "message": {
+    "message_id": "1724803200043", "from": {"user_id": "bob", "name": "Bob"},
+    "reply_message_id": "1724803200042",
+    "body": {"text": "Hello back!", "format": "plain"}
+  }
+}}
+```
 
 ### 3.6 Level 0 conformance checklist
 
@@ -607,8 +645,8 @@ each operation according to local policy and reply `denied` when unauthorized.
 A save replaces all editable fields: omitted fields are removed, and objects
 and arrays are replaced in full. `null` has no deletion meaning and is valid
 only where the field's type permits it. Clients MUST include every editable
-field they want to preserve, including embeds, thread assignment, and
-extensions. The server preserves the message's ID, `from`, and other
+field they want to preserve, including embeds, reply reference, thread assignment,
+and extensions. The server preserves the message's ID, `from`, and other
 server-owned fields. Accepted saves take effect in server processing order;
 there is no automatic merge with intervening changes.
 

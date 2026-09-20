@@ -562,6 +562,14 @@ func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
 	if replacing && !validMessageID(messageID) {
 		return nil, invalidParams("message_id must be a positive decimal string")
 	}
+	replyID, err := parseString(req.params, "reply_message_id", false)
+	if err != nil {
+		return nil, err
+	}
+	_, hasReply := req.params["reply_message_id"]
+	if hasReply && !validMessageID(replyID) {
+		return nil, invalidParams("reply_message_id must be a positive decimal string")
+	}
 	deleted, err := parseBool(req.params, "deleted", false)
 	if err != nil {
 		return nil, err
@@ -611,6 +619,23 @@ func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
 	if hasThread {
 		if _, exists := s.room.threads[threadID]; !exists {
 			return nil, invalidParams("Unknown thread %q", threadID)
+		}
+	}
+	if hasReply {
+		target, exists := s.room.states[replyID]
+		if !exists || (replacing && replyID == messageID) {
+			return nil, invalidParams("Reply target must be another message in this room")
+		}
+		targetThread, _ := target["thread_id"].(string)
+		if targetThread != threadID {
+			return nil, invalidParams("Reply target must be in the same thread")
+		}
+	}
+	if replacing && previousThread != threadID {
+		for _, message := range s.room.states {
+			if message["reply_message_id"] == messageID {
+				return nil, invalidParams("Cannot move a message with replies to another thread")
+			}
 		}
 	}
 	logID := s.nextIDLocked()
