@@ -13,10 +13,10 @@ broadcasts them to all clients in the room, including the sender.
 ```jsonc
 // <- Server greeting with auth capabilities
 {"method": "server", "params": {"protocol": 2, "auth": ["anonymous", "token"]}}
-// Client authenticates anonymously ->
-{"method": "auth", "id": "c1", "params": {"scheme": "anonymous"}}
-// <- Server confirms perceived identity
-{"id": "c1", "result": {"you": {"user_id": "guest_1"}}}
+// Client authenticates anonymously, requesting a display name ->
+{"method": "auth", "id": "c1", "params": {"scheme": "anonymous", "name": "Ada"}}
+// <- Server confirms the identity it assigned
+{"id": "c1", "result": {"you": {"user_id": "guest_1", "name": "Ada"}}}
 // <- Server shares available rooms
 {"method": "room", "params": {"room_id": "general"}}
 // Client posts a message ->
@@ -25,7 +25,7 @@ broadcasts them to all clients in the room, including the sender.
 {"id": "c2", "result": {"message_id": "1724803200042"}}
 // <- Server broadcasts the message to everyone
 {"method": "message", "params": {"room_id": "general", "log_id": "1724803200042", "echo": "c2", "message": {
-  "message_id": "1724803200042", "from": {"user_id": "guest_1"}, "body": {"text": "Hello"}
+  "message_id": "1724803200042", "from": {"user_id": "guest_1", "name": "Ada"}, "body": {"text": "Hello"}
 }}}
 ```
 
@@ -208,7 +208,7 @@ NOT retroactively un-render existing content. After replying
 
 ```jsonc
 // ->
-{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "bottomless-web/0.3"}}
+{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "name": "Alice", "client": "bottomless-web/0.3"}}
 // <-
 {"id": "c1", "result": {"you": {"user_id": "alice", "name": "Alice"}}}
 ```
@@ -223,6 +223,11 @@ NOT retroactively un-render existing content. After replying
 Servers MAY accept `auth` regardless of `params.scheme` and ignore credentials.
 Credential validation, identity assignment, and privilege policy are
 implementation-defined.
+
+`name` is an optional requested display name, valid with any scheme. The
+server MAY comply, decline, or alter it, exactly as for the `name` request
+(§3.3); `you.name` in the result is the answer. Clients MUST NOT supply
+`user_id`: identity is always server-assigned.
 
 `client` is an optional free-form implementation/version string for debugging.
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
@@ -240,12 +245,15 @@ There is no user directory or profile state.
 `user_id` is required and stable. `name`/`avatar` are optional advisory strings,
 current as of that message; absent `name` falls back to `user_id`. Authentication
 results (`you`), typing notifications (`from`), and RTC identities (`members`,
-`from`, and `to`) use the same identity shape. Rename request (server MAY comply,
-decline, or alter):
+`from`, and `to`) use the same identity shape. A `name` request changes the
+display name after authentication; the server MAY comply, decline, or alter it,
+and the result carries the resulting identity:
 
 ```jsonc
 // ->
-{"method": "nick", "id": "c2", "params": {"name": "Alice ⚙"}}
+{"method": "name", "id": "c2", "params": {"name": "Alice ⚙"}}
+// <-
+{"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
 ```
 
 Bots and agents are ordinary senders; nothing distinguishes them at the
