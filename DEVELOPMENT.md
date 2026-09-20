@@ -9,7 +9,9 @@ server keeps rooms and history in memory; restarting it clears messages.
   lives separately from UI components under `src/lib/protocol`.
 - `servers/go`: Go module; `cmd/aprond` is the executable and `internal`
   contains implementation packages.
-- `tests/interop`: Playwright tests against real clients and the Go server.
+- `servers/cloudflare-worker`: TypeScript Worker and SQLite Durable Object for
+  the bounded public demo; see its [setup and operating guide](servers/cloudflare-worker/README.md).
+- `tests/interop`: Playwright tests against real clients and the Go or Workers backend.
 - `tests/fixtures/wire`: portable JSON replay and session scenarios with
   expected protocol state; see its README for adapter requirements.
 
@@ -42,6 +44,13 @@ tools installed directly.
 
 Open `http://localhost:5173`. The development server proxies `/ws` to
 `127.0.0.1:8080`. Open another browser tab to chat with a second client.
+
+To use the Cloudflare backend locally, follow its secret setup and run
+`make dev-worker` instead of `make dev-server`. `make test-worker` runs its
+Workers runtime suite; `make test-worker-browser` tests browser passkeys against
+local Wrangler. The public demo has persistent passkeys and rolling history;
+its passkey registration creates a new identity instead of upgrading guest
+ownership as the Go example does.
 
 The example starts with an anonymous identity. Use **Add passkey** in the profile
 editor's Sign-in row to retain that identity and its message ownership, and
@@ -149,7 +158,7 @@ distributions). For a custom browser installation, set:
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chromium make test-interop
 ```
 
-No root JavaScript workspace or Go workspace is needed for this initial pair.
+No root JavaScript workspace or Go workspace is required.
 
 ## Environment updates
 

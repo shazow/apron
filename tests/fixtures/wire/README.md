@@ -182,10 +182,13 @@ must produce the same final state; use intermediate checkpoints when ordering
 matters. Validate source-log boundaries independently of compacted entries.
 Use generated data for volume benchmarks rather than large checked-in logs.
 
-Retention gaps, `nick` response semantics, deduplication lifetime, and optional
-renderer behavior remain excluded until their contracts are settled. Performance
-and browser rendering remain separate tests. The existing generated 5,000- and
-50,000-message tests continue covering replay scale.
+Retention boundaries are part of the base history contract. Session fixtures
+cover retained ranges, `history_log_id: null` for empty and all-expired logs,
+and a boundary advance while a fixed-head recovery buffers live entries.
+`nick` response semantics, deduplication lifetime, and optional renderer
+behavior remain excluded. Performance and browser rendering remain separate
+tests. The existing generated 5,000- and 50,000-message tests continue
+covering replay scale.
 
 TODO: Validate the fixture projections with a second independently implemented
 client adapter.

@@ -1,0 +1,84 @@
+{
+  "format": 1,
+  "kind": "webauthn",
+  "description": "Canonical two-step passkey wire shapes. Credential bytes are synthetic and do not establish cryptographic validity.",
+  "references": [
+    "PROTOCOL.md#appendix-c--webauthn-authentication-optional"
+  ],
+  "cases": [
+    {
+      "name": "register",
+      "begin": {
+        "method": "auth",
+        "id": "a1",
+        "params": {
+          "scheme": "webauthn",
+          "action": "register",
+          "step": "begin"
+        }
+      },
+      "begin_result": {
+        "challenge_id": "challenge-register-1",
+        "public_key": {
+          "challenge": "AQIDBA",
+          "rp": { "name": "Apron", "id": "demo.example" },
+          "user": { "id": "dXNlci0x", "name": "guest", "displayName": "Guest" },
+          "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+          "timeout": 120000,
+          "authenticatorSelection": { "residentKey": "required", "userVerification": "required" },
+          "attestation": "none"
+        }
+      },
+      "finish": {
+        "method": "auth",
+        "id": "a2",
+        "params": {
+          "scheme": "webauthn",
+          "action": "register",
+          "step": "finish",
+          "challenge_id": "challenge-register-1",
+          "credential": {
+            "id": "Y3JlZGVudGlhbC0x",
+            "rawId": "Y3JlZGVudGlhbC0x",
+            "type": "public-key",
+            "response": {
+              "clientDataJSON": "c3ludGhldGlj",
+              "attestationObject": "c3ludGhldGlj"
+            }
+          }
+        }
+      },
+      "assertions": {
+        "begin_does_not_authenticate": true,
+        "finish_requires_challenge_id": true,
+        "credential_is_browser_json": true
+      }
+    },
+    {
+      "name": "discoverable-login",
+      "begin": {
+        "method": "auth",
+        "id": "l1",
+        "params": {
+          "scheme": "webauthn",
+          "action": "login",
+          "step": "begin"
+        }
+      },
+      "begin_result": {
+        "challenge_id": "challenge-login-1",
+        "public_key": {
+          "challenge": "BQYHCA",
+          "rpId": "demo.example",
+          "allowCredentials": [],
+          "userVerification": "required",
+          "timeout": 120000
+        }
+      },
+      "assertions": {
+        "discoverable": true,
+        "allow_credentials_is_empty": true
+      }
+    }
+  ]
+}

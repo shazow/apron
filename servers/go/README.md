@@ -15,7 +15,7 @@ Defaults:
 - WebSocket origins: `localhost`, `127.0.0.1`, and `::1` during development
 - capabilities: `history`, `edit`
 - room: `general`
-- authentication: WebAuthn passkeys and anonymous guests
+- authentication: WebAuthn passkeys, bearer-token resume, and anonymous guests
 - passkey RP ID: `localhost`; frontend origins: `http://localhost:5173` and
   `http://localhost:8080`
 
@@ -66,18 +66,20 @@ frontend origin. Changing the RP ID creates a different credential scope.
 
 The implementation uses [go-webauthn](https://github.com/go-webauthn/webauthn)
 for registration and signature verification. Challenges are random, expire after
-two minutes, and belong to one connection and origin. Each finish attempt
-consumes its challenge, including failed attempts. New begin requests replace
-the outstanding challenge. Authentication requests are not cached for replay.
+two minutes, and belong to one connection, action, RP ID, and origin. A finish
+for the current challenge consumes it before verification, including failed
+attempts; a new begin replaces the outstanding challenge. Authentication
+requests are not cached for replay.
 User presence and verification are required; login updates the credential's
 signature counter and flags and rejects a clone warning.
 
 Successful registration or login returns an opaque bearer token for automatic
 transport reconnection. Tokens last twelve hours, are stored hashed on the server,
 and are bound to the frontend origin. The example client keeps its token only in
-memory; a page reload requires signing in again. Sign-out revokes the current
-token and disconnects that client. Already authenticated connections are not
-revoked globally. An expired token requires another passkey login.
+memory; a page reload requires signing in again. Sign-out drops the local token
+and reconnects. Already authenticated connections and disconnected clients
+retain their server-side token until it expires. An expired token requires
+another passkey login.
 
 **This is an in-memory example:** restarting the backend invalidates all stored
 credentials, including passkeys still present in your authenticator. Add a new
@@ -88,26 +90,30 @@ management, or push registration.
 
 ### Example WebAuthn exchange
 
-These examples define the implementation-specific exchange for the protocol's
-`webauthn` scheme. All steps use `auth` requests with fresh IDs over the same
+These examples define the Go server's bearer-token policy alongside the canonical
+protocol exchange. All steps use `auth` requests with fresh IDs over the same
 WebSocket; no HTTP authentication endpoints are needed.
 
-| `params.action` | Other parameters | Result |
+| `params.action` and `params.step` | Other parameters | Result |
 | --- | --- | --- |
-| `register_begin` | None; current connection must be authenticated | `{publicKey: ...}` creation options |
-| `register_finish` | `credential`: browser credential JSON | `{you, token}` followed by room/thread announcements |
-| `login_begin` | None | `{publicKey: ...}` discoverable request options |
-| `login_finish` | `credential`: browser credential JSON | `{you, token}` followed by room/thread announcements |
-| `resume` | `token`: previously issued token | `{you, token}` followed by room/thread announcements |
-| `logout` | None | `{}`; connection becomes unauthenticated |
+| `action: "register", step: "begin"` | None; current connection must be authenticated | `{challenge_id, public_key}` creation options |
+| `action: "register", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room/thread announcements |
+| `action: "login", step: "begin"` | None | `{challenge_id, public_key}` discoverable request options |
+| `action: "login", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room/thread announcements |
 
-Every request includes `params.scheme: "webauthn"`. Binary values in options and
+Bearer resumption uses the separate `token` authentication scheme:
+`{"scheme":"token","token":"..."}`. Dropping the token and reconnecting
+signs out the current client; tokens remain valid for their configured lifetime
+and are not revoked by disconnecting.
+
+Every ceremony request includes `params.scheme: "webauthn"`. Binary values in options and
 credentials use unpadded base64url, matching the browser's
 `PublicKeyCredential.parseCreationOptionsFromJSON`,
 `parseRequestOptionsFromJSON`, and `toJSON` APIs. Begin responses do not
 authenticate the connection. Failed verification returns `denied` and preserves
-the current identity. A client should pause chat operations while switching
-identities and must start a new ceremony after a disconnect.
+the current identity. Notifications do not start or finish ceremonies. A client
+should pause chat operations while switching identities and must start a new
+ceremony after a disconnect.
 
 Embedding applications opt in through `Config.WebAuthn`, using a validated
 `webauthn.WebAuthn` instance. A nil value leaves anonymous authentication enabled.

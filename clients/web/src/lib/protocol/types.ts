@@ -46,13 +46,25 @@ export interface ServerParams {
 	caps?: string[];
 	auth: string[];
 	upload?: string;
+	demo?: DemoParams;
+}
+
+export interface DemoParams extends JsonObject {
+	retention_seconds?: number;
+	cleanup_seconds?: number;
+	max_frame_bytes?: number;
+	max_message_text_bytes?: number;
+	max_snapshot_bytes?: number;
+	anonymous_posts_per_minute?: number;
+	registered_posts_per_minute?: number;
 }
 
 export interface RoomAnnouncement {
 	room_id: string;
 	name?: string;
 	topic?: string;
-	latest_id?: string;
+	latest_log_id?: string;
+	history_log_id?: string | null;
 	removed?: boolean;
 }
 
@@ -69,6 +81,8 @@ export interface HistoryResult {
 	first_id?: string;
 	last_id?: string;
 	more: boolean;
+	latest_log_id: string;
+	history_log_id: string | null;
 }
 
 export interface RpcError extends JsonObject {

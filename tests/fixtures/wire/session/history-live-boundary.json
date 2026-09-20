@@ -59,7 +59,8 @@
             "params": {
               "room_id": "general",
               "name": "General",
-              "latest_id": "1724803200105"
+              "latest_log_id": "1724803200105",
+              "history_log_id": "1"
             }
           }
         },
@@ -101,7 +102,8 @@
             "params": {
               "room_id": "general",
               "name": "General",
-              "latest_id": "1724803200106"
+              "latest_log_id": "1724803200106",
+              "history_log_id": "1"
             }
           }
         },
@@ -158,7 +160,9 @@
               ],
               "first_id": "1724803200100",
               "last_id": "1724803200104",
-              "more": true
+              "more": true,
+              "latest_log_id": "1724803200106",
+              "history_log_id": "1"
             }
           }
         },
@@ -196,7 +200,9 @@
               ],
               "first_id": "1724803200105",
               "last_id": "1724803200105",
-              "more": false
+              "more": false,
+              "latest_log_id": "1724803200106",
+              "history_log_id": "1"
             }
           }
         }
@@ -253,7 +259,8 @@
             "params": {
               "room_id": "general",
               "name": "General",
-              "latest_id": "1724803200105"
+              "latest_log_id": "1724803200105",
+              "history_log_id": "1"
             }
           }
         },
@@ -295,7 +302,8 @@
             "params": {
               "room_id": "general",
               "name": "General",
-              "latest_id": "1724803200106"
+              "latest_log_id": "1724803200106",
+              "history_log_id": "1"
             }
           }
         },
@@ -336,7 +344,9 @@
               ],
               "first_id": "1724803200100",
               "last_id": "1724803200104",
-              "more": true
+              "more": true,
+              "latest_log_id": "1724803200106",
+              "history_log_id": "1"
             }
           }
         },
@@ -374,7 +384,9 @@
               ],
               "first_id": "1724803200105",
               "last_id": "1724803200105",
-              "more": false
+              "more": false,
+              "latest_log_id": "1724803200106",
+              "history_log_id": "1"
             }
           }
         }

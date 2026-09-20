@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyTransition, applyTransitions, createTimeline, timelineEvents, TimelineReplay } from './reducer';
+import { applyTransition, applyTransitions, createTimeline, pruneTimelineBefore, timelineEvents, TimelineReplay } from './reducer';
 import { toTransition, type MessageRecord, type Transition } from './types';
 
 const snapshot = (log: number, id = log, fields: Partial<MessageRecord> = {}): Transition => ({
@@ -68,6 +68,18 @@ describe('timeline snapshots', () => {
 		expect(Object.hasOwn(result.events['700'], '__proto__')).toBe(true);
 		expect(result.events['700']['__proto__']).toEqual({ polluted: true });
 		expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+	});
+
+	it('prunes by latest transition while retaining old message IDs with recent edits', () => {
+		const state = applyTransitions(createTimeline('general'), [
+			snapshot(2, 1),
+			snapshot(8, 1, { body: { text: 'edited recently' } }),
+			snapshot(3, 3)
+		]);
+		const retained = pruneTimelineBefore(state, '8');
+		expect(timelineEvents(retained).map((message) => message.message_id)).toEqual(['1']);
+		expect(retained.events['1'].body?.text).toBe('edited recently');
+		expect(retained.events['3']).toBeUndefined();
 	});
 
 	it('rejects malformed IDs and missing authors at the wire boundary', () => {

@@ -38,13 +38,18 @@ connection change cancels the active ceremony. Chat requests pause while a
 ceremony is active, preventing edits from crossing an identity change.
 
 The session token stays in memory, scoped to this mounted client and server URL,
-and automatically resumes the same identity after a transport disconnect. A page
-reload requires signing in again. Expired sessions require another passkey login;
-the client does not automatically replace them with a guest identity. Signing out
-revokes the current token and reconnects as a guest. The Go example's credentials
-are also in memory and are lost on backend restart.
+and automatically resumes the same identity after a transport disconnect when the
+server advertises token authentication. A page reload requires signing in again.
+Expired sessions require another passkey login; the client does not automatically
+replace them with a guest identity. Signing out clears the in-memory credentials
+and reconnects as a guest. The Go example's credentials are also in memory and
+are lost on backend restart.
 
-The implementation-specific WebAuthn exchange is documented in
+The WebAuthn exchange follows [Appendix C of the protocol](../../PROTOCOL.md#appendix-c--webauthn-authentication-optional):
+both registration and login use `action` plus `step: "begin"` or
+`step: "finish"`, with the server's `challenge_id` and `public_key` and the
+browser's standard JSON credential representation. The implementation details
+for the Go example are documented in
 [`servers/go/README.md`](../../servers/go/README.md#example-webauthn-exchange).
 
 The UI follows the Apron design system. `src/lib/design/tokens.css` holds its
@@ -59,11 +64,19 @@ the design system changes rather than editing it here; the few `app-*` rules in
 the page are layout glue only.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol`. Room history recovery captures the room head, pages complete
-snapshots from the empty-log boundary, and buffers live snapshots until recovery
-finishes. Opening a thread fetches its history independently with `thread_id` and
-a fixed head. The reducer installs the greatest `log_id` for each `message_id`,
-so overlapping history and live delivery cannot revert newer state.
+`src/lib/protocol`. Recovery uses the base protocol's `latest_log_id` and
+`history_log_id` fields. It tracks the monotonic effective boundary and a
+per-scope checkpoint, captures a fixed room head, pages complete snapshots from
+the retained boundary, and buffers bounded live snapshots until recovery
+finishes. A checkpoint at `history_log_id - 1` resumes safely; if retention
+overtakes the next uncovered range, the client rebuilds from the new boundary
+and ignores obsolete replies. `history_log_id: null` means the effective
+boundary is `latest_log_id + 1`. Sparse timestamp log IDs are expected.
+Opening a thread fetches its history independently with `thread_id` and a fixed
+head, without advancing room coverage. The reducer installs the greatest
+`log_id` for each `message_id`, so overlapping history and live delivery cannot
+revert newer state. The UI displays a notice that the demo retains roughly the
+last day and honors server retry delays with jittered reconnect backoff.
 
 Edits, moves, and deletion use the same `message` request as creation, with an
 existing `message_id` and complete editable state. The client preserves unknown

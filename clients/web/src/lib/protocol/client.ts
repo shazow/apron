@@ -1,6 +1,7 @@
 import { requestPasskey } from './webauthn';
 import {
 	applyTransitions,
+	pruneTimelineBefore,
 	TimelineReplay,
 	compareLogIds,
 	createTimeline,
@@ -14,6 +15,7 @@ import {
 	toTransition,
 	type MessageRecord,
 	type JsonObject,
+	type JsonValue,
 	type RpcError,
 	type ServerParams,
 	type Identity,
@@ -28,7 +30,8 @@ export interface RoomSnapshot {
 	id: string;
 	name: string;
 	topic?: string;
-	latestId?: string;
+	latestLogId?: string;
+	historyLogId?: string | null;
 	timeline: TimelineState;
 	threads: ThreadAnnouncement[];
 	recovering: boolean;
@@ -60,6 +63,8 @@ export interface ClientSnapshot {
 	pending: PendingOperation[];
 	typing: TypingSnapshot[];
 	showReconnectDivider: boolean;
+	/** Server supplied retry delay for the most recent temporary limit. */
+	retryAfterMs?: number;
 }
 
 export interface OperationHandle<T extends JsonObject = JsonObject> {
@@ -74,15 +79,24 @@ export interface ChatClientOptions {
 }
 
 interface RoomState extends RoomSnapshot {
+	/** Internal monotonic effective lower boundary. */
+	floor: string;
+	/** Highest room-log coverage established by recovery. */
+	checkpoint: string;
 	recovery?: RecoveryState;
+	threadCheckpoints: Map<string, string>;
+	threadGenerations: Map<string, number>;
 }
 
 interface RecoveryState {
 	head: string;
+	/** Next unprocessed lower bound (`C + 1`), with `0` as the empty-log sentinel. */
 	nextAfter: string;
 	buffer: Transition[];
+	bufferBytes: number;
 	replay: TimelineReplay;
 	requestId?: string;
+	generation: number;
 }
 
 interface PendingRequest<T extends JsonObject = JsonObject> {
@@ -105,9 +119,20 @@ interface TypingState {
 	timer?: ReturnType<typeof setTimeout>;
 }
 
+type ValidHistoryResponse = JsonObject & {
+	entries: JsonValue[];
+	more: boolean;
+	latest_log_id: string;
+	history_log_id: string | null;
+};
+
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
 const MAX_RECONNECT_DELAY_MS = 10_000;
+const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
+const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
+const DEFAULT_HISTORY_BOUNDARY = '1';
+const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
 
 /** A browser-only protocol session; instantiate one per mounted UI. */
 export class ChatClient {
@@ -126,6 +151,7 @@ export class ChatClient {
 	// Keep bearer credentials in memory, scoped to this server and mounted client.
 	private sessionToken?: string;
 	private passkeyRequired = false;
+	private registeredSession = false;
 	private activeRoomId?: string;
 	private server?: ServerParams;
 	private you?: Identity;
@@ -133,6 +159,7 @@ export class ChatClient {
 	private status: ConnectionStatus = 'idle';
 	private error?: string;
 	private showReconnectDivider = false;
+	private retryAfterUntil = 0;
 
 	constructor(private serverUrl: string, displayName = '') {
 		this.displayName = displayName.trim();
@@ -154,6 +181,8 @@ export class ChatClient {
 		this.serverUrl = nextUrl;
 		this.sessionToken = undefined;
 		this.passkeyRequired = false;
+		this.registeredSession = false;
+		this.retryAfterUntil = 0;
 		this.resetSession('Server URL changed; pending requests were cancelled');
 		if (this.running) this.restart();
 	}
@@ -252,11 +281,21 @@ export class ChatClient {
 		return {
 			status: this.status,
 			authBusy: Boolean(this.passkeyAbort),
-			passkeySession: Boolean(this.sessionToken && this.authenticated),
+			passkeySession: Boolean(this.registeredSession && this.authenticated),
 			error: this.error,
 			server: this.server,
 			you: this.you,
-			rooms: [...this.rooms.values()].map((room) => ({ ...room, recovering: Boolean(room.recovery) })),
+			rooms: [...this.rooms.values()].map((room) => ({
+				id: room.id,
+				name: room.name,
+				...(room.topic !== undefined ? { topic: room.topic } : {}),
+				...(room.latestLogId !== undefined ? { latestLogId: room.latestLogId } : {}),
+				...(room.historyLogId !== undefined ? { historyLogId: room.historyLogId } : {}),
+				timeline: room.timeline,
+				threads: room.threads,
+				recovering: Boolean(room.recovery),
+				...(room.recoveryError ? { recoveryError: room.recoveryError } : {})
+			})),
 			activeRoom: this.activeRoomId,
 			pending: [...this.requests.values()]
 				.filter((request) => request.visible)
@@ -269,7 +308,8 @@ export class ChatClient {
 			typing: [...this.typing.values()]
 				.filter((entry) => entry.active)
 				.map(({ room, from, active }) => ({ room, from, active })),
-			showReconnectDivider: this.showReconnectDivider
+			showReconnectDivider: this.showReconnectDivider,
+			retryAfterMs: this.retryAfterRemaining()
 		};
 	}
 
@@ -282,13 +322,19 @@ export class ChatClient {
 		const connection = this.connectionId;
 		this.emit();
 		try {
-			const options = await this.passkeyRequest(`${action}_begin`);
+			const begin = { scheme: 'webauthn', action, step: 'begin' };
+			const options = await this.passkeyRequest(begin);
+			const challengeId = typeof options.challenge_id === 'string' && options.challenge_id.length > 0
+				? options.challenge_id : undefined;
+			if (!challengeId) throw new Error('Passkey challenge was missing; try again');
+			if (!isJsonObject(options.public_key)) throw new Error('Passkey options were missing; try again');
 			const credential = await requestPasskey(action, options, controller.signal);
 			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
-			const result = await this.passkeyRequest(`${action}_finish`, { credential });
+			const finish = { scheme: 'webauthn', action, step: 'finish', challenge_id: challengeId, credential };
+			const result = await this.passkeyRequest(finish);
 			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
 			this.cancelPasskey();
-			this.handleAuth(result);
+			if (!this.handleAuth(result, true)) throw new Error('Server authentication response did not include an identity');
 		} finally {
 			if (this.passkeyAbort === controller) this.cancelPasskey();
 			this.emit();
@@ -297,24 +343,15 @@ export class ChatClient {
 
 	async signOut(): Promise<void> {
 		if (this.passkeyAbort || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
-		const controller = new AbortController();
-		this.passkeyAbort = controller;
-		this.emit();
-		try {
-			await this.passkeyRequest('logout');
-			if (controller.signal.aborted) throw new Error('Connection changed; try again');
-			this.sessionToken = undefined;
-			this.passkeyRequired = false;
-			this.resetSession('Signed out');
-			this.restart();
-		} finally {
-			if (this.passkeyAbort === controller) this.cancelPasskey();
-			this.emit();
-		}
+		this.sessionToken = undefined;
+		this.passkeyRequired = false;
+		this.registeredSession = false;
+		this.resetSession('Signed out');
+		this.restart();
 	}
 
-	private passkeyRequest(action: string, params: JsonObject = {}): Promise<JsonObject> {
-		return this.enqueueRequest('auth', { scheme: 'webauthn', action, ...params }, {
+	private passkeyRequest(params: JsonObject): Promise<JsonObject> {
+		return this.enqueueRequest('auth', params, {
 			visible: false, allowBeforeAuth: true
 		}).promise;
 	}
@@ -387,23 +424,51 @@ export class ChatClient {
 	async loadThread(roomId: string, threadId: string): Promise<void> {
 		const room = this.rooms.get(roomId);
 		if (!room || !this.server?.caps?.includes('history')) return;
-		const head = room.latestId;
+		const head = room.latestLogId;
 		if (!head || head === '0') return;
-		let after = '0';
-		do {
-			const result = await this.enqueueRequest('history', {
-				room_id: roomId, thread_id: threadId, after, before: head, limit: HISTORY_PAGE_SIZE
-			}, { visible: false, allowBeforeAuth: false }).promise;
-			if (this.rooms.get(roomId) !== room) return;
-			if (!Array.isArray(result.entries) || typeof result.more !== 'boolean') throw new Error('Invalid history response');
+		const generation = (room.threadGenerations.get(threadId) ?? 0) + 1;
+		room.threadGenerations.set(threadId, generation);
+		let checkpoint = room.threadCheckpoints.get(threadId) ?? '0';
+		if (compareLogIds(increment(checkpoint), room.floor) < 0) checkpoint = decrement(room.floor);
+		let after = nextRecoveryAfter(checkpoint, room.floor);
+		while (compareLogIds(after, head) <= 0) {
+			const result = await this.enqueueRequest(
+				'history',
+				{
+					room_id: roomId,
+					thread_id: threadId,
+					after,
+					before: head,
+					limit: HISTORY_PAGE_SIZE
+				},
+				{ visible: false, allowBeforeAuth: false }
+			).promise;
+			if (this.rooms.get(roomId) !== room || room.threadGenerations.get(threadId) !== generation) return;
+			if (!validHistoryMetadata(result)) throw new Error('Invalid history response');
+			this.observeHistoryResponse(room, result.history_log_id, result.latest_log_id);
+			if (this.rooms.get(roomId) !== room || room.threadGenerations.get(threadId) !== generation) return;
+			if (compareLogIds(nextRecoveryBoundary(after), room.floor) < 0) {
+				checkpoint = decrement(room.floor);
+				after = nextRecoveryAfter(checkpoint, room.floor);
+				room.threadCheckpoints.set(threadId, checkpoint);
+				continue;
+			}
 			const transitions = result.entries.map(toTransition).filter((entry): entry is Transition => Boolean(entry));
+			// A filtered page has its own checkpoint, but while room recovery is
+			// active its snapshots still join the bounded recovery stream so a room
+			// replay cannot overwrite them when it finishes.
 			this.acceptTransitions(roomId, transitions);
-			if (!result.more) return;
+			if (!result.more) {
+				room.threadCheckpoints.set(threadId, maxLogId(checkpoint, head));
+				return;
+			}
 			if (!isLogId(result.last_id) || compareLogIds(result.last_id, after) < 0 || compareLogIds(result.last_id, head) >= 0) {
 				throw new Error('Invalid history continuation');
 			}
-			after = incrementLogId(result.last_id);
-		} while (compareLogIds(after, head) <= 0);
+			after = increment(result.last_id);
+			checkpoint = maxLogId(checkpoint, decrement(after));
+			room.threadCheckpoints.set(threadId, checkpoint);
+		}
 	}
 
 	private connectNow(): void {
@@ -503,13 +568,31 @@ export class ChatClient {
 			...(typeof params.name === 'string' ? { name: params.name } : {}),
 			caps: Array.isArray(params.caps) ? params.caps.filter(isString) : [],
 			auth,
-			...(typeof params.upload === 'string' ? { upload: params.upload } : {})
+			...(typeof params.upload === 'string' ? { upload: params.upload } : {}),
+			...(isJsonObject(params.demo) ? { demo: params.demo } : {})
 		};
 		if (this.authenticated || this.authRequested) {
 			this.emit();
 			return;
 		}
-		const resume = Boolean(this.sessionToken && auth.includes('webauthn'));
+		const resume = Boolean(this.sessionToken && auth.includes('token'));
+		if (!resume && this.passkeyRequired && auth.includes('webauthn')) {
+			// Servers without bearer-token resume still need discoverable login after
+			// a transport reconnect so a registered user keeps the server identity.
+			this.authRequested = true;
+			const socket = this.socket;
+			queueMicrotask(() => {
+				if (socket !== this.socket || !this.authRequested) return;
+				this.authRequested = false;
+				this.usePasskey('login').catch((cause: Error) => {
+					if (socket !== this.socket) return;
+					this.error = cause.message;
+					this.emit();
+				});
+			});
+			this.emit();
+			return;
+		}
 		if (!resume && (this.passkeyRequired || !auth.includes('anonymous'))) {
 			this.error = auth.includes('webauthn') ? 'Sign in with a passkey from your profile.' : 'No supported authentication scheme';
 			this.emit();
@@ -518,7 +601,7 @@ export class ChatClient {
 		this.authRequested = true;
 		const socket = this.socket;
 		const request = this.enqueueRequest('auth', {
-			...(resume ? { scheme: 'webauthn', action: 'resume', token: this.sessionToken } : { scheme: 'anonymous' }),
+			...(resume ? { scheme: 'token', token: this.sessionToken } : { scheme: 'anonymous' }),
 			client: 'bottomless-web/0.1'
 		}, { visible: false, allowBeforeAuth: true });
 		request.promise.then((result) => {
@@ -533,25 +616,32 @@ export class ChatClient {
 		});
 	}
 
-	private handleAuth(result: JsonObject): void {
+	private handleAuth(result: JsonObject, passkey = false): boolean {
 		const identity = result.you;
 		if (!isJsonObject(identity) || typeof identity.user_id !== 'string') {
 			this.error = 'Server authentication response did not include an identity';
 			this.emit();
-			return;
+			return false;
 		}
 		this.you = identity as Identity;
+		if (passkey) {
+			this.passkeyRequired = true;
+			this.registeredSession = true;
+		}
 		if (typeof result.token === 'string') {
 			this.sessionToken = result.token;
 			this.passkeyRequired = true;
+			this.registeredSession = true;
 		}
 		this.error = undefined;
+		this.retryAfterUntil = 0;
 		this.authenticated = true;
 		this.authRequested = false;
 		this.reconnectAttempt = 0;
 		this.showReconnectDivider = this.showReconnectDivider || this.rooms.size > 0;
 		if (this.displayName) this.sendNick();
 		this.emit();
+		return true;
 	}
 
 	private handleRoom(params: JsonObject | undefined): void {
@@ -565,23 +655,32 @@ export class ChatClient {
 		}
 
 		const existing = this.rooms.get(roomId);
-		// Authentication can re-announce an already current room. Preserve its
-		// timeline instead of replacing visible messages with an identical replay.
-		const needsRecovery = !existing || existing.latestId !== params.latest_id || Boolean(existing.recoveryError);
 		const room: RoomState = existing ?? {
 			id: roomId,
 			name: roomId,
 			timeline: createTimeline(roomId),
 			threads: [],
-			recovering: false
+			recovering: false,
+			floor: DEFAULT_HISTORY_BOUNDARY,
+			checkpoint: '0',
+			threadCheckpoints: new Map(),
+			threadGenerations: new Map()
 		};
+		const previousHead = room.latestLogId;
 		room.name = typeof params.name === 'string' ? params.name : roomId;
 		room.topic = typeof params.topic === 'string' ? params.topic : undefined;
-		if (params.latest_id === '0' || isLogId(params.latest_id)) room.latestId = params.latest_id;
+		const announcedHead = isWireHead(params.latest_log_id) ? params.latest_log_id : undefined;
+		this.observeLatestHead(room, announcedHead);
+		// Record the head before the boundary so a new recovery captures it.
+		// An active recovery keeps its original fixed head.
+		this.observeHistoryBoundary(room, params.history_log_id, announcedHead ?? room.latestLogId);
 		this.rooms.set(roomId, room);
 		this.activeRoomId ??= roomId;
-		if (needsRecovery && this.server?.caps?.includes('history') && isLogId(params.latest_id) && !room.recovery) {
-			this.startRecovery(room, params.latest_id);
+		const advertisedHead = room.latestLogId;
+		const headAdvanced = advertisedHead !== undefined && (!previousHead || compareWireHead(advertisedHead, previousHead) > 0);
+		const needsRecovery = !existing || Boolean(room.recoveryError) || headAdvanced || (advertisedHead !== undefined && compareWireHead(room.checkpoint, advertisedHead) < 0 && !room.recovery);
+		if (needsRecovery && this.server?.caps?.includes('history') && advertisedHead !== undefined && !room.recovery) {
+			this.startRecovery(room, advertisedHead, Boolean(room.recoveryError || !existing || room.checkpoint === '0'));
 		}
 		this.emit();
 	}
@@ -600,20 +699,34 @@ export class ChatClient {
 		this.emit();
 	}
 
-	private startRecovery(room: RoomState, head: string): void {
-		room.timeline = createTimeline(room.id);
-		room.recovery = { head, nextAfter: '0', buffer: [], replay: new TimelineReplay(room.timeline) };
+	private startRecovery(room: RoomState, head: string, reset = true, preserveBuffer = false): void {
+		const retainedBuffer = preserveBuffer ? (room.recovery?.buffer ?? []).filter(({ log_id }) => compareLogIds(log_id, room.floor) >= 0) : [];
+		this.retireRecoveryRequest(room);
+		const generation = (room.recovery?.generation ?? 0) + 1;
+		const floor = room.floor;
+		let nextAfter = reset ? nextRecoveryAfter(decrement(floor), floor) : nextRecoveryAfter(room.checkpoint, floor);
+		const base = reset ? createTimeline(room.id) : pruneTimelineBefore(room.timeline, floor);
+		if (reset) room.timeline = base;
+		room.recovery = {
+			head,
+			nextAfter,
+			buffer: retainedBuffer,
+			bufferBytes: retainedBuffer.reduce((bytes, transition) => bytes + transitionBytes(transition), 0),
+			replay: new TimelineReplay(base),
+			generation
+		};
+		room.recovery.replay.pruneBefore(floor);
 		room.recoveryError = undefined;
-		if (head === '0') {
-			room.recovery = undefined;
+		if (head === '0' || compareLogIds(nextAfter, head) > 0) {
+			this.finishRecovery(room);
 			return;
 		}
-		this.requestHistoryPage(room);
+		this.requestHistoryPage(room, generation);
 	}
 
-	private requestHistoryPage(room: RoomState): void {
+	private requestHistoryPage(room: RoomState, generation: number): void {
 		const recovery = room.recovery;
-		if (!recovery || !this.authenticated) return;
+		if (!recovery || recovery.generation !== generation || !this.authenticated) return;
 		const request = this.enqueueRequest('history', {
 			room_id: room.id,
 			after: recovery.nextAfter,
@@ -622,56 +735,66 @@ export class ChatClient {
 		}, { visible: false, allowBeforeAuth: false });
 		recovery.requestId = request.id;
 		request.promise.then((result) => {
-			if (room.recovery?.requestId !== request.id) return;
-			this.applyHistoryPage(room, result);
+			if (room.recovery?.requestId !== request.id || room.recovery.generation !== generation) return;
+			this.applyHistoryPage(room, result, generation);
 		}).catch((cause: Error) => {
-			if (!room.recovery || room.recovery.requestId !== request.id) return;
-			room.recoveryError = cause.message;
-			this.finishRecovery(room);
-			this.emit();
+			if (!room.recovery || room.recovery.requestId !== request.id || room.recovery.generation !== generation) return;
+			this.abortRecovery(room, cause.message);
 		});
 	}
 
-	private applyHistoryPage(room: RoomState, result: JsonObject): void {
+	private applyHistoryPage(room: RoomState, result: JsonObject, generation: number): void {
 		const recovery = room.recovery;
-		if (!recovery) return;
-		if (!Array.isArray(result.entries) || typeof result.more !== 'boolean') {
-			room.recoveryError = 'Invalid history response';
-			this.finishRecovery(room);
+		if (!recovery || recovery.generation !== generation) return;
+		if (!validHistoryMetadata(result)) {
+			this.abortRecovery(room, 'Invalid history response');
+			return;
+		}
+		this.observeHistoryResponse(room, result.history_log_id, result.latest_log_id);
+		if (room.recovery !== recovery || recovery.generation !== generation) return;
+		const transitions = result.entries
+			.map(toTransition)
+			.filter((entry): entry is Transition => Boolean(entry))
+			.filter(({ log_id }) => compareLogIds(log_id, room.floor) >= 0 && compareLogIds(log_id, recovery.head) <= 0);
+		recovery.replay.apply(transitions);
+		const more = result.more;
+		const lastId = typeof result.last_id === 'string' && isLogId(result.last_id) ? result.last_id : undefined;
+		if (more) {
+			if (!lastId || compareLogIds(lastId, recovery.nextAfter) < 0 || compareLogIds(lastId, recovery.head) >= 0) {
+				this.abortRecovery(room, 'History pagination did not provide a valid continuation');
+				return;
+			}
+			recovery.nextAfter = increment(lastId);
+			recovery.requestId = undefined;
+			this.requestHistoryPage(room, generation);
 			this.emit();
 			return;
 		}
-		const entries = result.entries;
-		const transitions = entries.map(toTransition).filter((entry): entry is Transition => Boolean(entry));
-		recovery.replay.apply(transitions);
-		const more = result.more;
-		const lastId = typeof result.last_id === 'string' ? result.last_id : undefined;
-		if (more && lastId && isLogId(lastId)) {
-			const nextAfter = incrementLogId(lastId);
-			if (compareLogIds(nextAfter, recovery.nextAfter) > 0) {
-				recovery.nextAfter = nextAfter;
-				recovery.requestId = undefined;
-				this.requestHistoryPage(room);
-				this.emit();
-				return;
-			}
-		}
-		if (more) {
-			room.recoveryError = 'History pagination did not provide a valid continuation';
-		}
+		if (lastId && compareLogIds(lastId, recovery.nextAfter) >= 0) recovery.nextAfter = increment(lastId);
 		this.finishRecovery(room);
 		this.emit();
+	}
+
+	private publishRecoveryTimeline(room: RoomState): void {
+		const recovery = room.recovery;
+		if (!recovery) return;
+		const buffered = recovery.buffer
+			.filter(({ log_id }) => compareLogIds(log_id, room.floor) >= 0)
+			.sort((a, b) => compareLogIds(transitionId(a), transitionId(b)));
+		recovery.replay.apply(buffered);
+		recovery.replay.pruneBefore(room.floor);
+		room.timeline = recovery.replay.finish();
 	}
 
 	private finishRecovery(room: RoomState): void {
 		const recovery = room.recovery;
 		if (!recovery) return;
-		recovery.replay.apply(
-			recovery.buffer.sort((a, b) => compareLogIds(transitionId(a), transitionId(b)))
-		);
-		room.timeline = recovery.replay.finish();
+		this.publishRecoveryTimeline(room);
+		// A response may report a newer head than this recovery's fixed H. That
+		// metadata must not turn H+1 and later live entries into a checkpoint.
+		room.checkpoint = maxLogId(room.checkpoint, recovery.head);
 		room.recovery = undefined;
-		this.showReconnectDivider = false;
+		this.showReconnectDivider = [...this.rooms.values()].every((entry) => !entry.recovery);
 	}
 
 	private handleSnapshot(params: JsonObject | undefined): void {
@@ -680,15 +803,117 @@ export class ChatClient {
 		if (transition) this.acceptTransitions(params.room_id, [transition]);
 	}
 
-	private acceptTransitions(roomId: string, transitions: Transition[]): void {
+	private acceptTransitions(roomId: string, transitions: Transition[], bufferDuringRecovery = true): void {
 		const room = this.rooms.get(roomId);
 		if (!room) return;
-		for (const { log_id } of transitions) {
-			if (!room.latestId || compareLogIds(log_id, room.latestId) > 0) room.latestId = log_id;
+		const retained = transitions.filter(({ log_id }) => compareLogIds(log_id, room.floor) >= 0);
+		for (const { log_id } of retained) {
+			if (!room.latestLogId || compareWireHead(log_id, room.latestLogId) > 0) room.latestLogId = log_id;
 		}
-		if (room.recovery) room.recovery.buffer.push(...transitions);
-		else room.timeline = applyTransitions(room.timeline, transitions);
+		if (room.recovery && bufferDuringRecovery) {
+			for (const transition of retained) {
+				const bytes = transitionBytes(transition);
+				if (!recoveryBufferFits(room.recovery.buffer.length, room.recovery.bufferBytes, transition)) {
+					this.restartRecoveryAfterOverflow(room);
+					return;
+				}
+				room.recovery.buffer.push(transition);
+				room.recovery.bufferBytes += bytes;
+			}
+		} else {
+			room.timeline = applyTransitions(room.timeline, retained);
+		}
 		this.emit();
+	}
+
+	private observeLatestHead(room: RoomState, advertised: unknown): string | undefined {
+		if (!isWireHead(advertised)) return room.latestLogId;
+		if (!room.latestLogId || compareWireHead(advertised, room.latestLogId) > 0) room.latestLogId = advertised;
+		return advertised;
+	}
+
+	private observeHistoryResponse(room: RoomState, advertised: unknown, responseHead: unknown): void {
+		const head = this.observeLatestHead(room, responseHead);
+		this.observeHistoryBoundary(room, advertised, head);
+	}
+
+	/** Apply an advertised effective boundary monotonically and invalidate stale state. */
+	private observeHistoryBoundary(room: RoomState, advertised: unknown, responseHead: unknown): void {
+		const historyLogId = advertised === null ? null : isLogId(advertised) ? advertised : undefined;
+		const head = isWireHead(responseHead) ? responseHead : undefined;
+		if (historyLogId === undefined) return;
+		const effective = historyLogId === null ? (head === undefined ? undefined : increment(head)) : historyLogId;
+		if (!effective || !isLogId(effective)) return;
+		if (compareLogIds(effective, room.floor) <= 0) {
+			if (compareLogIds(effective, room.floor) === 0 && (room.historyLogId === undefined || (room.historyLogId === null && historyLogId !== null))) {
+				room.historyLogId = historyLogId;
+			}
+			return;
+		}
+
+		room.floor = effective;
+		room.historyLogId = historyLogId;
+		room.timeline = pruneTimelineBefore(room.timeline, effective);
+		for (const [thread, checkpoint] of room.threadCheckpoints) {
+			if (compareLogIds(increment(checkpoint), effective) < 0) {
+				room.threadCheckpoints.delete(thread);
+			}
+		}
+		const recovery = room.recovery;
+		if (!recovery) {
+			if (compareLogIds(increment(room.checkpoint), effective) < 0 && this.server?.caps?.includes('history') && room.latestLogId && room.latestLogId !== '0') {
+				this.startRecovery(room, room.latestLogId, true);
+			}
+			this.emit();
+			return;
+		}
+		recovery.replay.pruneBefore(effective);
+		const retained: Transition[] = [];
+		recovery.bufferBytes = 0;
+		for (const transition of recovery.buffer) {
+			if (compareLogIds(transition.log_id, effective) < 0) continue;
+			retained.push(transition);
+			recovery.bufferBytes += transitionBytes(transition);
+		}
+		recovery.buffer = retained;
+		// `nextAfter` is the first unprocessed position. Equality is safe; a
+		// strictly larger boundary means a retained gap was discarded underneath us.
+		if (compareLogIds(effective, nextRecoveryBoundary(recovery.nextAfter)) > 0) {
+			// Keep this recovery's fixed H. Buffered live transitions above H must
+			// survive the rebuild and be applied after the retained range is replayed.
+			this.startRecovery(room, recovery.head, true, true);
+		}
+		this.emit();
+	}
+
+	private restartRecoveryAfterOverflow(room: RoomState): void {
+		const head = room.latestLogId && room.latestLogId !== '0' ? room.latestLogId : (room.recovery?.head ?? '0');
+		this.startRecovery(room, head, true);
+		this.error = 'History is arriving faster than the client can recover; reconnecting.';
+		this.scheduleReconnect();
+		if (this.socket && this.socket.readyState === WebSocket.OPEN) this.socket.close(1008, 'history recovery overflow');
+	}
+
+	private abortRecovery(room: RoomState, message: string): void {
+		const recovery = room.recovery;
+		if (!recovery) return;
+		this.retireRecoveryRequest(room);
+		room.recoveryError = message;
+		// Live delivery remains authoritative even when history is incomplete.
+		// Publish it without advancing the checkpoint past an unrecovered gap.
+		this.publishRecoveryTimeline(room);
+		room.recovery = undefined;
+		this.emit();
+	}
+
+	private retireRecoveryRequest(room: RoomState): void {
+		const id = room.recovery?.requestId;
+		if (!id) return;
+		const request = this.requests.get(id);
+		if (!request) return;
+		clearTimeout(request.timer);
+		this.requests.delete(id);
+		request.reject(new Error('History recovery superseded'));
 	}
 
 	private handleTyping(params: JsonObject | undefined): void {
@@ -722,9 +947,20 @@ export class ChatClient {
 		if (!request) return;
 		this.requests.delete(id);
 		clearTimeout(request.timer);
-		if (rpcError) request.reject(new Error(rpcError.message || `Request failed (${rpcError.code})`));
+		if (rpcError) request.reject(this.errorFromRpc(rpcError));
 		else request.resolve(result);
 		this.emit();
+	}
+
+	private errorFromRpc(rpcError: RpcError): Error {
+		const retryAfter = retryAfterMilliseconds(rpcError);
+		if (retryAfter !== undefined) {
+			this.retryAfterUntil = Math.max(this.retryAfterUntil, Date.now() + retryAfter);
+		}
+		const error = new Error(userFacingRpcError(rpcError));
+		(error as Error & { code?: number; retryAfterMs?: number }).code = rpcError.code;
+		if (retryAfter !== undefined) (error as Error & { code?: number; retryAfterMs?: number }).retryAfterMs = retryAfter;
+		return error;
 	}
 
 	private enqueueRequest<T extends JsonObject = JsonObject>(
@@ -806,6 +1042,8 @@ export class ChatClient {
 		this.you = undefined;
 		this.authenticated = false;
 		this.authRequested = false;
+		this.registeredSession = false;
+		this.passkeyRequired = false;
 		this.error = undefined;
 		this.clearTyping();
 		this.emit();
@@ -829,11 +1067,19 @@ export class ChatClient {
 	private scheduleReconnect(delayOverride?: number): void {
 		if (!this.running || this.reconnectTimer) return;
 		this.reconnectAttempt += 1;
-		const delay = delayOverride ?? Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(5, this.reconnectAttempt - 1));
+		const retryAfter = this.retryAfterRemaining();
+		const delay = delayOverride !== undefined
+			? Math.max(delayOverride, retryAfter ?? 0)
+			: reconnectDelay(this.reconnectAttempt, Math.random(), retryAfter);
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = undefined;
 			this.connectNow();
 		}, delay);
+	}
+
+	private retryAfterRemaining(): number | undefined {
+		const remaining = this.retryAfterUntil - Date.now();
+		return remaining > 0 ? Math.min(RETRY_AFTER_MAX_MS, remaining) : undefined;
 	}
 
 	private isCurrentSocket(id: number, socket: WebSocket): boolean {
@@ -887,6 +1133,95 @@ function incrementLogId(id: string): string {
 	} catch {
 		return id;
 	}
+}
+
+function increment(id: string): string {
+	return incrementLogId(id);
+}
+
+function decrement(id: string): string {
+	try {
+		const value = BigInt(id);
+		return value > 1n ? (value - 1n).toString() : '0';
+	} catch {
+		return '0';
+	}
+}
+
+/** The zero boundary is a protocol sentinel before the first positive log ID. */
+function nextRecoveryBoundary(after: string): string {
+	return after === '0' ? '1' : after;
+}
+
+/** Return the next lower bound for checkpoint C, respecting the floor. */
+function nextRecoveryAfter(checkpoint: string, floor: string): string {
+	if (checkpoint === '0' && floor === '1') return '0';
+	const candidate = increment(checkpoint);
+	return maxLogId(candidate, floor);
+}
+
+function maxLogId(a: string, b: string): string {
+	return compareWireHead(a, b) >= 0 ? a : b;
+}
+
+function isWireHead(value: unknown): value is string {
+	return value === '0' || isLogId(value);
+}
+
+function validHistoryMetadata(result: JsonObject): result is ValidHistoryResponse {
+	if (!Array.isArray(result.entries) || typeof result.more !== 'boolean' || !isWireHead(result.latest_log_id)) return false;
+	if (result.history_log_id !== null && !isLogId(result.history_log_id)) return false;
+	return result.history_log_id === null || compareLogIds(result.history_log_id, result.latest_log_id) <= 0;
+}
+
+function compareWireHead(a: string, b: string): number {
+	if (a === b) return 0;
+	if (a === '0') return -1;
+	if (b === '0') return 1;
+	return compareLogIds(a, b);
+}
+
+function transitionBytes(transition: Transition): number {
+	try {
+		return new TextEncoder().encode(JSON.stringify(transition)).byteLength;
+	} catch {
+		return MAX_HISTORY_BUFFER_BYTES + 1;
+	}
+}
+
+/** Pure admission check used to keep live/recovery memory bounded. */
+export function recoveryBufferFits(
+	entryCount: number,
+	bufferBytes: number,
+	transition: Transition,
+	maxEntries = MAX_HISTORY_BUFFER_ENTRIES,
+	maxBytes = MAX_HISTORY_BUFFER_BYTES
+): boolean {
+	return entryCount < maxEntries && bufferBytes + transitionBytes(transition) <= maxBytes;
+}
+
+function retryAfterMilliseconds(error: RpcError): number | undefined {
+	if (error.code !== -32002 || !isJsonObject(error.data) || typeof error.data.ms !== 'number') return undefined;
+	if (!Number.isFinite(error.data.ms) || error.data.ms < 0) return undefined;
+	return Math.min(RETRY_AFTER_MAX_MS, Math.ceil(error.data.ms));
+}
+
+function userFacingRpcError(error: RpcError): string {
+	const retryAfter = retryAfterMilliseconds(error);
+	if (retryAfter !== undefined) {
+		const seconds = Math.max(1, Math.ceil(retryAfter / 1000));
+		if (error.message) return `${error.message} Try again in ${seconds}s.`;
+		return `Temporarily limited. Try again in ${seconds}s.`;
+	}
+	return error.message || `Request failed (${error.code})`;
+}
+
+/** Exposed for deterministic UI/client tests without relying on timer scheduling. */
+export function reconnectDelay(attempt: number, random = 0.5, retryAfterMs?: number): number {
+	const boundedAttempt = Math.max(1, Math.floor(attempt));
+	const base = Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(5, boundedAttempt - 1));
+	const jitter = 0.8 + Math.min(1, Math.max(0, random)) * 0.4;
+	return Math.max(retryAfterMs ?? 0, Math.round(base * jitter));
 }
 
 function transitionId(transition: Transition): string {

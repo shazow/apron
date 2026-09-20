@@ -1,0 +1,26 @@
+name = "apron-cloudflare-demo"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[assets]
+directory = "../../clients/web/build"
+binding = "ASSETS"
+run_worker_first = ["/ws"]
+
+[durable_objects]
+bindings = [
+  { name = "DEMO", class_name = "ApronDemoServer" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ApronDemoServer"]
+
+[vars]
+RP_ID = "localhost"
+RP_ORIGINS = "http://localhost:5173,http://localhost:8787"
+ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:8787"
