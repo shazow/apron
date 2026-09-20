@@ -556,6 +556,67 @@ func TestStaticDirectoryAndOrigins(t *testing.T) {
 	}
 }
 
+func TestThreadSummaryEditing(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	creator := dialTestClient(t, httpServer, "creator", false)
+	root, _ := save(t, creator, "root", map[string]any{"body": map[string]any{"text": "Deploy"}})
+	thread := createThread(t, creator, "thread", map[string]any{"title": "Deploy", "root_message_id": root})
+	editor := dialTestClient(t, httpServer, "editor", false)
+	_ = editor.read(t) // Initial thread announcement.
+	params := map[string]any{"room_id": "general", "thread_id": thread, "summary": "First line\nSecond line"}
+	request := map[string]any{"method": "thread", "id": "summary", "params": params}
+	editor.write(t, request)
+	if editor.read(t)["result"].(map[string]any)["thread_id"] != thread {
+		t.Fatal("summary edit changed thread ID")
+	}
+	for _, c := range []*testClient{creator, editor} {
+		frame := c.read(t)
+		metadata := frame["params"].(map[string]any)
+		if frame["method"] != "thread" || metadata["summary"] != params["summary"] || metadata["title"] != "Deploy" || metadata["root_message_id"] != root {
+			t.Fatalf("summary update lost metadata: %#v", frame)
+		}
+	}
+	editor.write(t, request)
+	if editor.read(t)["result"].(map[string]any)["thread_id"] != thread {
+		t.Fatal("summary retry failed")
+	}
+
+	for i, invalid := range []map[string]any{
+		{"thread_id": thread},
+		{"thread_id": thread, "summary": nil},
+		{"thread_id": thread, "summary": 12},
+		{"thread_id": "missing", "summary": "new"},
+		{"thread_id": nil, "summary": "new"},
+		{"thread_id": thread, "summary": "new", "title": "changed"},
+		{"thread_id": thread, "summary": "new", "root_message_id": root},
+		{"thread_id": thread, "summary": "new", "room_id": "another-room"},
+	} {
+		if _, exists := invalid["room_id"]; !exists {
+			invalid["room_id"] = "general"
+		}
+		editor.write(t, map[string]any{"method": "thread", "id": fmt.Sprint("bad-summary-", i), "params": invalid})
+		frame := editor.read(t)
+		failure, ok := frame["error"].(map[string]any)
+		if !ok || failure["code"] != float64(codeInvalidParams) {
+			t.Fatalf("case %d: %#v", i, frame)
+		}
+	}
+	reader := dialTestClient(t, httpServer, "reader", false)
+	if reader.read(t)["params"].(map[string]any)["summary"] != params["summary"] {
+		t.Fatal("reconnect lost summary or rejected edit changed it")
+	}
+	page := historyPage(t, editor, map[string]any{"after": "0"})
+	if len(page["entries"].([]any)) != 1 || page["last_id"] != root {
+		t.Fatal("summary edit changed message history")
+	}
+	editor.write(t, map[string]any{"method": "thread", "id": "clear-summary", "params": map[string]any{"room_id": "general", "thread_id": thread, "summary": ""}})
+	_ = editor.read(t)
+	cleared := editor.read(t)["params"].(map[string]any)
+	if _, present := cleared["summary"]; present || cleared["title"] != "Deploy" || cleared["root_message_id"] != root {
+		t.Fatalf("clearing summary lost other metadata: %#v", cleared)
+	}
+}
+
 func TestThreadAndReplacementDeduplication(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)

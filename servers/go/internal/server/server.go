@@ -452,7 +452,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 		result, operationErr = s.history(req)
 		cacheResult = operationErr == nil
 	case "thread":
-		result, operationErr = s.createThread(c, req)
+		result, operationErr = s.saveThread(c, req)
 		cacheResult = operationErr == nil
 		responseSent = operationErr == nil
 	case "typing":
@@ -669,7 +669,7 @@ func validMessageID(id string) bool {
 	return true
 }
 
-func (s *Server) createThread(c *client, req request) (any, *rpcError) {
+func (s *Server) saveThread(c *client, req request) (any, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
 		return nil, err
@@ -678,7 +678,37 @@ func (s *Server) createThread(c *client, req request) (any, *rpcError) {
 		return nil, invalidParams("Unknown room %q", roomID)
 	}
 	if _, exists := req.params["thread_id"]; exists {
-		return nil, invalidParams("thread_id is server-controlled")
+		id, err := parseString(req.params, "thread_id", true)
+		if err != nil {
+			return nil, err
+		}
+		summary, err := parseString(req.params, "summary", true)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range []string{"title", "root_message_id"} {
+			if _, present := req.params[key]; present {
+				return nil, invalidParams("Only the summary can be edited")
+			}
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		metadata, exists := s.room.threads[id]
+		if !exists {
+			return nil, invalidParams("Unknown thread %q", id)
+		}
+		// Summaries are shared room notes; any authenticated participant may edit them.
+		if summary == "" {
+			delete(metadata.fields, "summary")
+		} else {
+			metadata.fields["summary"] = summary
+		}
+		result := map[string]any{"thread_id": id}
+		if req.hasID {
+			c.enqueue(response(req.id, req.full, result))
+		}
+		s.broadcastLocked(metadata.announcement(roomID))
+		return result, nil
 	}
 	fields := make(map[string]any)
 	for _, key := range []string{"title", "summary", "root_message_id"} {

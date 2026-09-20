@@ -473,7 +473,7 @@ client to the corresponding fallback:
 | cap            | fallback behavior                              |
 |----------------|------------------------------------------------|
 | `history`      | session-only scrollback; divider on reconnect  |
-| `edit`         | edit, delete, and thread reassignment/creation UI hidden |
+| `edit`         | edit, delete, and thread reassignment/creation/summary editing UI hidden |
 | `rooms`        | fixed room list                                |
 | `push`         | no mobile wake-ups                             |
 
@@ -738,8 +738,8 @@ Unknown kinds → fallback card rule (§3.5).
 ### 6.2 Threads
 
 `thread_id` is an optional opaque ID on messages (§2). The `thread` method creates
-a thread when sent by a client (cap `edit`) and announces current metadata
-when sent by the server:
+a thread or edits its summary when sent by a client (cap `edit`), and announces
+current metadata when sent by the server:
 
 ```json
 {
@@ -756,6 +756,7 @@ when sent by the server:
 
 Server announcements require `room_id` and the server-assigned `thread_id`.
 `title` and `summary` are optional strings; `title` defaults to `thread_id`.
+`summary` is plain text and MAY contain line breaks.
 `root_message_id` is an optional advisory message ID in the same room; it does
 not assign that message to the thread.
 
@@ -787,12 +788,19 @@ Client participation:
 - **Create a thread:** `thread` (cap `edit`) with required `room_id` and no
   `thread_id`. Optional `title`, `summary`, and `root_message_id` propose
   metadata; the server MAY adjust or supply it according to local policy.
+- **Edit a summary:** `thread` (cap `edit`) with required `room_id`, an existing
+  `thread_id`, and string `summary`. Only the summary is changed; other metadata
+  is preserved. An empty string removes the summary. Clients MUST omit `title`
+  and `root_message_id` on this request; supplying them is `invalid_params`.
+  An unknown thread or an invalid summary is `invalid_params`; unauthorized
+  edits are `denied` according to server policy. Successful edits return
+  `result: {"thread_id": "..."}` and broadcast the complete `thread` metadata.
 
 Creation establishes metadata only; messages are added separately through
 `message`. On success the server assigns a new thread ID, returns
 `result: {"thread_id": "..."}`, and broadcasts a `thread` announcement.
-A client-supplied `thread_id` on this request is `invalid_params`; unauthorized
-creation is `denied`. Retries follow §1.2.
+Supplying `thread_id` selects summary editing and never creates a thread;
+unauthorized creation is `denied`. Creation and edit retries follow §1.2.
 
 For example, create a thread, move an existing message into it, then have the
 server update its title and summary:
@@ -823,7 +831,16 @@ server update its title and summary:
 ```
 
 The later announcement replaces the thread metadata without editing messages.
-The protocol does not define a client request for changing existing thread metadata.
+Clients can update the summary without changing the title or root:
+
+```jsonc
+// ->
+{"method": "thread", "id": "c16", "params": {"room_id": "general", "thread_id": "t_deploy", "summary": "Resolved by rolling back the deployment\nFollow-up: add a deployment check."}}
+// <-
+{"id": "c16", "result": {"thread_id": "t_deploy"}}
+// <- (broadcast)
+{"method": "thread", "params": {"room_id": "general", "thread_id": "t_deploy", "title": "Deploy resolved", "summary": "Resolved by rolling back the deployment\nFollow-up: add a deployment check."}}
+```
 
 ### 6.3 `rooms`
 
