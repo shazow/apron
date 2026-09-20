@@ -775,7 +775,7 @@ export class ChatClient {
 		this.emit();
 	}
 
-	private finishRecovery(room: RoomState): void {
+	private publishRecoveryTimeline(room: RoomState): void {
 		const recovery = room.recovery;
 		if (!recovery) return;
 		const buffered = recovery.buffer
@@ -784,6 +784,12 @@ export class ChatClient {
 		recovery.replay.apply(buffered);
 		recovery.replay.pruneBefore(room.floor);
 		room.timeline = recovery.replay.finish();
+	}
+
+	private finishRecovery(room: RoomState): void {
+		const recovery = room.recovery;
+		if (!recovery) return;
+		this.publishRecoveryTimeline(room);
 		// A response may report a newer head than this recovery's fixed H. That
 		// metadata must not turn H+1 and later live entries into a checkpoint.
 		room.checkpoint = maxLogId(room.checkpoint, recovery.head);
@@ -893,7 +899,9 @@ export class ChatClient {
 		if (!recovery) return;
 		this.retireRecoveryRequest(room);
 		room.recoveryError = message;
-		room.timeline = pruneTimelineBefore(recovery.replay.finish(), room.floor);
+		// Live delivery remains authoritative even when history is incomplete.
+		// Publish it without advancing the checkpoint past an unrecovered gap.
+		this.publishRecoveryTimeline(room);
 		room.recovery = undefined;
 		this.emit();
 	}

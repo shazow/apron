@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "History failure preserves live transitions",
+  "description": "A failed page publishes buffered creations, edits, and deletions alongside partial replay. Retrying still requests the unrecovered range.",
+  "variants": [
+    {
+      "name": "retry-after",
+      "steps": [
+        {"receive": {"method": "server", "params": {"protocol": 2, "auth": ["anonymous"], "caps": ["history"]}}},
+        {"request": {"as": "auth", "match": {"method": "auth", "params": {"scheme": "anonymous"}}}},
+        {"reply": {"to": "auth", "result": {"you": {"user_id": "guest"}}}},
+        {"receive": {"method": "room", "params": {"room_id": "general", "latest_log_id": "2", "history_log_id": "1"}}},
+        {"request": {"as": "initial", "match": {"method": "history", "params": {"room_id": "general", "after": "0", "before": "2"}}}},
+        {"reply": {"to": "initial", "result": {"entries": [{"log_id": "1", "message": {"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "original"}}}, {"log_id": "2", "message": {"message_id": "2", "from": {"user_id": "alice"}, "body": {"text": "delete me"}}}], "last_id": "2", "more": false, "latest_log_id": "2", "history_log_id": "1"}}},
+        {"expect": {"rooms": [{"id": "general", "name": "general", "topic": null, "events": [{"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "original"}}, {"message_id": "2", "from": {"user_id": "alice"}, "body": {"text": "delete me"}}]}]}},
+        {"receive": {"method": "room", "params": {"room_id": "general", "latest_log_id": "5", "history_log_id": "1"}}},
+        {"request": {"as": "partial", "match": {"method": "history", "params": {"room_id": "general", "after": "3", "before": "5"}}}},
+        {"reply": {"to": "partial", "result": {"entries": [{"log_id": "3", "message": {"message_id": "3", "from": {"user_id": "alice"}, "body": {"text": "partial history"}}}], "last_id": "3", "more": true, "latest_log_id": "5", "history_log_id": "1"}}},
+        {"request": {"as": "failure", "match": {"method": "history", "params": {"room_id": "general", "after": "4", "before": "5"}}}},
+        {"receive": {"method": "message", "params": {"room_id": "general", "log_id": "6", "message": {"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "edited live"}}}}},
+        {"receive": {"method": "message", "params": {"room_id": "general", "log_id": "7", "message": {"message_id": "2", "from": {"user_id": "alice"}, "deleted": true}}}},
+        {"receive": {"method": "message", "params": {"room_id": "general", "log_id": "8", "message": {"message_id": "8", "from": {"user_id": "alice"}, "body": {"text": "new live message"}}}}},
+        {"reply": {"to": "failure", "error": {"code": -32002, "message": "Try again", "data": {"ms": 1}}}},
+        {"expect": {"rooms": [{"id": "general", "name": "general", "topic": null, "events": [{"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "edited live"}}, {"message_id": "2", "from": {"user_id": "alice"}, "deleted": true}, {"message_id": "3", "from": {"user_id": "alice"}, "body": {"text": "partial history"}}, {"message_id": "8", "from": {"user_id": "alice"}, "body": {"text": "new live message"}}]}]}},
+        {"receive": {"method": "room", "params": {"room_id": "general", "latest_log_id": "8", "history_log_id": "1"}}},
+        {"request": {"as": "retry", "match": {"method": "history", "params": {"room_id": "general", "after": "0", "before": "8"}}}},
+        {"reply": {"to": "retry", "result": {"entries": [{"log_id": "3", "message": {"message_id": "3", "from": {"user_id": "alice"}, "body": {"text": "partial history"}}}, {"log_id": "6", "message": {"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "edited live"}}}, {"log_id": "7", "message": {"message_id": "2", "from": {"user_id": "alice"}, "deleted": true}}, {"log_id": "8", "message": {"message_id": "8", "from": {"user_id": "alice"}, "body": {"text": "new live message"}}}], "last_id": "8", "more": false, "latest_log_id": "8", "history_log_id": "1"}}}
+      ]
+    },
+    {
+      "name": "invalid-page",
+      "steps": [
+        {"receive": {"method": "server", "params": {"protocol": 2, "auth": ["anonymous"], "caps": ["history"]}}},
+        {"request": {"as": "auth", "match": {"method": "auth", "params": {"scheme": "anonymous"}}}},
+        {"reply": {"to": "auth", "result": {"you": {"user_id": "guest"}}}},
+        {"receive": {"method": "room", "params": {"room_id": "general", "latest_log_id": "2", "history_log_id": "1"}}},
+        {"request": {"as": "initial", "match": {"method": "history", "params": {"room_id": "general", "after": "0", "before": "2"}}}},
+        {"reply": {"to": "initial", "result": {"entries": [{"log_id": "1", "message": {"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "original"}}}, {"log_id": "2", "message": {"message_id": "2", "from": {"user_id": "alice"}, "body": {"text": "delete me"}}}], "last_id": "2", "more": false, "latest_log_id": "2", "history_log_id": "1"}}},
+        {"expect": {"rooms": [{"id": "general", "name": "general", "topic": null, "events": [{"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "original"}}, {"message_id": "2", "from": {"user_id": "alice"}, "body": {"text": "delete me"}}]}]}},
+        {"receive": {"method": "room", "params": {"room_id": "general", "latest_log_id": "5", "history_log_id": "1"}}},
+        {"request": {"as": "partial", "match": {"method": "history", "params": {"room_id": "general", "after": "3", "before": "5"}}}},
+        {"reply": {"to": "partial", "result": {"entries": [{"log_id": "3", "message": {"message_id": "3", "from": {"user_id": "alice"}, "body": {"text": "partial history"}}}], "last_id": "3", "more": true, "latest_log_id": "5", "history_log_id": "1"}}},
+        {"request": {"as": "failure", "match": {"method": "history", "params": {"room_id": "general", "after": "4", "before": "5"}}}},
+        {"receive": {"method": "message", "params": {"room_id": "general", "log_id": "6", "message": {"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "edited live"}}}}},
+        {"receive": {"method": "message", "params": {"room_id": "general", "log_id": "7", "message": {"message_id": "2", "from": {"user_id": "alice"}, "deleted": true}}}},
+        {"receive": {"method": "message", "params": {"room_id": "general", "log_id": "8", "message": {"message_id": "8", "from": {"user_id": "alice"}, "body": {"text": "new live message"}}}}},
+        {"reply": {"to": "failure", "result": {"entries": []}}},
+        {"expect": {"rooms": [{"id": "general", "name": "general", "topic": null, "events": [{"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "edited live"}}, {"message_id": "2", "from": {"user_id": "alice"}, "deleted": true}, {"message_id": "3", "from": {"user_id": "alice"}, "body": {"text": "partial history"}}, {"message_id": "8", "from": {"user_id": "alice"}, "body": {"text": "new live message"}}]}]}},
+        {"receive": {"method": "room", "params": {"room_id": "general", "latest_log_id": "8", "history_log_id": "1"}}},
+        {"request": {"as": "retry", "match": {"method": "history", "params": {"room_id": "general", "after": "0", "before": "8"}}}},
+        {"reply": {"to": "retry", "result": {"entries": [{"log_id": "3", "message": {"message_id": "3", "from": {"user_id": "alice"}, "body": {"text": "partial history"}}}, {"log_id": "6", "message": {"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "edited live"}}}, {"log_id": "7", "message": {"message_id": "2", "from": {"user_id": "alice"}, "deleted": true}}, {"log_id": "8", "message": {"message_id": "8", "from": {"user_id": "alice"}, "body": {"text": "new live message"}}}], "last_id": "8", "more": false, "latest_log_id": "8", "history_log_id": "1"}}}
+      ]
+    }
+  ],
+  "expected": {"rooms": [{"id": "general", "name": "general", "topic": null, "events": [{"message_id": "1", "from": {"user_id": "alice"}, "body": {"text": "edited live"}}, {"message_id": "2", "from": {"user_id": "alice"}, "deleted": true}, {"message_id": "3", "from": {"user_id": "alice"}, "body": {"text": "partial history"}}, {"message_id": "8", "from": {"user_id": "alice"}, "body": {"text": "new live message"}}]}]}
+}
