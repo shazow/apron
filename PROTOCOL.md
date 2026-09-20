@@ -211,12 +211,12 @@ NOT retroactively un-render existing content. After replying
 
 - `anonymous` — no credentials; server assigns identity.
 - `token` — bearer string. The reference default.
-- `webauthn` — suggested optional scheme; exchange details are
-  implementation-defined.
+- `webauthn` — optional passkey scheme ([Appendix C](#appendix-c--webauthn-authentication-optional)).
 
-Servers MAY accept `auth` regardless of `params.scheme` and ignore credentials.
-Credential validation, identity assignment, and privilege policy are
-implementation-defined.
+Except for `webauthn`, servers MAY accept `auth` regardless of `params.scheme`
+and ignore credentials for anonymous-access policies. Token validation,
+identity assignment, and privilege policy are implementation-defined.
+WebAuthn credential verification follows Appendix C.
 
 `name` is an optional requested display name, valid with any scheme. The
 server MAY comply, decline, or alter it, exactly as for the `name` request
@@ -1090,3 +1090,40 @@ and attaches the authenticated user's `from` identity to the forwarded signal.
   (e.g. `{"kind": "rtc", "session_id": "...", ...}`) so mobile clients can show
   an incoming-call UI instead of a message notification.
 - Without `rtc`, hide call UI; without `rtc.sfu`, use mesh only.
+
+## Appendix C — WebAuthn authentication (optional)
+
+Support is OPTIONAL. Servers advertising `webauthn` in `server.params.auth`
+MUST use this exchange; no separate capability or extension flag is needed.
+
+Both steps are `auth` requests with string IDs and `scheme: "webauthn"`.
+Use `action: "register"` to create a credential or `action: "login"` to sign in;
+keep the action unchanged between steps. Notifications do not run ceremonies.
+
+| Step | Additional request fields | Successful result |
+| --- | --- | --- |
+| `begin` | `step: "begin"` | `challenge_id` (opaque string), `public_key` (WebAuthn options) |
+| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` (authenticated identity, §3.3) |
+
+`public_key` contains creation options for registration or request options for
+login. Clients pass these to `navigator.credentials.create` or `.get`, then
+return the credential in `finish`. Use standard [WebAuthn JSON representations](https://www.w3.org/TR/webauthn-3/#sctn-parseCreationOptionsFromJSON),
+with binary fields encoded as unpadded base64url. Decode options before browser
+calls and encode credentials afterward; native JSON converters or equivalents
+are acceptable. Registration MUST require discoverable credentials; login
+omits `allowCredentials` or sends an empty array. Both require user verification.
+
+Challenges MUST be unpredictable, expiring, and bound to the connection,
+action, RP ID, allowed origin, and any proposed registration identity. Keep
+one pending ceremony per connection: a new begin replaces it, disconnect
+invalidates it, and a matching finish attempt consumes it even on failure.
+Servers MUST perform [WebAuthn verification](https://www.w3.org/TR/webauthn-3/#sctn-rp-operations)
+before recording credentials or authenticating the associated identity.
+
+Only verified finish returns `you`, followed by room and applicable thread
+announcements. Begin or failure does not change existing authentication or
+ownership. Registration eligibility, whether it creates or extends an identity,
+and permission to reauthenticate are server policy.
+
+Malformed fields use `invalid_params`; invalid challenges, failed verification,
+or policy rejection use `denied`. Resource limits use ordinary protocol errors.
