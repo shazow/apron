@@ -15,14 +15,17 @@ npm run build     # writes the static site to build/
 npm run preview
 ```
 
-The default connection is same-origin `/ws` in a browser. The Connect popover
-in the sidebar header accepts a WebSocket URL or an HTTP(S) server base URL and
-stores it in local storage. The profile bar at the foot of the sidebar edits
-your handle, which is sent with the protocol `nick` request after anonymous
-authentication; the editor shows what the server actually kept.
+The default connection is same-origin `/ws` in a browser. **Connect** in the
+sidebar header opens the connect screen: a WebSocket URL or an HTTP(S) server
+base URL, a display name, and a sign-in choice (Guest by default; Passkey signs
+in with an existing passkey once the guest session is up). The server and name
+are stored in local storage, and the last few backends are listed under the
+form. The profile bar at the foot of the sidebar edits your handle, which is
+sent with the protocol `nick` request after authentication; the editor shows
+what the server actually kept.
 
-The profile panel also offers **Add passkey**, **Sign in with passkey**, and
-**Sign out** when the server advertises WebAuthn. With the Go example, open
+The profile editor's Sign-in row offers **Add passkey**, **Sign in with passkey**,
+and **Sign out** when the server advertises WebAuthn. With the Go example, open
 `http://localhost:5173` (or `http://localhost:8080` for a static build); other
 deployments need HTTPS and configured RP/frontend origins. Adding a passkey
 keeps your guest identity and message ownership. Signing in restores the
@@ -30,7 +33,7 @@ identity attached to your chosen passkey.
 
 Passkeys use the browser's native WebAuthn JSON APIs, with no frontend dependency.
 An up-to-date browser is required; unsupported browsers can still chat as guests.
-Browser cancellation and verification errors appear in the profile panel. A
+Browser cancellation and verification errors appear in the profile editor. A
 connection change cancels the active ceremony. Chat requests pause while a
 ceremony is active, preventing edits from crossing an identity change.
 
@@ -49,8 +52,11 @@ color, type, spacing, radius and size tokens as CSS custom properties (dark is
 the reference theme; light follows `prefers-color-scheme`), and
 `src/lib/design/apron.css` is the design system's component stylesheet copied
 verbatim, so every `ap-*` class in `src/routes/+page.svelte` matches the
-system's React components one to one. Re-copy `apron.css` when the design
-system changes rather than editing it here.
+system's React components one to one (thread cards with a preview line, reply
+quotes, the pinned thread summary, the thread editor popover, the profile
+editor's sign-in row and the connect screen included). Re-copy `apron.css` when
+the design system changes rather than editing it here; the few `app-*` rules in
+the page are layout glue only.
 
 Protocol types, replay reduction, and the WebSocket session live under
 `src/lib/protocol`. Room history recovery captures the room head, pages complete

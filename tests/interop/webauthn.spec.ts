@@ -27,7 +27,7 @@ test('passkeys preserve identity and edit ownership through sign-out, login, and
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	const identity = await dialog.locator('code').textContent();
 	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
-	await expect(dialog.getByText('Passkey added.', { exact: false })).toBeVisible();
+	await expect(dialog.getByText('Passkey saved', { exact: false })).toBeVisible();
 	const { credentials } = await cdp.send('WebAuthn.getCredentials', { authenticatorId });
 	expect(credentials).toHaveLength(1);
 	expect(credentials[0].isResidentCredential).toBe(true);
@@ -73,7 +73,7 @@ test('a rejected passkey verification leaves the guest usable and allows retry',
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	const identity = await dialog.locator('code').textContent();
 	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
-	await expect(dialog.getByText('Passkey added.', { exact: false })).toBeVisible();
+	await expect(dialog.getByText('Passkey saved', { exact: false })).toBeVisible();
 	await dialog.getByRole('button', { name: 'Sign out', exact: true }).click();
 	await expect(dialog.locator('code')).not.toHaveText(identity!);
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
@@ -98,16 +98,16 @@ test('changing servers cancels an active passkey prompt', async ({ page, context
 	await page.getByRole('button', { name: /^Your profile on/ }).click();
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
-	await expect(dialog.getByText('Follow your browser’s passkey prompt…')).toBeVisible();
+	await expect(dialog.getByText('Confirm on your device…')).toBeVisible();
 	await page.getByRole('button', { name: /^Your profile on/ }).click();
 	await page.getByRole('button', { name: 'Connection settings', exact: true }).click();
 	await page.getByTestId('server-url-input').fill('ws://localhost:8080/ws');
-	await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+	await page.getByRole('button', { name: 'Connect', exact: true }).click();
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	await page.getByRole('button', { name: /^Your profile on/ }).click();
-	await expect(dialog.getByText('Follow your browser’s passkey prompt…')).toHaveCount(0);
+	await expect(dialog.getByText('Confirm on your device…')).toHaveCount(0);
 	await expect(dialog.getByRole('button', { name: 'Add passkey', exact: true })).toBeEnabled();
 	await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: true });
 	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
-	await expect(dialog.getByText('Passkey added.', { exact: false })).toBeVisible();
+	await expect(dialog.getByText('Passkey saved', { exact: false })).toBeVisible();
 });

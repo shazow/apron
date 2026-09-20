@@ -39,11 +39,13 @@ test.describe('chat protocol interoperability', () => {
 			await expect(cardA.getByTestId('thread-preview')).toContainText(`${token}-latest`);
 			await cardA.click();
 			await pageA.getByRole('button', { name: 'Edit thread', exact: true }).click();
-			await expect(pageA.getByRole('textbox', { name: 'Thread title', exact: true })).toHaveValue(`${token}-root`);
+			await expect(pageA.getByRole('textbox', { name: 'Thread name', exact: true })).toHaveValue(`${token}-root`);
 			const summary = `${token} first line\nSecond line\nThird line\nFourth line\nFifth line <b>plain text</b>`;
+			// Summaries render as Markdown: raw HTML is dropped, never inserted; the card previews the source.
+			const rendered = summary.replace('<b>plain text</b>', 'plain text');
 			await pageA.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(summary);
 			await pageA.getByRole('button', { name: 'Save thread', exact: true }).click();
-			await expect(pageA.getByTestId('thread-summary')).toHaveText(summary);
+			await expect(pageA.getByTestId('thread-summary')).toHaveText(rendered);
 			await expect(cardB.getByTestId('thread-preview')).toHaveText(summary);
 			const previewBounds = await cardB.getByTestId('thread-preview').evaluate((node) => ({
 				height: node.clientHeight, fullHeight: node.scrollHeight, lineHeight: Number.parseFloat(getComputedStyle(node).lineHeight)
@@ -53,18 +55,18 @@ test.describe('chat protocol interoperability', () => {
 			await pageB.reload();
 			await expect(cardB.getByTestId('thread-preview')).toHaveText(summary);
 			await cardB.click();
-			await expect(pageB.getByTestId('thread-summary')).toHaveText(summary);
+			await expect(pageB.getByTestId('thread-summary')).toHaveText(rendered);
 			await expect(pageB.getByTestId('thread-summary')).toBeInViewport();
 			await expect(pageB.getByTestId('thread-summary').locator('b')).toHaveCount(0);
 			await pageB.getByRole('button', { name: 'Edit thread', exact: true }).click();
 			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('Cancelled draft');
-			await pageB.getByRole('textbox', { name: 'Thread title', exact: true }).fill('Cancelled title');
+			await pageB.getByRole('textbox', { name: 'Thread name', exact: true }).fill('Cancelled title');
 			await pageB.getByRole('region', { name: 'Edit thread', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
-			await expect(pageB.getByTestId('thread-summary')).toHaveText(summary);
+			await expect(pageB.getByTestId('thread-summary')).toHaveText(rendered);
 			await expect(pageB.getByRole('heading', { level: 1 })).toContainText(`${token}-root`);
 			await pageB.getByRole('button', { name: 'Edit thread', exact: true }).click();
 			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('Updated by another participant');
-			await pageB.getByRole('textbox', { name: 'Thread title', exact: true }).fill(`${token}-renamed`);
+			await pageB.getByRole('textbox', { name: 'Thread name', exact: true }).fill(`${token}-renamed`);
 			await pageB.getByRole('button', { name: 'Save thread', exact: true }).click();
 			await expect(pageA.getByTestId('thread-summary')).toHaveText('Updated by another participant');
 			await expect(pageA.getByRole('heading', { level: 1 })).toContainText(`${token}-renamed`);
@@ -102,7 +104,7 @@ test.describe('chat protocol interoperability', () => {
 		const list = page.getByTestId('message-list');
 		await expect(jump).toHaveCount(0);
 		await page.getByRole('button', { name: 'Edit thread', exact: true }).click();
-		await page.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(Array.from({ length: 50 }, (_, i) => `Summary line ${i}`).join('\n'));
+		await page.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(Array.from({ length: 50 }, (_, i) => `Summary line ${i}`).join('\n\n'));
 		await page.getByRole('button', { name: 'Save thread', exact: true }).click();
 		await expect(jump).toBeVisible();
 		await jump.click();
