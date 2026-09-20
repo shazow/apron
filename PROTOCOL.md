@@ -13,10 +13,10 @@ broadcasts them to all clients in the room, including the sender.
 ```jsonc
 // <- Server greeting with auth capabilities
 {"method": "server", "params": {"protocol": 2, "auth": ["anonymous", "token"]}}
-// Client authenticates anonymously ->
-{"method": "auth", "id": "c1", "params": {"scheme": "anonymous"}}
-// <- Server confirms perceived identity
-{"id": "c1", "result": {"you": {"user_id": "guest_1"}}}
+// Client authenticates anonymously, requesting a display name ->
+{"method": "auth", "id": "c1", "params": {"scheme": "anonymous", "name": "Ada"}}
+// <- Server confirms the identity it assigned
+{"id": "c1", "result": {"you": {"user_id": "guest_1", "name": "Ada"}}}
 // <- Server shares available rooms
 {"method": "room", "params": {"room_id": "general"}}
 // Client posts a message ->
@@ -24,14 +24,14 @@ broadcasts them to all clients in the room, including the sender.
 // <- Server confirms message ID
 {"id": "c2", "result": {"message_id": "1724803200042"}}
 // <- Server broadcasts the message to everyone
-{"method": "message", "params": {"room_id": "general", "log_id": "1724803200042", "echo": "c2", "message": {
-  "message_id": "1724803200042", "from": {"user_id": "guest_1"}, "body": {"text": "Hello"}
+{"method": "message", "params": {"room_id": "general", "log_id": "1724803200042", "message": {
+  "message_id": "1724803200042", "from": {"user_id": "guest_1", "name": "Ada"}, "body": {"text": "Hello"}
 }}}
 ```
 
-Request `id` correlates replies; `echo` links the broadcast to the `message`
-request. The server-assigned `message_id` identifies the message; `log_id`
-identifies a change in the room log.
+Request `id` correlates replies. The server-assigned `message_id` identifies
+the message in both the result and the broadcast; `log_id` identifies a change
+in the room log.
 
 ---
 
@@ -39,14 +39,18 @@ identifies a change in the room log.
 
 - One WebSocket connection. Each WebSocket text message contains exactly one JSON
   object (a **frame**).
-- Receivers MUST accept both the [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
-  envelope and a minimal form (omitting unused keys like `jsonrpc`).
+- Frames look like [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
+  requests, responses, and notifications (`method`, `params`, `id`, `result`,
+  `error`), minus the `"jsonrpc": "2.0"` key. Since unknown keys are ignored,
+  a JSON-RPC 2.0 client can talk to an Apron server without changes, but it
+  should not expect the `jsonrpc` key in what comes back.
 - Requests MAY be pipelined; the server processes them in order but MAY reply
   out of order. Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
-  notifications; clients ignore unknown notifications. Unknown *fields* in
-  known methods MUST be ignored by both sides, except message extension fields,
-  which are preserved as described in §3.5.
+  notifications; clients ignore unknown notifications. Unknown *fields*,
+  both envelope members and fields in known methods, MUST be ignored by both
+  sides, except message extension fields, which are preserved as described
+  in §3.5.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
@@ -57,16 +61,6 @@ identifies a change in the room log.
 Request `id`, when present, MUST be a string (§2). Clients SHOULD include `id`
 for result correlation or retries, including `auth`, `history`, and mutations.
 Broadcast log IDs reside in `params.log_id`.
-
-```jsonc
-// ->
-{"jsonrpc": "2.0", "method": "message", "id": "c42",
-   "params": {"room_id": "general", "body": {"text": "hello", "format": "plain"}}}
-// <-
-{"jsonrpc": "2.0", "id": "c42", "result": {"message_id": "1724803200042"}}
-```
-
-Equivalent minimal exchange:
 
 ```jsonc
 // ->
@@ -106,13 +100,13 @@ Success returns a `result` object (`{}` if empty). Errors contain integer
 Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
 and invalid envelopes whose request ID cannot be determined use `id: null`,
 as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
-still receive no error replies. Examples below use the minimal form for brevity.
+still receive no error replies.
 
 ### 1.2 Retries and recommended deduplication
 
 Retries SHOULD preserve `id`, `method`, and `params` across reconnects. New
 operations, including changed parameters, MUST use new IDs. Deduplication
-ignores `jsonrpc` presence and object key order.
+ignores object key order.
 
 Servers SHOULD deduplicate by `(authenticated user_id, request id)`, return
 the original result for accepted duplicates without re-execution or rebroadcast, reject
@@ -208,7 +202,7 @@ NOT retroactively un-render existing content. After replying
 
 ```jsonc
 // ->
-{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "bottomless-web/0.3"}}
+{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "name": "Alice", "client": "bottomless-web/0.3"}}
 // <-
 {"id": "c1", "result": {"you": {"user_id": "alice", "name": "Alice"}}}
 ```
@@ -223,6 +217,11 @@ NOT retroactively un-render existing content. After replying
 Servers MAY accept `auth` regardless of `params.scheme` and ignore credentials.
 Credential validation, identity assignment, and privilege policy are
 implementation-defined.
+
+`name` is an optional requested display name, valid with any scheme. The
+server MAY comply, decline, or alter it, exactly as for the `name` request
+(§3.3); `you.name` in the result is the answer. Clients MUST NOT supply
+`user_id`: identity is always server-assigned.
 
 `client` is an optional free-form implementation/version string for debugging.
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
@@ -240,12 +239,15 @@ There is no user directory or profile state.
 `user_id` is required and stable. `name`/`avatar` are optional advisory strings,
 current as of that message; absent `name` falls back to `user_id`. Authentication
 results (`you`), typing notifications (`from`), and RTC identities (`members`,
-`from`, and `to`) use the same identity shape. Rename request (server MAY comply,
-decline, or alter):
+`from`, and `to`) use the same identity shape. A `name` request changes the
+display name after authentication; the server MAY comply, decline, or alter it,
+and the result carries the resulting identity:
 
 ```jsonc
 // ->
-{"method": "nick", "id": "c2", "params": {"name": "Alice ⚙"}}
+{"method": "name", "id": "c2", "params": {"name": "Alice ⚙"}}
+// <-
+{"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
 ```
 
 Bots and agents are ordinary senders; nothing distinguishes them at the
@@ -315,7 +317,6 @@ Broadcast (to all clients in the room, including the sender):
   "params": {
     "room_id": "general",
     "log_id": "1724803200042",
-    "echo": "c3",
     "message": {
       "message_id": "1724803200042",
       "from": {"user_id": "alice", "name": "Alice"},
@@ -345,14 +346,10 @@ including ones predating the connection.
   Clients MUST disable raw HTML in Markdown or sanitize rendered HTML using
   the same allowlist policy as HTML embeds (§6.4).
 - **Result:** `message` returns `{"message_id": "..."}`, the message's permanent
-  ID, whether newly created or replaced.
-- **Echo:** the server's `message` notification for a client-originated save
-  with `id` carries `params.echo` = the originating request `id`. Omit `echo`
-  for requests without `id`. Clients match `echo` against their own pending
-  saves to reconcile local echo. Servers MAY include it on all copies of the
-  broadcast; clients MUST ignore values that do not match their own pending
-  requests. Clients MUST also accept the `message` result as confirmation,
-  including when deduplication suppresses a retry's broadcast (§1.2).
+  ID, whether newly created or replaced. Clients reconcile their own saves by
+  this `message_id`, which also appears in the broadcast. The result is the
+  confirmation: the broadcast MAY arrive before or after it, and a
+  deduplicated retry produces no broadcast at all (§1.2).
 - Clients deduplicate replayed transitions by their log IDs (§2).
 - `body.embeds`: see §6. **Clients MUST render entries
   of unknown `kind` as a labeled fallback card** (kind name + `url` if
@@ -407,7 +404,7 @@ For example, reply to the message created above:
 {"id": "c4", "result": {"message_id": "1724803200043"}}
 // <- (broadcast)
 {"method": "message", "params": {
-  "room_id": "general", "log_id": "1724803200043", "echo": "c4",
+  "room_id": "general", "log_id": "1724803200043",
   "message": {
     "message_id": "1724803200043", "from": {"user_id": "bob", "name": "Bob"},
     "reply_message_id": "1724803200042",
@@ -446,7 +443,6 @@ follow §1.
   "params": {
     "room_id": "general",
     "log_id": "1724803200000",
-    "echo": "b",
     "message": {
       "message_id": "1724803200000",
       "from": {"user_id": "alice", "name": "Alice"},
@@ -488,8 +484,8 @@ to each request.
 
 Stateless window query over the room's **append-only transition log** (§2).
 Every entry has the form `{"log_id": "...", "message": {...}}`: the same
-complete snapshot as a server `message` notification (§3.5), without delivery
-fields such as `room_id` or `echo`. Servers MAY return all source transitions
+complete snapshot as a server `message` notification (§3.5), without the
+`room_id` delivery field. Servers MAY return all source transitions
 or compact them as described below.
 
 ```jsonc
@@ -671,7 +667,6 @@ policy:
   "params": {
     "room_id": "general",
     "log_id": "1724803312007",
-    "echo": "c12",
     "message": {
       "message_id": "1724803200042",
       "from": {"user_id": "alice", "name": "Alice"},
@@ -698,7 +693,7 @@ For example, delete a message while retaining its thread assignment:
 {"id": "c14", "result": {"message_id": "1724803200042"}}
 // <- (broadcast)
 {"method": "message", "params": {
-  "room_id": "general", "log_id": "1724803312009", "echo": "c14",
+  "room_id": "general", "log_id": "1724803312009",
   "message": {
     "message_id": "1724803200042", "from": {"user_id": "alice", "name": "Alice"},
     "thread_id": "t_deploy", "deleted": true
@@ -819,7 +814,7 @@ server update its title and summary:
 // <-
 {"id": "c15", "result": {"message_id": "1724801100007"}}
 // <- (broadcast)
-{"method": "message", "params": {"room_id": "general", "log_id": "1724803312010", "echo": "c15", "message": {
+{"method": "message", "params": {"room_id": "general", "log_id": "1724803312010", "message": {
   "message_id": "1724801100007", "from": {"user_id": "alice", "name": "Alice"},
   "body": {"text": "Is the deployment broken?", "format": "plain"}, "thread_id": "t_deploy"
 }}}
