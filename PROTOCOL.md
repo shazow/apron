@@ -473,7 +473,7 @@ client to the corresponding fallback:
 | cap            | fallback behavior                              |
 |----------------|------------------------------------------------|
 | `history`      | session-only scrollback; divider on reconnect  |
-| `edit`         | edit, delete, and thread reassignment/creation/summary editing UI hidden |
+| `edit`         | edit, delete, and thread reassignment/creation/metadata editing UI hidden |
 | `rooms`        | fixed room list                                |
 | `push`         | no mobile wake-ups                             |
 
@@ -738,8 +738,8 @@ Unknown kinds → fallback card rule (§3.5).
 ### 6.2 Threads
 
 `thread_id` is an optional opaque ID on messages (§2). The `thread` method creates
-a thread or edits its summary when sent by a client (cap `edit`), and announces
-current metadata when sent by the server:
+a thread or edits its title and summary when sent by a client (cap `edit`),
+and announces current metadata when sent by the server:
 
 ```json
 {
@@ -788,18 +788,19 @@ Client participation:
 - **Create a thread:** `thread` (cap `edit`) with required `room_id` and no
   `thread_id`. Optional `title`, `summary`, and `root_message_id` propose
   metadata; the server MAY adjust or supply it according to local policy.
-- **Edit a summary:** `thread` (cap `edit`) with required `room_id`, an existing
-  `thread_id`, and string `summary`. Only the summary is changed; other metadata
-  is preserved. An empty string removes the summary. Clients MUST omit `title`
-  and `root_message_id` on this request; supplying them is `invalid_params`.
-  An unknown thread or an invalid summary is `invalid_params`; unauthorized
+- **Edit thread metadata:** `thread` (cap `edit`) with required `room_id`, an
+  existing `thread_id`, and at least one of string `title` or string `summary`.
+  Only supplied fields change; omitted fields are preserved. An empty string
+  removes that field, restoring the default title or removing the summary.
+  Clients MUST omit `root_message_id`; supplying it is `invalid_params`.
+  An unknown thread or invalid field type is `invalid_params`; unauthorized
   edits are `denied` according to server policy. Successful edits return
   `result: {"thread_id": "..."}` and broadcast the complete `thread` metadata.
 
 Creation establishes metadata only; messages are added separately through
 `message`. On success the server assigns a new thread ID, returns
 `result: {"thread_id": "..."}`, and broadcasts a `thread` announcement.
-Supplying `thread_id` selects summary editing and never creates a thread;
+Supplying `thread_id` selects metadata editing and never creates a thread;
 unauthorized creation is `denied`. Creation and edit retries follow §1.2.
 
 For example, create a thread, move an existing message into it, then have the

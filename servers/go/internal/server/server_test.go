@@ -556,7 +556,7 @@ func TestStaticDirectoryAndOrigins(t *testing.T) {
 	}
 }
 
-func TestThreadSummaryEditing(t *testing.T) {
+func TestThreadMetadataEditing(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	creator := dialTestClient(t, httpServer, "creator", false)
 	root, _ := save(t, creator, "root", map[string]any{"body": map[string]any{"text": "Deploy"}})
@@ -587,7 +587,8 @@ func TestThreadSummaryEditing(t *testing.T) {
 		{"thread_id": thread, "summary": 12},
 		{"thread_id": "missing", "summary": "new"},
 		{"thread_id": nil, "summary": "new"},
-		{"thread_id": thread, "summary": "new", "title": "changed"},
+		{"thread_id": thread, "summary": "new", "title": 12},
+		{"thread_id": thread, "title": nil},
 		{"thread_id": thread, "summary": "new", "root_message_id": root},
 		{"thread_id": thread, "summary": "new", "room_id": "another-room"},
 	} {
@@ -614,6 +615,28 @@ func TestThreadSummaryEditing(t *testing.T) {
 	cleared := editor.read(t)["params"].(map[string]any)
 	if _, present := cleared["summary"]; present || cleared["title"] != "Deploy" || cleared["root_message_id"] != root {
 		t.Fatalf("clearing summary lost other metadata: %#v", cleared)
+	}
+	for i, update := range []map[string]any{
+		{"title": "Renamed", "summary": "Keep this summary"},
+		{"title": "Renamed again"},
+		{"title": ""},
+	} {
+		update["room_id"], update["thread_id"] = "general", thread
+		editor.write(t, map[string]any{"method": "thread", "id": fmt.Sprint("rename-", i), "params": update})
+		if editor.read(t)["result"].(map[string]any)["thread_id"] != thread {
+			t.Fatal("title edit changed thread ID")
+		}
+		metadata := editor.read(t)["params"].(map[string]any)
+		if metadata["summary"] != "Keep this summary" || metadata["root_message_id"] != root {
+			t.Fatalf("title edit lost other metadata: %#v", metadata)
+		}
+		if update["title"] == "" {
+			if _, present := metadata["title"]; present {
+				t.Fatal("empty title was not removed")
+			}
+		} else if metadata["title"] != update["title"] {
+			t.Fatalf("title not updated: %#v", metadata)
+		}
 	}
 }
 

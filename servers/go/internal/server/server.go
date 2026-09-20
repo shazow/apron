@@ -682,14 +682,22 @@ func (s *Server) saveThread(c *client, req request) (any, *rpcError) {
 		if err != nil {
 			return nil, err
 		}
-		summary, err := parseString(req.params, "summary", true)
-		if err != nil {
-			return nil, err
+		if _, present := req.params["root_message_id"]; present {
+			return nil, invalidParams("The thread root cannot be edited")
 		}
-		for _, key := range []string{"title", "root_message_id"} {
-			if _, present := req.params[key]; present {
-				return nil, invalidParams("Only the summary can be edited")
+		updates := make(map[string]string)
+		for _, key := range []string{"title", "summary"} {
+			if _, present := req.params[key]; !present {
+				continue
 			}
+			value, err := parseString(req.params, key, false)
+			if err != nil {
+				return nil, err
+			}
+			updates[key] = value
+		}
+		if len(updates) == 0 {
+			return nil, invalidParams("Supply a title or summary to edit")
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -697,11 +705,13 @@ func (s *Server) saveThread(c *client, req request) (any, *rpcError) {
 		if !exists {
 			return nil, invalidParams("Unknown thread %q", id)
 		}
-		// Summaries are shared room notes; any authenticated participant may edit them.
-		if summary == "" {
-			delete(metadata.fields, "summary")
-		} else {
-			metadata.fields["summary"] = summary
+		// Thread metadata is shared; any authenticated participant may edit it.
+		for key, value := range updates {
+			if value == "" {
+				delete(metadata.fields, key)
+			} else {
+				metadata.fields[key] = value
+			}
 		}
 		result := map[string]any{"thread_id": id}
 		if req.hasID {
