@@ -80,7 +80,8 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	}), posted.result.message_id);
 	expect(edit.result.message_id).toBe(posted.result.message_id);
 	const history = await page.evaluate(() => (window as any).request('history', { room_id: 'general', after: '0' }));
-	expect(history.result.history_floor).toBe('1');
+	expect(history.result.latest_log_id).toBeTruthy();
+	expect(history.result.history_log_id).toBe('1');
 	expect(history.result.entries.at(-1).message.body.text).toBe('verified returning owner');
 	await page.evaluate(() => (window as any).socket.close());
 });

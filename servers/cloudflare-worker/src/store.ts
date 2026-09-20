@@ -312,8 +312,8 @@ export interface Transition {
 
 export interface StoreRoomState {
   room_id: string;
-  latest_id: string;
-  history_floor: string;
+  latest_log_id: string;
+  history_log_id: string | null;
   last_commit_ms: number;
   name: string;
   topic?: string;
@@ -378,7 +378,8 @@ export interface StoreHistoryResult {
   first_id?: string;
   last_id?: string;
   more: boolean;
-  history_floor: string;
+  latest_log_id: string;
+  history_log_id: string | null;
 }
 
 export interface StoreCleanupResult {
@@ -635,6 +636,10 @@ function integerColumn(value: unknown, fallback = 0): number {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function historyLogId(head: number, floor: number): string | null {
+  return floor <= head ? idString(floor) : null;
 }
 
 function ensureText(value: unknown, field: string, maxBytes: number): string {
@@ -1422,8 +1427,8 @@ export class Store {
       const metadata = parseJson<Record<string, unknown>>(row.metadata_json, { name: "General" });
       return {
         room_id: ROOM_ID,
-        latest_id: idString(row.last_log_id),
-        history_floor: idString(row.history_floor),
+        latest_log_id: idString(row.last_log_id),
+        history_log_id: historyLogId(row.last_log_id, row.history_floor),
         last_commit_ms: row.last_commit_ms,
         name: typeof metadata.name === "string" ? metadata.name : "General",
         topic: typeof metadata.topic === "string" ? metadata.topic : undefined,
@@ -2486,7 +2491,11 @@ export class Store {
     const upper = Math.min(head, before ?? head);
     const limit = positiveLimit(query.limit, this.config.historyDefaultLimit, this.config.maxHistoryLimit);
     const maxBytes = Math.min(query.maxBytes ?? this.config.maxHistoryResponseBytes, this.config.maxHistoryResponseBytes);
-    if (lower > upper || head === 0 || floor > head) return { entries: [], more: false, history_floor: idString(floor) };
+    const latestLogId = idString(head);
+    const retainedHistoryLogId = historyLogId(head, floor);
+    if (lower > upper || head === 0 || floor > head) {
+      return { entries: [], more: false, latest_log_id: latestLogId, history_log_id: retainedHistoryLogId };
+    }
     const forward = after !== undefined;
     const sourceLimit = limit + 1;
     const params: unknown[] = [ROOM_ID, lower, upper];
@@ -2552,7 +2561,7 @@ export class Store {
     // while considering a non-empty entry.
     // A 128-byte request ID can require 768 JSON bytes when escaped.
     const responseOverhead = 1024;
-    let bytes = utf8Bytes(JSON.stringify({ entries: [], more: false, history_floor: idString(floor) }));
+    let bytes = utf8Bytes(JSON.stringify({ entries: [], more: false, latest_log_id: latestLogId, history_log_id: retainedHistoryLogId }));
     let stoppedForBytes = false;
     for (const row of rows.slice(0, sourceLimit)) {
       const entry: StoreHistoryEntry = { log_id: idString(row.log_id), message: parseJson<MessageSnapshot>(row.snapshot_json) };
@@ -2568,13 +2577,16 @@ export class Store {
     }
     const more = stoppedForBytes || rows.length > selected.length;
     if (!forward) selected.reverse();
-    if (!selected.length) return { entries: [], more: false, history_floor: idString(floor) };
+    if (!selected.length) {
+      return { entries: [], more: false, latest_log_id: latestLogId, history_log_id: retainedHistoryLogId };
+    }
     return {
       entries: selected,
       first_id: selected[0].log_id,
       last_id: selected[selected.length - 1].log_id,
       more,
-      history_floor: idString(floor),
+      latest_log_id: latestLogId,
+      history_log_id: retainedHistoryLogId,
     };
   }
 

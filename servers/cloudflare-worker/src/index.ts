@@ -419,7 +419,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 				name: "apron-cloudflare-demo/1",
 				caps: ["history", "edit"],
 				auth: ["webauthn", "anonymous"],
-				extensions: ["history_floor.v1", "webauthn.demo.v1"],
+				extensions: ["webauthn.demo.v1"],
 				demo: {
 					retention_seconds: limits.retentionSeconds,
 					cleanup_seconds: limits.cleanupSeconds,
@@ -626,8 +626,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 				params: {
 					room_id: room.room_id ?? "general",
 					name: room.name ?? "General",
-					latest_id: room.latest_id,
-					history_floor: room.history_floor,
+					latest_log_id: room.latest_log_id,
+					history_log_id: room.history_log_id,
 					...(room.topic ? { topic: room.topic } : {}),
 				},
 			};
@@ -791,7 +791,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	private announceRoomToAll(): void {
 		const room = this.store.getRoomState();
-		this.broadcast({ method: "room", params: { room_id: "general", name: room.name ?? "General", latest_id: room.latest_id, history_floor: room.history_floor, ...(room.topic ? { topic: room.topic } : {}) } });
+		this.broadcast({ method: "room", params: { room_id: "general", name: room.name ?? "General", latest_log_id: room.latest_log_id, history_log_id: room.history_log_id, ...(room.topic ? { topic: room.topic } : {}) } });
 	}
 
 	private recordViolation(socket: WebSocketConnection, error: ProtocolError): void {

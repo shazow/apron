@@ -6,13 +6,6 @@ The protocol is designed to be incremental by level, the minimal backend ("Level
 
 Let's start with a simple exchange:
 
-The public Cloudflare demo defines the additive
-[`history_floor.v1` and `webauthn.demo.v1` extensions](servers/cloudflare-worker/docs/extensions.md).
-For servers advertising `history_floor.v1`, history and recovery guarantees
-below apply to the retained interval: room heads remain historical committed
-heads, expired ranges are unavailable, and clients must validate checkpoints
-against the advertised floor. Other servers retain the base semantics below.
-
 After the WebSocket opens, the server announces itself, accepts authentication,
 and announces visible rooms. The client can then send messages; the server
 broadcasts them to all clients in the room, including the sender.
@@ -268,7 +261,7 @@ these announcements:
 
 ```json
 {"method": "room", "params": {
-  "room_id": "general", "name": "General", "topic": "optional", "latest_id": "1724803200042"
+  "room_id": "general", "name": "General", "topic": "optional", "latest_log_id": "1724803200042", "history_log_id": "1"
 }}
 ```
 
@@ -287,14 +280,28 @@ including client cache policy, are implementation-defined. Servers MUST
 announce a room before delivering entries in it. A Level 0 server announces
 one room. Join/leave/create require cap `rooms` (§6.3).
 
-`latest_id` is the maximum committed room log ID, including creations and updates;
-`"0"` denotes an empty log. It is REQUIRED on active room announcements when
-`history` is supported, OPTIONAL otherwise. For history-enabled rooms, an
-announcement establishing live delivery MUST establish `latest_id` at the same
-serialization point: transitions through `latest_id` are recoverable via history
-(complete or compacted history), and subsequent entries MUST be delivered live in
-log order. Re-announcements report the current head but MUST NOT advance
-client checkpoints or replace an active recovery bound (§5.1).
+`latest_log_id` is the maximum committed room log ID, including creations and
+updates; `"0"` denotes a room that has never had a committed transition. It never
+resets when history expires. `history_log_id` is the inclusive lower boundary
+of available history, encoded as a positive decimal string, or `null` when no
+history is available. A non-null boundary need not identify an existing entry
+and MUST NOT exceed `latest_log_id`. Both fields are REQUIRED on active room
+announcements when `history` is supported, OPTIONAL otherwise.
+
+Servers MAY discard an old prefix of history. Available history covers the
+interval `[history_log_id, latest_log_id]`; it does not guarantee recovery of
+changes before that interval. With no retained history, the effective lower
+boundary is `latest_log_id + 1`. This effective boundary MUST NOT decrease.
+For example, a never-used room announces `{"latest_log_id":"0","history_log_id":null}`;
+a room whose entire history expired might announce
+`{"latest_log_id":"200","history_log_id":null}`. Equal non-null IDs describe
+one available log position, not an empty interval.
+
+An announcement establishing live delivery MUST capture these fields at the
+same serialization point: retained transitions through `latest_log_id` are
+recoverable via history (complete or compacted), and subsequent entries MUST
+be delivered live in log order. Re-announcements report current boundaries but
+MUST NOT advance client checkpoints or replace an active recovery bound (§5.1).
 
 ### 3.5 Messages
 
@@ -493,7 +500,8 @@ Stateless window query over the room's **append-only transition log** (§2).
 Every entry has the form `{"log_id": "...", "message": {...}}`: the same
 complete snapshot as a server `message` notification (§3.5), without the
 `room_id` delivery field. Servers MAY return all source transitions
-or compact them as described below.
+or compact them as described below. Servers MAY retain only a suffix of the
+log; completeness guarantees apply to that available interval.
 
 ```jsonc
 // ->
@@ -504,9 +512,19 @@ or compact them as described below.
 }
 // <-
 {"id": "c9", "result": {
-  "entries": [...], "first_id": "1724803200000", "last_id": "1724803200199", "more": true
+  "entries": [...], "first_id": "1724803200000", "last_id": "1724803200199", "more": true,
+  "latest_log_id": "1724806800000", "history_log_id": "1724803200000"
 }}
 ```
+
+Every successful history result MUST include `latest_log_id` and
+`history_log_id` with the room-wide meanings from §3.4, captured consistently
+with the selected page. They describe server availability, not the page's
+first/last entries or the requested thread. An empty filtered or out-of-range
+page MUST NOT report `history_log_id: null` unless no room history is available.
+Retention may advance between requests; clients MUST inspect each response's
+boundary before applying its entries. Resource rejection is an error, not an
+empty successful history result.
 
 Optional string `thread_id` restricts the query to a thread in the room. Omitting
 it queries the whole room, including threaded messages. An unknown thread is
@@ -525,8 +543,8 @@ Bounds and ordering:
 
 - `after`/`before` are **inclusive log-ID bounds**; either MAY be omitted.
   They select transitions, not message IDs, creation dates, or current state.
-- Apply the bounds and thread filter, then select a contiguous slice of the
-  matching transitions. `limit` is a positive matching-entry count, applied
+- Intersect the bounds with available history, apply the thread filter, then
+  select a contiguous slice of the matching transitions. `limit` is a positive matching-entry count, applied
   **before compaction**; servers MAY clamp it to a positive value. An omitted
   limit uses a server default. With `after`, select the oldest matches;
   otherwise select the newest. Matching transitions retain their room log IDs,
@@ -534,7 +552,8 @@ Bounds and ordering:
 - `first_id`/`last_id` are the first/last log IDs of that source slice, before
   compaction. Return both for nonempty slices; omit both for an empty slice.
   `more` indicates additional matching source entries in the selected direction
-  within the requested bounds. Empty slices return `entries: []` and
+  within the requested bounds and available history. It does not promise that
+  expired history was covered. Empty slices return `entries: []` and
   `more: false`.
 - Forward continuation uses `after = last_id + 1`; backward continuation uses
   `before = first_id - 1`. Preserve the opposite bound and thread filter.
@@ -566,28 +585,42 @@ has not been loaded. Clients MUST retain the state with the greatest
 a newer snapshot. No earlier message state is needed to apply a replacement.
 Caching, eviction, and replay scheduling are implementation-defined.
 
-Naive recovery:
+Recovery:
 
-1. Capture `H = room.latest_id`; buffer live transitions above `H`.
-2. From empty state, page forward from `after: "0"` through `before: H`.
-   Keep the same thread filter, if any, on every page. With state checkpointed
-   through `C` for that scope, resume at `after: C+1` instead.
-3. Replay pages in order until `more: false`, then apply buffered live entries.
+1. Capture `H = room.latest_log_id` when live delivery begins; buffer live
+   transitions above H. Let F be `history_log_id`, or `latest_log_id + 1` when
+   it is null. Track the greatest observed effective boundary per room.
+2. Evict cached snapshots whose greatest applied **log ID**, not message ID,
+   is below F. A checkpoint C is usable only if `C + 1 >= F`. Otherwise clear
+   that scope's recovered state and checkpoint: missing changes may include
+   deletions or edits to cached messages.
+3. From empty state, page forward from F through `before: H`. With a valid
+   checkpoint C for that scope, resume at `after: C+1`. Preserve the thread
+   filter, if any. If F > H, the retained initial view is empty.
+4. Inspect each page's availability before applying it. If its effective
+   boundary overtakes the next unprocessed position, discard partial recovery
+   and rebuild using the newly observed boundary. Ignore obsolete in-flight
+   responses. A boundary increase within processed coverage only needs eviction.
+   Keep H fixed for this recovery; a response's newer head does not extend it.
+5. Replay pages until `more: false`, then apply buffered live entries. Never
+   resurrect entries below the greatest observed boundary, including from
+   stale responses or buffers. Completing recovery when F > H needs no pages.
 
-Checkpoints MUST represent processed log coverage and recoverable client state
-for their query scope: the whole room or a specific `(room_id, thread_id)` pair.
-Thread-filtered recovery MUST NOT advance a room-wide checkpoint or another
-thread's checkpoint. Completing forward recovery through fixed `H` covers that
-scope through `H`, even if no matching transition occurs at the head. Neither
-an announced head, a received live maximum, nor a per-message snapshot alone
-establishes a checkpoint. Interrupted recovery resumes from the last valid
-checkpoint for the same scope.
+Checkpoints MUST represent processed available log coverage and recoverable
+client state for their query scope: the whole room or a specific
+`(room_id, thread_id)` pair. Thread-filtered recovery MUST NOT advance a
+room-wide checkpoint or another thread's checkpoint. Completing forward
+recovery through fixed H covers that scope's retained interval through H,
+even if no matching transition occurs at the head. Neither an announced head,
+a received live maximum, nor a per-message snapshot alone establishes a
+checkpoint. Interrupted recovery resumes only from a checkpoint that remains
+valid against the latest observed availability boundary.
 
 Recovery boundary example:
 
 ```jsonc
 // <-
-{"method": "room", "params": {"room_id": "general", "name": "General", "latest_id": "1724803200120"}}
+{"method": "room", "params": {"room_id": "general", "name": "General", "latest_log_id": "1724803200120", "history_log_id": "1"}}
 // ->
 {"method": "history", "id": "recover1", "params": {
   "room_id": "general", "after": "1724803200101", "before": "1724803200120"

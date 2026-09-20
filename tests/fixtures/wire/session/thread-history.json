@@ -52,7 +52,8 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "latest_id": "120"
+              "latest_log_id": "120",
+              "history_log_id": "1"
             }
           }
         },
@@ -122,7 +123,8 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "latest_id": "130"
+              "latest_log_id": "130",
+              "history_log_id": "1"
             }
           }
         },
@@ -147,7 +149,9 @@
               ],
               "first_id": "100",
               "last_id": "100",
-              "more": true
+              "more": true,
+              "latest_log_id": "130",
+              "history_log_id": "1"
             }
           }
         },
@@ -186,7 +190,9 @@
               ],
               "first_id": "120",
               "last_id": "120",
-              "more": false
+              "more": false,
+              "latest_log_id": "130",
+              "history_log_id": "1"
             }
           }
         },
@@ -211,7 +217,9 @@
               ],
               "first_id": "100",
               "last_id": "100",
-              "more": true
+              "more": true,
+              "latest_log_id": "130",
+              "history_log_id": "1"
             }
           }
         },
@@ -249,7 +257,9 @@
               ],
               "first_id": "120",
               "last_id": "120",
-              "more": false
+              "more": false,
+              "latest_log_id": "130",
+              "history_log_id": "1"
             }
           }
         }

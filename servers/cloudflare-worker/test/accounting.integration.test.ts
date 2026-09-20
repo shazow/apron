@@ -129,19 +129,20 @@ describe('measured storage accounting', () => {
 			const size = store.databaseSize();
 
 			const cleanupResult = cleanup as { history_floor: string; deleted_transitions: number; deleted_messages: number };
-			const history = page as { entries: Array<{ log_id: string; message: { message_id: string } }>; history_floor: string };
+			const history = page as { entries: Array<{ log_id: string; message: { message_id: string } }>; latest_log_id: string; history_log_id: string | null };
 			expect(cleanupResult.deleted_transitions).toBe(2);
 			expect(cleanupResult.deleted_messages).toBe(1);
 			expect(history.entries).toHaveLength(2);
 			expect(history.entries.some((entry) => entry.message.message_id === firstMessageId)).toBe(true);
-			expect(history.entries.every((entry) => BigInt(entry.log_id) >= BigInt(history.history_floor))).toBe(true);
-			expect(room.history_floor).toBe(cleanupResult.history_floor);
-			expect(BigInt(room.latest_id)).toBeGreaterThanOrEqual(BigInt(room.history_floor));
+			expect(history.entries.every((entry) => BigInt(entry.log_id) >= BigInt(history.history_log_id!))).toBe(true);
+			expect(room.history_log_id).toBe(cleanupResult.history_floor);
+			expect(history.latest_log_id).toBe(room.latest_log_id);
+			expect(BigInt(room.latest_log_id)).toBeGreaterThanOrEqual(BigInt(room.history_log_id!));
 
 			return {
 				base,
 				cleanup: cleanupResult,
-				history: { floor: history.history_floor, entries: history.entries.map((entry) => ({ log_id: entry.log_id, message_id: entry.message.message_id })) },
+				history: { floor: history.history_log_id, entries: history.entries.map((entry) => ({ log_id: entry.log_id, message_id: entry.message.message_id })) },
 				operationCosts,
 				budget,
 				observed,

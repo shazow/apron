@@ -217,9 +217,8 @@
 		return 'connecting';
 	});
 	let demoRetentionNotice = $derived.by(() => {
-		if (!snapshot.server?.extensions?.includes('history_floor.v1')) return '';
-		const seconds = snapshot.server.demo?.retention_seconds;
-		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return 'This demo keeps roughly the last day of history.';
+		const seconds = snapshot.server?.demo?.retention_seconds;
+		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return '';
 		const hours = Math.max(1, Math.round(seconds / 3600));
 		return hours >= 20 && hours <= 28
 			? 'This demo keeps roughly the last day of history; older messages may expire.'

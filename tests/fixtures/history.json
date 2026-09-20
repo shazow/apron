@@ -1,0 +1,136 @@
+{
+  "format": 1,
+  "kind": "history",
+  "description": "Base-protocol room and history availability boundaries, including nullable empty history.",
+  "references": [
+    "PROTOCOL.md#51-history",
+    "servers/cloudflare-worker/SPEC.md#9-rolling-history-and-base-protocol-availability"
+  ],
+  "cases": [
+    {
+      "name": "empty-room",
+      "room": {
+        "method": "room",
+        "params": {
+          "room_id": "general",
+          "name": "General",
+          "latest_log_id": "0",
+          "history_log_id": null
+        }
+      },
+      "history": {
+        "id": "h0",
+        "result": {
+          "entries": [],
+          "more": false,
+          "latest_log_id": "0",
+          "history_log_id": null
+        }
+      },
+      "assertions": {
+        "latest_log_id": "0",
+        "history_log_id": null,
+        "empty": true
+      }
+    },
+    {
+      "name": "empty-filter-retains-room-boundary",
+      "room": {
+        "method": "room",
+        "params": {
+          "room_id": "general",
+          "name": "General",
+          "latest_log_id": "1790000001000",
+          "history_log_id": "1789913600001"
+        }
+      },
+      "history": {
+        "id": "h1",
+        "result": {
+          "entries": [],
+          "more": false,
+          "latest_log_id": "1790000001000",
+          "history_log_id": "1789913600001"
+        }
+      },
+      "assertions": {
+        "history_log_id": "1789913600001",
+        "latest_log_id": "1790000001000",
+        "empty": true
+      }
+    },
+    {
+      "name": "floor-advances-with-old-message-id-retained",
+      "room": {
+        "method": "room",
+        "params": {
+          "room_id": "general",
+          "latest_log_id": "900",
+          "history_log_id": "850"
+        }
+      },
+      "entries": [
+        {
+          "log_id": "800",
+          "message": {
+            "message_id": "700",
+            "from": { "user_id": "alice" },
+            "body": { "text": "old creation" }
+          }
+        },
+        {
+          "log_id": "875",
+          "message": {
+            "message_id": "700",
+            "from": { "user_id": "alice" },
+            "body": { "text": "recent edit" }
+          }
+        }
+      ],
+      "history": {
+        "id": "h2",
+        "result": {
+          "entries": [
+            {
+              "log_id": "875",
+              "message": {
+                "message_id": "700",
+                "from": { "user_id": "alice" },
+                "body": { "text": "recent edit" }
+              }
+            }
+          ],
+          "first_id": "875",
+          "last_id": "875",
+          "more": false,
+          "latest_log_id": "900",
+          "history_log_id": "850"
+        }
+      },
+      "assertions": {
+        "retained_message_ids": ["700"],
+        "discarded_log_ids": ["800"],
+        "floor_is_monotonic": true
+      }
+    },
+    {
+      "name": "exact-checkpoint-boundary",
+      "checkpoint": "99",
+      "floor": "100",
+      "assertions": {
+        "forward_recovery_after": "100",
+        "restart": false
+      }
+    },
+    {
+      "name": "overtaken-checkpoint",
+      "checkpoint": "98",
+      "floor": "100",
+      "assertions": {
+        "forward_recovery_after": "100",
+        "restart": true,
+        "rebuild_from": "100"
+      }
+    }
+  ]
+}

@@ -112,7 +112,8 @@ export interface HistoryPage {
 	first_id?: string;
 	last_id?: string;
 	more: boolean;
-	history_floor: string;
+	latest_log_id: string;
+	history_log_id: string | null;
 }
 
 export interface AdmissionSnapshot {

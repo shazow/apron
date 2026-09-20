@@ -64,8 +64,8 @@ export interface RoomAnnouncement {
 	room_id: string;
 	name?: string;
 	topic?: string;
-	latest_id?: string;
-	history_floor?: string;
+	latest_log_id?: string;
+	history_log_id?: string | null;
 	removed?: boolean;
 }
 
@@ -82,7 +82,8 @@ export interface HistoryResult {
 	first_id?: string;
 	last_id?: string;
 	more: boolean;
-	history_floor?: string;
+	latest_log_id: string;
+	history_log_id: string | null;
 }
 
 export interface RpcError extends JsonObject {

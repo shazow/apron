@@ -86,6 +86,19 @@ function errorCode(fn: () => unknown): string {
 	throw new Error("expected StoreError");
 }
 
+it("reports no retained history for an unused room", async () => {
+	await withStore("unused-boundary", {}, (store, clock) => {
+		const room = store.getRoomState();
+		expect(room.latest_log_id).toBe("0");
+		expect(room.history_log_id).toBeNull();
+
+		const page = store.history({ roomId: "general", after: 0n, now: clock.value });
+		expect(page.entries).toEqual([]);
+		expect(page.latest_log_id).toBe("0");
+		expect(page.history_log_id).toBeNull();
+	});
+});
+
 it("returns inclusive, bounded forward and backward pages with true bounds", async () => {
 	await withStore("pagination", {}, (store, clock) => {
 		const logs: bigint[] = [];
@@ -101,6 +114,8 @@ it("returns inclusive, bounded forward and backward pages with true bounds", asy
 		expect(forward.first_id).toBe(String(logs[0]));
 		expect(forward.last_id).toBe(String(logs[1]));
 		expect(forward.more).toBe(true);
+		expect(forward.latest_log_id).toBe(String(logs[50]));
+		expect(forward.history_log_id).toBe("1");
 
 		const forwardContinuation = store.history({
 			roomId: "general",
@@ -132,6 +147,13 @@ it("returns inclusive, bounded forward and backward pages with true bounds", asy
 		const finalPage = store.history({ roomId: "general", after: logs[49] + 1n, limit: 50, now: clock.value });
 		expect(finalPage.entries.map((entry) => BigInt(entry.log_id))).toEqual([logs[50]]);
 		expect(finalPage.more).toBe(false);
+		expect(finalPage.latest_log_id).toBe(String(logs[50]));
+		expect(finalPage.history_log_id).toBe("1");
+
+		const limitedEmpty = store.history({ roomId: "general", after: logs[50] + 1n, limit: 50, now: clock.value });
+		expect(limitedEmpty.entries).toEqual([]);
+		expect(limitedEmpty.latest_log_id).toBe(String(logs[50]));
+		expect(limitedEmpty.history_log_id).toBe("1");
 
 		const exactRange = store.history({ roomId: "general", after: logs[10], before: logs[11], limit: 50, now: clock.value });
 		expect(exactRange.entries.map((entry) => BigInt(entry.log_id))).toEqual(logs.slice(10, 12));
@@ -181,11 +203,16 @@ it("distinguishes unknown threads from known empty threads", async () => {
 	await withStore("thread-filters", {}, (store, clock) => {
 		const created = store.mutateThread(threadInput(clock, "alice", "empty-thread", { title: "No messages yet" }));
 		const threadId = String(created.result.thread_id);
+		logId(store.mutate(messageInput(clock, "alice", "outside-thread", {
+			body: { format: "plain", text: "outside the empty thread" },
+		})));
 		const empty = store.history({ roomId: "general", threadId, limit: 50, now: clock.value });
 		expect(empty.entries).toEqual([]);
 		expect(empty.more).toBe(false);
 		expect(empty.first_id).toBeUndefined();
 		expect(empty.last_id).toBeUndefined();
+		expect(empty.latest_log_id).toBeTruthy();
+		expect(empty.history_log_id).toBe("1");
 
 		expect(errorCode(() => store.history({ roomId: "general", threadId: "t_missing", now: clock.value }))).toBe("invalid_params");
 	});
@@ -196,7 +223,7 @@ it("advances a fully expired nonzero head to head plus one and keeps future IDs 
 		const logs = [0, 1, 2].map((index) => logId(store.mutate(messageInput(clock, "alice", `expired-${index}`, {
 			body: { format: "plain", text: `expired-${index}` },
 		}))));
-		const head = store.getRoomState().latest_id;
+		const head = store.getRoomState().latest_log_id;
 		expect(head).toBe(String(logs[2]));
 
 		clock.value += RETENTION_MS + 1;
@@ -204,18 +231,19 @@ it("advances a fully expired nonzero head to head plus one and keeps future IDs 
 		const expectedFloor = logs[2] + 1n;
 		expect(cleanup.history_floor).toBe(String(expectedFloor));
 		expect(cleanup.latest_id).toBe(String(logs[2]));
-		expect(store.getRoomState().history_floor).toBe(String(expectedFloor));
+		expect(store.getRoomState().history_log_id).toBeNull();
 
 		const empty = store.history({ roomId: "general", after: 0n, limit: 50, now: clock.value });
 		expect(empty.entries).toEqual([]);
 		expect(empty.more).toBe(false);
-		expect(empty.history_floor).toBe(String(expectedFloor));
+		expect(empty.latest_log_id).toBe(String(logs[2]));
+		expect(empty.history_log_id).toBeNull();
 
 		const future = logId(store.mutate(messageInput(clock, "alice", "after-expiry", {
 			body: { format: "plain", text: "new" },
 		})));
 		expect(future).toBeGreaterThanOrEqual(expectedFloor);
-		expect(store.getRoomState().latest_id).toBe(String(future));
+		expect(store.getRoomState().latest_log_id).toBe(String(future));
 	});
 });
 
@@ -274,10 +302,12 @@ it("continues bounded cleanup while retaining recent roots and thread departures
 		expect(floors).toEqual([...floors].sort((left, right) => Number(BigInt(left) - BigInt(right))));
 
 		const room = store.getRoomState();
-		expect(BigInt(room.history_floor)).toBe(lastExpiredLog + 1n);
-		expect(BigInt(room.history_floor)).toBeLessThan(recentRootLog);
-		expect(BigInt(room.latest_id)).toBe(departureLog);
+		expect(BigInt(room.history_log_id!)).toBe(lastExpiredLog + 1n);
+		expect(BigInt(room.history_log_id!)).toBeLessThan(recentRootLog);
+		expect(BigInt(room.latest_log_id)).toBe(departureLog);
 		const history = store.history({ roomId: "general", after: 0n, limit: 50, now: clock.value });
+		expect(history.latest_log_id).toBe(departureLog.toString());
+		expect(history.history_log_id).toBe(room.history_log_id);
 		expect(history.entries.map((entry) => BigInt(entry.log_id))).toEqual([recentRootLog, departureLog]);
 		expect((history.entries[0].message.body as Record<string, unknown> | undefined)?.text).toBe("root-recent");
 		expect((history.entries[1].message.body as Record<string, unknown> | undefined)?.text).toBe("reply-departed");

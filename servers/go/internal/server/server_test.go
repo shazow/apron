@@ -59,6 +59,12 @@ func TestShutdownClosesConnections(t *testing.T) {
 
 func dialTestClient(t *testing.T, httpServer *httptest.Server, id string, full bool) *testClient {
 	t.Helper()
+	c, _ := dialTestClientWithRoom(t, httpServer, id, full)
+	return c
+}
+
+func dialTestClientWithRoom(t *testing.T, httpServer *httptest.Server, id string, full bool) (*testClient, map[string]any) {
+	t.Helper()
 	wsURL := "ws" + httpServer.URL[len("http"):] + "/ws"
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	ws, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -92,7 +98,7 @@ func dialTestClient(t *testing.T, httpServer *httptest.Server, id string, full b
 	if room["method"] != "room" {
 		t.Fatalf("auth follow-up = %#v, want room", room)
 	}
-	return c
+	return c, room
 }
 
 func (c *testClient) write(t *testing.T, value any) {
@@ -195,6 +201,41 @@ func historyPage(t *testing.T, c *testClient, params map[string]any) map[string]
 		t.Fatalf("history failed: %#v", frame)
 	}
 	return result
+}
+
+func TestHistoryBoundsOnRoomAndFilteredPages(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	c, room := dialTestClientWithRoom(t, httpServer, "a", false)
+
+	assertBounds := func(label string, value map[string]any, latest string, floor any) {
+		t.Helper()
+		if got, ok := value["latest_log_id"].(string); !ok || got != latest {
+			t.Fatalf("%s latest_log_id = %#v, want %q", label, value["latest_log_id"], latest)
+		}
+		got, present := value["history_log_id"]
+		if !present || got != floor {
+			t.Fatalf("%s history_log_id = %#v (present %v), want %#v", label, got, present, floor)
+		}
+	}
+
+	roomParams := room["params"].(map[string]any)
+	assertBounds("initial room", roomParams, "0", nil)
+	empty := historyPage(t, c, map[string]any{})
+	assertBounds("initial history", empty, "0", nil)
+	if len(empty["entries"].([]any)) != 0 || empty["more"] != false {
+		t.Fatalf("initial history page: %#v", empty)
+	}
+
+	id, _ := save(t, c, "create", map[string]any{"body": map[string]any{"text": "hello"}})
+	_, replayRoom := dialTestClientWithRoom(t, httpServer, "b", false)
+	assertBounds("nonempty room", replayRoom["params"].(map[string]any), id, "1")
+
+	thread := createThread(t, c, "thread", map[string]any{})
+	filtered := historyPage(t, c, map[string]any{"thread_id": thread})
+	assertBounds("empty filtered history", filtered, id, "1")
+	if len(filtered["entries"].([]any)) != 0 || filtered["more"] != false {
+		t.Fatalf("empty filtered history page: %#v", filtered)
+	}
 }
 
 func TestMessageSnapshotsReplaceEditableState(t *testing.T) {

@@ -135,6 +135,22 @@ type room struct {
 	threads map[string]threadMetadata
 }
 
+// historyFields returns the room's committed log head and the inclusive lower
+// bound covered by retained history. Callers must hold s.mu while using these
+// fields so that the bounds describe the same state as any page being built.
+func (r room) historyFields() map[string]any {
+	fields := map[string]any{
+		"latest_log_id":  strconv.FormatInt(r.lastID, 10),
+		"history_log_id": nil,
+	}
+	if len(r.entries) > 0 {
+		// The Go server retains every transition, and all generated log IDs are
+		// positive, so every positive log ID is covered once history exists.
+		fields["history_log_id"] = "1"
+	}
+	return fields
+}
+
 type dedupResult struct {
 	fingerprint string
 	result      any
@@ -543,13 +559,16 @@ func (s *Server) announceAuthenticated(c *client, req request, result map[string
 	if req.hasID {
 		frames = append(frames, response(req.id, req.full, result))
 	}
+	roomParams := map[string]any{
+		"room_id": s.room.id,
+		"name":    "General",
+	}
+	for key, value := range s.room.historyFields() {
+		roomParams[key] = value
+	}
 	frames = append(frames, map[string]any{
 		"method": "room",
-		"params": map[string]any{
-			"room_id":   s.room.id,
-			"name":      "General",
-			"latest_id": strconv.FormatInt(s.room.lastID, 10),
-		},
+		"params": roomParams,
 	})
 	threadIDs := make([]string, 0, len(s.room.threads))
 	for threadID := range s.room.threads {
@@ -858,6 +877,9 @@ func (s *Server) history(req request) (any, *rpcError) {
 		entries = append(entries, entry.historyEntry())
 	}
 	result := map[string]any{"entries": entries, "more": more}
+	for key, value := range s.room.historyFields() {
+		result[key] = value
+	}
 	if len(matching) > 0 {
 		result["first_id"] = matching[0].idString()
 		result["last_id"] = matching[len(matching)-1].idString()

@@ -66,12 +66,14 @@ the design system changes rather than editing it here; the few `app-*` rules in
 the page are layout glue only.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol`. When `history_floor.v1` is advertised, recovery tracks the
-monotonic floor and a per-scope checkpoint, captures a fixed room head, pages
-complete snapshots from the retained boundary, and buffers bounded live
-snapshots until recovery finishes. A checkpoint at `floor - 1` resumes safely;
-if retention overtakes the next uncovered range, the client rebuilds from the
-new floor and ignores obsolete replies. Sparse timestamp log IDs are expected.
+`src/lib/protocol`. Recovery uses the base protocol's `latest_log_id` and
+`history_log_id` fields. It tracks the monotonic effective boundary and a
+per-scope checkpoint, captures a fixed room head, pages complete snapshots from
+the retained boundary, and buffers bounded live snapshots until recovery
+finishes. A checkpoint at `history_log_id - 1` resumes safely; if retention
+overtakes the next uncovered range, the client rebuilds from the new boundary
+and ignores obsolete replies. `history_log_id: null` means the effective
+boundary is `latest_log_id + 1`. Sparse timestamp log IDs are expected.
 Opening a thread fetches its history independently with `thread_id` and a fixed
 head, without advancing room coverage. The reducer installs the greatest
 `log_id` for each `message_id`, so overlapping history and live delivery cannot

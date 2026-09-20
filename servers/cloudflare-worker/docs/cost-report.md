@@ -111,7 +111,7 @@ independent.
 
 ## Retention, maintenance, and persistent state
 
-The three-day cleanup advanced `history_floor` to `1790172000001`, removed two
+The three-day cleanup advanced the internal retention floor (`history_floor` in SQLite) to `1790172000001`, removed two
 old transition rows, removed the unreferenced old current message, and kept
 the edited message whose latest transition was still inside the retention
 window. It also removed two expired accepted-request rows without changing

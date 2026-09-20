@@ -18,7 +18,7 @@ it('rolls back failed writes atomically while keeping their resource reservation
 			params: { room_id: 'general', body: { text: 'atomic message' } },
 		};
 		expect(() => store.mutate(input)).toThrow('injected snapshot failure');
-		expect(store.getRoomState().latest_id).toBe(before.latest_id);
+		expect(store.getRoomState().latest_log_id).toBe(before.latest_log_id);
 		for (const table of ['transitions', 'messages', 'accepted_requests', 'principal_limits']) {
 			expect(state.storage.sql.exec(`SELECT COUNT(*) AS n FROM ${table}`).one().n).toBe(0);
 		}

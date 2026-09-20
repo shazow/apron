@@ -37,7 +37,9 @@ async function authenticate(peer: Awaited<ReturnType<typeof connect>>) {
 	const room = await peer.next();
 	expect(room.method).toBe('room');
 	expect(room.params.room_id).toBe('general');
-	expect(room.params.history_floor).toMatch(/^[1-9][0-9]*$/);
+	expect(room.params.latest_log_id).toMatch(/^(0|[1-9][0-9]*)$/);
+	if (room.params.latest_log_id === '0') expect(room.params.history_log_id).toBeNull();
+	else expect(room.params.history_log_id).toMatch(/^[1-9][0-9]*$/);
 	return auth.result.you;
 }
 

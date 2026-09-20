@@ -15,6 +15,7 @@ import {
 	toTransition,
 	type MessageRecord,
 	type JsonObject,
+	type JsonValue,
 	type RpcError,
 	type ServerParams,
 	type Identity,
@@ -29,8 +30,8 @@ export interface RoomSnapshot {
 	id: string;
 	name: string;
 	topic?: string;
-	latestId?: string;
-	historyFloor?: string;
+	latestLogId?: string;
+	historyLogId?: string | null;
 	timeline: TimelineState;
 	threads: ThreadAnnouncement[];
 	recovering: boolean;
@@ -78,7 +79,7 @@ export interface ChatClientOptions {
 }
 
 interface RoomState extends RoomSnapshot {
-	/** Internal monotonic floor. Older servers are treated as floor "1". */
+	/** Internal monotonic effective lower boundary. */
 	floor: string;
 	/** Highest room-log coverage established by recovery. */
 	checkpoint: string;
@@ -118,12 +119,19 @@ interface TypingState {
 	timer?: ReturnType<typeof setTimeout>;
 }
 
+type ValidHistoryResponse = JsonObject & {
+	entries: JsonValue[];
+	more: boolean;
+	latest_log_id: string;
+	history_log_id: string | null;
+};
+
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
 const MAX_RECONNECT_DELAY_MS = 10_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
-const DEFAULT_HISTORY_FLOOR = '1';
+const DEFAULT_HISTORY_BOUNDARY = '1';
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
 
 /** A browser-only protocol session; instantiate one per mounted UI. */
@@ -281,8 +289,8 @@ export class ChatClient {
 				id: room.id,
 				name: room.name,
 				...(room.topic !== undefined ? { topic: room.topic } : {}),
-				...(room.latestId !== undefined ? { latestId: room.latestId } : {}),
-				...(room.historyFloor !== undefined ? { historyFloor: room.historyFloor } : {}),
+				...(room.latestLogId !== undefined ? { latestLogId: room.latestLogId } : {}),
+				...(room.historyLogId !== undefined ? { historyLogId: room.historyLogId } : {}),
 				timeline: room.timeline,
 				threads: room.threads,
 				recovering: Boolean(room.recovery),
@@ -438,7 +446,7 @@ export class ChatClient {
 	async loadThread(roomId: string, threadId: string): Promise<void> {
 		const room = this.rooms.get(roomId);
 		if (!room || !this.server?.caps?.includes('history')) return;
-		const head = room.latestId;
+		const head = room.latestLogId;
 		if (!head || head === '0') return;
 		const generation = (room.threadGenerations.get(threadId) ?? 0) + 1;
 		room.threadGenerations.set(threadId, generation);
@@ -446,12 +454,20 @@ export class ChatClient {
 		if (compareLogIds(increment(checkpoint), room.floor) < 0) checkpoint = decrement(room.floor);
 		let after = nextRecoveryAfter(checkpoint, room.floor);
 		while (compareLogIds(after, head) <= 0) {
-			const result = await this.enqueueRequest('history', {
-				room_id: roomId, thread_id: threadId, after, before: head, limit: HISTORY_PAGE_SIZE
-			}, { visible: false, allowBeforeAuth: false }).promise;
+			const result = await this.enqueueRequest(
+				'history',
+				{
+					room_id: roomId,
+					thread_id: threadId,
+					after,
+					before: head,
+					limit: HISTORY_PAGE_SIZE
+				},
+				{ visible: false, allowBeforeAuth: false }
+			).promise;
 			if (this.rooms.get(roomId) !== room || room.threadGenerations.get(threadId) !== generation) return;
-			if (!Array.isArray(result.entries) || typeof result.more !== 'boolean') throw new Error('Invalid history response');
-			this.observeHistoryFloor(room, result.history_floor);
+			if (!validHistoryMetadata(result)) throw new Error('Invalid history response');
+			this.observeHistoryResponse(room, result.history_log_id, result.latest_log_id);
 			if (this.rooms.get(roomId) !== room || room.threadGenerations.get(threadId) !== generation) return;
 			if (compareLogIds(nextRecoveryBoundary(after), room.floor) < 0) {
 				checkpoint = decrement(room.floor);
@@ -664,26 +680,24 @@ export class ChatClient {
 			timeline: createTimeline(roomId),
 			threads: [],
 			recovering: false,
-			floor: DEFAULT_HISTORY_FLOOR,
+			floor: DEFAULT_HISTORY_BOUNDARY,
 			checkpoint: '0',
 			threadCheckpoints: new Map(),
 			threadGenerations: new Map()
 		};
-		const previousHead = room.latestId;
+		const previousHead = room.latestLogId;
 		room.name = typeof params.name === 'string' ? params.name : roomId;
 		room.topic = typeof params.topic === 'string' ? params.topic : undefined;
-		if (params.latest_id === '0' || isLogId(params.latest_id)) {
-			if (!room.latestId || compareWireHead(params.latest_id, room.latestId) > 0 || !existing) room.latestId = params.latest_id;
-		}
-		// Install the advertised head before processing a floor advance so a
-		// rebuild captures the newest fixed head when both change together.
-		this.observeHistoryFloor(room, params.history_floor);
+		const announcedHead = isWireHead(params.latest_log_id) ? params.latest_log_id : undefined;
+		this.observeLatestHead(room, announcedHead);
+		// Record the head before the boundary so a new recovery captures it.
+		// An active recovery keeps its original fixed head.
+		this.observeHistoryBoundary(room, params.history_log_id, announcedHead ?? room.latestLogId);
 		this.rooms.set(roomId, room);
 		this.activeRoomId ??= roomId;
-		const advertisedHead = params.latest_id === '0' || isLogId(params.latest_id) ? params.latest_id : room.latestId;
+		const advertisedHead = room.latestLogId;
 		const headAdvanced = advertisedHead !== undefined && (!previousHead || compareWireHead(advertisedHead, previousHead) > 0);
-		const needsRecovery = !existing || Boolean(room.recoveryError) || headAdvanced ||
-			(advertisedHead !== undefined && compareWireHead(room.checkpoint, advertisedHead) < 0 && !room.recovery);
+		const needsRecovery = !existing || Boolean(room.recoveryError) || headAdvanced || (advertisedHead !== undefined && compareWireHead(room.checkpoint, advertisedHead) < 0 && !room.recovery);
 		if (needsRecovery && this.server?.caps?.includes('history') && advertisedHead !== undefined && !room.recovery) {
 			this.startRecovery(room, advertisedHead, Boolean(room.recoveryError || !existing || room.checkpoint === '0'));
 		}
@@ -704,7 +718,8 @@ export class ChatClient {
 		this.emit();
 	}
 
-	private startRecovery(room: RoomState, head: string, reset = true): void {
+	private startRecovery(room: RoomState, head: string, reset = true, preserveBuffer = false): void {
+		const retainedBuffer = preserveBuffer ? (room.recovery?.buffer ?? []).filter(({ log_id }) => compareLogIds(log_id, room.floor) >= 0) : [];
 		this.retireRecoveryRequest(room);
 		const generation = (room.recovery?.generation ?? 0) + 1;
 		const floor = room.floor;
@@ -714,8 +729,8 @@ export class ChatClient {
 		room.recovery = {
 			head,
 			nextAfter,
-			buffer: [],
-			bufferBytes: 0,
+			buffer: retainedBuffer,
+			bufferBytes: retainedBuffer.reduce((bytes, transition) => bytes + transitionBytes(transition), 0),
 			replay: new TimelineReplay(base),
 			generation
 		};
@@ -750,12 +765,12 @@ export class ChatClient {
 	private applyHistoryPage(room: RoomState, result: JsonObject, generation: number): void {
 		const recovery = room.recovery;
 		if (!recovery || recovery.generation !== generation) return;
-		this.observeHistoryFloor(room, result.history_floor);
-		if (room.recovery !== recovery || recovery.generation !== generation) return;
-		if (!Array.isArray(result.entries) || typeof result.more !== 'boolean') {
+		if (!validHistoryMetadata(result)) {
 			this.abortRecovery(room, 'Invalid history response');
 			return;
 		}
+		this.observeHistoryResponse(room, result.history_log_id, result.latest_log_id);
+		if (room.recovery !== recovery || recovery.generation !== generation) return;
 		const transitions = result.entries
 			.map(toTransition)
 			.filter((entry): entry is Transition => Boolean(entry))
@@ -788,7 +803,9 @@ export class ChatClient {
 		recovery.replay.apply(buffered);
 		recovery.replay.pruneBefore(room.floor);
 		room.timeline = recovery.replay.finish();
-		room.checkpoint = maxLogId(room.checkpoint, maxLogId(decrement(recovery.nextAfter), recovery.head));
+		// A response may report a newer head than this recovery's fixed H. That
+		// metadata must not turn H+1 and later live entries into a checkpoint.
+		room.checkpoint = maxLogId(room.checkpoint, recovery.head);
 		room.recovery = undefined;
 		this.showReconnectDivider = [...this.rooms.values()].every((entry) => !entry.recovery);
 	}
@@ -804,7 +821,7 @@ export class ChatClient {
 		if (!room) return;
 		const retained = transitions.filter(({ log_id }) => compareLogIds(log_id, room.floor) >= 0);
 		for (const { log_id } of retained) {
-			if (!room.latestId || compareLogIds(log_id, room.latestId) > 0) room.latestId = log_id;
+			if (!room.latestLogId || compareWireHead(log_id, room.latestLogId) > 0) room.latestLogId = log_id;
 		}
 		if (room.recovery && bufferDuringRecovery) {
 			for (const transition of retained) {
@@ -822,44 +839,68 @@ export class ChatClient {
 		this.emit();
 	}
 
-	/** Apply an advertised floor monotonically and invalidate only unavailable snapshots. */
-	private observeHistoryFloor(room: RoomState, advertised: unknown): void {
-		if (!isLogId(advertised)) return;
-		if (room.historyFloor === undefined) room.historyFloor = advertised;
-		if (compareLogIds(advertised, room.floor) <= 0) return;
-		room.floor = advertised;
-		room.historyFloor = advertised;
-		room.timeline = pruneTimelineBefore(room.timeline, advertised);
+	private observeLatestHead(room: RoomState, advertised: unknown): string | undefined {
+		if (!isWireHead(advertised)) return room.latestLogId;
+		if (!room.latestLogId || compareWireHead(advertised, room.latestLogId) > 0) room.latestLogId = advertised;
+		return advertised;
+	}
+
+	private observeHistoryResponse(room: RoomState, advertised: unknown, responseHead: unknown): void {
+		const head = this.observeLatestHead(room, responseHead);
+		this.observeHistoryBoundary(room, advertised, head);
+	}
+
+	/** Apply an advertised effective boundary monotonically and invalidate stale state. */
+	private observeHistoryBoundary(room: RoomState, advertised: unknown, responseHead: unknown): void {
+		const historyLogId = advertised === null ? null : isLogId(advertised) ? advertised : undefined;
+		const head = isWireHead(responseHead) ? responseHead : undefined;
+		if (historyLogId === undefined) return;
+		const effective = historyLogId === null ? (head === undefined ? undefined : increment(head)) : historyLogId;
+		if (!effective || !isLogId(effective)) return;
+		if (compareLogIds(effective, room.floor) <= 0) {
+			if (compareLogIds(effective, room.floor) === 0 && (room.historyLogId === undefined || (room.historyLogId === null && historyLogId !== null))) {
+				room.historyLogId = historyLogId;
+			}
+			return;
+		}
+
+		room.floor = effective;
+		room.historyLogId = historyLogId;
+		room.timeline = pruneTimelineBefore(room.timeline, effective);
 		for (const [thread, checkpoint] of room.threadCheckpoints) {
-			if (compareLogIds(increment(checkpoint), advertised) < 0) room.threadCheckpoints.delete(thread);
+			if (compareLogIds(increment(checkpoint), effective) < 0) {
+				room.threadCheckpoints.delete(thread);
+			}
 		}
 		const recovery = room.recovery;
 		if (!recovery) {
-			if (compareLogIds(increment(room.checkpoint), advertised) < 0 && this.server?.caps?.includes('history') && room.latestId && room.latestId !== '0') {
-				this.startRecovery(room, room.latestId, true);
+			if (compareLogIds(increment(room.checkpoint), effective) < 0 && this.server?.caps?.includes('history') && room.latestLogId && room.latestLogId !== '0') {
+				this.startRecovery(room, room.latestLogId, true);
 			}
 			this.emit();
 			return;
 		}
-		recovery.replay.pruneBefore(advertised);
+		recovery.replay.pruneBefore(effective);
 		const retained: Transition[] = [];
 		recovery.bufferBytes = 0;
 		for (const transition of recovery.buffer) {
-			if (compareLogIds(transition.log_id, advertised) < 0) continue;
+			if (compareLogIds(transition.log_id, effective) < 0) continue;
 			retained.push(transition);
 			recovery.bufferBytes += transitionBytes(transition);
 		}
 		recovery.buffer = retained;
-		// `nextAfter` is C + 1. Equality is the safe exact-boundary case; only a
-		// strictly larger floor means a retained gap was discarded underneath us.
-		if (compareLogIds(advertised, nextRecoveryBoundary(recovery.nextAfter)) > 0) {
-			this.startRecovery(room, room.latestId && compareWireHead(room.latestId, recovery.head) > 0 ? room.latestId : recovery.head, true);
+		// `nextAfter` is the first unprocessed position. Equality is safe; a
+		// strictly larger boundary means a retained gap was discarded underneath us.
+		if (compareLogIds(effective, nextRecoveryBoundary(recovery.nextAfter)) > 0) {
+			// Keep this recovery's fixed H. Buffered live transitions above H must
+			// survive the rebuild and be applied after the retained range is replayed.
+			this.startRecovery(room, recovery.head, true, true);
 		}
 		this.emit();
 	}
 
 	private restartRecoveryAfterOverflow(room: RoomState): void {
-		const head = room.latestId && room.latestId !== '0' ? room.latestId : room.recovery?.head ?? '0';
+		const head = room.latestLogId && room.latestLogId !== '0' ? room.latestLogId : (room.recovery?.head ?? '0');
 		this.startRecovery(room, head, true);
 		this.error = 'History is arriving faster than the client can recover; reconnecting.';
 		this.scheduleReconnect();
@@ -1132,6 +1173,16 @@ function nextRecoveryAfter(checkpoint: string, floor: string): string {
 
 function maxLogId(a: string, b: string): string {
 	return compareWireHead(a, b) >= 0 ? a : b;
+}
+
+function isWireHead(value: unknown): value is string {
+	return value === '0' || isLogId(value);
+}
+
+function validHistoryMetadata(result: JsonObject): result is ValidHistoryResponse {
+	if (!Array.isArray(result.entries) || typeof result.more !== 'boolean' || !isWireHead(result.latest_log_id)) return false;
+	if (result.history_log_id !== null && !isLogId(result.history_log_id)) return false;
+	return result.history_log_id === null || compareLogIds(result.history_log_id, result.latest_log_id) <= 0;
 }
 
 function compareWireHead(a: string, b: string): number {

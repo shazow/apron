@@ -94,7 +94,7 @@ it("keeps log IDs strictly increasing across equal and backward clocks", async (
 		expect(firstLog).toBeGreaterThan(0);
 		expect(secondLog).toBeGreaterThan(firstLog);
 		expect(thirdLog).toBeGreaterThan(secondLog);
-		expect(store.getRoomState().latest_id).toBe(String(thirdLog));
+		expect(store.getRoomState().latest_log_id).toBe(String(thirdLog));
 	});
 });
 
@@ -235,7 +235,7 @@ it("keeps a recently edited message after its creation transition expires", asyn
 		const cleanup = store.runCleanup(clock.value);
 		expect(cleanup.history_floor).toBe(String(Number(creationLog) + 1));
 		const history = store.history({ roomId: "general", after: 0n, limit: 50, maxBytes: 256 * 1024, now: clock.value });
-		expect(history.history_floor).toBe(String(Number(creationLog) + 1));
+		expect(history.history_log_id).toBe(String(Number(creationLog) + 1));
 		expect(history.entries.map((entry) => entry.log_id)).toEqual([editLog]);
 		expect((history.entries[0].message.body as Record<string, unknown> | undefined)?.text).toBe("recent edit");
 	});

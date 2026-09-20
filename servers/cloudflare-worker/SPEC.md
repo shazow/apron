@@ -24,7 +24,7 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 - Anonymous authentication and verified WebAuthn registration/login.
 - Persistent request deduplication for mutating operations.
 - Rolling 24-hour history with hourly cleanup, using the same room ID indefinitely.
-- A documented `history_floor` extension and client support.
+- Base-protocol history availability boundaries and client recovery support.
 - Enforced application budgets, including cleanup, auth, and quota bookkeeping.
 
 ### Non-goals
@@ -83,14 +83,14 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":2,"name":"apron-cloudflare-demo/1","caps":["history","edit"],"auth":["webauthn","anonymous"],"extensions":["history_floor.v1","webauthn.demo.v1"],"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"anonymous_posts_per_minute":5,"registered_posts_per_minute":20}}}
+{"method":"server","params":{"protocol":2,"name":"apron-cloudflare-demo/1","caps":["history","edit"],"auth":["webauthn","anonymous"],"extensions":["webauthn.demo.v1"],"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"anonymous_posts_per_minute":5,"registered_posts_per_minute":20}}}
 ```
 
 `extensions` and `demo` are additive server-announcement fields defined by this implementation. They are not existing base-protocol capabilities. Document them in `PROTOCOL.md` or a linked protocol-extension document. Every later `server` announcement is a full replacement, including auth/caps/extension metadata. Temporary throttling does not mean a capability is unimplemented.
 
-The extension documentation must explicitly scope the base protocol's history/recovery promises to the retained interval. An optional extra JSON field alone does not define that semantic change; update the explanations of room heads, expired ranges, and client checkpoints together. Keep protocol version 2 for this additive deployment extension unless repository policy requires a version change.
+History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room announcements and history results, following protocol section 5.1. This revision replaces the old `latest_id` spelling; update repository implementations together.
 
-After final authentication, reply with `result.you`, announce `general` with its current `latest_id` and `history_floor`, and then announce all existing thread metadata. Do not send room messages to unauthenticated sockets. Establish the room's head and eligibility for live delivery at one serialization point.
+After final authentication, reply with `result.you`, announce `general` with its current `latest_log_id` and `history_log_id`, and then announce all existing thread metadata. Do not send room messages to unauthenticated sockets. Establish the room's head and eligibility for live delivery at one serialization point.
 
 ### Framing, ordering, and errors
 
@@ -316,7 +316,7 @@ Deduplicate accepted mutating requests by `(user_id, request_id)` for 24 hours a
 
 Check an unexpired duplicate before applying new-post quotas or deciding an old message has expired; a previously accepted result remains valid through the dedup window. Expired records are logically absent even if physical cleanup is pending. Failed/limited operations are not recorded as accepted. Notifications have no dedup guarantee. After the documented TTL, replaying an old request ID may execute again; the client must not retry stale queued operations indefinitely.
 
-## 9. Rolling history and `history_floor.v1`
+## 9. Rolling history and base-protocol availability
 
 Retention replaces all earlier daily-reset/room-rotation ideas. Keep `general` unchanged. Every hour, expire the prefix of transitions committed more than 24 hours earlier. Healthy operation normally exposes 24–25 hours of transitions; scheduling delay or quota exhaustion can delay physical cleanup. This is a demo history policy, not a secure-erasure SLA or a guarantee about backups, provider recovery, or copies on clients.
 
@@ -330,25 +330,37 @@ Retention replaces all earlier daily-reset/room-rotation ideas. Keep `general` u
 
 ### Floor definition and wire shape
 
-`history_floor` is a positive decimal-string log boundary F. All transitions with `log_id < F` have been logically discarded; transitions at/above F, if committed, are available. F starts at `"1"` and never decreases. It is a coverage boundary, not necessarily an existing entry or a timestamp, and not a client checkpoint.
+Internally maintain a positive log boundary F, initially 1. All transitions
+with `log_id < F` have been logically discarded; transitions at/above F, if
+committed, are available. F never decreases and is not a client checkpoint.
+Advance F to one greater than the greatest transition logically expired. If
+nothing further expires, retain F. Future IDs must be at least F.
 
-Advance F to one greater than the greatest transition logically expired. If no additional entries expire, retain F. If the entire committed log expires, F may equal `latest_id + 1`; `latest_id` remains the historical committed head, not `"0"`. An unused room has head `"0"` and F `"1"`. Future IDs must be at least F.
+On the wire, `latest_log_id` is the historical committed head H, including when
+history expires. `history_log_id` is the inclusive decimal-string coverage
+boundary F while F <= H, and `null` when no history remains (F > H). An unused
+room has H = 0 and `history_log_id: null`. Clients derive the effective floor
+from a null value as H + 1; no inverted range is sent on the wire.
 
-Add the field to every active room announcement and every successful history result:
+Include both fields in every active room announcement and successful history
+result, without an extension advertisement:
 
 ```json
-{"method":"room","params":{"room_id":"general","name":"General","latest_id":"1790000001000","history_floor":"1789913600001"}}
+{"method":"room","params":{"room_id":"general","name":"General","latest_log_id":"1790000001000","history_log_id":"1789913600001"}}
 ```
 
 ```json
-{"id":"h1","result":{"entries":[],"more":false,"history_floor":"1789913600001"}}
+{"id":"h1","result":{"entries":[],"more":false,"latest_log_id":"1790000001000","history_log_id":"1789913600001"}}
 ```
 
-After advancing F, re-announce full room metadata to all authenticated clients. Attach F atomically with each history page's query snapshot; do not return entries evaluated under an older floor with a newer response floor. Capture response state synchronously without external awaits. Keep F monotonic on clients even if paginated responses arrive out of order.
+This empty page can represent a filtered or expired query; only an empty
+room-wide retained log uses `history_log_id: null`.
+
+After advancing F, re-announce full room metadata to all authenticated clients. Attach both wire boundaries atomically with each history page's query snapshot; do not return entries evaluated under an older floor with a newer response floor. Capture response state synchronously without external awaits. Keep F monotonic on clients even if paginated responses arrive out of order.
 
 ### History queries
 
-Follow protocol section 5.1: inclusive after/before, forward oldest selection when after is present, backward newest otherwise, always return selected entries ascending. Query only the intersection with `[F, latest_id]`. An entirely expired range returns an empty result with F; do not invent pagination IDs. No compaction is required for this version.
+Follow protocol section 5.1: inclusive after/before, forward oldest selection when after is present, backward newest otherwise, always return selected entries ascending. Query only the intersection with `[F, latest_log_id]`. An entirely expired range returns an empty result with F; do not invent pagination IDs. No compaction is required for this version.
 
 Apply room/thread filters before the source-slice limit. With a byte cap, shrink the effective positive limit before selecting the final contiguous slice in the requested direction. Return its true first_id/last_id and more, accounting for entries omitted due to either count or byte cap. Each allowed snapshot must fit into at least one response with envelope overhead. Forward continuation is last_id+1, backward continuation first_id-1; never use string ordering or message IDs for pagination.
 
@@ -361,12 +373,12 @@ The implementing harness must add this behavior to the demo client:
 1. Track the greatest advertised F per room. Remove cached snapshots whose greatest applied log ID is below F; remove expired pending rendering references. Preserve newer snapshots even when their message creation IDs are old.
 2. A checkpoint C is usable for forward recovery only when `C + 1 >= F`. If `C + 1 < F`, some uncovered transitions were discarded: clear that scope's recovered state/checkpoint and rebuild from F. This handles the exact boundary without needless resets at `C = F - 1`.
 3. Capture head H when establishing live delivery. Recover forward through fixed H, buffer live entries above H, apply newer snapshots only, then drain the buffer. If F>H, the retained initial view is empty and subsequent live entries can proceed.
-4. Before applying each page, inspect its F. If retention has overtaken the next unprocessed recovery position, discard the partial recovery and restart against a fresh room head/boundary. Do not mark a silently truncated gap as recovered. Cancel or ignore obsolete in-flight requests by a local recovery generation.
+4. Before applying each page, inspect its F. If retention has overtaken the next unprocessed recovery position, discard the partial history replay and rebuild against the new floor while preserving the fixed head H and retained live entries buffered above it. Do not mark a silently truncated gap as recovered. Cancel or ignore obsolete in-flight requests by a local recovery generation.
 5. An increased floor within already processed coverage need not restart recovery, but must evict newly expired snapshots. Bound live/recovery buffers (1 MiB or 1,000 entries); on overflow, clear partial recovery and reconnect/recover with backoff.
 6. Room and thread checkpoints remain independent. Filtered recovery cannot advance the room checkpoint. Eviction and asynchronous older pages must never resurrect snapshots below the current floor or overwrite a newer snapshot.
 7. Metadata re-announcements do not advance checkpoints or replace an active fixed recovery head by themselves. The floor only invalidates unavailable history.
 
-Older clients can ignore the additive field and read available history, but may retain stale cached messages; do not claim retention-aware correctness for unmodified clients. Include a visible demo notice that only roughly the last day is retained.
+Update clients to the base-protocol fields; clients using the previous wire contract are not guaranteed correct recovery. Include a visible demo notice that only roughly the last day is retained.
 
 ### Cleanup algorithm and failure recovery
 
@@ -422,7 +434,7 @@ Use unit tests for pure logic and Cloudflare's Workers/Vitest integration for ru
 - Concurrent history/live delivery around captured H has no missing transition; per-scope checkpoints are not confused.
 - Fake-clock advance: nothing younger than cutoff expires; hourly cleanup yields the intended approximate window. Same room ID/head persists.
 - Recent edit of an old creation, recent tombstone, thread arrival/departure, restoration, and before/after membership survive trimming.
-- Fully expired room can have F=head+1 and nonzero head; next creation is newer. No accidental reset to zero or giant integer/string comparison bug.
+- Unused and fully expired rooms report `history_log_id: null`; an expired room preserves its nonzero `latest_log_id`. Internally F=head+1 and the next creation is newer. Empty filtered pages retain the room-wide non-null boundary when history remains. Both fields are captured with every page. No accidental reset to zero or giant integer/string comparison bug.
 - Client with C<F-1 rebuilds; C=F-1 resumes safely. Floor advancement during pagination, delayed older pages, and out-of-order replies cannot resurrect old state or create a checkpoint gap.
 - Cleanup after latest-message update never removes its retained snapshot. Crash/retry at every batch boundary preserves logical floor visibility. Work continues without connected clients.
 - Budget exhaustion delays physical cleanup safely; storage pressure blocks growth. Dedup expiry remains independent of transitions; credential/limiter state survives.
@@ -455,7 +467,7 @@ Use tiny configured quotas for deterministic exhaustion tests and a separate cal
 
 1. Add the Workers/DO package in the repository's appropriate location, native hibernation handling, versioned SQLite schema, metered storage wrapper, and fixed-room Level 0 conformance.
 2. Add atomic sequencing, deduplication, history, quota gates, and payload/connection limits. Test the live/history boundary before expanding features.
-3. Add edit/thread support, rolling retention, the floor extension, and client recovery changes.
+3. Add edit/thread support, rolling retention, base-protocol availability boundaries, and client recovery changes.
 4. Add verified passkey registration/login and minimal client UI. Anonymous operation remains available.
 5. Add maintenance/admission degradation, capacity tests, and operating documentation. Run the acceptance tests and review the full schema's cost model.
 
@@ -464,7 +476,7 @@ Deliver:
 - Working source and lockfile; no placeholder auth or quota bypasses.
 - Wrangler config with a fixed DO binding, SQLite migration, tested compatibility date, and no paid-service bindings.
 - Configuration reference for every limit, RP ID/origins, IP HMAC secret, optional operator secret, and feature toggles. Fail startup/config validation for impossible or unsafe relationships.
-- Protocol-extension documentation and the minimal client integration, including versioned fixtures for WebAuthn and history_floor.
+- Base-protocol history documentation and minimal client integration, including retention recovery fixtures and versioned WebAuthn fixtures.
 - Automated tests, local dev commands, a bounded load/cost report, and a concise implementation summary.
 - README describing Free-plan prerequisites, anonymous identity limitations, rolling history with a permanent room ID, quota exhaustion/recovery, secret setup, and manual deployment steps.
 - A deployment checklist that verifies the real account plan and other workload usage, rechecks current platform quotas, applies migrations once, and tests the deployed hibernation/reconnect path when deployment is separately authorized.

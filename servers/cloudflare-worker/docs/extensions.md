@@ -1,65 +1,19 @@
-# Public demo extensions (version 1)
+# Public demo authentication and policy
 
-The demo speaks Apron protocol **2**, advertising `history` and `edit`, plus
-`extensions: ["history_floor.v1", "webauthn.demo.v1"]`. These extension names
-are not capabilities. Server announcements are complete replacements.
+The demo speaks Apron protocol **2**, advertising `history` and `edit`. History
+availability uses the base protocol's `latest_log_id` and nullable
+`history_log_id`, without extension negotiation. See
+[history and recovery](../../../PROTOCOL.md#51-history) and the
+[retention implementation specification](../SPEC.md#9-rolling-history-and-base-protocol-availability).
+
+The separate authentication adapter is advertised as
+`extensions: ["webauthn.demo.v1"]`. Server announcements are complete replacements.
 
 The implementation follows the current repository protocol. Relative to the
 specification's reference blob `d24de5ec177d0c042d7237a7783ccdc8bffec3d5`, it also
 supports same-room reply references (including references across threads) and
 editing existing thread titles/summaries. Reply targets must exist when a save
 is accepted; subsequent expiration does not invalidate the reply snapshot.
-
-## `history_floor.v1`
-
-This extension explicitly restricts the base protocol's history completeness
-and recovery guarantees to the **retained interval**. The permanent room ID is
-`general`. Its historical committed `latest_id` never resets when history
-expires. Every room announcement and successful history response includes a
-positive decimal-string `history_floor`, initially `"1"`.
-
-For floor F, all transitions below F are logically unavailable. F is a monotonic
-coverage boundary, not a timestamp, an existing entry, or a recovery checkpoint.
-An unused room has head `"0"` and F `"1"`. After all history expires, F may be
-head + 1 while head remains nonzero. Newly allocated IDs are at least F.
-
-```json
-{"method":"room","params":{"room_id":"general","name":"General","latest_id":"1790000001000","history_floor":"1789913600001"}}
-{"id":"h1","result":{"entries":[],"more":false,"history_floor":"1789913600001"}}
-```
-
-History uses the base protocol's inclusive numeric bounds and directional
-selection. It queries only the intersection with the retained interval.
-Entirely expired ranges return empty successful pages carrying F; they do not
-invent first/last IDs. Resource rejection is an error, never an empty history
-page. Each page captures entries and floor together. Thread history includes
-transitions both into and out of the selected thread.
-
-Expiration is based on nondecreasing internal **transition commit time**, not
-message creation ID. Every transition contains a complete snapshot. A recent
-edit or tombstone can keep an older message present after its creation
-transition expires. Logical floor advancement precedes physical deletion; a
-cleanup interruption cannot expose logically expired data.
-
-Clients retain the greatest observed F, evicting snapshots by their greatest
-applied **log ID**, not their message ID. A checkpoint C permits recovery only
-if C + 1 >= F. Otherwise clear that scope's recovered state and rebuild from F.
-C = F - 1 is a valid exact boundary. Room and thread checkpoints are separate;
-a filtered page cannot establish room coverage.
-
-Recovery fixes head H when live delivery begins, pages forward through H, then
-drains buffered entries above H. Metadata re-announcements do not advance
-checkpoints or silently replace H. Before applying a page, inspect its floor:
-if it overtakes the next unprocessed position, discard the partial recovery and
-restart with a fresh boundary. Ignore obsolete asynchronous requests using a
-local generation. An increase within processed coverage only requires eviction.
-Never apply an older snapshot over a newer one or resurrect entries below F.
-Buffers are bounded to 1 MiB or 1,000 entries; overflow reconnects with backoff.
-
-Healthy cleanup normally retains roughly 24–25 hours. Resource exhaustion may
-delay cleanup. This is not a secure-erasure guarantee or a promise concerning
-provider backups or client copies. Older clients can read available history,
-but cannot claim retention-aware correctness and may keep expired cached data.
 
 ## `webauthn.demo.v1`
 

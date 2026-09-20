@@ -159,7 +159,7 @@ it("makes repeated cleanup invocations idempotent across due alarms and wakes", 
 it("publishes a floor before a failed physical delete and resumes after restart", async () => {
 	await withStore("cleanup-restart", { cleanupBatch: 1 }, (store, clock, state) => {
 		const oldLog = oneLog(store.mutate(messageInput(clock, "restart-old", "old message")));
-		const head = store.getRoomState().latest_id;
+		const head = store.getRoomState().latest_log_id;
 		clock.value += RETENTION_MS + 1;
 		state.storage.sql.exec("UPDATE maintenance SET next_cleanup_ms = ? WHERE id = 1", clock.value);
 		state.storage.sql.exec(`
@@ -178,13 +178,14 @@ it("publishes a floor before a failed physical delete and resumes after restart"
 		}
 		const floor = oldLog + 1n;
 		expect(failure).toBeDefined();
-		expect(store.getRoomState().history_floor).toBe(String(floor));
-		expect(store.getRoomState().latest_id).toBe(head);
+		expect(store.getRoomState().history_log_id).toBeNull();
+		expect(store.getRoomState().latest_log_id).toBe(head);
 		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM transitions").count)).toBe(1);
 		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM messages").count)).toBe(1);
 		const hidden = store.history({ roomId: "general", after: 0n, limit: 50, now: clock.value });
 		expect(hidden.entries).toEqual([]);
-		expect(hidden.history_floor).toBe(String(floor));
+		expect(hidden.latest_log_id).toBe(head);
+		expect(hidden.history_log_id).toBeNull();
 
 		state.storage.sql.exec("DROP TRIGGER fail_transition_delete");
 		const restarted = new Store(state, { cleanupBatch: 1 }, clock.clock);
