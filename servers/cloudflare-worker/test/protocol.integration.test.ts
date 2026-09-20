@@ -30,7 +30,10 @@ async function connect(ip = `192.0.2.${nextIp++}`) {
 }
 
 async function authenticate(peer: Awaited<ReturnType<typeof connect>>) {
-	expect((await peer.next()).method).toBe('server');
+	const server = await peer.next();
+	expect(server.method).toBe('server');
+	expect(server.params.auth).toContain('webauthn');
+	expect(server.params.extensions).toBeUndefined();
 	peer.send({ method: 'auth', id: 'auth', params: { scheme: 'anonymous' } });
 	const auth = await peer.next();
 	expect(auth.result.you.user_id).toBeTruthy();

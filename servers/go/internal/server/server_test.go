@@ -16,7 +16,8 @@ import (
 )
 
 type testClient struct {
-	ws *websocket.Conn
+	ws               *websocket.Conn
+	passkeyChallenge string
 }
 
 func newTestServer(t *testing.T, config Config) (*Server, *httptest.Server) {

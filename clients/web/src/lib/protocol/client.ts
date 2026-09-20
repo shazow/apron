@@ -322,24 +322,19 @@ export class ChatClient {
 		const connection = this.connectionId;
 		this.emit();
 		try {
-			const extension = this.usesWebAuthnDemoExtension();
-			const begin = extension
-				? { scheme: 'webauthn', action, step: 'begin' }
-				: { scheme: 'webauthn', action: `${action}_begin` };
+			const begin = { scheme: 'webauthn', action, step: 'begin' };
 			const options = await this.passkeyRequest(begin);
+			const challengeId = typeof options.challenge_id === 'string' && options.challenge_id.length > 0
+				? options.challenge_id : undefined;
+			if (!challengeId) throw new Error('Passkey challenge was missing; try again');
+			if (!isJsonObject(options.public_key)) throw new Error('Passkey options were missing; try again');
 			const credential = await requestPasskey(action, options, controller.signal);
 			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
-			const challengeId = typeof options.challenge_id === 'string' ? options.challenge_id : undefined;
-			if (extension && !challengeId) throw new Error('Passkey challenge was missing; try again');
-			const finish = extension
-				? { scheme: 'webauthn', action, step: 'finish', ...(challengeId ? { challenge_id: challengeId } : {}), credential }
-				: { scheme: 'webauthn', action: `${action}_finish`, credential };
+			const finish = { scheme: 'webauthn', action, step: 'finish', challenge_id: challengeId, credential };
 			const result = await this.passkeyRequest(finish);
 			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
 			this.cancelPasskey();
-			this.registeredSession = true;
-			this.passkeyRequired = true;
-			this.handleAuth(result);
+			if (!this.handleAuth(result, true)) throw new Error('Server authentication response did not include an identity');
 		} finally {
 			if (this.passkeyAbort === controller) this.cancelPasskey();
 			this.emit();
@@ -348,34 +343,17 @@ export class ChatClient {
 
 	async signOut(): Promise<void> {
 		if (this.passkeyAbort || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
-		const controller = new AbortController();
-		this.passkeyAbort = controller;
-		this.emit();
-		try {
-			// The demo extension defines only begin/finish ceremonies. Signing out
-			// therefore drops this client session and reconnects as a fresh guest;
-			// the Go example still supports its explicit logout action.
-			if (!this.usesWebAuthnDemoExtension()) await this.passkeyRequest({ scheme: 'webauthn', action: 'logout' });
-			if (controller.signal.aborted) throw new Error('Connection changed; try again');
-			this.sessionToken = undefined;
-			this.passkeyRequired = false;
-			this.registeredSession = false;
-			this.resetSession('Signed out');
-			this.restart();
-		} finally {
-			if (this.passkeyAbort === controller) this.cancelPasskey();
-			this.emit();
-		}
+		this.sessionToken = undefined;
+		this.passkeyRequired = false;
+		this.registeredSession = false;
+		this.resetSession('Signed out');
+		this.restart();
 	}
 
 	private passkeyRequest(params: JsonObject): Promise<JsonObject> {
 		return this.enqueueRequest('auth', params, {
 			visible: false, allowBeforeAuth: true
 		}).promise;
-	}
-
-	private usesWebAuthnDemoExtension(): boolean {
-		return this.server?.extensions?.includes('webauthn.demo.v1') === true;
 	}
 
 	private cancelPasskey(): void {
@@ -591,18 +569,16 @@ export class ChatClient {
 			caps: Array.isArray(params.caps) ? params.caps.filter(isString) : [],
 			auth,
 			...(typeof params.upload === 'string' ? { upload: params.upload } : {}),
-			...(Array.isArray(params.extensions) ? { extensions: params.extensions.filter(isString) } : {}),
 			...(isJsonObject(params.demo) ? { demo: params.demo } : {})
 		};
 		if (this.authenticated || this.authRequested) {
 			this.emit();
 			return;
 		}
-		const resume = Boolean(this.sessionToken && auth.includes('webauthn'));
-		if (!resume && this.passkeyRequired && this.usesWebAuthnDemoExtension() && auth.includes('webauthn')) {
-			// The demo extension deliberately has no bearer-token resume action.
-			// Re-run discoverable login after a transport reconnect so a registered
-			// user does not get stranded on an unauthenticated empty room view.
+		const resume = Boolean(this.sessionToken && auth.includes('token'));
+		if (!resume && this.passkeyRequired && auth.includes('webauthn')) {
+			// Servers without bearer-token resume still need discoverable login after
+			// a transport reconnect so a registered user keeps the server identity.
 			this.authRequested = true;
 			const socket = this.socket;
 			queueMicrotask(() => {
@@ -625,7 +601,7 @@ export class ChatClient {
 		this.authRequested = true;
 		const socket = this.socket;
 		const request = this.enqueueRequest('auth', {
-			...(resume ? { scheme: 'webauthn', action: 'resume', token: this.sessionToken } : { scheme: 'anonymous' }),
+			...(resume ? { scheme: 'token', token: this.sessionToken } : { scheme: 'anonymous' }),
 			client: 'bottomless-web/0.1'
 		}, { visible: false, allowBeforeAuth: true });
 		request.promise.then((result) => {
@@ -640,14 +616,18 @@ export class ChatClient {
 		});
 	}
 
-	private handleAuth(result: JsonObject): void {
+	private handleAuth(result: JsonObject, passkey = false): boolean {
 		const identity = result.you;
 		if (!isJsonObject(identity) || typeof identity.user_id !== 'string') {
 			this.error = 'Server authentication response did not include an identity';
 			this.emit();
-			return;
+			return false;
 		}
 		this.you = identity as Identity;
+		if (passkey) {
+			this.passkeyRequired = true;
+			this.registeredSession = true;
+		}
 		if (typeof result.token === 'string') {
 			this.sessionToken = result.token;
 			this.passkeyRequired = true;
@@ -661,6 +641,7 @@ export class ChatClient {
 		this.showReconnectDivider = this.showReconnectDivider || this.rooms.size > 0;
 		if (this.displayName) this.sendNick();
 		this.emit();
+		return true;
 	}
 
 	private handleRoom(params: JsonObject | undefined): void {

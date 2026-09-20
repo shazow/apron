@@ -18,6 +18,9 @@ export interface ChallengeRecord {
 	challenge: string;
 	origin: string;
 	rpId: string;
+	/** Connection and proposed identity bindings are checked again at finish. */
+	connectionId?: string;
+	identityUserId?: string | null;
 	userId?: string;
 	userHandle?: string;
 	userName?: string;
@@ -62,6 +65,13 @@ export class AuthError extends Error {
 	constructor(message = "Passkey verification failed") {
 		super(message);
 		this.name = "denied";
+	}
+}
+
+export class AuthTooLargeError extends AuthError {
+	constructor(message = "Passkey credential is too large") {
+		super(message);
+		this.name = "too_large";
 	}
 }
 
@@ -112,8 +122,13 @@ function asCredentialResponse(value: unknown, maxBytes: number): RegistrationRes
 	normalizedCredentialId(value.rawId);
 	if (value.rawId !== id) throw new AuthError("Passkey credential is invalid");
 	if (!isObject(value.response)) throw new AuthError("Passkey credential is invalid");
-	if (serializedBytes(value) > maxBytes) throw new AuthError("Passkey credential is too large");
+	if (serializedBytes(value) > maxBytes) throw new AuthTooLargeError();
 	return { ...value, id } as RegistrationResponseJSON | AuthenticationResponseJSON;
+}
+
+function hasDiscoverableCredential(response: RegistrationResponseJSON | AuthenticationResponseJSON): boolean {
+	if (!isObject(response.clientExtensionResults) || !isObject(response.clientExtensionResults.credProps)) return false;
+	return response.clientExtensionResults.credProps.rk === true;
 }
 
 function toWebAuthnCredential(record: StoredCredential): WebAuthnCredential {
@@ -139,6 +154,7 @@ export class WebAuthnService {
 		now: number,
 		identity?: Identity,
 		existingCredentialIds: string[] = [],
+		connectionId?: string,
 	): Promise<BeginResult> {
 		if (!this.config.rpOrigins.includes(origin)) throw new Error("origin is not configured for passkeys");
 		if (action === "register" && identity?.tier === "registered") throw new Error("identity switching requires reconnect");
@@ -158,7 +174,7 @@ export class WebAuthnService {
 				userID: base64UrlToBytes(candidateUserHandle!),
 				challenge,
 				attestationType: "none",
-				authenticatorSelection: { residentKey: "required", userVerification: "required" },
+				authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
 				excludeCredentials: existingCredentialIds.slice(0, 10).map((id) => ({ id })),
 				timeout: this.config.limits.challengeTtlSeconds * 1_000,
 			})
@@ -176,6 +192,8 @@ export class WebAuthnService {
 				challenge: options.challenge,
 				origin,
 				rpId: this.config.rpId,
+				...(connectionId ? { connectionId } : {}),
+				...(action === "register" ? { identityUserId: identity?.user_id ?? null } : {}),
 				...(candidateUserId ? { userId: candidateUserId, userHandle: candidateUserHandle, userName: candidateName } : {}),
 				expiresAt: now + this.config.limits.challengeTtlSeconds * 1_000,
 			},
@@ -188,10 +206,15 @@ export class WebAuthnService {
 		challengeId: string,
 		credentialValue: unknown,
 		repository: CredentialRepository,
-		input: { now: number; ipKey: string; identity?: Identity },
+		input: { now: number; ipKey: string; identity?: Identity; connectionId?: string },
 	): Promise<FinishResult> {
 		if (challenge.challengeId !== challengeId || input.now >= challenge.expiresAt) throw new AuthError("Passkey challenge is missing or expired");
-		if (serializedBytes(credentialValue) > this.config.limits.maxCredentialBytes) throw new AuthError("Passkey credential is too large");
+		if (challenge.connectionId !== undefined && challenge.connectionId !== input.connectionId) throw new AuthError("Passkey challenge is bound to another connection");
+		if (Object.hasOwn(challenge, "identityUserId") && challenge.identityUserId !== (input.identity?.user_id ?? null)) throw new AuthError("Passkey registration identity changed");
+		if (challenge.origin.length === 0 || !this.config.rpOrigins.includes(challenge.origin) || challenge.rpId !== this.config.rpId) {
+			throw new AuthError("Passkey challenge binding is invalid");
+		}
+		if (serializedBytes(credentialValue) > this.config.limits.maxCredentialBytes) throw new AuthTooLargeError();
 		let response: RegistrationResponseJSON | AuthenticationResponseJSON;
 		try {
 			response = asCredentialResponse(credentialValue, this.config.limits.maxCredentialBytes);
@@ -200,6 +223,7 @@ export class WebAuthnService {
 			throw new AuthError("Passkey credential is invalid");
 		}
 		if (challenge.action === "register") {
+			if (!hasDiscoverableCredential(response as RegistrationResponseJSON)) throw new AuthError("Passkey registration requires a discoverable credential");
 			if (!challenge.userId || !challenge.userHandle || !challenge.userName) throw new AuthError("Passkey registration challenge is incomplete");
 			let verified: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
 			try {

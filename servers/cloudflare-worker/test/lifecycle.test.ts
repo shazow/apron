@@ -262,3 +262,74 @@ it("expires a pending WebAuthn challenge on the shared alarm without authenticat
 		await peer.close();
 	}
 });
+
+it("ignores WebAuthn notifications and consumes matching malformed finishes", async () => {
+	const stub = env.DEMO.getByName("public-demo-v1");
+	const peer = await pendingSocket();
+	try {
+		peer.socket.send(JSON.stringify({ id: "unknown-scheme", method: "auth", params: { scheme: "legacy", action: "login", step: "begin" } }));
+		expect((await peer.next()).error?.code).toBe(-32601);
+		peer.socket.send(JSON.stringify({ method: "auth", params: { scheme: "webauthn", action: "register", step: "begin" } }));
+		peer.socket.send(JSON.stringify({ id: "notification-barrier", method: "lifecycle-noop" }));
+		expect((await peer.next()).error?.code).toBe(-32601);
+		const afterNotification = await runInDurableObject(stub, async (instance) => {
+			const runtime = instance as unknown as { ctx: { getWebSockets(): WebSocket[] } };
+			return runtime.ctx.getWebSockets().map((candidate) => (candidate as WebSocket & { deserializeAttachment(): Record<string, any> }).deserializeAttachment());
+		});
+		expect(afterNotification.some((attachment) => attachment.tier === "pending" && attachment.challenge !== undefined)).toBe(false);
+
+		peer.socket.send(JSON.stringify({ id: "begin-for-finish", method: "auth", params: { scheme: "webauthn", action: "register", step: "begin" } }));
+		const begun = await peer.next();
+		const challengeId = begun.result?.challenge_id;
+		expect(challengeId).toEqual(expect.any(String));
+		peer.socket.send(JSON.stringify({ id: "malformed-finish", method: "auth", params: {
+			scheme: "webauthn", action: "register", step: "finish", challenge_id: challengeId,
+		} }));
+		const malformed = await peer.next();
+		expect(malformed.error?.code).toBe(-32602);
+
+		const afterMalformed = await runInDurableObject(stub, async (instance) => {
+			const runtime = instance as unknown as { ctx: { getWebSockets(): WebSocket[] } };
+			return runtime.ctx.getWebSockets().map((candidate) => (candidate as WebSocket & { deserializeAttachment(): Record<string, any> }).deserializeAttachment());
+		});
+		expect(afterMalformed.some((attachment) => attachment.challenge?.challengeId === challengeId)).toBe(false);
+		peer.socket.send(JSON.stringify({ id: "replayed-finish", method: "auth", params: {
+			scheme: "webauthn", action: "register", step: "finish", challenge_id: challengeId,
+		} }));
+		const replayed = await peer.next();
+		expect(replayed.error?.code).toBe(-32001);
+	} finally {
+		await peer.close();
+	}
+});
+
+it("keeps a pending ceremony for a different challenge id and consumes it on action mismatch", async () => {
+	const stub = env.DEMO.getByName("public-demo-v1");
+	const peer = await pendingSocket();
+	try {
+		peer.socket.send(JSON.stringify({ id: "action-begin", method: "auth", params: { scheme: "webauthn", action: "register", step: "begin" } }));
+		const begun = await peer.next();
+		const challengeId = begun.result?.challenge_id as string;
+		peer.socket.send(JSON.stringify({ id: "wrong-id", method: "auth", params: {
+			scheme: "webauthn", action: "register", step: "finish", challenge_id: "other-challenge",
+		} }));
+		expect((await peer.next()).error?.code).toBe(-32001);
+		const retained = await runInDurableObject(stub, async (instance) => {
+			const runtime = instance as unknown as { ctx: { getWebSockets(): WebSocket[] } };
+			return runtime.ctx.getWebSockets().map((candidate) => (candidate as WebSocket & { deserializeAttachment(): Record<string, any> }).deserializeAttachment());
+		});
+		expect(retained.some((attachment) => attachment.challenge?.challengeId === challengeId)).toBe(true);
+
+		peer.socket.send(JSON.stringify({ id: "wrong-action", method: "auth", params: {
+			scheme: "webauthn", action: "login", step: "finish", challenge_id: challengeId,
+		} }));
+		expect((await peer.next()).error?.code).toBe(-32001);
+		const consumed = await runInDurableObject(stub, async (instance) => {
+			const runtime = instance as unknown as { ctx: { getWebSockets(): WebSocket[] } };
+			return runtime.ctx.getWebSockets().map((candidate) => (candidate as WebSocket & { deserializeAttachment(): Record<string, any> }).deserializeAttachment());
+		});
+		expect(consumed.some((attachment) => attachment.challenge?.challengeId === challengeId)).toBe(false);
+	} finally {
+		await peer.close();
+	}
+});

@@ -38,21 +38,19 @@ connection change cancels the active ceremony. Chat requests pause while a
 ceremony is active, preventing edits from crossing an identity change.
 
 The session token stays in memory, scoped to this mounted client and server URL,
-and automatically resumes the same identity after a transport disconnect. A page
-reload requires signing in again. Expired sessions require another passkey login;
-the client does not automatically replace them with a guest identity. Signing out
-revokes the current token and reconnects as a guest. The Go example's credentials
-are also in memory and are lost on backend restart.
+and automatically resumes the same identity after a transport disconnect when the
+server advertises token authentication. A page reload requires signing in again.
+Expired sessions require another passkey login; the client does not automatically
+replace them with a guest identity. Signing out clears the in-memory credentials
+and reconnects as a guest. The Go example's credentials are also in memory and
+are lost on backend restart.
 
-The implementation-specific WebAuthn exchange is documented in
+The WebAuthn exchange follows [Appendix C of the protocol](../../PROTOCOL.md#appendix-c--webauthn-authentication-optional):
+both registration and login use `action` plus `step: "begin"` or
+`step: "finish"`, with the server's `challenge_id` and `public_key` and the
+browser's standard JSON credential representation. The implementation details
+for the Go example are documented in
 [`servers/go/README.md`](../../servers/go/README.md#example-webauthn-exchange).
-The Cloudflare demo additionally advertises `webauthn.demo.v1`: its
-`register`/`login` ceremony uses `step: "begin"` and `step: "finish"`, returns
-`public_key` options plus a `challenge_id`, and receives the browser's JSON
-credential response. The adapter selects that exchange only when the server
-advertises the extension, so the Go example's `register_begin` and
-`login_begin` actions remain compatible. Demo sign-out is local and reconnects
-as a guest because the extension has no server-side logout method.
 
 The UI follows the Apron design system. `src/lib/design/tokens.css` holds its
 color, type, spacing, radius and size tokens as CSS custom properties (dark is

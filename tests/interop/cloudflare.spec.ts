@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { editMessage, waitForMessage } from './test-helpers';
 
 // This exercises browser-generated credentials and the actual Workers verifier.
 // Runtime/storage policy cases live in servers/cloudflare-worker/test.
@@ -72,18 +73,27 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	const forged = await page.evaluate(() => (window as any).passkey('login'));
 	expect(forged.error.code).toBe(-32001);
 	await cdp.send('WebAuthn.setResponseOverrideBits', { authenticatorId, isBogusSignature: false });
-	const login = await page.evaluate(() => (window as any).passkey('login'));
-	expect(login.error).toBeUndefined();
-	expect(login.result.you.user_id).toBe(userId);
-	const edit = await page.evaluate(message_id => (window as any).request('message', {
-		room_id: 'general', message_id, body: { text: 'verified returning owner' }
-	}), posted.result.message_id);
-	expect(edit.result.message_id).toBe(posted.result.message_id);
-	const history = await page.evaluate(() => (window as any).request('history', { room_id: 'general', after: '0' }));
-	expect(history.result.latest_log_id).toBeTruthy();
-	expect(history.result.history_log_id).toBe('1');
-	expect(history.result.entries.at(-1).message.body.text).toBe('verified returning owner');
-	await page.evaluate(() => (window as any).socket.close());
+	await page.evaluate(async () => {
+		const socket = (window as any).socket as WebSocket;
+		await new Promise<void>(resolve => { socket.onclose = () => resolve(); socket.close(); });
+	});
+	// Finish the return visit through the actual client. This shares the same
+	// canonical ceremony as Go, while the Worker does not issue a resume token.
+	await page.goto('/');
+	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
+	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
+	const profile = page.getByRole('button', { name: /^Your profile on/ });
+	await profile.click();
+	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
+	await expect(dialog.locator('code')).not.toHaveText(userId);
+	await dialog.getByRole('button', { name: 'Sign in with passkey', exact: true }).click();
+	await expect(dialog.getByText('Signed in with your passkey.', { exact: true })).toBeVisible();
+	await expect(dialog.locator('code')).toHaveText(userId);
+	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
+	await profile.click();
+	const savedMessage = page.locator(`article[data-message-id="${posted.result.message_id}"]`);
+	await editMessage(savedMessage, 'verified returning owner');
+	await waitForMessage(page, 'verified returning owner');
 });
 
 test('built frontend connects to the Worker and recovers retained history', async ({ page }) => {

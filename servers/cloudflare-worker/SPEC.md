@@ -10,7 +10,7 @@ Protocol reference reviewed: protocol version 2, Git blob SHA `d24de5ec177d0c042
 
 Build a usable, publicly accessible Apron demo backend using native Cloudflare Workers, one SQLite-backed Durable Object (DO), and hibernating WebSockets. Support anonymous use and passkey authentication, bounded posting and history, and graceful resource exhaustion. The demo must run on the actual Workers Free plan without enabling paid services.
 
-Read the repository's `AGENTS.md`, existing code, package-manager configuration, and `PROTOCOL.md` before implementing. Reuse existing client/protocol utilities where appropriate. Compare the current protocol with the reference above; preserve its mandatory behavior and document material differences. This specification defines deployment policies and explicit protocol extensions, not a replacement chat protocol.
+Read the repository's `AGENTS.md`, existing code, package-manager configuration, and `PROTOCOL.md` before implementing. Reuse existing client/protocol utilities where appropriate. Compare the current protocol with the reference above; preserve its mandatory behavior and document material differences. This specification defines deployment policies within the base chat protocol.
 
 Implement the backend, the minimal Apron client changes required for passkeys and rolling-history recovery, tests, configuration, and operating documentation. Keep unrelated frontend work out of scope. If the frontend is in another repository, provide a concrete patch/adapter and integration instructions rather than silently omitting the client requirements. Prepare a deployable result; do not deploy, switch billing plans, or create paid resources merely to complete this implementation task.
 
@@ -83,10 +83,10 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":2,"name":"apron-cloudflare-demo/1","caps":["history","edit"],"auth":["webauthn","anonymous"],"extensions":["webauthn.demo.v1"],"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"anonymous_posts_per_minute":5,"registered_posts_per_minute":20}}}
+{"method":"server","params":{"protocol":2,"name":"apron-cloudflare-demo/1","caps":["history","edit"],"auth":["webauthn","anonymous"],"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"anonymous_posts_per_minute":5,"registered_posts_per_minute":20}}}
 ```
 
-`extensions` and `demo` are additive server-announcement fields defined by this implementation. They are not existing base-protocol capabilities. Document them in `PROTOCOL.md` or a linked protocol-extension document. Every later `server` announcement is a full replacement, including auth/caps/extension metadata. Temporary throttling does not mean a capability is unimplemented.
+`demo` is additive server-announcement policy metadata. Authentication uses the canonical `webauthn` scheme in protocol Appendix C, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
 
 History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room announcements and history results, following protocol section 5.1. This revision replaces the old `latest_id` spelling; update repository implementations together.
 
@@ -136,9 +136,9 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 
 Guest identity lasts for that socket, including hibernation. This initial version does not promise guest identity recovery after reconnect; explain that anonymous retry deduplication/ownership cannot span a reconnect that assigns a new identity. IP posting limits still span reconnects. Registered users have stable identity across devices/reconnects.
 
-### WebAuthn extension: `webauthn.demo.v1`
+### Canonical WebAuthn authentication
 
-Use a two-step `auth` exchange with required request IDs. The base protocol deliberately leaves WebAuthn exchange details implementation-defined. Support discoverable passkeys; do not download a directory of all credentials to the client.
+Implement protocol Appendix C: `action` is `register` or `login`, `step` is `begin` or `finish`, and both steps require request IDs. Support discoverable passkeys; do not download a directory of all credentials to the client.
 
 ```json
 {"method":"auth","id":"a1","params":{"scheme":"webauthn","action":"register","step":"begin"}}
@@ -152,7 +152,7 @@ The intermediate response is `{"id":"a1","result":{"challenge_id":"...","public_
 
 `credential` contains the serialized browser credential response, not the empty illustrative object above. On successful verification return normal `result.you`, store the authenticated tier in the attachment, and establish live room delivery. Login uses the same exchange with `action: "login"`.
 
-- Challenge TTL: 120 seconds, one outstanding challenge per connection. A challenge is bound to connection, action, RP ID, and allowed origin, and is consumed by a finish attempt. Begin replaces an earlier challenge. A challenge does not extend the initial authentication deadline; challenge expiry and unauthenticated timeout are independent.
+- Challenge TTL: 120 seconds, one outstanding challenge per connection. A challenge is bound to connection, action, RP ID, and allowed origin, and is consumed by a matching finish attempt. Begin replaces an earlier challenge. A challenge does not extend the initial authentication deadline; challenge expiry and unauthenticated timeout are independent.
 - Anonymous users may initiate an upgrade on their authenticated guest socket; they retain guest rights until success. After final registered authentication, identity switching requires reconnect. Failed upgrade grants no higher allowance.
 - Configure an explicit RP ID and exact allowed origins. Validate type, challenge, origin, RP ID hash, signature, user presence, and user verification using a maintained verifier. Registration requires discoverable credentials, user verification, and `attestation: "none"`. Bound all credential sizes before expensive verification.
 - Do not accept a claimed user ID or credential ID as authentication. Resolve identity from the verified stored credential. Handle zero/non-monotonic counters for synchronized passkeys according to the verifier's supported semantics; do not invent a counter-only proof of authenticity.
@@ -476,7 +476,7 @@ Deliver:
 - Working source and lockfile; no placeholder auth or quota bypasses.
 - Wrangler config with a fixed DO binding, SQLite migration, tested compatibility date, and no paid-service bindings.
 - Configuration reference for every limit, RP ID/origins, IP HMAC secret, optional operator secret, and feature toggles. Fail startup/config validation for impossible or unsafe relationships.
-- Base-protocol history documentation and minimal client integration, including retention recovery fixtures and versioned WebAuthn fixtures.
+- Base-protocol history documentation and minimal client integration, including retention recovery fixtures and canonical WebAuthn fixtures.
 - Automated tests, local dev commands, a bounded load/cost report, and a concise implementation summary.
 - README describing Free-plan prerequisites, anonymous identity limitations, rolling history with a permanent room ID, quota exhaustion/recovery, secret setup, and manual deployment steps.
 - A deployment checklist that verifies the real account plan and other workload usage, rechecks current platform quotas, applies migrations once, and tests the deployed hibernation/reconnect path when deployment is separately authorized.

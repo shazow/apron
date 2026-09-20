@@ -1,12 +1,9 @@
 {
   "format": 1,
-  "kind": "extension",
-  "name": "webauthn.demo.v1",
-  "extension": "webauthn.demo.v1",
-  "version": 1,
-  "description": "Two-step passkey ceremonies use explicit action, step, challenge_id, and browser JSON credential fields.",
+  "kind": "webauthn",
+  "description": "Canonical two-step passkey wire shapes. Credential bytes are synthetic and do not establish cryptographic validity.",
   "references": [
-    "servers/cloudflare-worker/SPEC.md#139-webauthn-extension-webauthndemov1"
+    "PROTOCOL.md#appendix-c--webauthn-authentication-optional"
   ],
   "cases": [
     {
@@ -28,6 +25,7 @@
           "user": { "id": "dXNlci0x", "name": "guest", "displayName": "Guest" },
           "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
           "timeout": 120000,
+          "authenticatorSelection": { "residentKey": "required", "userVerification": "required" },
           "attestation": "none"
         }
       },
@@ -40,7 +38,7 @@
           "step": "finish",
           "challenge_id": "challenge-register-1",
           "credential": {
-            "id": "credential-1",
+            "id": "Y3JlZGVudGlhbC0x",
             "rawId": "Y3JlZGVudGlhbC0x",
             "type": "public-key",
             "response": {

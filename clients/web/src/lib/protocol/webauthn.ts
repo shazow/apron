@@ -11,9 +11,8 @@ export function passkeySupportError(): string | undefined {
 	return undefined;
 }
 
-/** Return the browser option object from either supported server envelope. */
+/** Return the browser option object from the canonical server envelope. */
 export function passkeyPublicKeyOptions(options: JsonObject): JsonObject | undefined {
-	if (isJsonObject(options.publicKey)) return options.publicKey;
 	if (isJsonObject(options.public_key)) return options.public_key;
 	return undefined;
 }
@@ -24,10 +23,6 @@ export async function requestPasskey(
 ): Promise<JsonObject> {
 	const unsupported = passkeySupportError();
 	if (unsupported) throw new Error(unsupported);
-	// `webauthn.demo.v1` wraps browser JSON options as `public_key`, while the
-	// existing Go example returns the WebAuthn library's `publicKey` field.
-	// Accept both spellings at this adapter boundary and leave the credential
-	// response in the browser's JSON serialization for the server verifier.
 	const publicKey = passkeyPublicKeyOptions(options);
 	if (!publicKey) throw new Error('Invalid passkey options from server');
 	const credential = action === 'register'

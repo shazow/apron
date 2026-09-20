@@ -46,7 +46,6 @@ export interface ServerParams {
 	caps?: string[];
 	auth: string[];
 	upload?: string;
-	extensions?: string[];
 	demo?: DemoParams;
 }
 

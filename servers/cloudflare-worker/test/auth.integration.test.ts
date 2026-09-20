@@ -61,10 +61,13 @@ it('verifies signed ceremonies against SQLite identities and rejects challenge, 
 			return { id: b64(credentialId), rawId: b64(credentialId), type: 'public-key', response: {
 				clientDataJSON: b64(clientData(challenge, 'webauthn.create')),
 				attestationObject: b64(cbor(new Map<string, any>([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData]]))),
-			}, clientExtensionResults: {} };
+			}, clientExtensionResults: { credProps: { rk: true } } };
 		};
 		const begun = await service.begin('register', 'https://chat.example.test', now, { user_id: 'guest_original', name: 'Guest', tier: 'anonymous' });
-		const registered = await service.finish(begun.challenge, begun.challenge.challengeId, await registration(begun.challenge), repository, { now, ipKey: 'fixture-ip' });
+		expect(begun.publicKey.authenticatorSelection).toMatchObject({ residentKey: 'required', requireResidentKey: true, userVerification: 'required' });
+		const registered = await service.finish(begun.challenge, begun.challenge.challengeId, await registration(begun.challenge), repository, {
+			now, ipKey: 'fixture-ip', identity: { user_id: 'guest_original', name: 'Guest', tier: 'anonymous' },
+		});
 		expect(registered.identity.tier).toBe('registered');
 		expect(registered.identity.user_id).not.toBe('guest_original');
 		expect(store.getIdentity(registered.identity.user_id)?.userHandle).toBe(begun.challenge.userHandle);
@@ -72,6 +75,8 @@ it('verifies signed ceremonies against SQLite identities and rejects challenge, 
 		await expect(service.finish(duplicate.challenge, duplicate.challenge.challengeId, await registration(duplicate.challenge), repository, { now, ipKey: 'fixture-ip' })).rejects.toThrow();
 
 		const login = await service.begin('login', 'https://chat.example.test', now);
+		expect(login.publicKey.userVerification).toBe('required');
+		expect(login.publicKey.allowCredentials === undefined || (Array.isArray(login.publicKey.allowCredentials) && login.publicKey.allowCredentials.length === 0)).toBe(true);
 		const assertion = async (options: { flags?: number; rp?: string; client?: Record<string, string>; badSignature?: boolean } = {}) => {
 			const data = clientData(login.challenge, 'webauthn.get', options.client);
 			const authData = join(await hash(encode(options.rp ?? login.challenge.rpId)), new Uint8Array([options.flags ?? 5, 0, 0, 0, 1]));
@@ -93,5 +98,10 @@ it('verifies signed ceremonies against SQLite identities and rejects challenge, 
 		const accepted = await finish(await assertion());
 		expect(accepted.identity.user_id).toBe(registered.identity.user_id);
 		expect(store.getCredential(b64(credentialId))?.counter).toBe(1);
+
+		const connectionBound = await service.begin('login', 'https://chat.example.test', now, undefined, [], 'connection-a');
+		await expect(service.finish(connectionBound.challenge, connectionBound.challenge.challengeId, {}, repository, {
+			now, ipKey: 'fixture-ip', connectionId: 'connection-b',
+		})).rejects.toThrow('another connection');
 	});
 });

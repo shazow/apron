@@ -4,7 +4,7 @@ A single SQLite Durable Object serves the permanent `general` room over
 hibernating WebSockets. The backend supports anonymous access, discoverable
 passkeys, complete-snapshot history, message replacement/deletion/restoration,
 threads, and a rolling retention floor. It speaks protocol 2 with `history` and
-`edit`; see [authentication and policy](docs/extensions.md) and [the implementation
+`edit`; see [authentication and policy](docs/policy.md) and [the implementation
 specification](SPEC.md).
 
 See the [configuration reference](docs/configuration.md) for all policy variables

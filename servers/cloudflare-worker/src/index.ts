@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { AuthError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
+import { AuthError, AuthTooLargeError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
 import { isAllowedOrigin, loadConfig, type RuntimeConfig } from "./config";
 import { extractClientIp, hmacIpKey, stripForwardingHeaders } from "./ip";
 import {
@@ -114,12 +114,30 @@ function trustedIpKey(request: Request): string | null {
 	return value && /^[A-Za-z0-9_-]{40,128}$/.test(value) ? value : null;
 }
 
+function challengeFromAttachment(value: unknown, connectionId: string): ChallengeRecord | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const candidate = value as Partial<ChallengeRecord>;
+	const boundedString = (input: unknown, max = 1_024): input is string => typeof input === "string" && input.length > 0 && input.length <= max;
+	if (!boundedString(candidate.challengeId) || !/^[A-Za-z0-9_-]+$/.test(candidate.challengeId)) return undefined;
+	if (!boundedString(candidate.challenge) || !/^[A-Za-z0-9_-]+$/.test(candidate.challenge)) return undefined;
+	if (candidate.action !== "register" && candidate.action !== "login") return undefined;
+	if (!boundedString(candidate.origin) || !boundedString(candidate.rpId)) return undefined;
+	if (!Number.isSafeInteger(candidate.expiresAt)) return undefined;
+	if (candidate.connectionId !== undefined && (!boundedString(candidate.connectionId) || candidate.connectionId !== connectionId)) return undefined;
+	for (const key of ["identityUserId", "userId", "userHandle", "userName"] as const) {
+		if (key === "identityUserId" && candidate[key] === null) continue;
+		if (candidate[key] !== undefined && !boundedString(candidate[key])) return undefined;
+	}
+	return candidate as ChallengeRecord;
+}
+
 function connectionAttachment(socket: WebSocketConnection): ConnectionAttachment | null {
 	try {
 		const value = socket.deserializeAttachment?.();
 		if (!value || typeof value !== "object") return null;
 		const attachment = value as Partial<ConnectionAttachment>;
 		if (attachment.v !== ATTACHMENT_VERSION || typeof attachment.connId !== "string" || typeof attachment.ipKey !== "string") return null;
+		const challenge = challengeFromAttachment(attachment.challenge, attachment.connId);
 		return {
 			v: 1,
 			connId: attachment.connId,
@@ -128,7 +146,7 @@ function connectionAttachment(socket: WebSocketConnection): ConnectionAttachment
 			...(typeof attachment.userId === "string" ? { userId: attachment.userId } : {}),
 			...(typeof attachment.name === "string" ? { name: attachment.name } : {}),
 			...(typeof attachment.origin === "string" ? { origin: attachment.origin } : {}),
-			...(attachment.challenge ? { challenge: attachment.challenge } : {}),
+			...(challenge ? { challenge } : {}),
 			authDeadline: typeof attachment.authDeadline === "number" ? attachment.authDeadline : 0,
 			pendingFrames: typeof attachment.pendingFrames === "number" ? attachment.pendingFrames : 0,
 			pendingBytes: typeof attachment.pendingBytes === "number" ? attachment.pendingBytes : 0,
@@ -169,6 +187,7 @@ function writeSessionAttachment(socket: WebSocketConnection, attachment: Connect
 }
 
 function errorToProtocol(error: unknown): ProtocolError {
+	if (error instanceof AuthTooLargeError) return { name: "too_large", message: error.message };
 	if (error instanceof AuthError) {
 		return { name: "denied", message: error.message };
 	}
@@ -204,6 +223,30 @@ function asDecimalId(value: unknown, field: string, allowZero = true): string | 
 	const number = Number(value);
 	if (!Number.isSafeInteger(number) || (!allowZero && number === 0)) throw { name: "invalid_params", message: `${field} is outside the supported range` } satisfies ProtocolError;
 	return String(number);
+}
+
+function passkeyCredentialParam(params: Record<string, unknown>, action: "register" | "login"): Record<string, unknown> {
+	const credential = objectParam(params, "credential");
+	if (!credential) throw { name: "invalid_params", message: "credential is required" } satisfies ProtocolError;
+	const requiredCredentialString = (value: unknown, name: string): string => {
+		if (typeof value !== "string" || value.length === 0) throw { name: "invalid_params", message: `credential.${name} must be a non-empty string` } satisfies ProtocolError;
+		return value;
+	};
+	const id = requiredCredentialString(credential.id, "id");
+	const rawId = requiredCredentialString(credential.rawId, "rawId");
+	if (!/^[A-Za-z0-9_-]{1,1024}$/.test(id) || rawId !== id) throw { name: "invalid_params", message: "credential id must be unpadded base64url" } satisfies ProtocolError;
+	if (credential.type !== "public-key") throw { name: "invalid_params", message: "credential.type must be public-key" } satisfies ProtocolError;
+	const response = objectParam(credential, "response");
+	if (!response) throw { name: "invalid_params", message: "credential.response is required" } satisfies ProtocolError;
+	requiredCredentialString(response.clientDataJSON, "response.clientDataJSON");
+	if (action === "register") requiredCredentialString(response.attestationObject, "response.attestationObject");
+	else {
+		requiredCredentialString(response.authenticatorData, "response.authenticatorData");
+		requiredCredentialString(response.signature, "response.signature");
+		if (response.userHandle !== undefined) requiredCredentialString(response.userHandle, "response.userHandle");
+	}
+	objectParam(credential, "clientExtensionResults");
+	return credential;
 }
 
 function identityOf(attachment: ConnectionAttachment): IdentityShape | null {
@@ -419,7 +462,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 				name: "apron-cloudflare-demo/1",
 				caps: ["history", "edit"],
 				auth: ["webauthn", "anonymous"],
-				extensions: ["webauthn.demo.v1"],
 				demo: {
 					retention_seconds: limits.retentionSeconds,
 					cleanup_seconds: limits.cleanupSeconds,
@@ -538,6 +580,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	private async handleAuth(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		// Authentication ceremonies are request/response exchanges. Ignore auth
+		// notifications before reserving any attempt or changing attachment state.
+		if (request.id === undefined && request.params.scheme === "webauthn") return;
 		this.store.reserveAuthAttempt({ ipKey: attachment.ipKey, now: nowMs() });
 		const params = request.params;
 		const scheme = requiredString(params, "scheme");
@@ -557,7 +602,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 			return;
 		}
 		if (scheme !== "webauthn") throw { name: "unsupported", message: "Unsupported authentication scheme" } satisfies ProtocolError;
-		if (request.id === undefined) throw { name: "invalid_params", message: "Passkey authentication requires a request id" } satisfies ProtocolError;
 		if (attachment.tier === "registered") throw { name: "denied", message: "Identity switching requires reconnect" } satisfies ProtocolError;
 		const action = requiredString(params, "action");
 		if (action !== "register" && action !== "login") throw { name: "invalid_params", message: "Unknown passkey action" } satisfies ProtocolError;
@@ -566,7 +610,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (!origin || !this.config.rpOrigins.includes(origin)) throw { name: "denied", message: "Frontend origin is not configured for passkeys" } satisfies ProtocolError;
 		if (step === "begin") {
 			const identity = action === "register" ? identityOf(attachment) : undefined;
-			const begun = await this.webAuthn.begin(action, origin, nowMs(), identity ?? undefined, []);
+			const begun = await this.webAuthn.begin(action, origin, nowMs(), identity ?? undefined, [], attachment.connId);
 			if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 			attachment.challenge = begun.challenge;
 			writeSessionAttachment(socket, attachment);
@@ -577,11 +621,16 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (step !== "finish") throw { name: "invalid_params", message: "Passkey step must be begin or finish" } satisfies ProtocolError;
 		const challengeId = requiredString(params, "challenge_id");
 		const challenge = attachment.challenge;
-		// Consume before cryptographic work, including a failed verification.
-		delete attachment.challenge;
-		writeAttachment(socket, attachment);
-		if (!challenge || challenge.action !== action) throw { name: "denied", message: "Passkey challenge is missing or expired" } satisfies ProtocolError;
-		const credential = params.credential;
+		// A matching finish consumes the pending ceremony before any proof work,
+		// including malformed proof data or failed verification. A finish naming a
+		// different challenge is denied without destroying the usable ceremony.
+		const matchingChallenge = challenge?.challengeId === challengeId;
+		if (matchingChallenge) {
+			delete attachment.challenge;
+			writeAttachment(socket, attachment);
+		}
+		if (!challenge || !matchingChallenge || challenge.action !== action) throw { name: "denied", message: "Passkey challenge is missing or expired" } satisfies ProtocolError;
+		const credential = passkeyCredentialParam(params, action);
 		const repository: CredentialRepository = {
 			getCredential: (credentialId) => this.store.getCredential(credentialId),
 			getIdentity: (userId) => {
@@ -598,6 +647,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 			now: nowMs(),
 			ipKey: attachment.ipKey,
 			identity: identityOf(attachment) ?? undefined,
+			connectionId: attachment.connId,
 		});
 		const latest = connectionAttachment(socket);
 		if (!latest || latest.closing || !openSocket(socket)) return;

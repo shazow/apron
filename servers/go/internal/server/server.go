@@ -320,7 +320,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// The server announcement is queued before the reader starts accepting auth.
 	authSchemes := []string{"anonymous"}
 	if s.config.WebAuthn != nil {
-		authSchemes = []string{"webauthn", "anonymous"}
+		authSchemes = []string{"webauthn", "token", "anonymous"}
 	}
 	c.enqueue(map[string]any{
 		"method": "server",
@@ -533,6 +533,12 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	}
 	if scheme == "webauthn" {
 		return s.authenticatePasskey(c, req)
+	}
+	if scheme == "token" {
+		if s.config.WebAuthn == nil {
+			return nil, &rpcError{Code: codeUnsupported, Message: "Unsupported authentication scheme"}
+		}
+		return s.authenticateToken(c, req, time.Now())
 	}
 	if scheme != "anonymous" {
 		return nil, &rpcError{Code: codeUnsupported, Message: "Unsupported authentication scheme"}
