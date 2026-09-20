@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/shazow/apron/servers/go/internal/server"
 )
 
@@ -19,6 +20,8 @@ func main() {
 	staticDir := flag.String("static-dir", "", "directory containing the built frontend")
 	origins := flag.String("origin", "", "comma-separated allowed WebSocket origins; empty uses localhost defaults")
 	allowAnyOrigin := flag.Bool("allow-any-origin", false, "disable WebSocket origin checks")
+	rpID := flag.String("webauthn-rp-id", "localhost", "passkey relying party domain; empty disables passkeys")
+	rpOrigins := flag.String("webauthn-origin", "http://localhost:5173,http://localhost:8080", "comma-separated exact frontend origins for passkeys")
 	flag.Parse()
 
 	config := server.DefaultConfig()
@@ -26,6 +29,16 @@ func main() {
 	config.AllowAnyOrigin = *allowAnyOrigin
 	if strings.TrimSpace(*origins) != "" {
 		config.OriginPatterns = splitNonEmpty(*origins)
+	}
+	if *rpID != "" {
+		var err error
+		config.WebAuthn, err = webauthn.New(&webauthn.Config{
+			RPID: *rpID, RPDisplayName: "Apron", RPOrigins: splitNonEmpty(*rpOrigins),
+		})
+		if err != nil {
+			slog.Error("invalid WebAuthn configuration", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	app := server.New(config)

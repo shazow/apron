@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const (
@@ -25,6 +26,8 @@ const (
 
 // Config controls the HTTP and WebSocket behavior of a Server.
 type Config struct {
+	// WebAuthn enables passkeys with an explicitly configured RP and frontend origins.
+	WebAuthn *webauthn.WebAuthn
 	// OriginPatterns is passed to the WebSocket origin checker. Empty uses the
 	// local development origins for localhost, 127.0.0.1, and ::1.
 	OriginPatterns []string
@@ -149,6 +152,9 @@ type client struct {
 	dedup    map[string]dedupResult
 	identity identity
 	authed   bool
+	origin   string
+	ceremony *passkeyCeremony
+	token    [32]byte
 }
 
 // outboundBatch keeps a sequence of protocol frames together in the writer's
@@ -166,6 +172,9 @@ type Server struct {
 	clients     map[*client]struct{}
 	guestNumber uint64
 	closed      bool
+	users       map[string]*passkeyUser
+	credentials map[string]*passkeyUser
+	sessions    map[[32]byte]passkeySession
 
 	connections sync.WaitGroup
 }
@@ -173,8 +182,11 @@ type Server struct {
 func New(config Config) *Server {
 	config = config.withDefaults()
 	return &Server{
-		config:  config,
-		clients: make(map[*client]struct{}),
+		config:      config,
+		clients:     make(map[*client]struct{}),
+		users:       make(map[string]*passkeyUser),
+		credentials: make(map[string]*passkeyUser),
+		sessions:    make(map[[32]byte]passkeySession),
 		room: room{
 			id:      "general",
 			states:  make(map[string]map[string]any),
@@ -269,6 +281,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		out:    make(chan outboundBatch, s.config.OutgoingQueue),
 		done:   make(chan struct{}),
 		dedup:  make(map[string]dedupResult),
+		origin: r.Header.Get("Origin"),
 	}
 	s.mu.Lock()
 	if s.closed {
@@ -289,13 +302,17 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go c.writeLoop()
 	go c.pingLoop()
 	// The server announcement is queued before the reader starts accepting auth.
+	authSchemes := []string{"anonymous"}
+	if s.config.WebAuthn != nil {
+		authSchemes = []string{"webauthn", "anonymous"}
+	}
 	c.enqueue(map[string]any{
 		"method": "server",
 		"params": map[string]any{
 			"protocol": 2,
 			"name":     "apron-go/0.1",
 			"caps":     []string{"history", "edit"},
-			"auth":     []string{"anonymous"},
+			"auth":     authSchemes,
 		},
 	})
 
@@ -406,7 +423,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 		return
 	}
 
-	if req.hasID {
+	if req.hasID && req.method != "auth" {
 		fingerprint := requestFingerprint(req)
 		c.mu.Lock()
 		previous, exists := c.dedup[req.id]
@@ -439,7 +456,6 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	switch req.method {
 	case "auth":
 		result, operationErr = s.authenticate(c, req)
-		cacheResult = operationErr == nil
 		responseSent = operationErr == nil
 	case "nick":
 		result, operationErr = s.rename(c, req)
@@ -495,6 +511,16 @@ func (c *client) sendError(req request, err *rpcError) {
 func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	scheme, err := parseString(req.params, "scheme", true)
+	if err != nil {
+		return nil, err
+	}
+	if scheme == "webauthn" {
+		return s.authenticatePasskey(c, req)
+	}
+	if scheme != "anonymous" {
+		return nil, &rpcError{Code: codeUnsupported, Message: "Unsupported authentication scheme"}
+	}
 	if c.authed {
 		result := map[string]any{"you": c.identity.object()}
 		if req.hasID {
@@ -507,6 +533,12 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	c.authed = true
 
 	result := map[string]any{"you": c.identity.object()}
+	s.announceAuthenticated(c, req, result)
+	return result, nil
+}
+
+// announceAuthenticated runs under s.mu, ordering identity before room replay.
+func (s *Server) announceAuthenticated(c *client, req request, result map[string]any) {
 	frames := make([]any, 0, 2+len(s.room.threads))
 	if req.hasID {
 		frames = append(frames, response(req.id, req.full, result))
@@ -528,7 +560,6 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 		frames = append(frames, s.room.threads[threadID].announcement(s.room.id))
 	}
 	c.enqueueBatch(frames...)
-	return result, nil
 }
 
 func (s *Server) rename(c *client, req request) (any, *rpcError) {
@@ -538,6 +569,9 @@ func (s *Server) rename(c *client, req request) (any, *rpcError) {
 	}
 	s.mu.Lock()
 	c.identity.Name = name
+	if user := s.users[c.identity.ID]; user != nil {
+		user.identity.Name = name
+	}
 	result := map[string]any{"you": c.identity.object()}
 	s.mu.Unlock()
 	return result, nil
