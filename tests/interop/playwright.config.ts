@@ -5,6 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
 const configDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(configDirectory, '../..');
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+// TODO: Make server ports configurable so browser tests can run beside local development servers.
 
 export default defineConfig({
 	testDir: configDirectory,

@@ -279,8 +279,8 @@ export class ChatClient {
 		return this.enqueueRequest('thread', { room_id: room, ...metadata }, { visible: true, allowBeforeAuth: false });
 	}
 
-	updateThreadSummary(room: string, thread: string, summary: string): OperationHandle {
-		return this.enqueueRequest('thread', { room_id: room, thread_id: thread, summary }, { visible: true, allowBeforeAuth: false });
+	updateThread(room: string, thread: string, metadata: { title?: string; summary?: string }): OperationHandle {
+		return this.enqueueRequest('thread', { room_id: room, thread_id: thread, ...metadata }, { visible: true, allowBeforeAuth: false });
 	}
 
 	private editableMessage(room: string, messageId: string): JsonObject {

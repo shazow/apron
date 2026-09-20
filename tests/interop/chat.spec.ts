@@ -25,6 +25,7 @@ test.describe('chat protocol interoperability', () => {
 			await (await messageAction(await waitForMessage(pageA, `${token}-root`), 'Start thread')).click();
 			const selected = pageA.locator('[data-testid="thread-list"] button[aria-current="page"]');
 			await expect(selected).toBeVisible();
+			await expect(pageA.getByRole('region', { name: 'Thread summary', exact: true })).toHaveCount(0);
 			const threadId = await selected.getAttribute('data-thread');
 			const cardA = pageA.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
 			const cardB = pageB.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
@@ -37,10 +38,11 @@ test.describe('chat protocol interoperability', () => {
 			await expect(cardA).toContainText('Last reply');
 			await expect(cardA.getByTestId('thread-preview')).toContainText(`${token}-latest`);
 			await cardA.click();
-			await pageA.getByRole('button', { name: 'Add summary', exact: true }).click();
+			await pageA.getByRole('button', { name: 'Edit thread', exact: true }).click();
+			await expect(pageA.getByRole('textbox', { name: 'Thread title', exact: true })).toHaveValue(`${token}-root`);
 			const summary = `${token} first line\nSecond line\nThird line\nFourth line\nFifth line <b>plain text</b>`;
 			await pageA.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(summary);
-			await pageA.getByRole('button', { name: 'Save summary', exact: true }).click();
+			await pageA.getByRole('button', { name: 'Save thread', exact: true }).click();
 			await expect(pageA.getByTestId('thread-summary')).toHaveText(summary);
 			await expect(cardB.getByTestId('thread-preview')).toHaveText(summary);
 			const previewBounds = await cardB.getByTestId('thread-preview').evaluate((node) => ({
@@ -54,20 +56,26 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageB.getByTestId('thread-summary')).toHaveText(summary);
 			await expect(pageB.getByTestId('thread-summary')).toBeInViewport();
 			await expect(pageB.getByTestId('thread-summary').locator('b')).toHaveCount(0);
-			await pageB.getByRole('button', { name: 'Edit summary', exact: true }).click();
+			await pageB.getByRole('button', { name: 'Edit thread', exact: true }).click();
 			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('Cancelled draft');
-			await pageB.getByRole('region', { name: 'Thread summary', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
+			await pageB.getByRole('textbox', { name: 'Thread title', exact: true }).fill('Cancelled title');
+			await pageB.getByRole('region', { name: 'Edit thread', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
 			await expect(pageB.getByTestId('thread-summary')).toHaveText(summary);
-			await pageB.getByRole('button', { name: 'Edit summary', exact: true }).click();
+			await expect(pageB.getByRole('heading', { level: 1 })).toContainText(`${token}-root`);
+			await pageB.getByRole('button', { name: 'Edit thread', exact: true }).click();
 			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('Updated by another participant');
-			await pageB.getByRole('button', { name: 'Save summary', exact: true }).click();
+			await pageB.getByRole('textbox', { name: 'Thread title', exact: true }).fill(`${token}-renamed`);
+			await pageB.getByRole('button', { name: 'Save thread', exact: true }).click();
 			await expect(pageA.getByTestId('thread-summary')).toHaveText('Updated by another participant');
-			await expect(pageA.getByRole('heading', { level: 1 })).toContainText(`${token}-root`);
-			await pageB.getByRole('button', { name: 'Edit summary', exact: true }).click();
+			await expect(pageA.getByRole('heading', { level: 1 })).toContainText(`${token}-renamed`);
+			await pageB.getByRole('button', { name: 'Edit thread', exact: true }).click();
 			await pageB.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('');
-			await pageB.getByRole('button', { name: 'Save summary', exact: true }).click();
-			await expect(pageB.getByRole('button', { name: 'Add summary', exact: true })).toBeVisible();
+			await pageB.getByRole('button', { name: 'Save thread', exact: true }).click();
+			await expect(pageB.getByRole('button', { name: 'Edit thread', exact: true })).toBeVisible();
+			await expect(pageB.getByRole('region', { name: 'Thread summary', exact: true })).toHaveCount(0);
+			await expect(pageB.getByRole('region', { name: 'Edit thread', exact: true })).toHaveCount(0);
 			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
+			await expect(cardB).toContainText(`${token}-renamed`);
 			await expect(cardB.getByTestId('thread-preview')).toContainText(`${token}-latest`);
 			const stableLatest = pageA.locator(`article[data-message-id="${latestId}"]`);
 			await editMessage(stableLatest, `${token}-edited`);
@@ -77,6 +85,38 @@ test.describe('chat protocol interoperability', () => {
 		} finally {
 			await Promise.all([owner.close(), reader.close()]);
 		}
+	});
+
+	test('shows the jump prompt only when the latest timeline item is outside the viewport', async ({ page }) => {
+		await page.setViewportSize({ width: 900, height: 700 });
+		await openChat(page);
+		const token = `jump-${Date.now()}`;
+		await sendMessage(page, token);
+		await (await messageAction(await waitForMessage(page, token), 'Start thread')).click();
+		const selected = page.locator('[data-testid="thread-list"] button[aria-current="page"]');
+		await expect(selected).toBeVisible();
+		const threadId = await selected.getAttribute('data-thread');
+		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
+		await page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`).click();
+		const jump = page.getByRole('button', { name: /^Jump to (latest|new)$/ });
+		const list = page.getByTestId('message-list');
+		await expect(jump).toHaveCount(0);
+		await page.getByRole('button', { name: 'Edit thread', exact: true }).click();
+		await page.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(Array.from({ length: 50 }, (_, i) => `Summary line ${i}`).join('\n'));
+		await page.getByRole('button', { name: 'Save thread', exact: true }).click();
+		await expect(jump).toBeVisible();
+		await jump.click();
+		await expect(jump).toHaveCount(0);
+		await list.evaluate((node) => { node.scrollTop = 0; });
+		await expect(jump).toBeVisible();
+		await page.setViewportSize({ width: 900, height: 1800 });
+		await expect(jump).toHaveCount(0);
+		await page.setViewportSize({ width: 900, height: 700 });
+		await expect(jump).toBeVisible();
+		await page.getByRole('button', { name: 'Edit thread', exact: true }).click();
+		await page.getByRole('textbox', { name: 'Thread summary', exact: true }).fill('');
+		await page.getByRole('button', { name: 'Save thread', exact: true }).click();
+		await expect(jump).toHaveCount(0);
 	});
 
 	test('replies to another sender, preserves references on edits, and replays deleted targets', async ({ browser }) => {

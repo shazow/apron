@@ -45,7 +45,7 @@
 	let profileServerName = $state('');
 	let editingId = $state<string | undefined>();
 	let editDraft = $state('');
-	let summaryEditor = $state<{ room: string; thread: string; text: string; saving: boolean; error?: string }>();
+	let threadEditor = $state<{ room: string; thread: string; title: string; initialTitle: string; text: string; saving: boolean; error?: string }>();
 	let feedback = $state<Feedback | undefined>();
 	let activeThread = $state<string | undefined>();
 	let selectedRoomId = $state<string | undefined>();
@@ -60,6 +60,7 @@
 	let composer = $state<HTMLTextAreaElement | undefined>();
 	let messageScroll = $state<HTMLDivElement | undefined>();
 	let stickToBottom = $state(true);
+	let latestVisible = $state(true);
 	let seenCount = $state(0);
 	let typingTimer: ReturnType<typeof setTimeout> | undefined;
 	let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -218,6 +219,30 @@
 		});
 	});
 
+	$effect(() => {
+		const scroll = messageScroll;
+		const items = timeline;
+		if (!scroll) return;
+		let observer: IntersectionObserver | undefined;
+		const frame = requestAnimationFrame(() => {
+			const nodes = scroll.querySelectorAll<HTMLElement>('[data-timeline-item]');
+			const latest = nodes[nodes.length - 1];
+			if (!items.length || !latest) {
+				latestVisible = true;
+				return;
+			}
+			observer = new IntersectionObserver(([entry]) => {
+				latestVisible = entry.isIntersecting;
+				if (latestVisible) seenCount = messages.length;
+			}, { root: scroll });
+			observer.observe(latest);
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+			observer?.disconnect();
+		};
+	});
+
 	onMount(() => {
 		const savedUrl = localStorage.getItem('bottomless.serverUrl') ?? defaultWebSocketUrl(window.location);
 		const savedName = localStorage.getItem('bottomless.displayName') ?? '';
@@ -265,7 +290,7 @@
 			moreId = undefined;
 			composerText = '';
 			replyId = undefined;
-			summaryEditor = undefined;
+			threadEditor = undefined;
 			serverInput = normalized;
 			localStorage.setItem('bottomless.serverUrl', normalized);
 			client.setUrl(normalized);
@@ -351,7 +376,7 @@
 		replyId = replyDrafts[key];
 		editingId = undefined;
 		editDraft = '';
-		summaryEditor = undefined;
+		threadEditor = undefined;
 		movingId = undefined;
 		moreId = undefined;
 		stickToBottom = true;
@@ -607,27 +632,34 @@
 		return `${senderName(event)}: ${text || (embedsOf(event).length ? 'Attachment' : 'Empty message')}`;
 	}
 
-	function editSummary(): void {
-		if (!activeRoom || !activeThreadAnnouncement || !canEdit || !canCompose) return;
-		summaryEditor = {
+	function editThread(): void {
+		if (threadEditor || !activeRoom || !activeThreadAnnouncement || !canEdit || !canCompose) return;
+		threadEditor = {
 			room: activeRoom.id, thread: activeThreadAnnouncement.thread_id,
+			title: activeThreadAnnouncement.title ?? activeThreadAnnouncement.thread_id,
+			initialTitle: activeThreadAnnouncement.title ?? activeThreadAnnouncement.thread_id,
 			text: activeThreadAnnouncement.summary ?? '', saving: false
 		};
+		stickToBottom = false;
+		requestAnimationFrame(() => { if (messageScroll) messageScroll.scrollTop = 0; });
 	}
 
-	async function saveSummary(event: SubmitEvent): Promise<void> {
+	async function saveThread(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
-		if (!client || !summaryEditor || summaryEditor.saving || !canEdit || !canCompose) return;
-		const editor = summaryEditor;
+		if (!client || !threadEditor || threadEditor.saving || !canEdit || !canCompose) return;
+		const editor = threadEditor;
 		editor.saving = true;
 		editor.error = undefined;
 		try {
-			await client.updateThreadSummary(editor.room, editor.thread, editor.text.trim() ? editor.text : '').promise;
-			if (summaryEditor === editor) summaryEditor = undefined;
+			await client.updateThread(editor.room, editor.thread, {
+				...(editor.title.trim() !== editor.initialTitle ? { title: editor.title.trim() } : {}),
+				summary: editor.text.trim() ? editor.text : ''
+			}).promise;
+			if (threadEditor === editor) threadEditor = undefined;
 		} catch (cause) {
-			if (summaryEditor !== editor) return;
+			if (threadEditor !== editor) return;
 			editor.saving = false;
-			editor.error = cause instanceof Error ? cause.message : 'Unable to save summary';
+			editor.error = cause instanceof Error ? cause.message : 'Unable to save thread';
 		}
 	}
 
@@ -779,11 +811,16 @@
 				<button class="ap-roomhead-back" type="button" aria-label="Back to rooms" onclick={() => (mobilePane = 'rooms')}>‹</button>
 				<div class="ap-roomhead-text">
 					{#if activeThread}
-						<h1 class="ap-roomhead-name">
-							<button class="ap-roomhead-crumb" type="button" aria-label="Back to room" onclick={backToRoom}>{activeRoom.name}</button>
-							<span class="ap-roomhead-sep" aria-hidden="true"> › </span>
-							{threadTitle(activeThread)}
-						</h1>
+						<div class="app-thread-heading">
+							<h1 class="ap-roomhead-name">
+								<button class="ap-roomhead-crumb" type="button" aria-label="Back to room" onclick={backToRoom}>{activeRoom.name}</button>
+								<span class="ap-roomhead-sep" aria-hidden="true"> › </span>
+								{threadTitle(activeThread)}
+							</h1>
+							{#if canEdit && activeThreadAnnouncement}
+								<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Edit thread" aria-expanded={Boolean(threadEditor)} disabled={!canCompose || Boolean(threadEditor?.saving)} onclick={editThread}>Edit</button>
+							{/if}
+						</div>
 					{:else}
 						<h1 class="ap-roomhead-name">{activeRoom.name}</h1>
 					{/if}
@@ -821,29 +858,27 @@
 			{/if}
 
 			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.name} messages`}>
-				{#if activeThreadAnnouncement && (activeThreadAnnouncement.summary !== undefined || canEdit)}
-					<section class="app-thread-summary" aria-label="Thread summary">
+				{#if activeThreadAnnouncement && (activeThreadAnnouncement.summary?.trim() || threadEditor)}
+					<section class="app-thread-summary" aria-label={threadEditor ? 'Edit thread' : 'Thread summary'}>
 						<div class="app-summary-heading">
-							<h2>Summary</h2>
-							{#if canEdit && !summaryEditor}
-								<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={!canCompose} onclick={editSummary}>{activeThreadAnnouncement.summary !== undefined ? 'Edit summary' : 'Add summary'}</button>
-							{/if}
+							<h2>{threadEditor ? 'Edit thread' : 'Summary'}</h2>
 						</div>
-						{#if summaryEditor}
-							<form onsubmit={saveSummary}>
-								<label class="ap-fieldlabel">Thread summary
-									<textarea class="ap-field app-summary-editor" bind:value={summaryEditor.text} rows="5" disabled={summaryEditor.saving}></textarea>
+						{#if threadEditor}
+							<form onsubmit={saveThread}>
+								<label class="ap-fieldlabel">Thread title
+									<input class="ap-field" bind:value={threadEditor.title} disabled={threadEditor.saving} />
 								</label>
-								{#if summaryEditor.error}<p role="alert">{summaryEditor.error}</p>{/if}
+								<label class="ap-fieldlabel">Thread summary
+									<textarea class="ap-field app-summary-editor" bind:value={threadEditor.text} rows="5" disabled={threadEditor.saving}></textarea>
+								</label>
+								{#if threadEditor.error}<p role="alert">{threadEditor.error}</p>{/if}
 								<div class="ap-profedit-actions">
-									<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={summaryEditor.saving} onclick={() => (summaryEditor = undefined)}>Cancel</button>
-									<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" disabled={summaryEditor.saving || !canCompose || !canEdit}>{summaryEditor.saving ? 'Saving…' : 'Save summary'}</button>
+									<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={threadEditor.saving} onclick={() => (threadEditor = undefined)}>Cancel</button>
+									<button class="ap-btn ap-btn-primary ap-btn-sm" type="submit" disabled={threadEditor.saving || !canCompose || !canEdit}>{threadEditor.saving ? 'Saving…' : 'Save thread'}</button>
 								</div>
 							</form>
 						{:else if activeThreadAnnouncement.summary !== undefined}
 							<div class="app-summary-text" data-testid="thread-summary">{activeThreadAnnouncement.summary}</div>
-						{:else}
-							<p class="app-muted">No summary yet.</p>
 						{/if}
 					</section>
 				{/if}
@@ -864,7 +899,7 @@
 						{:else if item.kind === 'thread'}
 							{@const entry = item.entry}
 							<div class="app-thread-row">
-								<button class="ap-thread" data-testid="thread-card" data-thread={entry.thread_id} type="button" onclick={() => chooseThread(entry.thread_id)}>
+								<button class="ap-thread" data-timeline-item data-testid="thread-card" data-thread={entry.thread_id} type="button" onclick={() => chooseThread(entry.thread_id)}>
 									{#if entry.participants.length > 0}
 										<span class="ap-thread-faces" aria-hidden="true">
 											{#each entry.participants as participant (participant.user_id)}
@@ -889,7 +924,7 @@
 						{:else}
 							{@const event = item.event}
 							{@const name = senderName(event)}
-							<article class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} data-message-id={event.message_id} tabindex="-1">
+							<article data-timeline-item class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} data-message-id={event.message_id} tabindex="-1">
 								<div class="ap-msg-gutter">
 									{#if item.grouped}
 										<span class="ap-msg-hovertime">{eventTime(event)}</span>
@@ -1001,7 +1036,7 @@
 				{/if}
 			</div>
 
-			{#if unseenCount > 0 || !stickToBottom}
+			{#if timeline.length > 0 && !latestVisible}
 				<div class="app-jump">
 					<div class="ap-jumpbar" role="status">
 						<span class="ap-jumpbar-text">{unseenCount ? (unseenCount === 1 ? '1 new message' : `${unseenCount} new messages`) : 'You’re viewing older messages'}</span>
@@ -1082,6 +1117,9 @@
 	.ap-room-active .app-room-meta { color: var(--ink); }
 	.ap-roomhead-back { display: none; }
 	.ap-roomhead-name { max-width: 100%; }
+	.app-thread-heading { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: var(--space-1); }
+	.app-thread-heading .ap-btn { flex: none; }
+	.app-thread-summary form { display: flex; flex-direction: column; gap: var(--space-3); }
 	.app-banner { padding: var(--space-2) var(--space-4) 0; }
 	.app-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 	.app-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }

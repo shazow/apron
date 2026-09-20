@@ -20,10 +20,10 @@ test('thread summary previews and the full editor fit a phone viewport', async (
 	const token = `mobile-summary-${Date.now()}`;
 	await sendMessage(page, token);
 	await (await messageAction(await waitForMessage(page, token), 'Start thread')).click();
-	await page.getByRole('button', { name: 'Add summary', exact: true }).click();
+	await page.getByRole('button', { name: 'Edit thread', exact: true }).click();
 	const summary = `${'longword'.repeat(30)}\nSecond line\nThird line\nFourth line\nLast line`;
 	await page.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(summary);
-	await page.getByRole('button', { name: 'Save summary', exact: true }).click();
+	await page.getByRole('button', { name: 'Save thread', exact: true }).click();
 	await expect(page.getByTestId('thread-summary')).toHaveText(summary);
 	await page.getByRole('button', { name: 'Back to room', exact: true }).click();
 	const card = page.getByTestId('thread-card').filter({ hasText: token });
@@ -33,7 +33,7 @@ test('thread summary previews and the full editor fit a phone viewport', async (
 	expect(height.height).toBeLessThanOrEqual(height.line * 3 + 1);
 	await card.click();
 	await expect(page.getByTestId('thread-summary')).toBeInViewport();
-	await page.getByRole('button', { name: 'Edit summary', exact: true }).click();
+	await page.getByRole('button', { name: 'Edit thread', exact: true }).click();
 	await expect(page.getByRole('textbox', { name: 'Thread summary', exact: true })).toHaveValue(summary);
 	const editorBounds = await page.getByRole('textbox', { name: 'Thread summary', exact: true }).boundingBox();
 	expect(editorBounds!.height).toBeGreaterThanOrEqual(120);
