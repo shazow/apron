@@ -41,7 +41,10 @@ in the room log.
   object (a **frame**).
 - Frames use the [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
   request, response, and notification shapes (`method`, `params`, `id`,
-  `result`, `error`) without the `jsonrpc` member.
+  `result`, `error`) without the `jsonrpc` member. Because unknown members
+  are ignored (below), frames from a JSON-RPC 2.0 sender are accepted as-is;
+  frames emitted by this protocol are not JSON-RPC 2.0, since they omit
+  that member.
 - Requests MAY be pipelined; the server processes them in order but MAY reply
   out of order. Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
