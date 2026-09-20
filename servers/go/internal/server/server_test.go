@@ -257,7 +257,7 @@ func TestMessageSnapshotsReplaceEditableState(t *testing.T) {
 	}
 }
 
-func TestRepliesStayWithinRoomAndThread(t *testing.T) {
+func TestRepliesStayWithinRoomAcrossThreads(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
 	body := map[string]any{"text": "hello"}
@@ -277,14 +277,6 @@ func TestRepliesStayWithinRoomAndThread(t *testing.T) {
 		{"reply_message_id": "0"}, {"reply_message_id": "bad"}, {"reply_message_id": "999"},
 		{"message_id": root, "reply_message_id": root},
 		{"reply_message_id": root, "room_id": "another-room"},
-		{"reply_message_id": root, "thread_id": thread},
-		{"reply_message_id": threadRoot},
-		{"reply_message_id": threadRoot, "thread_id": other},
-		{"message_id": reply, "reply_message_id": threadRoot},
-		{"message_id": reply, "reply_message_id": root, "thread_id": thread},
-		{"message_id": root, "thread_id": thread},
-		{"message_id": threadRoot, "thread_id": other},
-		{"message_id": threadRoot, "deleted": true}, // Tombstones must retain the target's thread too.
 	}
 	for i, params := range cases {
 		if _, ok := params["room_id"]; !ok {
@@ -301,6 +293,27 @@ func TestRepliesStayWithinRoomAndThread(t *testing.T) {
 	after := historyPage(t, c, map[string]any{"after": "0"})
 	if before["last_id"] != after["last_id"] {
 		t.Fatal("rejected reply changed history")
+	}
+
+	// Cross-thread references survive creation, edits, and moves of either endpoint.
+	for i, params := range []map[string]any{
+		{"reply_message_id": root, "thread_id": thread},
+		{"reply_message_id": threadRoot},
+		{"reply_message_id": threadRoot, "thread_id": other},
+		{"message_id": reply, "reply_message_id": threadRoot},
+		{"message_id": reply, "reply_message_id": root, "thread_id": thread},
+		{"message_id": root, "thread_id": thread},
+		{"message_id": threadRoot, "thread_id": other},
+		{"message_id": threadRoot, "deleted": true},
+	} {
+		if params["deleted"] != true {
+			params["body"] = body
+		}
+		_, saved := save(t, c, fmt.Sprintf("cross-thread-%d", i), params)
+		message := saved["message"].(map[string]any)
+		if message["reply_message_id"] != params["reply_message_id"] {
+			t.Fatalf("save lost reply reference: %#v", message)
+		}
 	}
 
 	_, edited := save(t, c, "edit-reply", map[string]any{"message_id": reply, "body": map[string]any{"text": "edited"}, "reply_message_id": root})

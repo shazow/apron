@@ -368,7 +368,7 @@ retained in stored snapshots and ignored by renderers):
 | `message_id`          | permanent server-assigned message ID (§2)     |
 | `from`                | server-assigned inline identity (§3.3)        |
 | `body`                | `text`, `format`, `embeds`                    |
-| `reply_message_id`     | optional reply target message ID in the same room and thread |
+| `reply_message_id`     | optional reply target message ID in the same room |
 | `thread_id`           | optional thread reference (§6.2)             |
 | `deleted`             | boolean tombstone marker, default false (§5.3) |
 
@@ -383,9 +383,9 @@ Clients MUST retain and resubmit extension fields they do not understand
 when saving an existing message, so those fields are not lost.
 
 `reply_message_id`, when present, MUST be a string identifying the message
-being replied to in the same room and thread (§2). Both messages MUST have the
-same `thread_id`, or both omit it. The target MUST exist and MUST NOT be the
-reply itself; invalid references MUST be rejected with `invalid_params`.
+being replied to in the same room (§2). The messages MAY belong to different
+threads, including when only one is threaded. The target MUST exist and MUST NOT
+be the reply itself; invalid references MUST be rejected with `invalid_params`.
 Clients supply it in `params`; server notifications carry it in `params.message`,
 and history entries carry it in their `message` snapshots.
 Omitting it means the message has no reply reference. It is editable state:
@@ -393,10 +393,9 @@ omitting it on replacement removes the reference (§5.3). Reply references
 require no capability flag and do not create threads or change thread membership;
 `thread_id` is set independently. Clients MUST tolerate a referenced message
 being unavailable or deleted and still render the reply's own content.
-Deleted targets remain valid references. Servers MUST reject thread moves
-that would leave a reply and its target in different threads, including moves
-of a target with existing replies. Remove the affected reply references before
-moving; a reply's own reference MAY be removed in the same save as its move.
+Deleted targets remain valid references. Moving a message between threads does
+not require removing its reply reference or references from other messages.
+Reply references do not constrain thread membership.
 
 For example, reply to the message created above:
 

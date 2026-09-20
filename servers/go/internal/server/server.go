@@ -656,20 +656,9 @@ func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
 		}
 	}
 	if hasReply {
-		target, exists := s.room.states[replyID]
+		_, exists := s.room.states[replyID]
 		if !exists || (replacing && replyID == messageID) {
 			return nil, invalidParams("Reply target must be another message in this room")
-		}
-		targetThread, _ := target["thread_id"].(string)
-		if targetThread != threadID {
-			return nil, invalidParams("Reply target must be in the same thread")
-		}
-	}
-	if replacing && previousThread != threadID {
-		for _, message := range s.room.states {
-			if message["reply_message_id"] == messageID {
-				return nil, invalidParams("Cannot move a message with replies to another thread")
-			}
 		}
 	}
 	logID := s.nextIDLocked()

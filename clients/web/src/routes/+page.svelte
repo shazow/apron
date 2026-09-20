@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { passkeySupportError } from '$lib/protocol/webauthn';
 	import {
 		ChatClient,
@@ -178,8 +178,6 @@
 		(!activeThread || Boolean(activeThreadAnnouncement))
 	));
 	let canEdit = $derived(snapshot.server?.caps?.includes('edit') === true);
-	let replyTarget = $derived(replyId ? activeRoom?.timeline.events[replyId] : undefined);
-	let replyTargetMoved = $derived(Boolean(replyTarget && replyTarget.thread_id !== activeThread));
 	let canUpload = $derived(typeof snapshot.server?.upload === 'string' && snapshot.server.upload.length > 0);
 	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== snapshot.you?.user_id));
 	let typingNames = $derived(roomTyping.map((entry) => entry.from.name || entry.from.user_id));
@@ -570,7 +568,7 @@
 	}
 
 	function sendMessage(): void {
-		if (!client || !activeRoom || !canCompose || replyTargetMoved || !composerText.trim()) return;
+		if (!client || !activeRoom || !canCompose || !composerText.trim()) return;
 		const draft = composerText;
 		const roomId = activeRoom.id;
 		const thread = activeThread;
@@ -628,7 +626,18 @@
 	}
 
 	/** Scrolls the timeline to a message and highlights it for a moment. */
-	function jumpToMessage(id: string): void {
+	async function jumpToMessage(id: string): Promise<void> {
+		const room = activeRoom;
+		const target = room?.timeline.events[id];
+		if (!room || !target) return;
+		if (target.thread_id !== activeThread) {
+			setDestination(room.id, target.thread_id);
+			stickToBottom = false;
+			if (target.thread_id) {
+				client?.loadThread(room.id, target.thread_id).catch((cause: Error) => { feedback = { kind: 'error', text: cause.message }; });
+			}
+			await tick();
+		}
 		const node = messageScroll?.querySelector<HTMLElement>(`article[data-message-id="${CSS.escape(id)}"]`);
 		if (!node) return;
 		stickToBottom = false;
@@ -1309,13 +1318,13 @@
 
 			{#if replyId}
 				<div class="app-reply-draft" data-testid="reply-draft" role="status">
-					<span>{replyTargetMoved ? 'This message moved to another thread. Cancel this reply to continue.' : `Replying to ${replyPreview(replyId)}`}</span>
+					<span>{`Replying to ${replyPreview(replyId)}`}</span>
 					<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Cancel reply" onclick={cancelReply}>Cancel reply</button>
 				</div>
 			{/if}
 			<form class="ap-composer" class:ap-composer-disabled={!canCompose} aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); sendMessage(); }}>
 				<textarea class="ap-composer-field" id="message-input" data-testid="message-input" aria-label="Message" bind:this={composer} bind:value={composerText} oninput={composerInput} onkeydown={composerKeydown} disabled={!canCompose} placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.name}`} rows="1"></textarea>
-				<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || replyTargetMoved || !composerText.trim()}>Send</button>
+				<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || !composerText.trim()}>Send</button>
 			</form>
 		{:else}
 			<div class="app-empty app-empty-room">

@@ -74,13 +74,15 @@ complete metadata; the root and messages stay intact. The jump prompt is hidden
 when the latest timeline item is already visible.
 
 Use a message's Reply action to reference it in a new message. Reply references
-are restricted to the same room and thread (or two unthreaded messages). The
+are restricted to the same room but may cross thread boundaries. The
 composer keeps the reply target with the destination's draft. A reply shows the
-quoted message above its body; clicking the quote scrolls to the original and
-highlights it briefly. Edits preserve references; More → Remove reply removes
-one. A message with replies cannot move
-to another thread until those references are removed. Deleted targets display
-as “Message deleted”; targets outside loaded history display as “Message unavailable”.
+quoted message above its body; clicking the quote opens its destination, scrolls
+to the original and highlights it briefly. Edits preserve references; More →
+Remove reply removes one. Messages can move between threads while preserving
+reply references. Deleted targets display as “Message deleted”; targets outside
+loaded history display as “Message unavailable”.
+
+TODO: Add an interface for bulk-moving messages into a thread.
 
 The server stores thread metadata in memory and re-announces it on connection.
 Empty threads remain available; deleting or moving their root does not remove

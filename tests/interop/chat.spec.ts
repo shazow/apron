@@ -161,7 +161,38 @@ test.describe('chat protocol interoperability', () => {
 		}
 	});
 
-	test('keeps reply drafts in their thread and rejects moves that separate replies', async ({ page }) => {
+	test('starts threads from messages with replies and from replies without losing references', async ({ page }) => {
+		await openChat(page);
+		const token = `start-replied-${Date.now()}`;
+		await sendMessage(page, `${token}-target`);
+		const target = await waitForMessage(page, `${token}-target`);
+		const targetId = await target.getAttribute('data-message-id');
+		await (await messageAction(target, 'Reply to message')).click();
+		await sendMessage(page, `${token}-answer`);
+		const reply = await waitForMessage(page, `${token}-answer`);
+		const replyId = await reply.getAttribute('data-message-id');
+		await (await messageAction(target, 'Start thread')).click();
+		const selected = page.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
+		await expect(selected).toBeVisible();
+		const targetThreadId = await selected.getAttribute('data-thread');
+		await expect(page.locator(`article[data-message-id="${targetId}"]`)).toBeVisible();
+		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
+		await expect(reply.getByTestId('reply-reference')).toContainText(`${token}-target`);
+		await (await messageAction(reply, 'Start thread')).click();
+		await expect(selected).toBeVisible();
+		await expect(selected).not.toHaveAttribute('data-thread', targetThreadId!);
+		const replyThreadId = await selected.getAttribute('data-thread');
+		const stableReply = page.locator(`article[data-message-id="${replyId}"]`);
+		await expect(stableReply.getByTestId('reply-reference')).toContainText(`${token}-target`);
+		await stableReply.getByTestId('reply-reference').click();
+		await expect(selected).toHaveAttribute('data-thread', targetThreadId!);
+		await expect(page.locator(`article[data-message-id="${targetId}"]`)).toBeFocused();
+		await page.reload();
+		await page.locator(`[data-testid="thread-list"] button[data-thread="${replyThreadId}"]`).click();
+		await expect(stableReply.getByTestId('reply-reference')).toContainText(`${token}-target`);
+	});
+
+	test('keeps reply drafts and references when their target moves across threads', async ({ page }) => {
 		await openChat(page);
 		const token = `thread-reply-${Date.now()}`;
 		await sendMessage(page, `${token}-target`);
@@ -184,22 +215,22 @@ test.describe('chat protocol interoperability', () => {
 		await page.getByRole('button', { name: 'Send message', exact: true }).click();
 		const reply = await waitForMessage(page, `${token}-answer`);
 		await expect(reply.getByTestId('reply-reference')).toContainText(`${token}-target`);
-		await (await moreAction(stableTarget, 'Move message')).click();
-		await stableTarget.getByRole('combobox', { name: 'Move message to', exact: true }).selectOption('');
-		await expect(page.getByRole('alert')).toContainText('Cannot move a message with replies');
-		await expect(stableTarget).toBeVisible();
-		await (await moreAction(reply, 'Remove reply reference')).click();
-		await expect(reply.getByTestId('reply-reference')).toHaveCount(0);
 		await (await messageAction(stableTarget, 'Reply to message')).click();
 		await composer(page).fill(`${token}-unsent`);
 		await (await moreAction(stableTarget, 'Move message')).click();
 		await stableTarget.getByRole('combobox', { name: 'Move message to', exact: true }).selectOption('');
 		await expect(stableTarget).toHaveCount(0);
-		await expect(page.getByTestId('reply-draft')).toContainText('moved to another thread');
-		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
-		await page.getByRole('button', { name: 'Cancel reply', exact: true }).click();
-		await expect(composer(page)).toHaveValue(`${token}-unsent`);
+		await expect(reply.getByTestId('reply-reference')).toContainText(`${token}-target`);
+		await expect(page.getByTestId('reply-draft')).toContainText(`${token}-target`);
 		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+		await reply.getByTestId('reply-reference').click();
+		await expect(stableTarget).toBeVisible();
+		await expect(composer(page)).toHaveValue('');
+		await thread.click();
+		await expect(composer(page)).toHaveValue(`${token}-unsent`);
+		await page.getByRole('button', { name: 'Send message', exact: true }).click();
+		const crossThreadReply = await waitForMessage(page, `${token}-unsent`);
+		await expect(crossThreadReply.getByTestId('reply-reference')).toContainText(`${token}-target`);
 	});
 
 	test('broadcasts across independent sessions and recovers history for a new reader', async ({ browser }) => {
