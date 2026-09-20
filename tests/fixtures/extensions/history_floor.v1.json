@@ -1,0 +1,93 @@
+{
+  "format": 1,
+  "kind": "extension",
+  "name": "history_floor.v1",
+  "extension": "history_floor.v1",
+  "version": 1,
+  "description": "Retention-aware room announcements and history pages keep a monotonic log coverage boundary.",
+  "references": [
+    "servers/cloudflare-worker/SPEC.md#91-rolling-history-and-history_floorv1",
+    "PROTOCOL.md#51-history"
+  ],
+  "cases": [
+    {
+      "name": "initial-boundary",
+      "room": {
+        "method": "room",
+        "params": {
+          "room_id": "general",
+          "name": "General",
+          "latest_id": "1790000001000",
+          "history_floor": "1789913600001"
+        }
+      },
+      "history": {
+        "id": "h1",
+        "result": {
+          "entries": [],
+          "more": false,
+          "history_floor": "1789913600001"
+        }
+      },
+      "assertions": {
+        "floor": "1789913600001",
+        "latest_id": "1790000001000",
+        "checkpoint_before_floor": "1789913600000",
+        "empty": true
+      }
+    },
+    {
+      "name": "floor-advances-with-old-message-id-retained",
+      "room": {
+        "method": "room",
+        "params": {
+          "room_id": "general",
+          "latest_id": "900",
+          "history_floor": "850"
+        }
+      },
+      "entries": [
+        {
+          "log_id": "800",
+          "message": {
+            "message_id": "700",
+            "from": { "user_id": "alice" },
+            "body": { "text": "old creation" }
+          }
+        },
+        {
+          "log_id": "875",
+          "message": {
+            "message_id": "700",
+            "from": { "user_id": "alice" },
+            "body": { "text": "recent edit" }
+          }
+        }
+      ],
+      "assertions": {
+        "retained_message_ids": ["700"],
+        "discarded_log_ids": ["800"],
+        "floor_is_monotonic": true
+      }
+    },
+    {
+      "name": "exact-checkpoint-boundary",
+      "checkpoint": "99",
+      "floor": "100",
+      "assertions": {
+        "forward_recovery_after": "100",
+        "restart": false
+      }
+    },
+    {
+      "name": "overtaken-checkpoint",
+      "checkpoint": "98",
+      "floor": "100",
+      "assertions": {
+        "forward_recovery_after": "100",
+        "restart": true,
+        "rebuild_from": "100"
+      }
+    }
+  ]
+}

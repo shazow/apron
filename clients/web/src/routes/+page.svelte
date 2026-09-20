@@ -216,6 +216,15 @@
 		if (snapshot.status === 'offline') return 'offline';
 		return 'connecting';
 	});
+	let demoRetentionNotice = $derived.by(() => {
+		if (!snapshot.server?.extensions?.includes('history_floor.v1')) return '';
+		const seconds = snapshot.server.demo?.retention_seconds;
+		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return 'This demo keeps roughly the last day of history.';
+		const hours = Math.max(1, Math.round(seconds / 3600));
+		return hours >= 20 && hours <= 28
+			? 'This demo keeps roughly the last day of history; older messages may expire.'
+			: `This demo keeps roughly the last ${hours} hours of history; older messages may expire.`;
+	});
 
 	$effect(() => {
 		const roomId = activeRoom?.id;
@@ -317,9 +326,20 @@
 	function statusLabel(): string {
 		if (snapshot.status === 'connected' && snapshot.you) return 'Connected';
 		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'Connecting…';
-		if (snapshot.status === 'reconnecting') return 'Connection lost. Reconnecting…';
+		if (snapshot.status === 'reconnecting') {
+			if (snapshot.retryAfterMs && snapshot.retryAfterMs > 0) return `Connection limited. Retrying in ${retryAfterLabel(snapshot.retryAfterMs)}…`;
+			return 'Connection lost. Reconnecting…';
+		}
 		if (snapshot.status === 'offline') return 'Offline';
 		return 'Waiting to connect';
+	}
+
+	function retryAfterLabel(milliseconds: number): string {
+		const seconds = Math.max(1, Math.ceil(milliseconds / 1000));
+		if (seconds < 60) return `${seconds}s`;
+		const minutes = Math.ceil(seconds / 60);
+		if (minutes < 60) return `${minutes}m`;
+		return `${Math.ceil(minutes / 60)}h`;
 	}
 
 	function backendHost(value: string): string {
@@ -1108,6 +1128,14 @@
 			{:else}
 				<span class="app-sr" data-testid="connection-status" role="status" aria-live="polite">Connected</span>
 			{/if}
+			{#if demoRetentionNotice}
+				<div class="app-banner app-demo-notice" role="note">
+					<div class="ap-status">
+						<span class="ap-status-dot ap-status-warn" aria-hidden="true"></span>
+						<span class="ap-status-text">{demoRetentionNotice}</span>
+					</div>
+				</div>
+			{/if}
 			{#if activeThread && !activeThreadAnnouncement}
 				<div class="app-banner">
 					<div class="ap-status" role="status">
@@ -1388,6 +1416,7 @@
 	.ap-roomhead-name { max-width: 100%; }
 	.ap-roomhead-actions { flex: none; }
 	.app-banner { padding: var(--space-2) var(--space-4) 0; }
+	.app-demo-notice .ap-status { color: var(--ink-muted); }
 	.app-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 	.app-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }
 	.app-empty h2 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 600; color: var(--ink); }

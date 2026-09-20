@@ -46,6 +46,13 @@ are also in memory and are lost on backend restart.
 
 The implementation-specific WebAuthn exchange is documented in
 [`servers/go/README.md`](../../servers/go/README.md#example-webauthn-exchange).
+The Cloudflare demo additionally advertises `webauthn.demo.v1`: its
+`register`/`login` ceremony uses `step: "begin"` and `step: "finish"`, returns
+`public_key` options plus a `challenge_id`, and receives the browser's JSON
+credential response. The adapter selects that exchange only when the server
+advertises the extension, so the Go example's `register_begin` and
+`login_begin` actions remain compatible. Demo sign-out is local and reconnects
+as a guest because the extension has no server-side logout method.
 
 The UI follows the Apron design system. `src/lib/design/tokens.css` holds its
 color, type, spacing, radius and size tokens as CSS custom properties (dark is
@@ -59,11 +66,17 @@ the design system changes rather than editing it here; the few `app-*` rules in
 the page are layout glue only.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol`. Room history recovery captures the room head, pages complete
-snapshots from the empty-log boundary, and buffers live snapshots until recovery
-finishes. Opening a thread fetches its history independently with `thread_id` and
-a fixed head. The reducer installs the greatest `log_id` for each `message_id`,
-so overlapping history and live delivery cannot revert newer state.
+`src/lib/protocol`. When `history_floor.v1` is advertised, recovery tracks the
+monotonic floor and a per-scope checkpoint, captures a fixed room head, pages
+complete snapshots from the retained boundary, and buffers bounded live
+snapshots until recovery finishes. A checkpoint at `floor - 1` resumes safely;
+if retention overtakes the next uncovered range, the client rebuilds from the
+new floor and ignores obsolete replies. Sparse timestamp log IDs are expected.
+Opening a thread fetches its history independently with `thread_id` and a fixed
+head, without advancing room coverage. The reducer installs the greatest
+`log_id` for each `message_id`, so overlapping history and live delivery cannot
+revert newer state. The UI displays a notice that the demo retains roughly the
+last day and honors server retry delays with jittered reconnect backoff.
 
 Edits, moves, and deletion use the same `message` request as creation, with an
 existing `message_id` and complete editable state. The client preserves unknown

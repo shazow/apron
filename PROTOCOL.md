@@ -6,6 +6,13 @@ The protocol is designed to be incremental by level, the minimal backend ("Level
 
 Let's start with a simple exchange:
 
+The public Cloudflare demo defines the additive
+[`history_floor.v1` and `webauthn.demo.v1` extensions](servers/cloudflare-worker/docs/extensions.md).
+For servers advertising `history_floor.v1`, history and recovery guarantees
+below apply to the retained interval: room heads remain historical committed
+heads, expired ranges are unavailable, and clients must validate checkpoints
+against the advertised floor. Other servers retain the base semantics below.
+
 After the WebSocket opens, the server announces itself, accepts authentication,
 and announces visible rooms. The client can then send messages; the server
 broadcasts them to all clients in the room, including the sender.

@@ -46,6 +46,17 @@ export class TimelineReplay {
 			this.state.latestLogs[id] = log_id;
 		}
 	}
+
+	/** Remove snapshots whose latest authoritative transition is below a retention floor. */
+	pruneBefore(floor: string): void {
+		for (const id of [...this.state.order]) {
+			const latest = this.state.latestLogs[id];
+			if (!latest || compareLogIds(latest, floor) >= 0) continue;
+			delete this.state.latestLogs[id];
+			delete this.state.events[id];
+		}
+		this.state.order = this.state.order.filter((id) => Object.hasOwn(this.state.events, id));
+	}
 	finish(): TimelineState {
 		this.state.order.sort(compareLogIds);
 		return this.state;
@@ -64,4 +75,20 @@ export function applyTransition(state: TimelineState, transition: Transition): T
 
 export function timelineEvents(state: TimelineState): MessageRecord[] {
 	return state.order.map((id) => state.events[id]);
+}
+
+/**
+ * Apply a retention floor without changing snapshots whose latest transition is
+ * still retained. A message may have an old creation ID and remain visible
+ * after a recent edit, so pruning is keyed by log ID rather than message ID.
+ */
+export function pruneTimelineBefore(state: TimelineState, floor: string): TimelineState {
+	if (!isPositiveLogId(floor)) return state;
+	const replay = new TimelineReplay(state);
+	replay.pruneBefore(floor);
+	return replay.finish();
+}
+
+function isPositiveLogId(value: string): boolean {
+	return /^[1-9]\d*$/.test(value);
 }

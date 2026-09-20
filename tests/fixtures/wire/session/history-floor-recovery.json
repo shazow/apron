@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "kind": "session",
+  "name": "Retention floor recovery",
+  "description": "A client keeps the exact floor-minus-one checkpoint, buffers live entries above a fixed head, and rebuilds when retention overtakes an uncovered range.",
+  "references": [
+    "servers/cloudflare-worker/SPEC.md#319-rolling-history-and-history_floorv1",
+    "PROTOCOL.md#51-history"
+  ],
+  "variants": [
+    {
+      "name": "exact-floor-boundary-and-live-buffer",
+      "steps": [
+        { "receive": { "method": "server", "params": { "protocol": 2, "auth": ["anonymous"], "caps": ["history"], "extensions": ["history_floor.v1"] } } },
+        { "request": { "as": "auth", "match": { "method": "auth", "params": { "scheme": "anonymous" } } } },
+        { "reply": { "to": "auth", "result": { "you": { "user_id": "guest" } } } },
+        { "receive": { "method": "room", "params": { "room_id": "general", "name": "General", "latest_id": "8", "history_floor": "5" } } },
+        { "request": { "as": "history-1", "match": { "method": "history", "params": { "room_id": "general", "after": "5", "before": "8" } } } },
+        { "receive": { "method": "message", "params": { "room_id": "general", "log_id": "9", "message": { "message_id": "9", "from": { "user_id": "alice" }, "body": { "text": "live" } } } } },
+        { "receive": { "method": "room", "params": { "room_id": "general", "latest_id": "9", "history_floor": "5" } } },
+        { "reply": { "to": "history-1", "result": { "entries": [ { "log_id": "5", "message": { "message_id": "5", "from": { "user_id": "alice" }, "body": { "text": "five" } } }, { "log_id": "6", "message": { "message_id": "6", "from": { "user_id": "alice" }, "body": { "text": "six" } } } ], "last_id": "6", "more": true, "history_floor": "5" } } },
+        { "request": { "as": "history-2", "match": { "method": "history", "params": { "room_id": "general", "after": "7", "before": "8" } } } },
+        { "receive": { "method": "room", "params": { "room_id": "general", "latest_id": "9", "history_floor": "7" } } },
+        { "reply": { "to": "history-2", "result": { "entries": [ { "log_id": "7", "message": { "message_id": "7", "from": { "user_id": "alice" }, "body": { "text": "seven" } } }, { "log_id": "8", "message": { "message_id": "8", "from": { "user_id": "alice" }, "body": { "text": "eight" } } } ], "last_id": "8", "more": false, "history_floor": "7" } } },
+        { "expect": { "rooms": [ { "id": "general", "name": "general", "topic": null, "events": [ { "message_id": "7", "from": { "user_id": "alice" }, "body": { "text": "seven" } }, { "message_id": "8", "from": { "user_id": "alice" }, "body": { "text": "eight" } }, { "message_id": "9", "from": { "user_id": "alice" }, "body": { "text": "live" } } ] } ] } }
+      ]
+    },
+    {
+      "name": "overtaken-checkpoint-rebuild",
+      "steps": [
+        { "receive": { "method": "server", "params": { "protocol": 2, "auth": ["anonymous"], "caps": ["history"], "extensions": ["history_floor.v1"] } } },
+        { "request": { "as": "auth", "match": { "method": "auth", "params": { "scheme": "anonymous" } } } },
+        { "reply": { "to": "auth", "result": { "you": { "user_id": "guest" } } } },
+        { "receive": { "method": "room", "params": { "room_id": "general", "latest_id": "8", "history_floor": "5" } } },
+        { "request": { "as": "history-1", "match": { "method": "history", "params": { "room_id": "general", "after": "5", "before": "8" } } } },
+        { "reply": { "to": "history-1", "result": { "entries": [ { "log_id": "5", "message": { "message_id": "5", "from": { "user_id": "alice" }, "body": { "text": "five" } } } ], "last_id": "5", "more": true, "history_floor": "5" } } },
+        { "request": { "as": "history-2", "match": { "method": "history", "params": { "room_id": "general", "after": "6", "before": "8" } } } },
+        { "receive": { "method": "room", "params": { "room_id": "general", "latest_id": "8", "history_floor": "7" } } },
+        { "request": { "as": "history-rebuild", "match": { "method": "history", "params": { "room_id": "general", "after": "7", "before": "8" } } } },
+        { "reply": { "to": "history-rebuild", "result": { "entries": [ { "log_id": "7", "message": { "message_id": "7", "from": { "user_id": "alice" }, "body": { "text": "seven" } } }, { "log_id": "8", "message": { "message_id": "8", "from": { "user_id": "alice" }, "body": { "text": "eight" } } } ], "last_id": "8", "more": false, "history_floor": "7" } } },
+        { "expect": { "rooms": [ { "id": "general", "name": "general", "topic": null, "events": [ { "message_id": "7", "from": { "user_id": "alice" }, "body": { "text": "seven" } }, { "message_id": "8", "from": { "user_id": "alice" }, "body": { "text": "eight" } } ] } ] } }
+      ]
+    },
+    {
+      "name": "sparse-timestamp-logs",
+      "steps": [
+        { "receive": { "method": "server", "params": { "protocol": 2, "auth": ["anonymous"], "caps": ["history"], "extensions": ["history_floor.v1"] } } },
+        { "request": { "as": "auth", "match": { "method": "auth", "params": { "scheme": "anonymous" } } } },
+        { "reply": { "to": "auth", "result": { "you": { "user_id": "guest" } } } },
+        { "receive": { "method": "room", "params": { "room_id": "general", "latest_id": "1724803200105", "history_floor": "1724803200001" } } },
+        { "request": { "as": "history", "match": { "method": "history", "params": { "room_id": "general", "after": "1724803200001", "before": "1724803200105" } } } },
+        { "reply": { "to": "history", "result": { "entries": [ { "log_id": "1724803200001", "message": { "message_id": "1724803200001", "from": { "user_id": "alice" }, "body": { "text": "first" } } }, { "log_id": "1724803200104", "message": { "message_id": "1724803200104", "from": { "user_id": "alice" }, "body": { "text": "last" } } } ], "last_id": "1724803200104", "more": false, "history_floor": "1724803200001" } } },
+        { "expect": { "rooms": [ { "id": "general", "name": "general", "topic": null, "events": [ { "message_id": "1724803200001", "from": { "user_id": "alice" }, "body": { "text": "first" } }, { "message_id": "1724803200104", "from": { "user_id": "alice" }, "body": { "text": "last" } } ] } ] } }
+      ]
+    }
+  ],
+  "expected": {}
+}
