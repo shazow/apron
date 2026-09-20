@@ -36,6 +36,6 @@ in {
   };
 
   enterTest = ''
-    make check test build test-interop
+    make check test build test-interop test-worker-browser
   '';
 }

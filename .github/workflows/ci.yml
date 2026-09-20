@@ -26,6 +26,7 @@ jobs:
           cache-dependency-path: |
             clients/web/package-lock.json
             tests/interop/package-lock.json
+            servers/cloudflare-worker/package-lock.json
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: servers/go/go.mod
@@ -35,3 +36,4 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: tests/interop
       - run: make test-interop
+      - run: make test-worker-browser
