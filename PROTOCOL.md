@@ -1,31 +1,29 @@
-# Bottomless Chat Protocol
+# Apron Chat Protocol
 
-A chat frontend/backend protocol over a single WebSocket, designed so that a
-minimal conforming backend ("Level 0") is implementable in under ~100 lines in
-any language. Server features beyond the core are optional; frontends MUST
-degrade gracefully when they are unavailable.
+Apron Chat Protocol is designed to be easy to implement in semi-trusted environments. It can run over a WebSocket, or most other transports. The goal is to foster an ecosystem of many Apron Chat apps and Apron Chat servers who can speak with each other--from things like local chat bridges to other protocols, to coding harnesses, to internal message rooms.
 
-Terminology per RFC 2119. "Server" = the WebSocket backend. "Client" = the chat
-frontend.
+The protocol is designed to be incremental by level, the minimal backend ("Level 0") should be implementable in about a hundred lines.
+
+Let's start with a simple exchange:
 
 After the WebSocket opens, the server announces itself, accepts authentication,
 and announces visible rooms. The client can then send messages; the server
 broadcasts them to all clients in the room, including the sender.
 
 ```jsonc
-// <-
-{"method": "server", "params": {"protocol": 2, "auth": ["anonymous"]}}
-// ->
+// <- Server greeting with auth capabilities
+{"method": "server", "params": {"protocol": 2, "auth": ["anonymous", "token"]}}
+// Client authenticates anonymously ->
 {"method": "auth", "id": "c1", "params": {"scheme": "anonymous"}}
-// <-
+// <- Server confirms perceived identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1"}}}
-// <-
+// <- Server shares available rooms
 {"method": "room", "params": {"room_id": "general"}}
-// ->
+// Client posts a message ->
 {"method": "message", "id": "c2", "params": {"room_id": "general", "body": {"text": "Hello"}}}
-// <-
+// <- Server confirms message ID
 {"id": "c2", "result": {"message_id": "1724803200042"}}
-// <- (broadcast)
+// <- Server broadcasts the message to everyone
 {"method": "message", "params": {"room_id": "general", "log_id": "1724803200042", "echo": "c2", "message": {
   "message_id": "1724803200042", "from": {"user_id": "guest_1"}, "body": {"text": "Hello"}
 }}}
