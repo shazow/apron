@@ -39,14 +39,16 @@ in the room log.
 
 - One WebSocket connection. Each WebSocket text message contains exactly one JSON
   object (a **frame**).
-- Receivers MUST accept both the [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
-  envelope and a minimal form (omitting unused keys like `jsonrpc`).
+- Frames use the [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
+  request, response, and notification shapes (`method`, `params`, `id`,
+  `result`, `error`) without the `jsonrpc` member.
 - Requests MAY be pipelined; the server processes them in order but MAY reply
   out of order. Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
-  notifications; clients ignore unknown notifications. Unknown *fields* in
-  known methods MUST be ignored by both sides, except message extension fields,
-  which are preserved as described in §3.5.
+  notifications; clients ignore unknown notifications. Unknown *fields*,
+  both envelope members and fields in known methods, MUST be ignored by both
+  sides, except message extension fields, which are preserved as described
+  in §3.5.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
@@ -57,16 +59,6 @@ in the room log.
 Request `id`, when present, MUST be a string (§2). Clients SHOULD include `id`
 for result correlation or retries, including `auth`, `history`, and mutations.
 Broadcast log IDs reside in `params.log_id`.
-
-```jsonc
-// ->
-{"jsonrpc": "2.0", "method": "message", "id": "c42",
-   "params": {"room_id": "general", "body": {"text": "hello", "format": "plain"}}}
-// <-
-{"jsonrpc": "2.0", "id": "c42", "result": {"message_id": "1724803200042"}}
-```
-
-Equivalent minimal exchange:
 
 ```jsonc
 // ->
@@ -106,13 +98,13 @@ Success returns a `result` object (`{}` if empty). Errors contain integer
 Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
 and invalid envelopes whose request ID cannot be determined use `id: null`,
 as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
-still receive no error replies. Examples below use the minimal form for brevity.
+still receive no error replies.
 
 ### 1.2 Retries and recommended deduplication
 
 Retries SHOULD preserve `id`, `method`, and `params` across reconnects. New
 operations, including changed parameters, MUST use new IDs. Deduplication
-ignores `jsonrpc` presence and object key order.
+ignores object key order.
 
 Servers SHOULD deduplicate by `(authenticated user_id, request id)`, return
 the original result for accepted duplicates without re-execution or rebroadcast, reject
