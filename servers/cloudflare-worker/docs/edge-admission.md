@@ -20,7 +20,9 @@ During an authorized deployment:
 2. Add or update `apron_invalid_request` in the zone's custom-rule phase using
    the generated expression and Block action. It is scoped to the server hostname
    and rejects unsupported paths, non-GET requests, and missing/non-WebSocket
-   Upgrade headers. Header comparison is case insensitive. Have Cloudflare validate
+   Upgrade headers, except for the explicit `apron_connection_status=1` HTTP
+   diagnostic probe. Probes retain Worker rate limiting and origin checks.
+   Header comparison is case insensitive. Have Cloudflare validate
    the expression before saving. Place it before any applicable Skip rule.
 3. Optionally create `apron_admission_off`, disabled, as an emergency Block rule.
    Enabling it prevents new requests from invoking the Worker. It does not close
@@ -48,6 +50,8 @@ After applying rules, use a handful of requests, not a quota-exhaustion load tes
   browser origin and an originless client. The app's normal connection caps apply.
 - Confirm plain HTTP GET, POST, and invalid paths on the server hostname are
   blocked at the edge; check the matching rule in Security Events.
+- Confirm `GET /ws?apron_connection_status=1` reaches the Worker and exposes
+  capacity errors and `Retry-After` to the frontend through CORS.
 - Confirm the web and documentation hosts are unaffected by the custom rules.
 - Review aggregate Worker/DO metrics and active edge definitions against the
   generated policy. Local tests verify admission behavior, not live WAF billing.

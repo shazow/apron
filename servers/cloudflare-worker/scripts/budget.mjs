@@ -40,8 +40,8 @@ export function renderEdgeRules(hostname, admission = ADMISSION_BUDGET) {
 			rules: [
 				{
 					ref: 'apron_invalid_request',
-					description: 'Apron: reject invalid WebSocket handshakes before Worker invocation',
-					expression: `(${host}) and (http.request.method ne "GET" or not http.request.uri.path in {"/" "/ws"} or not any(lower(http.request.headers["upgrade"][*])[*] eq "websocket"))`,
+					description: 'Apron: allow WebSocket handshakes and connection status probes',
+					expression: `(${host}) and (http.request.method ne "GET" or not http.request.uri.path in {"/" "/ws"} or (not any(lower(http.request.headers["upgrade"][*])[*] eq "websocket") and not any(http.request.uri.args["apron_connection_status"][*] eq "1")))`,
 					action: 'block', enabled: true,
 				},
 				{
