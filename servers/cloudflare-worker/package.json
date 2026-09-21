@@ -8,9 +8,11 @@
 	},
 	"scripts": {
 		"dev": "wrangler dev",
-		"deploy": "wrangler deploy",
-		"typecheck": "tsc --noEmit",
-		"test": "vitest run",
+		"deploy": "npm run budget:check && wrangler deploy --config wrangler.production.toml",
+		"budget:generate": "node scripts/budget.mjs",
+		"budget:check": "node scripts/budget.mjs --check",
+		"typecheck": "npm run budget:check && tsc --noEmit",
+		"test": "npm run budget:check && node --test scripts/budget.test.mjs && vitest run",
 		"test:watch": "vitest",
 		"cf-typegen": "wrangler types"
 	},

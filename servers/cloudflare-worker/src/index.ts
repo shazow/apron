@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { AuthError, AuthTooLargeError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
 import { isAllowedOrigin, loadConfig, type RuntimeConfig } from "./config";
+import { ACCOUNT_USAGE_POLICY, ADMISSION_BUDGET } from "./budget";
+import { fetchAccountUsage, type AccountUsageSnapshot } from "./account-usage";
 import { extractClientIp, hashIpKey, stripForwardingHeaders } from "./ip";
 import {
 	errorFromUnknown,
@@ -288,8 +290,18 @@ export async function fetchEntry(request: Request, env: Env): Promise<Response> 
 	if (!isUpgrade(request)) return responseError(400, "WebSocket upgrade required");
 	const clientIp = extractClientIp(request.headers);
 	if (!clientIp) return responseError(403, "Trusted client address unavailable");
-	if (!env.DEMO) return responseError(503, "Demo capacity unavailable");
+	if (config.admissionOff) return responseError(503, "Demo admission is closed");
 	const key = await hashIpKey(clientIp);
+	// This counts attempts, including connections subsequently rejected by the DO.
+	// Fail closed if the binding is absent or unavailable; never bypass admission.
+	try {
+		if (!env.CONNECTION_ATTEMPTS) return responseError(503, "Demo admission unavailable");
+		const { success } = await env.CONNECTION_ATTEMPTS.limit({ key });
+		if (!success) return responseError(429, "Connection attempts exceeded", ADMISSION_BUDGET.workerWindowSeconds * 1_000);
+	} catch {
+		return responseError(503, "Demo admission unavailable");
+	}
+	if (!env.DEMO) return responseError(503, "Demo capacity unavailable");
 	const headers = stripForwardingHeaders(request.headers);
 	headers.set(INTERNAL_IP_HEADER, key);
 	headers.delete("content-length");
@@ -303,19 +315,27 @@ export default { fetch: fetchEntry };
 
 export class ApronDemoServer extends DurableObject<Env> {
 	private readonly config: RuntimeConfig;
+	private readonly runtimeEnv: Env;
 	private readonly store: Store;
 	private readonly webAuthn: WebAuthnService;
 	private mutationTail: Promise<void> = Promise.resolve();
 	private alarmTail: Promise<void> = Promise.resolve();
 	private alarmFailures = 0;
 	private alarmKnown = false;
+	private accountUsageEvents = 0;
+	private accountUsageRetryAt = 0;
+	private accountUsageFailureCount = 0;
+	private accountUsageRefresh?: Promise<void>;
+	private accountUsageSnapshot: AccountUsageSnapshot | null = null;
 	private readonly queues = new WeakMap<WebSocketConnection, Promise<void>>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
+		this.runtimeEnv = env;
 		this.config = loadConfig(env);
 		this.store = new Store(ctx as unknown as ConstructorParameters<typeof Store>[0], asStoreConfig(this.config));
 		this.store.initialize();
+		this.accountUsageSnapshot = this.store.accountUsageSnapshot();
 		this.webAuthn = new WebAuthnService(this.config);
 	}
 
@@ -324,6 +344,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 		const ipKey = trustedIpKey(request);
 		if (!ipKey) return responseError(403, "Trusted client address unavailable");
 		if (this.config.admissionOff) return responseError(503, "Demo admission is closed");
+		this.noteAccountUsageActivity(this.runtimeEnv);
+		if (this.accountUsageBlocked(nowMs())) return responseError(503, "Demo account capacity reached", 300_000);
 		const origin = request.headers.get("Origin");
 		if (!isAllowedOrigin(this.config, origin)) return responseError(403, "Origin not allowed");
 		try {
@@ -363,6 +385,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 		const socket = ws as WebSocketConnection;
 		const attachment = connectionAttachment(socket);
 		if (!attachment || attachment.closing) return Promise.resolve();
+		this.noteAccountUsageActivity(this.runtimeEnv);
+		if (this.accountUsageBlocked(nowMs())) {
+			this.closePolicy(socket, attachment, 1013, "Demo account capacity reached; try later");
+			return Promise.resolve();
+		}
 		if (typeof message !== "string") {
 			this.closePolicy(socket, attachment, 1003, "Binary application frames are not supported");
 			return Promise.resolve();
@@ -422,6 +449,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	async alarm(): Promise<void> {
 		this.alarmKnown = false;
 		const now = nowMs();
+		await this.refreshAccountUsage(this.runtimeEnv, now, false);
 		for (const ws of this.ctx.getWebSockets()) {
 			const socket = ws as WebSocketConnection;
 			const attachment = connectionAttachment(socket);
@@ -575,6 +603,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "thread":
 				await this.handleThread(socket, attachment, request);
 				return;
+			case "nick":
+				await this.handleNick(socket, attachment, request);
+				return;
 			default:
 				if (request.id !== undefined) throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 		}
@@ -722,6 +753,34 @@ export class ApronDemoServer extends DurableObject<Env> {
 				writeAttachment(socket, latest);
 			}
 		}
+	}
+
+	private async handleNick(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		const identity = identityOf(attachment);
+		if (!identity || attachment.tier !== "registered") {
+			throw { name: "denied", message: "Only registered users may change their name" } satisfies ProtocolError;
+		}
+		const name = requiredString(request.params, "name");
+		await this.runMutation(async () => {
+			const result = this.store.commitMutation({
+				userId: identity.user_id, ipKey: attachment.ipKey,
+				requestId: request.id, method: "nick", now: nowMs(),
+				params: request.params, identity,
+			});
+			// Persist first, then refresh every live attachment for this identity so
+			// subsequent messages from other tabs carry the same name. An accepted
+			// retry must not roll back a newer name change.
+			if (!result.deduplicated) {
+				for (const peer of this.ctx.getWebSockets()) {
+					const state = connectionAttachment(peer);
+					if (state?.userId !== identity.user_id) continue;
+					state.name = name;
+					writeAttachment(peer, state);
+				}
+			}
+			const current = connectionAttachment(socket);
+			if (current) this.reply(socket, request, { you: identityOf(current) });
+		});
 	}
 
 	private async handleMessage(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
@@ -874,5 +933,55 @@ export class ApronDemoServer extends DurableObject<Env> {
 			this.alarmFailures++;
 			if ((this.alarmFailures & (this.alarmFailures - 1)) === 0) console.warn(JSON.stringify({ event: "alarm_setup_failed", count: this.alarmFailures }));
 		});
+	}
+
+	private accountUsageBlocked(now: number): boolean {
+		return this.accountUsageSnapshot?.day === new Date(now).toISOString().slice(0, 10) && this.accountUsageSnapshot.stop;
+	}
+
+	private noteAccountUsageActivity(env: Env): void {
+		if (!env.ACCOUNT_ID || !env.ACCOUNT_ANALYTICS_TOKEN) return;
+		this.accountUsageEvents += 1;
+		const now = nowMs();
+		const stale = !this.accountUsageSnapshot || now - this.accountUsageSnapshot.sampledAt >= ACCOUNT_USAGE_POLICY.staleAfterMs;
+		if (this.accountUsageEvents < ACCOUNT_USAGE_POLICY.refreshEveryEvents && !stale) return;
+		// Keep the refresh alive after the request returns without adding its latency
+		// to the admitted WebSocket attempt.
+		this.ctx.waitUntil(this.refreshAccountUsage(env, now, false));
+	}
+
+	private async refreshAccountUsage(env: Env, now: number, forced: boolean): Promise<void> {
+		if (!env.ACCOUNT_ID || !env.ACCOUNT_ANALYTICS_TOKEN) return;
+		if (this.accountUsageRefresh) return this.accountUsageRefresh;
+		if (!forced && now < this.accountUsageRetryAt) return;
+		if (!forced && this.accountUsageSnapshot && now - this.accountUsageSnapshot.sampledAt < ACCOUNT_USAGE_POLICY.minimumRefreshIntervalMs && this.accountUsageEvents < ACCOUNT_USAGE_POLICY.refreshEveryEvents) return;
+		this.accountUsageEvents = 0;
+		const task = (async () => {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 5_000);
+			try {
+				const snapshot = await fetchAccountUsage(env, now, controller.signal);
+				try { this.store.persistAccountUsageSnapshot(snapshot, now); } catch { /* retain the in-memory safety stop */ }
+				this.accountUsageSnapshot = snapshot;
+				this.accountUsageFailureCount = 0;
+				this.accountUsageRetryAt = 0;
+				if (snapshot.stop) {
+					for (const peer of this.ctx.getWebSockets()) {
+						const state = connectionAttachment(peer);
+						if (state) this.closePolicy(peer as WebSocketConnection, state, 1013, "Demo account capacity reached; try later");
+					}
+				}
+			} catch {
+				this.accountUsageFailureCount += 1;
+				const delay = Math.min(ACCOUNT_USAGE_POLICY.maxRetryMs, ACCOUNT_USAGE_POLICY.initialRetryMs * 2 ** Math.min(this.accountUsageFailureCount - 1, 4));
+				this.accountUsageRetryAt = now + delay;
+				if ((this.accountUsageFailureCount & (this.accountUsageFailureCount - 1)) === 0) console.warn(JSON.stringify({ event: "account_usage_refresh_failed", count: this.accountUsageFailureCount }));
+			} finally {
+				clearTimeout(timeout);
+			}
+		})();
+		this.accountUsageRefresh = task;
+		await task;
+		this.accountUsageRefresh = undefined;
 	}
 }

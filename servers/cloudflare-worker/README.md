@@ -10,6 +10,18 @@ specification](SPEC.md).
 See the [configuration reference](docs/configuration.md) for all policy variables
 and the [local cost report](docs/cost-report.md) for measured bounds and assumptions.
 
+Edit resource and admission budgets in [`src/budget.ts`](src/budget.ts), then run
+`npm run budget:generate` from this directory. It updates the native Worker rate
+limiter configuration and reviewable edge-rule definitions; it does not deploy.
+The entry Worker rejects excessive connection attempts before calling the DO.
+See [edge admission operations](docs/edge-admission.md) for applying WAF rules,
+their Free-plan limitations, and the quota-exhaustion runbook.
+
+For an additional delayed account-wide safety stop, configure `ACCOUNT_ID` and
+the `ACCOUNT_ANALYTICS_TOKEN` secret. The Durable Object refreshes account usage
+periodically and keeps local limits as the fallback when analytics is unavailable.
+Provision it with `npx wrangler secret put ACCOUNT_ANALYTICS_TOKEN --config wrangler.production.toml`.
+
 Use **Workers Free**, with SQLite Durable Objects. No paid plan or auxiliary
 service is required. This repository does not deploy as part of installation
 or tests. A paid plan's included allowance is not a spending cap.
@@ -168,7 +180,7 @@ After completing the checks below, run `make deploy-worker` and
 the latter builds the frontend with `wss://server.apron.chat/` as its default
 server and deploys the static assets using the existing Worker package's Wrangler.
 For direct Wrangler production commands, always pass
-`--config wrangler.production.toml`.
+`--config wrangler.production.toml` and run `npm run budget:check` first.
 
 1. Verify the **actual account is on Workers Free** and SQLite Durable Objects
    are enabled. Inventory other Workers, DO namespaces, and staging workloads;

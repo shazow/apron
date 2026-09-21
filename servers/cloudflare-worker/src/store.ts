@@ -8,7 +8,8 @@
  * for a complete mutation before exposing its result.
  */
 
-import { BOOTSTRAP_ROW_RESERVATION } from "./config.js";
+import { BOOTSTRAP_ROW_RESERVATION, DEFAULT_LIMITS, MAINTENANCE_CONTROL_RESERVE } from "./budget";
+import type { AccountUsageSnapshot } from "./account-usage";
 import type {
   AdmissionSnapshot,
   AuthTier,
@@ -32,8 +33,8 @@ import { createHash } from "node:crypto";
 export const ROOM_ID = "general";
 export const SCHEMA_VERSION = 1;
 export const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
-export const RETENTION_MS = 24 * 60 * 60 * 1000;
-export const DEDUP_TTL_MS = RETENTION_MS;
+export const RETENTION_MS = DEFAULT_LIMITS.retentionSeconds * 1000;
+export const DEDUP_TTL_MS = DEFAULT_LIMITS.dedupTtlSeconds * 1000;
 export const POST_WINDOW_MS = 60 * 1000;
 
 // Keep a small durable control reserve inside the maintenance allocation.
@@ -41,8 +42,8 @@ export const POST_WINDOW_MS = 60 * 1000;
 // persisted cleanup deadline to the next UTC budget reset.  Without this gap,
 // an exhausted maintenance budget would leave a due timestamp behind and an
 // alarm would wake the object continuously.
-const MAINTENANCE_CONTROL_READS = 8;
-const MAINTENANCE_CONTROL_WRITES = 8;
+const MAINTENANCE_CONTROL_READS = MAINTENANCE_CONTROL_RESERVE;
+const MAINTENANCE_CONTROL_WRITES = MAINTENANCE_CONTROL_RESERVE;
 
 // A budget row is retained for the active UTC day only.  Rollover pruning is
 // deliberately a tiny bounded operation: old rows are bookkeeping, and a
@@ -187,51 +188,51 @@ export interface CostEstimate {
 const DEFAULT_CONFIG: StoreConfig = {
   retentionMs: RETENTION_MS,
   dedupTtlMs: DEDUP_TTL_MS,
-  cleanupIntervalMs: 60 * 60 * 1000,
-  cleanupBatch: 100,
-  maxSnapshotBytes: 8 * 1024,
-  maxTextBytes: 4 * 1024,
-  maxNameBytes: 320,
-  maxNameCodePoints: 80,
-  maxEmbeds: 4,
-  maxThreads: 100,
-  maxThreadMetadataBytes: 2 * 1024,
-  maxHistoryLimit: 50,
-  historyDefaultLimit: 20,
-  maxHistoryResponseBytes: 256 * 1024,
-  historyRequestsPerUserMinute: 10,
-  historyRequestsPerIpMinute: 30,
-  anonymousPostsPerMinute: 5,
-  anonymousPostsPerDay: 100,
-  registeredPostsPerMinute: 20,
-  registeredPostsPerDay: 500,
-  ipPostsPerMinute: 30,
-  ipPostsPerDay: 1000,
-  globalPostsPerMinute: 60,
-  globalPostsPerDay: 5000,
-  registrationsPerIpDay: 3,
-  registrationsPerDay: 100,
-  registeredIdentityCount: 10000,
-  authAttemptsPerIpMinute: 10,
-  framesPerConnectionMinute: 60,
-  framesPerIpMinute: 120,
-  processedFramesPerDay: 100_000,
-  openConnections: 100,
-  anonymousConnectionsPerIp: 2,
-  registeredConnectionsPerUser: 3,
-  connectionsPerIp: 10,
-  connectionAdmissionsPerIpMinute: 5,
-  connectionAdmissionsPerDay: 2_000,
-  principalLimitCap: 10000,
-  sqlReadsPerDay: 3_000_000,
-  sqlWritesPerDay: 80_000,
-  foregroundReadsPerDay: 2_500_000,
-  foregroundWritesPerDay: 60_000,
-  maintenanceReadsPerDay: 500_000,
-  maintenanceWritesPerDay: 20_000,
-  storageHighWaterBytes: 96 * 1024 * 1024,
-  storageHardTargetBytes: 128 * 1024 * 1024,
-  storageLowWaterBytes: 80 * 1024 * 1024,
+  cleanupIntervalMs: DEFAULT_LIMITS.cleanupSeconds * 1000,
+  cleanupBatch: DEFAULT_LIMITS.cleanupBatch,
+  maxSnapshotBytes: DEFAULT_LIMITS.maxSnapshotBytes,
+  maxTextBytes: DEFAULT_LIMITS.maxTextBytes,
+  maxNameBytes: DEFAULT_LIMITS.maxNameBytes,
+  maxNameCodePoints: DEFAULT_LIMITS.maxNameCodePoints,
+  maxEmbeds: DEFAULT_LIMITS.maxEmbeds,
+  maxThreads: DEFAULT_LIMITS.threadLimit,
+  maxThreadMetadataBytes: DEFAULT_LIMITS.threadMetadataBytes,
+  maxHistoryLimit: DEFAULT_LIMITS.historyMaxLimit,
+  historyDefaultLimit: DEFAULT_LIMITS.historyDefaultLimit,
+  maxHistoryResponseBytes: DEFAULT_LIMITS.historyMaxResponseBytes,
+  historyRequestsPerUserMinute: DEFAULT_LIMITS.historyRequestsPerUserMinute,
+  historyRequestsPerIpMinute: DEFAULT_LIMITS.historyRequestsPerIpMinute,
+  anonymousPostsPerMinute: DEFAULT_LIMITS.anonymousPostsPerMinute,
+  anonymousPostsPerDay: DEFAULT_LIMITS.anonymousPostsPerDay,
+  registeredPostsPerMinute: DEFAULT_LIMITS.registeredPostsPerMinute,
+  registeredPostsPerDay: DEFAULT_LIMITS.registeredPostsPerDay,
+  ipPostsPerMinute: DEFAULT_LIMITS.ipPostsPerMinute,
+  ipPostsPerDay: DEFAULT_LIMITS.ipPostsPerDay,
+  globalPostsPerMinute: DEFAULT_LIMITS.globalPostsPerMinute,
+  globalPostsPerDay: DEFAULT_LIMITS.globalPostsPerDay,
+  registrationsPerIpDay: DEFAULT_LIMITS.registrationsPerIpDay,
+  registrationsPerDay: DEFAULT_LIMITS.registrationsPerDay,
+  registeredIdentityCount: DEFAULT_LIMITS.registeredIdentityCount,
+  authAttemptsPerIpMinute: DEFAULT_LIMITS.authAttemptsPerIpMinute,
+  framesPerConnectionMinute: DEFAULT_LIMITS.framesPerConnectionMinute,
+  framesPerIpMinute: DEFAULT_LIMITS.framesPerIpMinute,
+  processedFramesPerDay: DEFAULT_LIMITS.processedFramesPerDay,
+  openConnections: DEFAULT_LIMITS.openConnections,
+  anonymousConnectionsPerIp: DEFAULT_LIMITS.anonymousConnectionsPerIp,
+  registeredConnectionsPerUser: DEFAULT_LIMITS.registeredConnectionsPerUser,
+  connectionsPerIp: DEFAULT_LIMITS.connectionsPerIp,
+  connectionAdmissionsPerIpMinute: DEFAULT_LIMITS.connectionAdmissionsPerIpMinute,
+  connectionAdmissionsPerDay: DEFAULT_LIMITS.connectionAdmissionsPerDay,
+  principalLimitCap: DEFAULT_LIMITS.limiterRecordCap,
+  sqlReadsPerDay: DEFAULT_LIMITS.sqlReadsPerDay,
+  sqlWritesPerDay: DEFAULT_LIMITS.sqlWritesPerDay,
+  foregroundReadsPerDay: DEFAULT_LIMITS.foregroundReadsPerDay,
+  foregroundWritesPerDay: DEFAULT_LIMITS.foregroundWritesPerDay,
+  maintenanceReadsPerDay: DEFAULT_LIMITS.maintenanceReadsPerDay,
+  maintenanceWritesPerDay: DEFAULT_LIMITS.maintenanceWritesPerDay,
+  storageHighWaterBytes: DEFAULT_LIMITS.databaseHighWaterBytes,
+  storageHardTargetBytes: DEFAULT_LIMITS.databaseHardTargetBytes,
+  storageLowWaterBytes: DEFAULT_LIMITS.databaseResumeLowWaterBytes,
   admissionEnabled: true,
   // These bounds include the reservation row and worst-case indexed control
   // updates for one accepted operation; calibrated workloads may lower them
@@ -517,6 +518,7 @@ interface RawMaintenanceRow {
 const META_EFFECTIVE_NOW = "effective_now_ms";
 const META_NEXT_THREAD = "next_thread_seq";
 const META_ACCOUNTING_UNSAFE = "accounting_unsafe";
+const META_ACCOUNT_USAGE = "account_usage_snapshot";
 
 function isFiniteInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
@@ -1330,6 +1332,31 @@ export class Store {
 
   accountingStatus(): { unsafe: boolean; database_bytes: number | null } {
     return { unsafe: this.accountingUnsafe, database_bytes: this.databaseSize() };
+  }
+
+  accountUsageSnapshot(): AccountUsageSnapshot | null {
+    this.ensureReady();
+    const raw = this.metaValue(META_ACCOUNT_USAGE);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<AccountUsageSnapshot>;
+      const sampledAt = parsed.sampledAt;
+      if (typeof parsed.day !== "string" || typeof sampledAt !== "number" || !Number.isSafeInteger(sampledAt) || sampledAt < 0 ||
+        ["workerRequests", "durableObjectRequests", "durableObjectDurationGbSeconds", "sqlRowsRead", "sqlRowsWritten", "storedBytes"].some(key => {
+          const value = parsed[key as keyof AccountUsageSnapshot];
+          return typeof value !== "number" || !Number.isFinite(value) || value < 0;
+        }) || typeof parsed.stop !== "boolean") return null;
+      return parsed as AccountUsageSnapshot;
+    } catch {
+      return null;
+    }
+  }
+
+  persistAccountUsageSnapshot(snapshot: AccountUsageSnapshot, now = this.clock.now()): void {
+    this.ensureReady();
+    this.reserved({ reads: 8, writes: 8 }, true, now, () => {
+      this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)", META_ACCOUNT_USAGE, JSON.stringify(snapshot));
+    });
   }
 
   budget(now = this.clock.now()): BudgetSnapshot {

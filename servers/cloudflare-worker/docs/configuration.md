@@ -1,9 +1,73 @@
 # Configuration reference
 
+## Editing the deployment budget
+
+`src/budget.ts` is the source of truth for application defaults, resource ceilings,
+maintenance reserves, and admission rates. The Worker, standalone store, and
+protocol parser all consume its defaults. Resource ceilings reference those
+defaults rather than repeating numeric allocations. Separate calibrated parser,
+payload, and memory bounds remain in that same file; increasing them requires
+reviewing their consumers and repeating cost calibration.
+
+After changing the policy, run from `servers/cloudflare-worker`:
+
+```sh
+npm run budget:generate
+npm run typecheck
+npm test
+```
+
+Commit the policy and generated changes together. Generation updates the marked
+rate-limiter binding blocks in both Wrangler files and the edge-rule definitions
+in `docs/edge-rules.generated.json`. It does not contact Cloudflare. Tests,
+typechecking, and both supported deployment commands reject stale generated
+configuration. Application defaults are imported directly and need no generated
+copy. Use Node.js 24, as in the repository development environment.
+
+`ADMISSION_BUDGET.requestsPerIpMinute` defaults to 10 attempted handshakes per
+minute, before calling the DO. This leaves retry headroom over the five accepted
+connections per IP per minute. `/` and `/ws` share a bucket. IPv4-mapped addresses
+share their IPv4 bucket; native IPv6 shares a /64. Missing or failed limiter
+bindings reject admission with 503. Exhaustion returns 429 and `Retry-After`.
+The binding is approximate and local to each Cloudflare location, not a global
+daily counter. NAT users share this limit. Development and production use distinct
+limiter namespaces; additional deployments must use distinct namespace IDs too.
+
+`ACCOUNT_USAGE_POLICY` in `src/budget.ts` defines the lightweight account-usage
+stop. The Durable Object refreshes after about 1,000 incoming events, no more
+often than once per minute, and treats a snapshot older than five minutes as
+stale. Set `ACCOUNT_ID` and the read-only `ACCOUNT_ANALYTICS_TOKEN` secret on a
+deployment to enable it. Without both values, local application limits remain
+active and no analytics request is attempted. Refresh failures retain the last
+successful snapshot and retry with backoff; they do not pause the service.
+Set the token with `npx wrangler secret put ACCOUNT_ANALYTICS_TOKEN --config
+wrangler.production.toml`; never put the token in Wrangler vars or source code.
+
+The snapshot is account-wide and delayed. At 90% of any configured Workers Free
+allowance, the object persists a stop for that UTC day, rejects new connections,
+and closes live sockets. This is an early-stop signal, not an exact remaining-
+quota meter: analytics lag, sampling, and other account workloads can still cause
+an earlier or later platform limit.
+
+The optional Free WAF rate rule uses `edgeRequestsPerIpWindow`,
+`edgeWindowSeconds`, and `edgeBlockSeconds` from the same file. Its counting and
+blocking windows must both be 10 seconds on Free. It is generated disabled because
+it applies across hostnames in the zone. See [edge admission operations](edge-admission.md)
+before applying rules or deploying changed budgets.
+
+Keep the account on **Workers Free** for an absolute zero-overage boundary.
+Changing this file never changes the account plan. These resource budgets are
+not an account-wide dollar cap, and cannot guarantee availability under attack.
+
+## Runtime overrides
+
 Wrangler string variables use the exact names below. Numeric policy variables
-accept camelCase, matching `src/config.ts`, or uppercase snake case with an
+accept camelCase, matching `src/budget.ts`, or uppercase snake case with an
 optional `LIMIT_` prefix (for example `LIMIT_MAX_FRAME_BYTES`). The prefixed
 form takes precedence, then uppercase, then camelCase. Omitted variables use the defaults.
+Production should use the checked-in budget defaults; retain overrides for local
+tests or deliberate temporary reductions. Overrides do not regenerate the native
+limiter or edge rules. Remove temporary overrides before applying a budget increase.
 All limits compose; reducing a global budget may prevent reaching a principal
 allowance. Validate changes locally and rerun cost calibration before deployment.
 Use small values for deterministic test exhaustion, not larger production limits
@@ -55,7 +119,7 @@ and recalibrating its resource model.
 | `RP_ORIGINS` | Comma-separated exact WebAuthn origins; required explicitly with wildcard guest admission; never accepts wildcards |
 | `ALLOWED_ORIGINS` | Exact browser-origin allowlist, or standalone `*` to admit every guest origin (including opaque/missing Origin); cannot mix `*` with explicit origins; all clients remain subject to quotas |
 | `RP_NAME` | Bounded display name for browser passkey prompts |
-| `ADMISSION_OFF` | Operator admission switch; `true` rejects new sockets |
+| `ADMISSION_OFF` | Operator admission switch; `true` rejects new sockets in the entry Worker before the limiter or DO call; existing sockets remain subject to DO budgets |
 | `OPERATOR_SECRET` | Optional secret reserved for authenticated aggregate operator access; never exposes chat content |
 | `ENVIRONMENT` | Set to `development` to enable local origin defaults when `ALLOWED_ORIGINS` and `RP_ORIGINS` are omitted |
 | `NODE_ENV` | Set to `test` to enable the same local origin defaults for tests; production-like deployments must configure origins explicitly |
