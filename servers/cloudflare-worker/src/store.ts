@@ -668,6 +668,7 @@ export class Store {
   private lastEffectiveMs = 0;
   private budgetCacheDay: string | null = null;
   private budgetCache: RawBudgetRow | null = null;
+  private budgetStopLoggedDay: string | null = null;
   private budgetHandoverPending = false;
   /** UTC day for which this object has already attempted bounded row pruning. */
   private budgetPruneDay: string | null = null;
@@ -1121,6 +1122,67 @@ export class Store {
     );
   }
 
+  private reservationCost(costInput: CostEstimate, day: string): BudgetCost {
+    const cost = this.normalizeCost(costInput);
+    // A reservation includes its own bounded control work: effective-clock
+    // read/write, budget-row lookup/creation, and the durable counter update.
+    // Keep fixed headroom in every class so read-only callers still pay for
+    // the bookkeeping writes they cause.
+    cost.reads = Math.max(1, cost.reads + 8);
+    cost.writes = Math.max(1, cost.writes + 8);
+    if (this.budgetHandoverPending) {
+      cost.reads += 8;
+      cost.writes += 8;
+    }
+    if (this.budgetPruneDay !== day) {
+      cost.reads += BUDGET_PRUNE_RESERVATION_READS;
+      cost.writes += BUDGET_PRUNE_RESERVATION_WRITES;
+    }
+    return cost;
+  }
+
+  private checkBudgetCost(cost: BudgetCost, maintenance: boolean, candidateTime: number): void {
+    const row = this.budgetCache!;
+    const readCeiling = maintenance ? this.config.sqlReadsPerDay : this.config.foregroundReadsPerDay;
+    const writeCeiling = maintenance ? this.config.sqlWritesPerDay : this.config.foregroundWritesPerDay;
+    const readUsed = row.reads_reserved + cost.reads;
+    const writeUsed = row.writes_reserved + cost.writes;
+    const reserveReads = maintenance ? this.config.maintenanceReadsPerDay - MAINTENANCE_CONTROL_READS : 0;
+    const reserveWrites = maintenance ? this.config.maintenanceWritesPerDay - MAINTENANCE_CONTROL_WRITES : 0;
+    if (readUsed > this.config.sqlReadsPerDay || (!maintenance && row.foreground_reads + cost.reads > readCeiling) ||
+        (maintenance && row.maintenance_reads + cost.reads > reserveReads) ||
+        writeUsed > this.config.sqlWritesPerDay || (!maintenance && row.foreground_writes + cost.writes > writeCeiling) ||
+        (maintenance && row.maintenance_writes + cost.writes > reserveWrites)) {
+      const next = Math.max(1000, 86_400_000 - (candidateTime % 86_400_000));
+      const day = dayFor(candidateTime);
+      if (this.budgetStopLoggedDay !== day) {
+        this.budgetStopLoggedDay = day;
+        console.warn(JSON.stringify({ event: "daily_budget_exhausted", ...row,
+          requested_reads: cost.reads, requested_writes: cost.writes, maintenance,
+          foreground_read_limit: this.config.foregroundReadsPerDay,
+          foreground_write_limit: this.config.foregroundWritesPerDay,
+          total_read_limit: this.config.sqlReadsPerDay, total_write_limit: this.config.sqlWritesPerDay }));
+      }
+      throw new StoreError("retry_after", maintenance ? "Maintenance budget exhausted" : "Demo capacity reached", {
+        retryAfterMs: next,
+        data: { ms: next, reason: "daily_budget" },
+      });
+    }
+  }
+
+  /** Advisory capacity check: no SQL, reservations, or durable clock updates. */
+  checkConnectionBudget(now = this.clock.now()): void {
+    this.ensureReady();
+    if (this.accountingUnsafe) throw new StoreError("internal_error", "storage accounting is unsafe; admission is closed");
+    if (!this.config.admissionEnabled) throw new StoreError("denied", "Demo admission is closed");
+    const candidateTime = Math.max(Math.trunc(now), this.lastEffectiveMs);
+    const day = dayFor(candidateTime);
+    // The next real admission initializes a new day's budget. Never carry a
+    // previous day's exhausted allowance into a new day's diagnostic response.
+    if (!this.budgetCache || this.budgetCacheDay !== day) return;
+    this.checkBudgetCost(this.reservationCost({ reads: 64, writes: 32, admissions: 1 }, day), false, candidateTime);
+  }
+
   private reserveCost(costInput: CostEstimate, maintenance = false, now = this.clock.now()): BudgetCost {
     this.ensureReady();
     if (this.accountingUnsafe) {
@@ -1137,38 +1199,9 @@ export class Store {
         this.budgetHandoverPending = true;
       }
       const pruning = this.budgetPruneDay !== candidateDay;
-    const cost = this.normalizeCost(costInput);
-    // A reservation includes its own bounded control work: effective-clock
-    // read/write, budget-row lookup/creation, and the durable counter update.
-    // Keep fixed headroom in every class so read-only callers still pay for
-    // the bookkeeping writes they cause.
-    cost.reads = Math.max(1, cost.reads + 8);
-    cost.writes = Math.max(1, cost.writes + 8);
-    if (this.budgetHandoverPending) {
-      cost.reads += 8;
-      cost.writes += 8;
-    }
-    if (pruning) {
-      cost.reads += BUDGET_PRUNE_RESERVATION_READS;
-      cost.writes += BUDGET_PRUNE_RESERVATION_WRITES;
-    }
+    const cost = this.reservationCost(costInput, candidateDay);
+    this.checkBudgetCost(cost, maintenance, candidateTime);
     const row = this.budgetCache!;
-    const readCeiling = maintenance ? this.config.sqlReadsPerDay : this.config.foregroundReadsPerDay;
-    const writeCeiling = maintenance ? this.config.sqlWritesPerDay : this.config.foregroundWritesPerDay;
-    const readUsed = row.reads_reserved + cost.reads;
-    const writeUsed = row.writes_reserved + cost.writes;
-    const reserveReads = maintenance ? this.config.maintenanceReadsPerDay - MAINTENANCE_CONTROL_READS : 0;
-    const reserveWrites = maintenance ? this.config.maintenanceWritesPerDay - MAINTENANCE_CONTROL_WRITES : 0;
-    if (readUsed > this.config.sqlReadsPerDay || (!maintenance && row.foreground_reads + cost.reads > readCeiling) ||
-        (maintenance && row.maintenance_reads + cost.reads > reserveReads) ||
-        writeUsed > this.config.sqlWritesPerDay || (!maintenance && row.foreground_writes + cost.writes > writeCeiling) ||
-        (maintenance && row.maintenance_writes + cost.writes > reserveWrites)) {
-      const next = Math.max(1000, 86_400_000 - (candidateTime % 86_400_000));
-      throw new StoreError("retry_after", maintenance ? "Maintenance budget exhausted" : "Demo capacity reached", {
-        retryAfterMs: next,
-        data: { ms: next },
-      });
-    }
     const reservationCursor = this.rawExec(
       `UPDATE resource_budgets SET
         reads_reserved = reads_reserved + ?, writes_reserved = writes_reserved + ?,

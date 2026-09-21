@@ -169,6 +169,7 @@ export class ChatClient {
 	private error?: string;
 	private showReconnectDivider = false;
 	private retryAfterUntil = 0;
+	private connectionProbe?: AbortController;
 	private disconnectedAt?: number;
 
 	constructor(private serverUrl: string, displayName = '') {
@@ -236,6 +237,7 @@ export class ChatClient {
 	}
 
 	stop(): void {
+		this.connectionProbe?.abort();
 		this.cancelPasskey();
 		this.running = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -260,6 +262,10 @@ export class ChatClient {
 
 	restart(): void {
 		if (!this.running) return;
+		this.connectionProbe?.abort();
+		this.connectionId += 1;
+		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+		this.reconnectTimer = undefined;
 		this.cancelPasskey();
 		const socket = this.socket;
 		this.socket = undefined;
@@ -284,6 +290,10 @@ export class ChatClient {
 	 */
 	retryNow(): void {
 		if (!this.running) return;
+		if (this.retryAfterRemaining()) {
+			this.emit();
+			return;
+		}
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
 		this.reconnectAttempt = 0;
@@ -516,7 +526,9 @@ export class ChatClient {
 
 	private connectNow(): void {
 		if (!this.running || this.socket) return;
+		this.connectionProbe?.abort();
 		const id = ++this.connectionId;
+		let opened = false;
 		this.status = this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting';
 		this.error = undefined;
 		this.emit();
@@ -530,6 +542,7 @@ export class ChatClient {
 		this.socket = socket;
 		socket.onopen = () => {
 			if (!this.isCurrentSocket(id, socket)) return;
+			opened = true;
 			this.status = 'connected';
 			this.error = undefined;
 			this.authRequested = false;
@@ -562,12 +575,48 @@ export class ChatClient {
 			if (this.running) {
 				this.disconnectedAt ??= Date.now();
 				this.status = 'reconnecting';
-				this.scheduleReconnect();
+				if (opened) this.scheduleReconnect();
+				else void this.diagnoseConnection(id);
 			} else {
 				this.status = 'offline';
 			}
 			this.emit();
 		};
+	}
+
+	private async diagnoseConnection(id: number): Promise<void> {
+		const controller = new AbortController();
+		this.connectionProbe = controller;
+		const timeout = setTimeout(() => controller.abort(), 4_000);
+		try {
+			const url = new URL(this.serverUrl);
+			url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+			url.searchParams.set('apron_connection_status', '1');
+			const response = await fetch(url, {
+				credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal
+			});
+			if (![403, 429, 503].includes(response.status) || !response.headers.get('content-type')?.includes('application/json')) return;
+			const body: unknown = await response.json();
+			if (!this.running || id !== this.connectionId || controller.signal.aborted) return;
+			if (!isJsonObject(body) || typeof body.error !== 'string' || !body.error.trim()) return;
+			this.error = body.error.slice(0, 300);
+			const retry = response.headers.get('Retry-After');
+			if (retry) {
+				const delay = /^\d+$/.test(retry) ? Number(retry) * 1_000 : Date.parse(retry) - Date.now();
+				if (Number.isFinite(delay) && delay > 0) {
+					this.retryAfterUntil = Math.max(this.retryAfterUntil, Date.now() + Math.min(delay, RETRY_AFTER_MAX_MS));
+				}
+			}
+		} catch {
+			// Older servers and network failures may not expose HTTP diagnostics.
+		} finally {
+			clearTimeout(timeout);
+			if (this.connectionProbe === controller) this.connectionProbe = undefined;
+			if (this.running && id === this.connectionId) {
+				this.scheduleReconnect();
+				this.emit();
+			}
+		}
 	}
 
 	private handleMessage(raw: unknown): void {

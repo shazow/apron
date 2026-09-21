@@ -468,7 +468,7 @@
 		if (connectionState === 'connected') return 'Connected';
 		if (connectionState === 'offline') return 'Offline';
 		if (connectionState === 'reconnecting') {
-			if (snapshot.retryAfterMs && snapshot.retryAfterMs > 0) return `Connection limited. Retrying in ${retryAfterLabel(snapshot.retryAfterMs)}…`;
+			if (snapshot.retryAfterMs && snapshot.retryAfterMs > 0) return `${reconnectError || 'Connection limited'}. Retrying in ${retryAfterLabel(snapshot.retryAfterMs)}…`;
 			if (reconnectError) return reconnectStalled ? `Still disconnected: ${reconnectError}` : reconnectError;
 			return reconnectStalled ? 'Still trying to reconnect…' : 'Reconnecting…';
 		}
@@ -1301,7 +1301,7 @@
 						<span class="ap-status-dot" class:ap-status-warn={connectionState === 'connecting'} class:ap-status-danger={connectionState === 'offline' || connectionState === 'error' || reconnectNeedsAttention} aria-hidden="true"></span>
 						<span class="ap-status-text" data-testid="connection-status" aria-live="polite">{statusLabel()}</span>
 						{#if reconnectNeedsAttention}
-							<button class="ap-btn ap-btn-sm" type="button" data-testid="reconnect-retry" onclick={retryConnection}>Try Again</button>
+							<button class="ap-btn ap-btn-sm" type="button" data-testid="reconnect-retry" disabled={Boolean(snapshot.retryAfterMs)} onclick={retryConnection}>Try Again</button>
 						{/if}
 					</div>
 				</div>

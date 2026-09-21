@@ -222,3 +222,16 @@ Free-plan hard limits are the zero-overage backstop. Application quotas provide
 controlled degradation for admitted work, not availability under unlimited
 hostile traffic: rejected HTTP requests and incoming frames still cost platform
 resources. Local calibration is not proof of production billing or availability.
+
+Failed WebSocket handshakes can be diagnosed with an HTTP GET to the same `/`
+or `/ws` URL with `?apron_connection_status=1`. The response exposes `Retry-After`
+through CORS and disables caching. It checks live connection capacity and the
+cached daily SQL budget without reserving SQL work or opening a socket; it is
+advisory, and the real upgrade still enforces every admission gate. The native
+per-IP attempt limiter also applies to these probes.
+
+When the daily SQL guard stops work, a `daily_budget_exhausted` log records the
+reserved counters and limits once per object instance/day. These are conservative
+reservations, not Cloudflare's measured usage. Compare them with account analytics
+before tuning operation costs. Daily reservations survive redeploys and reset at
+UTC midnight; resetting the object or its counters would discard that protection.

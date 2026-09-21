@@ -21,6 +21,11 @@ repository root builds with `wss://server.apron.chat/` and deploys the static
 frontend to `https://web.apron.chat` using `wrangler.toml`. Deploy the backend
 separately with `make deploy-worker`. The apex `apron.chat` is reserved for docs.
 Local development and ordinary builds retain the same-origin default.
+After a failed WebSocket handshake, the client makes a bounded HTTP diagnostic
+request to the same URL with `?apron_connection_status=1`. Supporting servers
+can expose a capacity error and `Retry-After` through CORS; the client displays
+the reason and waits before retrying, including manual retries. Servers without
+this optional endpoint retain ordinary reconnect behavior.
 Explicit server URLs keep their path: a bare hostname connects at `/`, while
 servers that require `/ws` should be entered with that suffix.
 

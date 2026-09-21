@@ -236,3 +236,73 @@ describe('persisted session tokens', () => {
 		client.stop();
 	});
 });
+
+describe('failed handshake diagnostics', () => {
+	let client: ChatClient;
+	let snapshot: ClientSnapshot;
+	const fetchStatus = vi.fn<typeof fetch>();
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		FakeSocket.instances = [];
+		fetchStatus.mockReset();
+		vi.stubGlobal('fetch', fetchStatus);
+		vi.stubGlobal('WebSocket', FakeSocket);
+		client = new ChatClient('wss://server.test/ws');
+		client.subscribe(next => { snapshot = next; });
+		client.start();
+	});
+
+	afterEach(() => {
+		client.stop();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it('surfaces capacity errors and honors Retry-After, including manual retry', async () => {
+		fetchStatus.mockResolvedValue(Response.json({ error: 'Daily demo capacity reached' }, {
+			status: 429, headers: { 'Retry-After': '3600' }
+		}));
+		latest().drop();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(String(fetchStatus.mock.calls[0][0])).toBe('https://server.test/ws?apron_connection_status=1');
+		expect(fetchStatus.mock.calls[0][1]).toMatchObject({ credentials: 'omit', cache: 'no-store' });
+		expect(snapshot.error).toBe('Daily demo capacity reached');
+		expect(snapshot.retryAfterMs).toBe(3600000);
+		client.retryNow();
+		await vi.advanceTimersByTimeAsync(3599999);
+		expect(FakeSocket.instances).toHaveLength(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(FakeSocket.instances).toHaveLength(2);
+	});
+
+	it('falls back to reconnecting when diagnostics are unsupported', async () => {
+		fetchStatus.mockResolvedValue(new Response('Not found', { status: 404 }));
+		latest().drop();
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(FakeSocket.instances).toHaveLength(2);
+	});
+
+	it('ignores diagnostics from a server that was replaced', async () => {
+		let resolve!: (response: Response) => void;
+		fetchStatus.mockReturnValue(new Promise(done => { resolve = done; }));
+		latest().drop();
+		client.setUrl('wss://other.test/');
+		resolve(Response.json({ error: 'Old capacity error' }, { status: 429, headers: { 'Retry-After': '86400' } }));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(latest().url).toBe('wss://other.test/');
+		expect(snapshot.error).toBeUndefined();
+		expect(snapshot.retryAfterMs).toBeUndefined();
+	});
+
+	it('times out an unavailable diagnostic service and resumes retries', async () => {
+		fetchStatus.mockImplementation((_url, options) => new Promise((_resolve, reject) => {
+			options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+		}));
+		latest().drop();
+		await vi.advanceTimersByTimeAsync(4000);
+		expect(FakeSocket.instances).toHaveLength(1);
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(FakeSocket.instances).toHaveLength(2);
+	});
+});

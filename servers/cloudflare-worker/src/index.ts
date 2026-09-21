@@ -296,9 +296,26 @@ function editableMessageParams(params: Record<string, unknown>): Record<string, 
 	return message;
 }
 
+// Browsers hide failed WebSocket handshake responses. An explicit, read-only
+// HTTP probe on the same URL exposes capacity errors without admitting a socket.
+function isConnectionStatus(request: Request): boolean {
+	return request.method === "GET" && new URL(request.url).searchParams.get("apron_connection_status") === "1" && !isUpgrade(request);
+}
+
 export async function fetchEntry(request: Request, env: Env): Promise<Response> {
+	const response = await fetchConnection(request, env);
+	if (!isConnectionStatus(request)) return response;
+	const headers = new Headers(response.headers);
+	headers.set("Access-Control-Allow-Origin", "*");
+	headers.set("Access-Control-Expose-Headers", "Retry-After");
+	headers.set("Cache-Control", "no-store");
+	return new Response(response.body, { status: response.status, headers });
+}
+
+async function fetchConnection(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
-	const rootUpgrade = url.pathname === "/" && isUpgrade(request);
+	const status = isConnectionStatus(request);
+	const rootUpgrade = url.pathname === "/" && (isUpgrade(request) || status);
 	if (url.pathname !== "/ws" && !rootUpgrade) {
 		if (env.ASSETS) return env.ASSETS.fetch(request);
 		return responseError(404, "Not found");
@@ -314,7 +331,7 @@ export async function fetchEntry(request: Request, env: Env): Promise<Response> 
 	if (request.body !== null || (request.headers.has("Content-Length") && request.headers.get("Content-Length") !== "0") || request.headers.has("Transfer-Encoding")) {
 		return responseError(400, "WebSocket upgrade must not contain a body");
 	}
-	if (!isUpgrade(request)) return responseError(400, "WebSocket upgrade required");
+	if (!isUpgrade(request) && !status) return responseError(400, "WebSocket upgrade required");
 	const clientIp = extractClientIp(request.headers);
 	if (!clientIp) return responseError(403, "Trusted client address unavailable");
 	if (config.admissionOff) return responseError(503, "Demo admission is closed");
@@ -368,7 +385,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	async fetch(request: Request): Promise<Response> {
-		if (request.method !== "GET" || !isUpgrade(request)) return responseError(400, "WebSocket upgrade required");
+		const status = isConnectionStatus(request);
+		if (request.method !== "GET" || (!isUpgrade(request) && !status)) return responseError(400, "WebSocket upgrade required");
 		const ipKey = trustedIpKey(request);
 		if (!ipKey) return responseError(403, "Trusted client address unavailable");
 		if (this.config.admissionOff) return responseError(503, "Demo admission is closed");
@@ -382,6 +400,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 			if (sockets.length >= this.config.limits.openConnections || peers.length >= this.config.limits.connectionsPerIp ||
 				peers.filter(peer => peer?.tier !== "registered").length >= this.config.limits.anonymousConnectionsPerIp) {
 				return responseError(429, "Demo capacity reached", 60_000);
+			}
+			if (status) {
+				this.store.checkConnectionBudget(nowMs());
+				// This is advisory; the real upgrade still checks all admission gates.
+				return Response.json({ available: true });
 			}
 			this.store.reserveConnection({ ipKey, tier: "pending", now: nowMs() });
 		} catch (error) {
@@ -508,7 +531,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 		const protocol = errorToProtocol(error);
 		const status = protocol.name === "retry_after" ? 429 : protocol.name === "denied" ? 403 : 503;
 		const retry = protocol.data?.ms;
-		return responseError(status, protocol.message, typeof retry === "number" ? retry : undefined);
+		const message = protocol.data?.reason === "daily_budget" ? "Daily demo capacity reached" : protocol.message;
+		return responseError(status, message, typeof retry === "number" ? retry : undefined);
 	}
 
 	private serverAnnouncement(origin: string | null): Record<string, unknown> {
