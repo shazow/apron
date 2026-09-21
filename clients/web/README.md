@@ -101,14 +101,21 @@ The UI follows the Apron design system. `src/lib/design/tokens.css` holds its
 color, type, spacing, radius and size tokens as CSS custom properties (dark is
 the reference theme; light follows `prefers-color-scheme`), and
 `src/lib/design/apron.css` is the design system's component stylesheet copied
-verbatim, so every `ap-*` class in `src/routes/+page.svelte` matches the
-system's React components one to one (thread cards with a preview line, reply
-quotes, the pinned thread summary, the thread editor popover, the profile
-editor's sign-in row, the connect screen, mention chips and their picker, the
-select-mode check column and selection bar, and the composer's glyph buttons
-included). Re-copy `apron.css` when
-the design system changes rather than editing it here; the few `app-*` rules in
-the page are layout glue only.
+verbatim. The Svelte components under `src/lib/components` wrap its `ap-*`
+classes one to one with the system's React components — `ConnectScreen`,
+`Sidebar` and `ProfileBar`, `RoomHeader` and `ThreadEditor`, `ThreadCard`,
+`Message`, `Composer` with its `MentionPicker`, `SelectionBar`, `JumpBar`,
+`StatusBanner`, `Avatar` — and carry only the layout glue each needs. Re-copy
+`apron.css` when the design system changes rather than editing it here.
+
+`src/routes/+page.svelte` owns the session and the navigation (which room or
+thread is open, per-destination drafts) and composes the components. The
+reactive state behind it lives in `src/lib/ui` as small classes — `SessionView`
+(the last authenticated view, held through a reconnect), `MentionTracker`,
+`MessageSelection`, `FeedbackState`, `SidebarLayout` — beside pure, unit-tested
+helpers: `timeline.ts` builds the room and thread views, `messages.ts` and
+`time.ts` read messages, `connection.ts` words the connection state, and
+`storage.ts` keeps everything remembered between visits under `apron.*` keys.
 
 Protocol types, replay reduction, and the WebSocket session live under
 `src/lib/protocol`. Recovery uses the base protocol's `latest_log_id` and

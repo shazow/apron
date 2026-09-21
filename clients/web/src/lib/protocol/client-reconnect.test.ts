@@ -209,7 +209,7 @@ describe('persisted session tokens', () => {
 		first.start();
 		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'session-1' });
 		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'anonymous' }));
-		expect(storage.get('bottomless.session:ws://fake.test/')).toBe('session-1');
+		expect(storage.get('apron.session:ws://fake.test/')).toBe('session-1');
 		first.stop();
 
 		const second = new ChatClient('ws://fake.test/');
@@ -233,12 +233,12 @@ describe('persisted session tokens', () => {
 		const client = new ChatClient('ws://fake.test/');
 		client.start();
 		await latest().greet([], { auth: ['webauthn', 'anonymous'], token: 'session-2' });
-		expect(storage.has('bottomless.session:ws://fake.test/')).toBe(false);
+		expect(storage.has('apron.session:ws://fake.test/')).toBe(false);
 		client.stop();
 	});
 
 	it('forgets a stored token the server rejects and on sign-out', async () => {
-		storage.set('bottomless.session:ws://fake.test/', 'stale');
+		storage.set('apron.session:ws://fake.test/', 'stale');
 		const client = new ChatClient('ws://fake.test/');
 		client.subscribe((next) => (snapshot = next));
 		client.start();
@@ -249,16 +249,16 @@ describe('persisted session tokens', () => {
 		latest().receive({ id: auth.id, error: { code: -32001, message: 'Session expired; sign in with your passkey' } });
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(storage.has('bottomless.session:ws://fake.test/')).toBe(false);
+		expect(storage.has('apron.session:ws://fake.test/')).toBe(false);
 		expect(snapshot.error).toBe('Session expired; sign in with your passkey');
 		expect(snapshot.authenticated).toBe(false);
 
-		storage.set('bottomless.session:ws://fake.test/', 'fresh');
+		storage.set('apron.session:ws://fake.test/', 'fresh');
 		const again = new ChatClient('ws://fake.test/');
 		again.start();
 		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'fresh' });
 		await again.signOut();
-		expect(storage.has('bottomless.session:ws://fake.test/')).toBe(false);
+		expect(storage.has('apron.session:ws://fake.test/')).toBe(false);
 		again.stop();
 		client.stop();
 	});

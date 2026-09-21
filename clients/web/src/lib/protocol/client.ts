@@ -734,7 +734,7 @@ export class ChatClient {
 		const socket = this.socket;
 		const request = this.enqueueRequest('auth', {
 			...(resume ? { scheme: 'token', token: this.sessionToken } : { scheme: 'anonymous' }),
-			client: 'bottomless-web/0.1'
+			client: 'apron-web/0.1'
 		}, { visible: false, allowBeforeAuth: true });
 		request.promise.then((result) => {
 			if (socket === this.socket) this.handleAuth(result);
@@ -1227,7 +1227,7 @@ export class ChatClient {
 	 * resume removes the entry.
 	 */
 	private sessionStorageKey(): string {
-		return `bottomless.session:${this.serverUrl}`;
+		return `apron.session:${this.serverUrl}`;
 	}
 
 	private loadStoredSession(): void {

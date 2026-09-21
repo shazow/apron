@@ -66,14 +66,14 @@ Use `localhost` for the default passkey configuration; see
 
 Start a thread from one of your messages, then open it to reply. The room
 timeline shows only unthreaded messages; each thread shows its current members
-after replaying edits and moves. Open threads through the thread list. Use the
-message controls to move your messages to another thread or back to the room.
-Drafts are kept separately for each room and thread.
+after replaying edits and moves. Open threads through the thread list. Drafts are kept separately for each room
+and thread.
 
-Several messages move at once through select mode: shift-click one of your
-messages (or press `x` on it, long-press it on touch, or use More → Select) to
-enter it, shift-click another to fill the range, then pick a thread or start a
-new one from the selection bar that takes the composer's place. Each message is
+Your messages move through select mode: shift-click one (or press `x` on it,
+long-press it on touch, or use More → Select) to enter it, shift-click another
+to fill the range, then pick a thread — or, from inside a thread, the room — or
+start a new thread from the selection bar that takes the composer's place. A new
+thread opens once it exists; other moves leave the pane where it is. Each message is
 a separate `message` request carrying the same `thread_id`; a new thread is
 requested once and reused for all of them. Messages the server denies stay
 selected and the bar reports how many didn't move. Escape leaves select mode.

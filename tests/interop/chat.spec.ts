@@ -6,6 +6,7 @@ import {
 	messageAction,
 	messageByText,
 	moreAction,
+	moveMessage,
 	openChat,
 	sendMessage,
 	setDisplayName,
@@ -218,8 +219,7 @@ test.describe('chat protocol interoperability', () => {
 		await expect(reply.getByTestId('reply-reference')).toContainText(`${token}-target`);
 		await (await messageAction(stableTarget, 'Reply to message')).click();
 		await composer(page).fill(`${token}-unsent`);
-		await (await moreAction(stableTarget, 'Move message')).click();
-		await stableTarget.getByRole('combobox', { name: 'Move message to', exact: true }).selectOption('');
+		await moveMessage(page, stableTarget, 'room');
 		await expect(stableTarget).toHaveCount(0);
 		await expect(reply.getByTestId('reply-reference')).toContainText(`${token}-target`);
 		await expect(page.getByTestId('reply-draft')).toContainText(`${token}-target`);
@@ -421,9 +421,7 @@ test.describe('chat protocol interoperability', () => {
 			await expect(await waitForMessage(pageB, replyText)).toContainText(replyText);
 
 			const rootInThread = pageA.locator(`article[data-message-id="${rootEventId}"]`);
-			await (await moreAction(rootInThread, 'Move message')).click();
-			const moveSelect = rootInThread.getByRole('combobox', { name: 'Move message to', exact: true });
-			await moveSelect.selectOption({ label: 'Move to room' });
+			await moveMessage(pageA, rootInThread, 'room');
 			await expect(rootInThread).toHaveCount(0);
 			await expect(rootB).toHaveCount(0);
 			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
