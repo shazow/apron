@@ -32,6 +32,8 @@
 	type RecentServer = { url: string; label?: string };
 
 	const GROUP_WINDOW_MS = 5 * 60 * 1000;
+	/** How long a reconnect may run quietly before the UI escalates and offers a manual retry. */
+	const RECONNECT_STALL_MS = 10_000;
 	const RECENT_SERVERS_MAX = 5;
 	const SCHEMES: Record<ConnectScheme, { label: string; hint: string }> = {
 		anonymous: { label: 'Guest', hint: 'No token needed; the server picks a guest identity.' },
@@ -39,7 +41,7 @@
 	};
 
 	const blankSnapshot = (): ClientSnapshot => ({
-		status: 'idle', rooms: [], pending: [], typing: [], showReconnectDivider: false
+		status: 'idle', authenticated: false, rooms: [], pending: [], typing: [], showReconnectDivider: false
 	});
 
 	let snapshot = $state<ClientSnapshot>(blankSnapshot());
@@ -58,6 +60,8 @@
 	let profileServerName = $state('');
 	let passkeyError = $state('');
 	let passkeyNotice = $state('');
+	/** True once a dropped connection has stayed down for RECONNECT_STALL_MS. */
+	let reconnectStalled = $state(false);
 	let passkeyUnavailable = $state<string | undefined>();
 	let editingId = $state<string | undefined>();
 	let editDraft = $state('');
@@ -180,8 +184,10 @@
 		}
 		return items;
 	});
+	/** The socket is open and the server has accepted our auth; identity kept from a previous connection does not count. */
+	let sessionReady = $derived(snapshot.status === 'connected' && snapshot.authenticated && Boolean(snapshot.you));
 	let canCompose = $derived(Boolean(
-		activeRoom && snapshot.status === 'connected' && snapshot.you && !snapshot.authBusy &&
+		activeRoom && sessionReady && !snapshot.authBusy &&
 		(!activeThread || Boolean(activeThreadAnnouncement))
 	));
 	let canEdit = $derived(snapshot.server?.caps?.includes('edit') === true);
@@ -204,7 +210,7 @@
 		if (!connectPending) return 'idle';
 		if (snapshot.authBusy) return 'authing';
 		if (snapshot.error) return 'idle';
-		if (snapshot.status === 'connected') return snapshot.you ? 'idle' : 'authing';
+		if (snapshot.status === 'connected') return sessionReady ? 'idle' : 'authing';
 		if (snapshot.status === 'connecting' || snapshot.status === 'reconnecting') return 'connecting';
 		return 'idle';
 	});
@@ -214,14 +220,31 @@
 		if (!connectPending || !snapshot.error) return '';
 		return snapshot.error === 'WebSocket connection error' ? 'Can’t reach the server. Check the address and try again.' : snapshot.error;
 	});
-	let canCancelConnect = $derived(snapshot.rooms.length > 0 || (snapshot.status === 'connected' && Boolean(snapshot.you)));
+	let canCancelConnect = $derived(snapshot.rooms.length > 0 || sessionReady);
 	let unseenCount = $derived(stickToBottom ? 0 : Math.max(0, messages.length - seenCount));
 	let connectionState = $derived.by((): 'connected' | 'connecting' | 'reconnecting' | 'offline' | 'error' => {
-		if (snapshot.status === 'connected' && snapshot.you) return 'connected';
-		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'connecting';
-		if (snapshot.status === 'reconnecting') return 'reconnecting';
+		if (sessionReady) return 'connected';
 		if (snapshot.status === 'offline') return 'offline';
+		if (snapshot.disconnectedAt !== undefined || snapshot.status === 'reconnecting') return 'reconnecting';
 		return 'connecting';
+	});
+	/** A transport-level failure during a reconnect is expected noise; anything else (auth refused, bad frames) is worth surfacing. */
+	let reconnectError = $derived(snapshot.error && snapshot.error !== 'WebSocket connection error' ? snapshot.error : '');
+	/** A reconnect that has stalled past the quiet window, or one the server refused. */
+	let reconnectNeedsAttention = $derived(connectionState === 'reconnecting' && (reconnectStalled || Boolean(reconnectError)));
+	$effect(() => {
+		const since = snapshot.disconnectedAt;
+		if (since === undefined || sessionReady) {
+			reconnectStalled = false;
+			return;
+		}
+		const remaining = RECONNECT_STALL_MS - (Date.now() - since);
+		if (remaining <= 0) {
+			reconnectStalled = true;
+			return;
+		}
+		const timer = setTimeout(() => (reconnectStalled = true), remaining);
+		return () => clearTimeout(timer);
 	});
 	let demoRetentionNotice = $derived.by(() => {
 		const seconds = snapshot.server?.demo?.retention_seconds;
@@ -238,7 +261,7 @@
 	});
 
 	$effect(() => {
-		if (!connectPending || snapshot.authBusy || snapshot.status !== 'connected' || !snapshot.you) return;
+		if (!connectPending || snapshot.authBusy || !sessionReady) return;
 		if (!connectSchemes.includes(connectScheme)) connectScheme = connectSchemes[0];
 		if (connectScheme === 'webauthn' && !snapshot.passkeySession) {
 			connectPending = false;
@@ -400,14 +423,20 @@
 	});
 
 	function statusLabel(): string {
-		if (snapshot.status === 'connected' && snapshot.you) return 'Connected';
-		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'Connecting…';
-		if (snapshot.status === 'reconnecting') {
+		if (connectionState === 'connected') return 'Connected';
+		if (connectionState === 'offline') return 'Offline';
+		if (connectionState === 'reconnecting') {
 			if (snapshot.retryAfterMs && snapshot.retryAfterMs > 0) return `Connection limited. Retrying in ${retryAfterLabel(snapshot.retryAfterMs)}…`;
-			return 'Connection lost. Reconnecting…';
+			if (reconnectError) return reconnectStalled ? `Still disconnected: ${reconnectError}` : reconnectError;
+			return reconnectStalled ? 'Still trying to reconnect…' : 'Reconnecting…';
 		}
-		if (snapshot.status === 'offline') return 'Offline';
+		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'Connecting…';
 		return 'Waiting to connect';
+	}
+
+	function retryConnection(): void {
+		reconnectStalled = false;
+		client?.retryNow();
 	}
 
 	function retryAfterLabel(milliseconds: number): string {
@@ -1210,11 +1239,20 @@
 				</section>
 			{/if}
 
-			{#if connectionState !== 'connected'}
+			{#if connectionState === 'reconnecting' && !reconnectNeedsAttention}
+				<!-- A short blip stays quiet: the room, history, and identity are all kept in place while the socket comes back. -->
+				<div class="app-reconnect-quiet" role="status">
+					<span class="ap-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+					<span data-testid="connection-status" aria-live="polite">{statusLabel()}</span>
+				</div>
+			{:else if connectionState !== 'connected'}
 				<div class="app-banner">
 					<div class="ap-status" role="status">
-						<span class="ap-status-dot" class:ap-status-warn={connectionState === 'connecting' || connectionState === 'reconnecting'} class:ap-status-danger={connectionState === 'offline' || connectionState === 'error'} aria-hidden="true"></span>
+						<span class="ap-status-dot" class:ap-status-warn={connectionState === 'connecting'} class:ap-status-danger={connectionState === 'offline' || connectionState === 'error' || reconnectNeedsAttention} aria-hidden="true"></span>
 						<span class="ap-status-text" data-testid="connection-status" aria-live="polite">{statusLabel()}</span>
+						{#if reconnectNeedsAttention}
+							<button class="ap-btn ap-btn-sm" type="button" data-testid="reconnect-retry" onclick={retryConnection}>Try Again</button>
+						{/if}
 					</div>
 				</div>
 			{:else}
@@ -1471,7 +1509,7 @@
 			</div>
 		</div>
 	{/if}
-	{#if snapshot.error}
+	{#if snapshot.error && !(connectionState === 'reconnecting' && !reconnectError)}
 		<div class="app-toast app-toast-right">
 			<div class="ap-status" role="alert">
 				<span class="ap-status-dot ap-status-danger" aria-hidden="true"></span>
@@ -1519,6 +1557,7 @@
 	.ap-roomhead-name { max-width: 100%; }
 	.ap-roomhead-actions { flex: none; }
 	.app-banner { padding: var(--space-2) var(--space-4) 0; }
+	.app-reconnect-quiet { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-4) 0; font-size: 12px; line-height: 16px; color: var(--ink-muted); }
 	.app-demo-notice .ap-status { color: var(--ink-muted); }
 	.app-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 	.app-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }
