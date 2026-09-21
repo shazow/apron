@@ -325,6 +325,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private accountUsageEvents = 0;
 	private accountUsageRetryAt = 0;
 	private accountUsageFailureCount = 0;
+	private accountUsageVerified = false;
 	private accountUsageRefresh?: Promise<void>;
 	private accountUsageSnapshot: AccountUsageSnapshot | null = null;
 	private readonly queues = new WeakMap<WebSocketConnection, Promise<void>>();
@@ -954,13 +955,18 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (!env.ACCOUNT_ID || !env.ACCOUNT_ANALYTICS_TOKEN) return;
 		if (this.accountUsageRefresh) return this.accountUsageRefresh;
 		if (!forced && now < this.accountUsageRetryAt) return;
-		if (!forced && this.accountUsageSnapshot && now - this.accountUsageSnapshot.sampledAt < ACCOUNT_USAGE_POLICY.minimumRefreshIntervalMs && this.accountUsageEvents < ACCOUNT_USAGE_POLICY.refreshEveryEvents) return;
+		if (this.accountUsageSnapshot && now - this.accountUsageSnapshot.sampledAt < ACCOUNT_USAGE_POLICY.minimumRefreshIntervalMs) return;
 		this.accountUsageEvents = 0;
 		const task = (async () => {
 			const controller = new AbortController();
 			const timeout = setTimeout(() => controller.abort(), 5_000);
 			try {
 				const snapshot = await fetchAccountUsage(env, now, controller.signal);
+				// Bounded confirmation per instance and after recovery; no sensitive data.
+				if (!this.accountUsageVerified || this.accountUsageFailureCount > 0) {
+					console.info(JSON.stringify({ event: "account_usage_refresh_succeeded", sampledAt: snapshot.sampledAt, stop: snapshot.stop }));
+				}
+				this.accountUsageVerified = true;
 				try { this.store.persistAccountUsageSnapshot(snapshot, now); } catch { /* retain the in-memory safety stop */ }
 				this.accountUsageSnapshot = snapshot;
 				this.accountUsageFailureCount = 0;

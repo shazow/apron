@@ -76,7 +76,7 @@ export function accountUsageSnapshotFromResult(result: unknown, sampledAt: numbe
 	const usage = {
 		day: dayFor(sampledAt),
 		sampledAt,
-		workerRequests: sum(account.workersInvocationsAdaptiveGroups, "requests"),
+		workerRequests: sum(account.workersInvocationsAdaptive, "requests"),
 		durableObjectRequests: sum(account.durableObjectsInvocationsAdaptiveGroups, "requests"),
 		durableObjectDurationGbSeconds: sum(account.durableObjectsPeriodicGroups, "duration"),
 		sqlRowsRead: sum(account.durableObjectsPeriodicGroups, "rowsRead"),
@@ -91,7 +91,7 @@ export async function fetchAccountUsage(env: AccountUsageEnvironment, sampledAt 
 	const start = new Date(Date.UTC(new Date(sampledAt).getUTCFullYear(), new Date(sampledAt).getUTCMonth(), new Date(sampledAt).getUTCDate())).toISOString();
 	const end = new Date(sampledAt).toISOString();
 	const query = `query { viewer { accounts(filter: { accountTag: ${JSON.stringify(env.ACCOUNT_ID)} }) {
-		workersInvocationsAdaptiveGroups(filter: { datetime_geq: ${JSON.stringify(start)}, datetime_leq: ${JSON.stringify(end)} }, limit: 1000) { sum { requests } }
+		workersInvocationsAdaptive(filter: { datetime_geq: ${JSON.stringify(start)}, datetime_leq: ${JSON.stringify(end)} }, limit: 1000) { sum { requests } }
 		durableObjectsInvocationsAdaptiveGroups(filter: { datetime_geq: ${JSON.stringify(start)}, datetime_leq: ${JSON.stringify(end)} }, limit: 1000) { sum { requests } }
 		durableObjectsPeriodicGroups(filter: { datetime_geq: ${JSON.stringify(start)}, datetime_leq: ${JSON.stringify(end)} }, limit: 1000) { sum { duration rowsRead rowsWritten } }
 		durableObjectsStorageGroups(filter: { datetime_geq: ${JSON.stringify(start)}, datetime_leq: ${JSON.stringify(end)} }, limit: 1000) { max { storedBytes } }
