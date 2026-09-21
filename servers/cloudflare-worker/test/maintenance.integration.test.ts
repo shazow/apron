@@ -81,6 +81,54 @@ it("keeps an early authentication alarm cheap while cleanup is not due", async (
 	});
 });
 
+it("keeps a full day of empty hourly cleanups below one deletion batch", async () => {
+	await withStore("idle-day", {}, (store, clock, state) => {
+		const before = store.storageAccounting();
+		for (let hour = 0; hour < 24; hour++) {
+			clock.value += 3_600_000;
+			const cleanup = store.runCleanup(clock.value);
+			expect(cleanup.did_work).toBe(false);
+			expect(cleanup.next_due_ms).toBe(clock.value + 3_600_000);
+		}
+		const after = store.storageAccounting();
+		expect(after.reservedWrites - before.reservedWrites).toBeLessThan(1_024);
+		expect(after.writes - before.writes).toBeLessThan(200);
+		expect(store.accountingStatus().unsafe).toBe(false);
+		const maintenance = rowValue<{ cleanup_cursor: number | null; cleanup_cutoff_ms: number | null }>(state,
+			"SELECT cleanup_cursor, cleanup_cutoff_ms FROM maintenance WHERE id = 1");
+		expect(maintenance).toEqual({ cleanup_cursor: null, cleanup_cutoff_ms: null });
+	});
+});
+
+it("reuses a known future alarm without spending SQL and still advances earlier deadlines", async () => {
+	await withStore("cached-alarm", {}, async (store, clock, state) => {
+		const first = clock.value + 30_000;
+		await store.scheduleAlarm(first, clock.value);
+		const before = store.storageAccounting();
+		for (let attempt = 0; attempt < 100; attempt++) {
+			await store.scheduleAlarm(attempt % 2 ? first + 60_000 : undefined, clock.value);
+		}
+		expect(store.storageAccounting()).toEqual(before);
+		expect(await state.storage.getAlarm()).toBe(first);
+		await store.scheduleAlarm(first - 10_000, clock.value);
+		expect(await state.storage.getAlarm()).toBe(first - 10_000);
+		expect(store.storageAccounting().writes).toBeGreaterThan(before.writes);
+
+		// A new Store must read durable alarm state rather than assuming a cache
+		// survived a wake; its following scheduling requests can reuse that read.
+		const restarted = new Store(state, {}, clock.clock);
+		restarted.initialize();
+		await restarted.scheduleAlarm(undefined, clock.value);
+		const afterWake = restarted.storageAccounting();
+		await restarted.scheduleAlarm(undefined, clock.value);
+		expect(restarted.storageAccounting()).toEqual(afterWake);
+		clock.value = first;
+		restarted.runCleanup(clock.value);
+		await restarted.scheduleAlarm(undefined, clock.value);
+		expect(await state.storage.getAlarm()).toBeGreaterThan(clock.value);
+	});
+});
+
 it("defers exhausted cleanup to the next UTC day and schedules one reset alarm", async () => {
 	await withStore("maintenance-deferral", {
 		maintenanceReadsPerDay: 1_100,

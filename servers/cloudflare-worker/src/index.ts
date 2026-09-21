@@ -805,6 +805,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	/** Drops expired session records. Runs from the alarm, beside other sweeps. */
 	private async sweepSessions(now: number): Promise<void> {
+		// TODO: Use a bounded, metered expiry index so authentication alarms do
+		// not repeatedly list every session, including ones far from expiry.
 		const sessions = await this.ctx.storage.list<StoredSession>({ prefix: SESSION_KEY_PREFIX });
 		const expired = [...sessions].filter(([, session]) => session.expiresMs <= now).map(([key]) => key);
 		if (expired.length) await this.ctx.storage.delete(expired);

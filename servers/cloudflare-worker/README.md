@@ -236,6 +236,11 @@ reservations, not Cloudflare's measured usage. Compare them with account analyti
 before tuning operation costs. Daily reservations survive redeploys and reset at
 UTC midnight; resetting the object or its counters would discard that protection.
 
+Idle cleanup runs use indexed existence checks before reserving a deletion batch.
+If no records are eligible, they only advance the cleanup deadline. Within an
+object instance, a known adequate future alarm is reused without SQL bookkeeping;
+earlier deadlines, fired alarms, cleanup runs, and hibernation wakes are rechecked.
+
 <!-- TODO: Calibrate foreground SQL reservations against representative reconnect,
 auth, and history workloads. On 2026-09-21 the app stopped at 59,976 reserved
 foreground writes after 93 admissions, while account analytics reported about

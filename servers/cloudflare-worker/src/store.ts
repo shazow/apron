@@ -676,6 +676,7 @@ export class Store {
   private accountingUnsafePersisted = false;
   private accountingUnsafePending = false;
   private deferredCleanupUntil = 0;
+  private scheduledAlarmAt?: number;
 
   constructor(
     storageOrState: unknown,
@@ -2664,13 +2665,35 @@ export class Store {
 
   runCleanup(now = this.clock.now()): StoreCleanupResult {
     this.ensureReady();
+    // An alarm may have fired, and cleanup may establish an earlier continuation.
+    this.scheduledAlarmAt = undefined;
     // A challenge deadline is not an hourly cleanup. Its cheap due check must
     // not consume the reservation for a complete deletion batch.
     let gate: { maintenance: RawMaintenanceRow; room: RawRoomRow; effective: number };
     try {
-      gate = this.reserved({ reads: 8, writes: 2 }, true, now, () => ({
-        maintenance: this.maintenanceRow(), room: this.roomRow(), effective: this.effectiveNow(now),
-      }));
+      gate = this.reserved({ reads: 8, writes: 2 }, true, now, () => {
+        const maintenance = this.maintenanceRow();
+        const room = this.roomRow();
+        const effective = this.effectiveNow(now);
+        if (effective >= Math.max(maintenance.next_cleanup_ms, this.deferredCleanupUntil)) {
+          const cutoff = maintenance.cleanup_cursor !== null && maintenance.cleanup_cutoff_ms !== null
+            ? maintenance.cleanup_cutoff_ms : effective - this.config.retentionMs;
+          const limiterCutoff = Math.min(Math.floor(effective / 86_400_000) * 86_400_000, effective - POST_WINDOW_MS);
+          // Each existence check uses its cleanup index and reads at most one
+          // matching row. Idle hours must not burn a full deletion reservation.
+          const hasWork =
+            this.rawRows("SELECT log_id FROM transitions WHERE room_id = ? AND log_id < ? ORDER BY log_id LIMIT 1", ROOM_ID, room.history_floor).length > 0 ||
+            this.rawRows("SELECT log_id FROM transitions INDEXED BY transitions_retention_idx WHERE room_id = ? AND commit_ms < ? ORDER BY commit_ms, log_id LIMIT 1", ROOM_ID, cutoff).length > 0 ||
+            this.rawRows("SELECT message_id FROM messages WHERE room_id = ? AND latest_log_id < ? ORDER BY latest_log_id LIMIT 1", ROOM_ID, room.history_floor).length > 0 ||
+            this.rawRows("SELECT user_id FROM accepted_requests WHERE expires_ms <= ? ORDER BY expires_ms LIMIT 1", effective).length > 0 ||
+            this.rawRows("SELECT scope FROM principal_limits WHERE updated_ms < ? ORDER BY updated_ms LIMIT 1", limiterCutoff).length > 0;
+          if (!hasWork) {
+            maintenance.next_cleanup_ms = effective + this.config.cleanupIntervalMs;
+            this.rawExec("UPDATE maintenance SET next_cleanup_ms = ?, cleanup_cutoff_ms = NULL, cleanup_cursor = NULL WHERE id = 1", maintenance.next_cleanup_ms);
+          }
+        }
+        return { maintenance, room, effective };
+      });
     } catch (error) {
       if (error instanceof StoreError && error.code === "retry_after") this.deferCleanup(Math.max(now, this.lastEffectiveMs));
       throw error;
@@ -2774,6 +2797,9 @@ export class Store {
    */
   async scheduleAlarm(socketDeadline?: number, now = this.clock.now()): Promise<void> {
     this.ensureReady();
+    const candidateTime = Math.max(Math.trunc(now), this.lastEffectiveMs);
+    if (this.scheduledAlarmAt !== undefined && this.scheduledAlarmAt > candidateTime &&
+        (socketDeadline === undefined || this.scheduledAlarmAt <= socketDeadline)) return;
     const beforeReads = this.observed.reads;
     const beforeWrites = this.observed.writes;
     let reserved: BudgetCost;
@@ -2801,10 +2827,14 @@ export class Store {
       // control-row costs even when the native call fails.
       actualReads += 2; this.observed.reads += 2;
       const existing = await getAlarm.call(this.durableStorage);
-      if (existing !== null && Number.isFinite(existing) && existing > effective && existing <= dueAt) return;
+      if (existing !== null && Number.isFinite(existing) && existing > effective && existing <= dueAt) {
+        this.scheduledAlarmAt = existing;
+        return;
+      }
       actualReads += 2; actualWrites += 2;
       this.observed.reads += 2; this.observed.writes += 2;
       await setAlarm.call(this.durableStorage, dueAt);
+      this.scheduledAlarmAt = dueAt;
     } finally {
       this.assertReservation(reserved, this.observed.reads - actualReads, this.observed.writes - actualWrites);
     }
