@@ -102,7 +102,7 @@ it('keeps server-owned state out of public protocol frames', async () => {
 		const server = await peer.next();
 		publicFrames.push(server);
 		expectPublicFrame(server);
-		expect(server.params.auth).toEqual(['webauthn', 'anonymous']);
+		expect(server.params.auth).toEqual(['webauthn', 'token', 'anonymous']);
 
 		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'anonymous' } });
 		const auth = await peer.next();
