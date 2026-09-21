@@ -150,17 +150,19 @@ describe('transport reconnects', () => {
 	it('bounds typing traffic while refreshing it before expiry', () => {
 		const socket = latest();
 		const typing = () => socket.sent.filter(frame => frame.method === 'typing');
+		// Twenty seconds of keystrokes: one frame at the start and one refresh twelve seconds in.
 		for (let key = 0; key < 200; key++) {
 			client.sendTyping('lobby', true);
 			vi.advanceTimersByTime(100);
 		}
-		expect(typing()).toHaveLength(5);
+		expect(typing()).toHaveLength(2);
+		expect(typing()[0].params).toMatchObject({ active: true, timeout: 15 });
 		client.sendTyping('lobby', false);
 		client.sendTyping('lobby', false);
-		expect(typing()).toHaveLength(6);
+		expect(typing()).toHaveLength(3);
 		expect(typing().at(-1)?.params).toMatchObject({ active: false });
 		client.sendTyping('lobby', true);
-		expect(typing()).toHaveLength(7);
+		expect(typing()).toHaveLength(4);
 	});
 
 	it('keeps typing refreshes independent across rooms and transport reconnects', async () => {

@@ -28,8 +28,9 @@ the reason and waits before retrying, including manual retries. Servers without
 this optional endpoint retain ordinary reconnect behavior.
 Repeated connection failures back off from 500 ms to about one attempt per minute
 with jitter. An explicit server retry window takes precedence.
-Typing notifications refresh at most once every four seconds per room, with
-one stop notification when typing ends, to avoid charging a frame per keystroke.
+Typing notifications ask for a 15-second indicator and refresh it at most once
+every 12 seconds per room, with one stop notification when typing ends, to avoid
+charging a frame per keystroke.
 Explicit server URLs keep their path: a bare hostname connects at `/`, while
 servers that require `/ws` should be entered with that suffix.
 

@@ -139,6 +139,10 @@ type ValidHistoryResponse = JsonObject & {
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
 const MAX_RECONNECT_DELAY_MS = 60_000;
+/** How long a typing indicator this client sends should persist without a refresh, in the frame's `timeout` seconds. */
+const TYPING_TIMEOUT_S = 15;
+/** How often the indicator is refreshed while typing continues: well inside the timeout, and far from one frame per keystroke. */
+const TYPING_REFRESH_MS = 12_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const DEFAULT_HISTORY_BOUNDARY = '1';
@@ -497,16 +501,16 @@ export class ChatClient {
 		if (!this.authenticated || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
 		const previous = this.sentTypingAt.get(room);
 		const now = Date.now();
-		// Refresh halfway through the advertised lifetime, not on every keypress.
+		// Refresh well inside the advertised lifetime, not on every keypress.
 		// Repeated inactive events do not need another notification either.
 		if (active) {
-			if (previous !== undefined && now - previous < 4_000) return;
+			if (previous !== undefined && now - previous < TYPING_REFRESH_MS) return;
 			this.sentTypingAt.set(room, now);
 		} else {
 			if (previous === undefined) return;
 			this.sentTypingAt.delete(room);
 		}
-		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: 8 } });
+		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: TYPING_TIMEOUT_S } });
 	}
 
 	/** Fetch a thread independently; its progress never advances room history coverage. */
