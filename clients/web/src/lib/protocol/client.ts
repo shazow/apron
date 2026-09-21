@@ -13,6 +13,7 @@ import {
 	isLogId,
 	isString,
 	toTransition,
+	type Embed,
 	type MessageRecord,
 	type JsonObject,
 	type JsonValue,
@@ -138,6 +139,10 @@ type ValidHistoryResponse = JsonObject & {
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
 const MAX_RECONNECT_DELAY_MS = 60_000;
+/** How long a typing indicator this client sends should persist without a refresh, in the frame's `timeout` seconds. */
+const TYPING_TIMEOUT_S = 15;
+/** How often the indicator is refreshed while typing continues: well inside the timeout, and far from one frame per keystroke. */
+const TYPING_REFRESH_MS = 12_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const DEFAULT_HISTORY_BOUNDARY = '1';
@@ -415,12 +420,35 @@ export class ChatClient {
 		this.passkeyAbort = undefined;
 	}
 
-	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string, replyMessageId?: string): OperationHandle {
+	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string, replyMessageId?: string, embeds?: Embed[]): OperationHandle {
 		return this.saveMessage({
-			room_id: room, body: { text, format },
+			room_id: room, body: { text, format, ...(embeds && embeds.length > 0 ? { embeds } : {}) },
 			...(thread ? { thread_id: thread } : {}),
 			...(replyMessageId !== undefined ? { reply_message_id: replyMessageId } : {})
 		});
+	}
+
+	/**
+	 * Media travels over HTTP, not the socket (§6.1): POST the file as
+	 * `multipart/form-data` to the `upload` URL the `server` frame carried and
+	 * take the URL back. A token session sends the same token as bearer; other
+	 * schemes rely on the per-session URL the server re-sent after auth.
+	 */
+	async uploadMedia(file: File, signal?: AbortSignal): Promise<string> {
+		const endpoint = this.server?.upload;
+		if (!endpoint) throw new Error('This backend accepts no uploads');
+		const form = new FormData();
+		form.append('file', file, file.name);
+		const response = await fetch(endpoint, {
+			method: 'POST',
+			body: form,
+			...(signal ? { signal } : {}),
+			...(this.sessionToken ? { headers: { Authorization: `Bearer ${this.sessionToken}` } } : {})
+		});
+		if (!response.ok) throw new Error(`The server refused the upload (${response.status})`);
+		const payload: unknown = await response.json().catch(() => undefined);
+		if (!isJsonObject(payload) || typeof payload.url !== 'string') throw new Error('The server returned no upload URL');
+		return payload.url;
 	}
 
 	setMessageReply(room: string, messageId: string, replyMessageId: string | null): OperationHandle {
@@ -473,16 +501,16 @@ export class ChatClient {
 		if (!this.authenticated || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
 		const previous = this.sentTypingAt.get(room);
 		const now = Date.now();
-		// Refresh halfway through the advertised lifetime, not on every keypress.
+		// Refresh well inside the advertised lifetime, not on every keypress.
 		// Repeated inactive events do not need another notification either.
 		if (active) {
-			if (previous !== undefined && now - previous < 4_000) return;
+			if (previous !== undefined && now - previous < TYPING_REFRESH_MS) return;
 			this.sentTypingAt.set(room, now);
 		} else {
 			if (previous === undefined) return;
 			this.sentTypingAt.delete(room);
 		}
-		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: 8 } });
+		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: TYPING_TIMEOUT_S } });
 	}
 
 	/** Fetch a thread independently; its progress never advances room history coverage. */
@@ -710,7 +738,7 @@ export class ChatClient {
 		const socket = this.socket;
 		const request = this.enqueueRequest('auth', {
 			...(resume ? { scheme: 'token', token: this.sessionToken } : { scheme: 'anonymous' }),
-			client: 'bottomless-web/0.1'
+			client: 'apron-web/0.1'
 		}, { visible: false, allowBeforeAuth: true });
 		request.promise.then((result) => {
 			if (socket === this.socket) this.handleAuth(result);
@@ -1203,7 +1231,7 @@ export class ChatClient {
 	 * resume removes the entry.
 	 */
 	private sessionStorageKey(): string {
-		return `bottomless.session:${this.serverUrl}`;
+		return `apron.session:${this.serverUrl}`;
 	}
 
 	private loadStoredSession(): void {

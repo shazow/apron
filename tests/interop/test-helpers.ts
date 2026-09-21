@@ -43,7 +43,7 @@ export async function messageAction(message: Locator, name: string): Promise<Loc
 	return button;
 }
 
-/** Opens the toolbar's "More" menu, where Move and Delete live. */
+/** Opens the toolbar's "More" menu, where Select and Delete live. */
 export async function moreAction(message: Locator, name: string): Promise<Locator> {
 	await (await messageAction(message, 'More actions')).click();
 	return message.getByRole('button', { name, exact: true });
@@ -60,4 +60,23 @@ export async function editMessage(message: Locator, text: string): Promise<void>
 export async function deleteMessage(page: Page, message: Locator): Promise<void> {
 	page.once('dialog', (dialog) => dialog.accept());
 	await (await moreAction(message, 'Delete message')).click();
+}
+
+/** Sets the handle the server knows you by, through the profile editor. */
+export async function setDisplayName(page: Page, name: string): Promise<void> {
+	await page.getByRole('button', { name: /^Your profile on/ }).click();
+	const dialog = page.getByRole('dialog', { name: 'Edit profile', exact: true });
+	await dialog.getByTestId('display-name-input').fill(name);
+	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByRole('button', { name: new RegExp(`^Your profile on .*: ${name}\\.`) })).toBeVisible();
+}
+
+/** Picks one message with a shift-click and moves it through the selection bar: to a thread by title, or back to the room. */
+export async function moveMessage(page: Page, message: Locator, destination: string | 'room'): Promise<void> {
+	await message.click({ modifiers: ['Shift'] });
+	const bar = page.getByTestId('selection-bar');
+	await expect(bar).toContainText('1 message selected');
+	await bar.getByRole('button', { name: 'Move to thread ▾', exact: true }).click();
+	await bar.getByRole('option', { name: destination === 'room' ? 'Move to room' : destination, exact: true }).click();
+	await expect(bar).toHaveCount(0);
 }

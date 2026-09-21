@@ -1,0 +1,265 @@
+<script lang="ts">
+	import type { RoomSnapshot } from '$lib/protocol/client';
+	import { formatBytes, renderMarkdown, safeUrl, type MentionPerson } from '$lib/protocol/markdown';
+	import type { MessageRecord } from '$lib/protocol/types';
+	import { aspectRatio, embedsOf, replySnippet, senderName, textOf } from '$lib/ui/messages';
+	import { eventTime } from '$lib/ui/time';
+	import Avatar from './Avatar.svelte';
+
+	const LONG_PRESS_MS = 500;
+
+	/** What the viewer may do to this message: built from the server's caps and ownership, so only real actions show. */
+	export interface MessageCaps {
+		reply: boolean;
+		edit: boolean;
+		startThread: boolean;
+		select: boolean;
+		removeReply: boolean;
+	}
+
+	interface Props {
+		event: MessageRecord;
+		/** A follower in a sender's group: no avatar or header, time on hover. */
+		grouped: boolean;
+		/** For looking up the quoted message of a reply. */
+		room: RoomSnapshot;
+		people: MentionPerson[];
+		mention: boolean;
+		pinged: boolean;
+		highlighted: boolean;
+		/** Select mode is on for the pane. */
+		selecting: boolean;
+		selected: boolean;
+		editing: boolean;
+		startingThread: boolean;
+		caps: MessageCaps;
+		onreply: () => void;
+		onjump: (id: string) => void;
+		onedit: () => void;
+		onsave: (text: string) => void;
+		oncanceledit: () => void;
+		ondelete: () => void;
+		onremovereply: () => void;
+		onstartthread: () => void;
+		/** Enter select mode with this message picked. */
+		onbeginselect: () => void;
+		/** In select mode: toggle this message, or fill the range to it. */
+		onselect: (range: boolean) => void;
+	}
+	let {
+		event, grouped, room, people, mention, pinged, highlighted, selecting, selected, editing, startingThread, caps,
+		onreply, onjump, onedit, onsave, oncanceledit, ondelete, onremovereply, onstartthread, onbeginselect, onselect
+	}: Props = $props();
+
+	let moreOpen = $state(false);
+	let draft = $state('');
+	let longPress: ReturnType<typeof setTimeout> | undefined;
+
+	let name = $derived(senderName(event));
+	let time = $derived(eventTime(event));
+	let text = $derived(textOf(event));
+	let embeds = $derived(embedsOf(event));
+	let selectable = $derived(selecting && caps.select);
+	let picked = $derived(selectable && selected);
+	let replyTarget = $derived(event.reply_message_id && !event.deleted ? room.timeline.events[event.reply_message_id] : undefined);
+	let hasActions = $derived(!selecting && (caps.reply || caps.edit || caps.removeReply));
+
+	$effect(() => {
+		if (editing) draft = text;
+		else moreOpen = false;
+	});
+
+	function editKeydown(key: KeyboardEvent): void {
+		if (key.key === 'Escape') {
+			key.preventDefault();
+			oncanceledit();
+		} else if (key.key === 'Enter' && !key.shiftKey && !key.isComposing) {
+			key.preventDefault();
+			save();
+		}
+	}
+
+	function save(): void {
+		if (!draft.trim()) return;
+		onsave(draft);
+	}
+
+	function act(action: () => void): void {
+		moreOpen = false;
+		action();
+	}
+
+	/** Shift-click enters select mode with this message picked; inside it, plain clicks toggle. */
+	function click(mouse: MouseEvent): void {
+		if ((mouse.target as HTMLElement | null)?.closest('a, button, input, textarea, select')) return;
+		if (selecting) {
+			if (caps.select) onselect(mouse.shiftKey);
+			return;
+		}
+		if (mouse.shiftKey && caps.select) onbeginselect();
+	}
+
+	/** Keyboard: `x` on a focused message picks it, the same as a shift-click. */
+	function keydown(key: KeyboardEvent): void {
+		if (key.key !== 'x' || key.metaKey || key.ctrlKey || key.altKey || !caps.select) return;
+		if ((key.target as HTMLElement | null)?.closest('input, textarea, select')) return;
+		key.preventDefault();
+		if (selecting) onselect(false);
+		else onbeginselect();
+	}
+
+	/** Touch has no hover: a long press opens select mode instead. */
+	function pointerdown(pointer: PointerEvent): void {
+		cancelLongPress();
+		if (pointer.pointerType !== 'touch' || selecting || !caps.select) return;
+		longPress = setTimeout(() => {
+			longPress = undefined;
+			onbeginselect();
+		}, LONG_PRESS_MS);
+	}
+
+	function cancelLongPress(): void {
+		if (!longPress) return;
+		clearTimeout(longPress);
+		longPress = undefined;
+	}
+
+	$effect(() => cancelLongPress);
+</script>
+
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<article
+	data-timeline-item
+	class="ap-msg"
+	class:ap-msg-grouped={grouped}
+	class:ap-msg-mention={mention}
+	class:ap-msg-pinged={pinged}
+	class:ap-msg-highlighted={highlighted}
+	class:ap-msg-selectable={selectable}
+	class:ap-msg-selected={picked}
+	data-message-id={event.message_id}
+	tabindex="-1"
+	onclick={click}
+	onkeydown={keydown}
+	onpointerdown={pointerdown}
+	onpointerup={cancelLongPress}
+	onpointermove={cancelLongPress}
+	onpointercancel={cancelLongPress}
+>
+	{#if selectable}
+		<span class="ap-msg-check" role="checkbox" aria-checked={picked} aria-label="Select message" tabindex="0" onkeydown={(key) => { if (key.key === ' ' || key.key === 'Enter') { key.preventDefault(); onselect(false); } }}>{picked ? '✓' : ''}</span>
+	{/if}
+	<div class="ap-msg-gutter">
+		{#if grouped}
+			<span class="ap-msg-hovertime">{time}</span>
+		{:else}
+			<Avatar {name} src={event.from?.avatar} />
+		{/if}
+	</div>
+	<div class="ap-msg-main">
+		{#if !grouped}
+			<header class="ap-msg-head">
+				<span class="ap-msg-sender">{name}</span>
+				<span class="ap-msg-meta">{#if time}<time>{time}</time>{/if}</span>
+			</header>
+		{/if}
+		{#if event.reply_message_id && !event.deleted}
+			{#if replyTarget}
+				{@const targetName = senderName(replyTarget)}
+				<button class="ap-reply" data-testid="reply-reference" type="button" aria-label={`Replying to ${targetName}. Jump to their message`} onclick={() => onjump(replyTarget.message_id)}>
+					<span class="ap-reply-who">
+						<Avatar name={targetName} src={replyTarget.from?.avatar} size="sm" />
+						{targetName}
+					</span>
+					<span class="ap-reply-text">{#if replyTarget.deleted}<em>Message deleted</em>{:else}{replySnippet(replyTarget)}{/if}</span>
+				</button>
+			{:else}
+				<div class="ap-reply reply-static" data-testid="reply-reference">
+					<span class="ap-reply-text"><em>Message unavailable</em></span>
+				</div>
+			{/if}
+		{/if}
+		{#if event.deleted}
+			<div class="ap-msg-tomb">Message deleted</div>
+		{:else if editing}
+			<div class="edit">
+				<textarea class="ap-field edit-field" aria-label="Edit message" bind:value={draft} rows="3" onkeydown={editKeydown}></textarea>
+				<div class="ap-profedit-actions">
+					<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" onclick={oncanceledit}>Cancel</button>
+					<button class="ap-btn ap-btn-primary ap-btn-sm" type="button" onclick={save}>Save changes</button>
+				</div>
+			</div>
+		{:else}
+			{#if text}
+				{#if event.body?.format === 'plain'}
+					<div class="ap-msg-text plain">{text}</div>
+				{:else}
+					<div class="ap-msg-text markdown">{@html renderMarkdown(text, people)}</div>
+				{/if}
+			{/if}
+			{#if embeds.length > 0}
+				<div class="ap-msg-embeds">
+					{#each embeds as embed}
+						{@const url = safeUrl(embed.url)}
+						{#if embed.kind === 'image' && url}
+							<img class="ap-embed ap-embed-media" src={url} alt={embed.name || ''} loading="lazy" style={aspectRatio(embed)} />
+						{:else if embed.kind === 'video' && url}
+							<!-- svelte-ignore a11y_media_has_caption -->
+							<video class="ap-embed ap-embed-media" src={url} controls preload="metadata" style={aspectRatio(embed)}></video>
+						{:else if embed.kind === 'audio' && url}
+							<audio class="ap-embed ap-embed-audio" src={url} controls preload="none"></audio>
+						{:else if embed.kind === 'file' && url}
+							<a class="ap-embed ap-embed-card" href={url} download={embed.name || true}>
+								<span class="ap-embed-title">{embed.name || 'File'}</span>
+								<span class="ap-embed-detail">{[embed.mime, formatBytes(embed.size)].filter(Boolean).join(' · ')}</span>
+							</a>
+						{:else}
+							<div class="ap-embed ap-embed-card ap-embed-fallback">
+								<span class="ap-embed-kind">{embed.kind || 'unknown'}</span>
+								{#if url}<a class="ap-embed-url" href={url} rel="noreferrer noopener" target="_blank">{url}</a>{:else}<span class="ap-embed-detail">This client can’t display this embed.</span>{/if}
+							</div>
+						{/if}
+					{/each}
+				</div>
+			{/if}
+		{/if}
+	</div>
+	{#if hasActions}
+		<div class="ap-msg-actions">
+			<div class="ap-actions" role="toolbar" aria-label="Message actions">
+				{#if event.deleted && caps.removeReply}
+					<button class="ap-actions-btn" type="button" aria-label="Remove reply reference" onclick={() => act(onremovereply)}>Remove reply</button>
+				{/if}
+				{#if caps.reply}
+					<button class="ap-actions-btn" type="button" aria-label="Reply to message" onclick={() => act(onreply)}>Reply</button>
+				{/if}
+				{#if caps.edit}
+					{#if caps.startThread}
+						<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={startingThread} onclick={() => act(onstartthread)}>{startingThread ? 'Starting…' : 'Start thread'}</button>
+					{/if}
+					<button class="ap-actions-btn" type="button" aria-label="Edit message" title="Edit" onclick={() => act(onedit)}>Edit</button>
+					{#if moreOpen}
+						{#if event.reply_message_id}
+							<button class="ap-actions-btn" type="button" aria-label="Remove reply reference" onclick={() => act(onremovereply)}>Remove reply</button>
+						{/if}
+						{#if caps.select}
+							<button class="ap-actions-btn" type="button" data-testid="select-message" aria-label="Select message" title="Select" onclick={() => act(onbeginselect)}>Select</button>
+						{/if}
+						<button class="ap-actions-btn ap-actions-danger" type="button" aria-label="Delete message" title="Delete" onclick={() => act(ondelete)}>Delete</button>
+					{:else}
+						<button class="ap-actions-btn" type="button" aria-label="More actions" aria-expanded="false" title="More" onclick={() => (moreOpen = true)}>⋯</button>
+					{/if}
+				{/if}
+			</div>
+		</div>
+	{/if}
+</article>
+
+<style>
+	.ap-actions { max-width: calc(100vw - 32px); flex-wrap: wrap; }
+	.reply-static { cursor: default; }
+	.reply-static:hover { background: var(--bg-200); }
+	.plain { white-space: pre-wrap; }
+	.edit { display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--timeline-max-w); }
+	.edit-field { height: auto; min-height: 66px; padding: var(--space-2); resize: vertical; font-size: 15px; line-height: 22px; }
+</style>

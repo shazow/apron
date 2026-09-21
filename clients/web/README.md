@@ -28,10 +28,35 @@ the reason and waits before retrying, including manual retries. Servers without
 this optional endpoint retain ordinary reconnect behavior.
 Repeated connection failures back off from 500 ms to about one attempt per minute
 with jitter. An explicit server retry window takes precedence.
-Typing notifications refresh at most once every four seconds per room, with
-one stop notification when typing ends, to avoid charging a frame per keystroke.
+Typing notifications ask for a 15-second indicator and refresh it at most once
+every 12 seconds per room, with one stop notification when typing ends, to avoid
+charging a frame per keystroke.
 Explicit server URLs keep their path: a bare hostname connects at `/`, while
 servers that require `/ws` should be entered with that suffix.
+
+Typing `@` in the composer opens the mention picker over the senders this room
+has seen, filtered by what follows: arrows move, Tab or Enter inserts `@name` as
+plain text, Escape dismisses. A rendered body turns an `@handle` that matches a
+sender's name or ID — whole word, case-insensitive, never inside code — into a
+mention chip. A message that names you tints its row with a rust rule, pulses
+once as it arrives (never on replayed history), raises an `@` badge on a room
+you aren't reading, and, when it lands above the fold, turns the jump bar rust
+with **Jump to mention**. Mentions are decided here from the text; the protocol
+carries none.
+
+With the `edit` cap, several of your messages move into one thread at a time:
+shift-click a message (or press `x` on it, long-press it on touch, or pick
+**Select** from its More menu) to enter select mode, shift-click another to fill
+the range, and the selection bar replaces the composer with the count, **Move to
+thread**, **New thread** and Cancel. Each message is its own `message` request;
+denied ones stay selected and the bar says how many didn't move. Escape leaves
+select mode.
+
+When the server advertises an `upload` URL, the composer grows attach and
+microphone buttons: attach posts the file as `multipart/form-data` to that URL
+(§6.1) and sends the returned URL as an embed, and the microphone records a clip
+and sends it as an `audio` embed. Neither example server in this repository
+offers uploads, so both buttons stay hidden there.
 
 **Connect** in the
 sidebar header opens the connect screen: a WebSocket URL or an HTTP(S) server
@@ -77,12 +102,21 @@ The UI follows the Apron design system. `src/lib/design/tokens.css` holds its
 color, type, spacing, radius and size tokens as CSS custom properties (dark is
 the reference theme; light follows `prefers-color-scheme`), and
 `src/lib/design/apron.css` is the design system's component stylesheet copied
-verbatim, so every `ap-*` class in `src/routes/+page.svelte` matches the
-system's React components one to one (thread cards with a preview line, reply
-quotes, the pinned thread summary, the thread editor popover, the profile
-editor's sign-in row and the connect screen included). Re-copy `apron.css` when
-the design system changes rather than editing it here; the few `app-*` rules in
-the page are layout glue only.
+verbatim. The Svelte components under `src/lib/components` wrap its `ap-*`
+classes one to one with the system's React components — `ConnectScreen`,
+`Sidebar` and `ProfileBar`, `RoomHeader` and `ThreadEditor`, `ThreadCard`,
+`Message`, `Composer` with its `MentionPicker`, `SelectionBar`, `JumpBar`,
+`StatusBanner`, `Avatar` — and carry only the layout glue each needs. Re-copy
+`apron.css` when the design system changes rather than editing it here.
+
+`src/routes/+page.svelte` owns the session and the navigation (which room or
+thread is open, per-destination drafts) and composes the components. The
+reactive state behind it lives in `src/lib/ui` as small classes — `SessionView`
+(the last authenticated view, held through a reconnect), `MentionTracker`,
+`MessageSelection`, `FeedbackState`, `SidebarLayout` — beside pure, unit-tested
+helpers: `timeline.ts` builds the room and thread views, `messages.ts` and
+`time.ts` read messages, `connection.ts` words the connection state, and
+`storage.ts` keeps everything remembered between visits under `apron.*` keys.
 
 Protocol types, replay reduction, and the WebSocket session live under
 `src/lib/protocol`. Recovery uses the base protocol's `latest_log_id` and

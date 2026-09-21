@@ -66,9 +66,17 @@ Use `localhost` for the default passkey configuration; see
 
 Start a thread from one of your messages, then open it to reply. The room
 timeline shows only unthreaded messages; each thread shows its current members
-after replaying edits and moves. Open threads through the thread list. Use the
-message controls to move your messages to another thread or back to the room.
-Drafts are kept separately for each room and thread.
+after replaying edits and moves. Open threads through the thread list. Drafts are kept separately for each room
+and thread.
+
+Your messages move through select mode: shift-click one (or press `x` on it,
+long-press it on touch, or use More → Select) to enter it, shift-click another
+to fill the range, then pick a thread — or, from inside a thread, the room — or
+start a new thread from the selection bar that takes the composer's place. A new
+thread opens once it exists; other moves leave the pane where it is. Each message is
+a separate `message` request carrying the same `thread_id`; a new thread is
+requested once and reused for all of them. Messages the server denies stay
+selected and the bar reports how many didn't move. Escape leaves select mode.
 
 Thread cards in the room feed preview up to three lines of the summary, or the
 latest loaded message when no summary is present. Open a thread to read the
@@ -81,6 +89,13 @@ metadata in the example server. A `thread` request with an existing `thread_id`
 and `title` and/or `summary` updates only the supplied fields and broadcasts the
 complete metadata; the root and messages stay intact. The jump prompt is hidden
 when the latest timeline item is already visible.
+
+Mentions are a frontend reading of the text — the protocol carries none. An
+`@handle` matching a sender's name or ID (whole word, case-insensitive, outside
+code) renders as a chip; a message that names you tints its row and pulses once
+when it arrives, and shows an `@` badge on a room you aren't reading or a rust
+jump bar when it landed above the fold. Typing `@` in the composer lists the
+senders the room has seen so one can be inserted as plain text.
 
 Use a message's Reply action to reference it in a new message. Reply references
 are restricted to the same room but may cross thread boundaries. The
