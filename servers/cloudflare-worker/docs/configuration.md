@@ -52,10 +52,9 @@ and recalibrating its resource model.
 | Variable | Meaning |
 | --- | --- |
 | `RP_ID` | Explicit passkey relying-party hostname; local default `localhost` |
-| `RP_ORIGINS` | Comma-separated exact WebAuthn origins |
-| `ALLOWED_ORIGINS` | Comma-separated exact allowed browser origins; clients without Origin remain subject to all quotas |
+| `RP_ORIGINS` | Comma-separated exact WebAuthn origins; required explicitly with wildcard guest admission; never accepts wildcards |
+| `ALLOWED_ORIGINS` | Exact browser-origin allowlist, or standalone `*` to admit every guest origin (including opaque/missing Origin); cannot mix `*` with explicit origins; all clients remain subject to quotas |
 | `RP_NAME` | Bounded display name for browser passkey prompts |
-| `IP_HMAC_SECRET` | Secret, at least 32 UTF-8 bytes; keep stable across deploys and active windows |
 | `ADMISSION_OFF` | Operator admission switch; `true` rejects new sockets |
 | `OPERATOR_SECRET` | Optional secret reserved for authenticated aggregate operator access; never exposes chat content |
 | `ENVIRONMENT` | Set to `development` to enable local origin defaults when `ALLOWED_ORIGINS` and `RP_ORIGINS` are omitted |

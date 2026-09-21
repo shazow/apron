@@ -19,11 +19,7 @@ or tests. A paid plan's included allowance is not a spending cap.
 Use Node.js 24 and the repository's existing Nix/devenv environment. From the
 repository root, `make install` installs each package from its lockfile.
 
-Create `servers/cloudflare-worker/.dev.vars` with a random local-only secret:
-
-```dotenv
-IP_HMAC_SECRET="replace-with-at-least-32-random-characters"
-```
+No secret provisioning is required for local development or production.
 
 Start `make dev-worker` and `make dev-web` in separate terminals, then open
 `http://localhost:5173`. The existing frontend proxy connects to port 8080.
@@ -47,6 +43,38 @@ repository sets `MINIFLARE_WORKERD_PATH` to a launcher using Nix's ELF loader
 and libraries with the npm lockfile's workerd executable. It does not patch
 `node_modules` or require system-wide `nix-ld`. Re-enter the shell after changing
 `devenv.nix`. Other platforms use the normal npm executable.
+
+## Connecting a custom frontend
+
+Point a browser WebSocket client at `wss://server.apron.chat/` (`/ws` is also
+accepted). No frontend registration, access token, or origin approval is needed.
+For example, run this from your localhost frontend's browser console:
+
+```js
+const socket = new WebSocket('wss://server.apron.chat/');
+socket.onmessage = ({ data }) => {
+  const frame = JSON.parse(data);
+  console.log(frame);
+  if (frame.method === 'server') {
+    socket.send(JSON.stringify({ id: 'guest', method: 'auth', params: { scheme: 'anonymous' } }));
+  } else if (frame.id === 'guest' && frame.result) {
+    socket.send(JSON.stringify({ id: 'history', method: 'history', params: { room_id: 'general' } }));
+  }
+};
+```
+
+Use the protocol's `message` and `thread` requests to exercise posting, editing,
+deletion/restoration, and threads. This is a shared public `general` room, not
+an isolated sandbox: test messages are visible to others, guest ownership lasts
+only for the socket, and IP/resource quotas and retention still apply. Changing
+frontend origins does not give an IP a fresh allowance. Honor `retry_after`.
+
+The server advertises only `anonymous` authentication to custom frontends.
+`web.apron.chat` additionally receives `webauthn`; inspect each connection's
+`server.params.auth` rather than assuming passkeys are available everywhere.
+A frontend with a Content Security Policy must permit the endpoint in
+`connect-src` (for example, `connect-src wss://server.apron.chat`). Wildcard
+admission cannot override the frontend's own browser policies.
 
 ## User-visible policies
 
@@ -80,11 +108,16 @@ and rejects new admissions until replenishment.
 
 ## Operations and secrets
 
-Keep the IP HMAC secret stable through redeploys and daily rollover. Raw IP
-addresses are never stored. Uncoordinated secret rotation would reset active
-principal buckets: take admissions offline through all applicable windows
-before rotating, or implement an overlapping-key migration first. Never place
-production secrets in Wrangler variables, source control, fixtures, or logs.
+IP rate limits use the first 128 bits of SHA-256 of the canonical address key,
+encoded as 22 base64url characters. IPv4-mapped IPv6 shares its IPv4 key; native
+IPv6 is grouped by /64. No IP secret or backup is needed. These internal hashes
+are compact identifiers, not anonymization: candidate IPs can be hashed to
+recover a match. Neither raw IPs nor these keys are sent to chat clients.
+
+Switching from the former keyed hashes resets per-IP buckets once as clients
+reconnect; existing buckets expire through normal cleanup. User and global
+quotas, credentials, and chat history are unchanged. Keep the hash format stable
+across future deployments to preserve active IP windows.
 
 The public Worker reaches exactly `DEMO.getByName("public-demo-v1")`. URL,
 query, room, and identity input cannot select another object. Do not expose a
@@ -105,6 +138,38 @@ Do not delete the database or run unmetered VACUUM as a space-recovery measure.
 
 ## Deployment checklist (manual, separately authorized)
 
+The production backend at `wss://server.apron.chat/` uses
+`wrangler.production.toml`. The frontend is deployed separately at
+`https://web.apron.chat` using `clients/web/wrangler.toml`; `apron.chat` is
+reserved for static documentation. The production backend has no static assets.
+WebSocket upgrades use `/`; `/ws` remains an alias for existing clients.
+The default Worker config keeps serving the frontend for local development and
+browser tests. Keep bindings, migrations, and compatibility settings in sync.
+Custom Domains configure DNS and HTTPS through Cloudflare; workers.dev and
+preview URLs are disabled for both deployments.
+
+The RP ID stays `apron.chat` to preserve existing passkey credentials across
+the move. Guest connections accept every origin, including localhost, LAN
+frontends, local files (opaque origins), and clients without Origin. Passkey
+verification allows only the exact `https://web.apron.chat` origin. Browser
+local storage is origin-specific, so saved names and server preferences do not
+move from the apex automatically.
+
+From `devenv shell`, authenticate:
+
+```sh
+cd servers/cloudflare-worker
+npx wrangler login
+npx wrangler whoami
+```
+
+After completing the checks below, run `make deploy-worker` and
+`make deploy-web` from the repository root. The former deploys only the backend;
+the latter builds the frontend with `wss://server.apron.chat/` as its default
+server and deploys the static assets using the existing Worker package's Wrangler.
+For direct Wrangler production commands, always pass
+`--config wrangler.production.toml`.
+
 1. Verify the **actual account is on Workers Free** and SQLite Durable Objects
    are enabled. Inventory other Workers, DO namespaces, and staging workloads;
    their usage shares the same account allowances. Do not switch billing plans.
@@ -115,25 +180,25 @@ Do not delete the database or run unmetered VACUUM as a space-recovery measure.
    5 GB account SQLite storage, and 100,000 entry Worker requests. Reserve
    headroom for all account workloads. Confirm the application cost tests and
    configured limits still fit; 5,000 daily posts is a ceiling, not a promise.
-3. Set the production RP ID to the site's hostname and exact HTTPS origins for
-   both browser admission and RP verification. Do not include wildcard origins.
+3. Set `ALLOWED_ORIGINS = "*"` for the public reference server. Keep the
+   passkey RP ID `apron.chat` and the explicit, exact `RP_ORIGINS` allowlist;
+   wildcard guest admission never enables wildcard passkey verification.
    RP changes can make previously registered credentials unusable.
 4. Build the frontend, check the static-asset output, and run all checks plus
    the browser test. Review the lockfile and compatibility date together.
-5. Supply `IP_HMAC_SECRET` with `npx wrangler secret put IP_HMAC_SECRET` from
-   this package. Use a long random secret and keep a secure operator copy.
-6. Review `wrangler.toml`: fixed DO binding, `new_sqlite_classes` migration,
+5. Review `wrangler.production.toml`: fixed DO binding, `new_sqlite_classes` migration,
    no paid-service bindings. Apply the initial migration once using the normal
    Wrangler deployment workflow. Do not rename or recreate the production
    object to work around a quota or schema issue.
-7. When deployment is authorized, run `npx wrangler deploy`. Verify anonymous
-   access, passkey registration/login, edits, history, duplicate retries, and
-   rejected origins against the deployed endpoint.
-8. Exercise idle **hibernation and wake**, then a real redeploy/reconnect. Check
+6. When deployment is authorized, run `make deploy-worker deploy-web` from the
+   repository root. Verify anonymous access, passkey registration/login, edits, history,
+   duplicate retries, custom-origin guest access, and rejection of passkey
+   requests from unapproved origins against the deployed endpoint.
+7. Exercise idle **hibernation and wake**, then a real redeploy/reconnect. Check
    identity attachments, challenges, persistent quotas, room head/floor, alarm
    scheduling, and recovery. A local reconnect test alone does not establish
    production hibernation behavior.
-9. Observe aggregate resource use and cleanup across daily rollover. Never use
+8. Observe aggregate resource use and cleanup across daily rollover. Never use
    production Free quotas for exhaustive stress tests. Stop admission if actual
    costs exceed tested bounds; do not raise budgets to conceal a discrepancy.
 

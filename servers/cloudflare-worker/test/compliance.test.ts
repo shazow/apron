@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, DEFAULT_LIMITS, loadConfig } from '../src/config';
-import { canonicalizeIp, extractClientIp } from '../src/ip';
+import { ConfigError, DEFAULT_LIMITS, isAllowedOrigin, loadConfig } from '../src/config';
+import { canonicalizeIp, extractClientIp, hashIpKey } from '../src/ip';
 import { DEFAULT_PARSE_OPTIONS, FrameError, parseFrame } from '../src/protocol';
 
 // Independent boundary cases from the implementation specification.
 describe('trusted IP boundaries', () => {
+	it('keeps compact rate-limit keys stable and preserves address grouping', async () => {
+		const hash = (address: string) => hashIpKey(canonicalizeIp(address)!);
+		// Pin the persisted format so a refactor cannot silently reset IP quotas.
+		expect(await hash('192.0.2.10')).toBe('zBXK6QD6CozD5FPoI5CPlQ');
+		expect(await hash('::ffff:192.0.2.10')).toBe(await hash('192.0.2.10'));
+		expect(await hash('192.0.2.11')).not.toBe(await hash('192.0.2.10'));
+		expect(await hash('2001:db8:1:2::1')).toBe(await hash('2001:db8:1:2::abcd'));
+		expect(await hash('2001:db8:1:3::1')).not.toBe(await hash('2001:db8:1:2::1'));
+	});
 	it('joins dotted and hexadecimal IPv4-mapped IPv6 with IPv4', () => {
 		const key = canonicalizeIp('192.0.2.10')?.key;
 		expect(canonicalizeIp('::ffff:192.0.2.10')?.key).toBe(key);
@@ -61,7 +70,6 @@ describe('frame policy boundaries', () => {
 describe('configuration policy boundaries', () => {
 	const base = {
 		NODE_ENV: 'test',
-		IP_HMAC_SECRET: 'config-test-secret-at-least-32-bytes',
 	} as Parameters<typeof loadConfig>[0];
 
 	function config(extra: Record<string, string> = {}, overrides: Partial<typeof DEFAULT_LIMITS> = {}) {
@@ -97,8 +105,25 @@ describe('configuration policy boundaries', () => {
 		expect(() => config({}, { registrationsPerDay: 101 })).toThrow(ConfigError);
 	});
 
+	it('allows arbitrary guest origins with an explicit passkey allowlist', () => {
+		const open = config({ ALLOWED_ORIGINS: '*', RP_ORIGINS: 'https://web.apron.chat', RP_ID: 'apron.chat' });
+		for (const origin of ['http://localhost:1234', 'http://127.0.0.1:9876', 'http://[::1]:3000', 'http://192.168.1.2:8080', 'https://custom.example', 'null', null]) {
+			expect(isAllowedOrigin(open, origin)).toBe(true);
+		}
+		expect(open.rpOrigins).toEqual(['https://web.apron.chat']);
+		expect(() => config({ ALLOWED_ORIGINS: '*' })).toThrow(ConfigError);
+		expect(() => config({ ALLOWED_ORIGINS: '*', RP_ORIGINS: '*' })).toThrow(ConfigError);
+		expect(() => config({ ALLOWED_ORIGINS: '*,http://localhost:5173', RP_ORIGINS: 'http://localhost:5173' })).toThrow(ConfigError);
+		expect(() => config({ ALLOWED_ORIGINS: '*', RP_ORIGINS: 'https://unrelated.example', RP_ID: 'apron.chat' })).toThrow(ConfigError);
+		const restricted = config();
+		expect(isAllowedOrigin(restricted, 'http://localhost:5173')).toBe(true);
+		expect(isAllowedOrigin(restricted, null)).toBe(true);
+		expect(isAllowedOrigin(restricted, 'https://custom.example')).toBe(false);
+		expect(isAllowedOrigin(restricted, 'null')).toBe(false);
+	});
+
 	it('requires exact origins and bounds the browser display name', () => {
-		expect(() => loadConfig({ IP_HMAC_SECRET: base.IP_HMAC_SECRET })).toThrow(ConfigError);
+		expect(() => loadConfig({})).toThrow(ConfigError);
 		expect(config({ ENVIRONMENT: 'development' }).allowedOrigins).toEqual([
 			'http://localhost:5173',
 			'http://localhost:8787',

@@ -4,9 +4,9 @@ import { expect, it } from 'vitest';
 type Frame = { id?: string | null; method?: string; result?: any; error?: any; params?: any };
 let nextIp = 1;
 
-async function connect(ip = `192.0.2.${nextIp++}`) {
-	const response = await SELF.fetch('https://demo.test/ws', { headers: {
-		Upgrade: 'websocket', Origin: 'http://localhost:5173', 'CF-Connecting-IP': ip
+async function connect(ip = `192.0.2.${nextIp++}`, path = '/ws', origin: string | null = 'http://localhost:5173') {
+	const response = await SELF.fetch(`https://demo.test${path}`, { headers: {
+		Upgrade: 'websocket', ...(origin === null ? {} : { Origin: origin }), 'CF-Connecting-IP': ip
 	} });
 	expect(response.status).toBe(101);
 	const socket = response.webSocket!;
@@ -45,6 +45,30 @@ async function authenticate(peer: Awaited<ReturnType<typeof connect>>) {
 	else expect(room.params.history_log_id).toMatch(/^[1-9][0-9]*$/);
 	return auth.result.you;
 }
+
+it('admits clients without Origin as guests without advertising or allowing passkeys', async () => {
+	const peer = await connect(undefined, '/', null);
+	try {
+		expect((await peer.next()).params.auth).toEqual(['anonymous']);
+		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'anonymous' } });
+		expect((await peer.next()).result.you.user_id).toBeTruthy();
+		await peer.next(); // Room announcement.
+		peer.send({ id: 'passkey', method: 'auth', params: { scheme: 'webauthn', action: 'register', step: 'begin' } });
+		expect((await peer.next()).error.code).toBe(-32001);
+	} finally { peer.close(); }
+});
+
+it('authenticates on the root WebSocket endpoint and still serves the homepage', async () => {
+	const response = await SELF.fetch('https://demo.test/');
+	expect(response.status).toBe(200);
+	expect(response.headers.get('content-type')).toContain('text/html');
+	const peer = await connect(undefined, '/');
+	try { await authenticate(peer); } finally { peer.close(); }
+	const denied = await SELF.fetch('https://demo.test/', { headers: {
+		Upgrade: 'websocket', Origin: 'https://untrusted.example', 'CF-Connecting-IP': '192.0.2.240'
+	} });
+	expect(denied.status).toBe(403);
+});
 
 it('commits once for canonical retries, preserves extensions, and sends no reply to notifications', async () => {
 	const peer = await connect();

@@ -25,7 +25,9 @@ export default defineConfig({
 	},
 	webServer: [
 		{
-			command: `npx wrangler dev --ip 127.0.0.1 --port 8788 --persist-to ${quote(state)} --var IP_HMAC_SECRET:local-browser-test-secret-at-least-32-bytes --var RP_ORIGINS:http://localhost:8788 --var ALLOWED_ORIGINS:http://localhost:8788`,
+			// Browser ceremonies share one loopback IP. Keep posting limits real,
+			// but allow enough handshakes/auth attempts for the full suite.
+			command: `npx wrangler dev --ip 127.0.0.1 --port 8788 --persist-to ${quote(state)} --var RP_ORIGINS:http://localhost:8788 --var 'ALLOWED_ORIGINS:*' --var LIMIT_CONNECTION_ADMISSIONS_PER_IP_MINUTE:30 --var LIMIT_AUTH_ATTEMPTS_PER_IP_MINUTE:60`,
 			cwd: path.join(root, 'servers/cloudflare-worker'),
 			port: 8788,
 			timeout: 120_000,

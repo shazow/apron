@@ -1097,6 +1097,8 @@ export function timelineMessages(room: RoomSnapshot | undefined): MessageRecord[
 }
 
 export function defaultWebSocketUrl(locationLike?: Location): string {
+	const configured = import.meta.env.VITE_DEFAULT_SERVER_URL;
+	if (configured) return configured;
 	if (!locationLike) return 'ws://localhost:8080/ws';
 	const protocol = locationLike.protocol === 'https:' ? 'wss:' : 'ws:';
 	return `${protocol}//${locationLike.host}/ws`;
@@ -1105,21 +1107,15 @@ export function defaultWebSocketUrl(locationLike?: Location): string {
 export function normalizeWebSocketUrl(input: string, locationLike?: Location): string {
 	const value = input.trim();
 	if (!value) return defaultWebSocketUrl(locationLike);
-	if (value.startsWith('ws://') || value.startsWith('wss://')) return ensureWebSocketPath(value);
+	if (value.startsWith('ws://') || value.startsWith('wss://')) return new URL(value).toString();
 	if (value.startsWith('http://') || value.startsWith('https://')) {
-		return ensureWebSocketPath(value.replace(/^http/, 'ws'));
+		return new URL(value.replace(/^http/, 'ws')).toString();
 	}
 	if (value.startsWith('/')) {
 		const base = locationLike ? `${locationLike.protocol === 'https:' ? 'wss:' : 'ws:'}//${locationLike.host}` : 'ws://localhost:5173';
 		return `${base}${value}`;
 	}
-	return ensureWebSocketPath(`ws://${value}`);
-}
-
-function ensureWebSocketPath(value: string): string {
-	const parsed = new URL(value);
-	if (parsed.pathname === '' || parsed.pathname === '/') parsed.pathname = '/ws';
-	return parsed.toString();
+	return new URL(`ws://${value}`).toString();
 }
 
 function makeRequestId(method: string): string {

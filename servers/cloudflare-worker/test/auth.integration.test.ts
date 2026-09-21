@@ -41,7 +41,7 @@ it('verifies signed ceremonies against SQLite identities and rejects challenge, 
 		const store = new Store(state, {}, { now: () => now });
 		const service = new WebAuthnService(loadConfig({
 			ALLOWED_ORIGINS: 'https://chat.example.test', RP_ORIGINS: 'https://chat.example.test',
-			RP_ID: 'example.test', IP_HMAC_SECRET: 'a-secret-for-unit-tests-at-least-32-bytes',
+			RP_ID: 'example.test',
 		}));
 		const repository: CredentialRepository = {
 			getCredential: id => store.getCredential(id),

@@ -993,7 +993,7 @@
 		<h1 class="ap-connect-title">Apron</h1>
 		<p class="ap-connect-tag">Connect to a backend</p>
 		<label class="ap-fieldlabel">Server
-			<input class="ap-field ap-field-mono" data-testid="server-url-input" type="text" inputmode="url" bind:value={serverInput} placeholder="wss://chat.example/ws" disabled={connectBusy} autocomplete="url" spellcheck="false" />
+			<input class="ap-field ap-field-mono" data-testid="server-url-input" type="text" inputmode="url" bind:value={serverInput} placeholder="wss://server.apron.chat/" disabled={connectBusy} autocomplete="url" spellcheck="false" />
 		</label>
 		<label class="ap-fieldlabel">Display name
 			<input class="ap-field" bind:value={displayName} placeholder="How others see you" disabled={connectBusy} maxlength="64" autocomplete="nickname" />

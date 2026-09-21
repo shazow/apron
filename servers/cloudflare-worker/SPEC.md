@@ -50,7 +50,7 @@ Use TypeScript, Wrangler, the native `DurableObject` base class from `cloudflare
 
 | Component | Responsibility |
 | --- | --- |
-| Entry Worker | Validate `/ws` upgrade requests, allowed browser origins, route/method/body bounds, derive trusted IP metadata, apply cheap preliminary admission controls, forward to the fixed DO |
+| Entry Worker | Validate `/` and `/ws` upgrade requests, configured guest origin policy, route/method/body bounds, derive trusted IP metadata, apply cheap preliminary admission controls, forward to the fixed DO |
 | `ApronDemoServer` DO | Own sockets, authenticate, authorize, sequence protocol operations, enforce budgets, persist state, serve history, broadcast, run cleanup |
 | Embedded SQLite | Authoritative room state, transitions, current snapshots, credentials, deduplication, budgets, rate-limit state, maintenance progress |
 | Existing Apron frontend | Anonymous access, passkey UI, retry/backoff, retention-aware recovery and concise demo status |
@@ -167,7 +167,7 @@ Implementation reference: [WebAuthn verification](https://www.w3.org/TR/webauthn
 
 Extract Cloudflare's client address in the public entry Worker. Strip any incoming copy of the private forwarding field before setting trusted metadata for the DO. Do not trust `X-Forwarded-For`, client JSON, or a public query parameter. Account for documented Worker-subrequest and Pseudo IPv4 behavior; a missing/unusable trusted IP fails admission rather than creating a fresh unlimited bucket.
 
-Canonicalize IPv4 and IPv4-mapped IPv6 to the same IPv4 key; group native IPv6 by /64. Store an HMAC of the canonical key using a server secret rather than raw addresses. Do not rotate that secret at midnight or on every deploy: rotation must not reset an active rolling window. If rotation is needed, overlap old/new keys through their applicable windows. Public users behind NAT share IP limits; explain this tradeoff in the demo help text.
+Canonicalize IPv4 and IPv4-mapped IPv6 to the same IPv4 key; group native IPv6 by /64. Store the first 128 bits of SHA-256 of the canonical key, encoded as unpadded base64url. This requires no server secret and is a compact internal identifier, not anonymization. Keep the hash format stable across daily rollover and deployments to preserve active rolling windows. Public users behind NAT share IP limits; explain this tradeoff in the demo help text.
 
 Reference: [Cloudflare request headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/).
 
@@ -409,7 +409,7 @@ For a permanent policy cap with no automatic replenishment, such as the identity
 
 Keep UI messages concrete: "Anonymous posting limit reached", "Demo is read-only until daily reset", "History temporarily unavailable", or "Demo capacity reached". No billing/SQL details in normal user flows. Do not silently drop a successful write, alter user content, or hide an error as success.
 
-Reject unexpected browser origins before upgrade and enforce explicit RP origins for WebAuthn. Non-browser clients with no Origin may use the public protocol subject to the same quotas; origin checking is not bot authentication. Reuse the existing Markdown sanitization and iframe restrictions. No backend URL fetching from embeds. Secrets never enter logs, public status responses, or source control.
+Support a standalone `ALLOWED_ORIGINS = "*"` to admit every guest origin, including opaque origins. Exact allowlist deployments reject unexpected browser origins before upgrade. Require explicit exact RP origins for WebAuthn even under wildcard guest admission; advertise WebAuthn only to connections from those origins. Non-browser clients with no Origin may use the public protocol subject to the same quotas; origin checking is not bot authentication. Reuse the existing Markdown sanitization and iframe restrictions. No backend URL fetching from embeds. Secrets never enter logs, public status responses, or source control.
 
 Limit observability to bounded structured events and counters: operation category, accepted/rejected reason, daily resource reservations/actuals, active sockets, database bytes, oldest retained commit, floor/head, cleanup backlog, and alarm failures. Sample repetitive rejection logs and never persist request bodies, passkey challenges, or raw IPs to analytics.
 
@@ -475,7 +475,7 @@ Deliver:
 
 - Working source and lockfile; no placeholder auth or quota bypasses.
 - Wrangler config with a fixed DO binding, SQLite migration, tested compatibility date, and no paid-service bindings.
-- Configuration reference for every limit, RP ID/origins, IP HMAC secret, optional operator secret, and feature toggles. Fail startup/config validation for impossible or unsafe relationships.
+- Configuration reference for every limit, RP ID/origins, optional operator secret, and feature toggles. Fail startup/config validation for impossible or unsafe relationships.
 - Base-protocol history documentation and minimal client integration, including retention recovery fixtures and canonical WebAuthn fixtures.
 - Automated tests, local dev commands, a bounded load/cost report, and a concise implementation summary.
 - README describing Free-plan prerequisites, anonymous identity limitations, rolling history with a permanent room ID, quota exhaustion/recovery, secret setup, and manual deployment steps.

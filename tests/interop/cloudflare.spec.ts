@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createServer } from 'node:http';
 import { editMessage, waitForMessage } from './test-helpers';
 
 // This exercises browser-generated credentials and the actual Workers verifier.
@@ -105,4 +106,71 @@ test('built frontend connects to the Worker and recovers retained history', asyn
 	await page.getByRole('textbox', { name: 'Message', exact: true }).fill(message);
 	await page.getByRole('button', { name: 'Send message', exact: true }).click();
 	await expect(page.locator('article[data-message-id]').filter({ hasText: message })).toBeVisible();
+});
+
+test('custom frontend origins share guest quotas and cannot use passkeys', async ({ page }) => {
+	const frontend = createServer((req, res) => {
+		res.setHeader('Content-Type', 'text/html');
+		if (req.url === '/opaque') res.setHeader('Content-Security-Policy', 'sandbox allow-scripts');
+		res.end('<!doctype html><title>Custom Apron client</title>');
+	});
+	await new Promise<void>(resolve => frontend.listen(0, resolve));
+	const port = (frontend.address() as { port: number }).port;
+	try {
+		for (const [index, url] of [`http://localhost:${port}`, `http://127.0.0.1:${port}`, `http://localhost:${port}/opaque`].entries()) {
+			await page.goto(url);
+			const result = await page.evaluate(async (index) => {
+				const socket = new WebSocket('ws://localhost:8788/');
+				let sequence = 0;
+				const pending = new Map<string, (frame: any) => void>();
+				const announcement: any = await new Promise((resolve, reject) => {
+					socket.onerror = () => reject(new Error('WebSocket failed'));
+					socket.onmessage = event => {
+						const frame = JSON.parse(event.data);
+						if (frame.method === 'server') resolve(frame.params);
+						if (frame.id && pending.has(frame.id)) { pending.get(frame.id)!(frame); pending.delete(frame.id); }
+					};
+				});
+				const request = (method: string, params: unknown): Promise<any> => new Promise((resolve, reject) => {
+					const id = `custom-${index}-${++sequence}`;
+					const timer = setTimeout(() => reject(new Error(`Timeout: ${method}`)), 10_000);
+					pending.set(id, frame => { clearTimeout(timer); resolve(frame); });
+					socket.send(JSON.stringify({ id, method, params }));
+				});
+				try {
+					const auth = await request('auth', { scheme: 'anonymous' });
+					const passkey = await request('auth', { scheme: 'webauthn', action: 'register', step: 'begin' });
+					let operations: any[] = [];
+					if (index === 0) {
+						const post = await request('message', { room_id: 'general', body: { text: 'custom frontend' } });
+						if (!post.result) throw new Error(JSON.stringify(post));
+						const message_id = post.result.message_id;
+						operations = [post,
+							await request('message', { room_id: 'general', message_id, body: { text: 'custom edit' } }),
+							await request('message', { room_id: 'general', message_id, deleted: true })];
+						// Earlier browser tests may have used part of this IP's allowance.
+						// Spend the remaining allowance on the same tombstone, then ensure
+						// another origin cannot reset it. These are local runtime requests.
+						for (let i = 0; i < 6; i++) {
+							const next = await request('message', { room_id: 'general', message_id, deleted: true });
+							if (next.error) break;
+						}
+					}
+					const history = await request('history', { room_id: 'general' });
+					const limited = await request('message', { room_id: 'general', body: { text: 'must be rate limited' } });
+					return { announcement, auth, passkey, operations, history, limited };
+				} finally {
+					await new Promise<void>(resolve => { socket.onclose = () => resolve(); socket.close(); });
+				}
+			}, index);
+			expect(result.announcement.auth).toEqual(['anonymous']);
+			expect(result.auth.result.you.user_id).toBeTruthy();
+			expect(result.passkey.error.code).toBe(-32001);
+			for (const operation of result.operations) expect(operation.error).toBeUndefined();
+			expect(result.history.result.entries).toBeInstanceOf(Array);
+			expect(result.limited.error.code).toBe(-32002);
+		}
+	} finally {
+		await new Promise<void>((resolve, reject) => frontend.close(error => error ? reject(error) : resolve()));
+	}
 });

@@ -7,8 +7,14 @@ availability uses the base protocol's `latest_log_id` and nullable
 [retention implementation specification](../SPEC.md#9-rolling-history-and-base-protocol-availability).
 
 WebAuthn uses the canonical [optional authentication scheme](../../../PROTOCOL.md#appendix-c--webauthn-authentication-optional),
-advertised through `auth: ["webauthn", "anonymous"]`. Server announcements are
-complete replacements.
+advertised through `auth: ["webauthn", "anonymous"]` only on connections whose
+origin is in `RP_ORIGINS`. Other connections advertise `auth: ["anonymous"]`
+and reject WebAuthn requests. Server announcements are complete replacements.
+
+Production admits guest connections from any frontend origin, including opaque
+origins and clients without Origin. This does not relax passkey verification,
+IP attribution, quotas, or the fixed shared room. See the
+[custom frontend example](../README.md#connecting-a-custom-frontend).
 
 The implementation follows the current repository protocol. Relative to the
 specification's reference blob `d24de5ec177d0c042d7237a7783ccdc8bffec3d5`, it also

@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { AuthError, AuthTooLargeError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
 import { isAllowedOrigin, loadConfig, type RuntimeConfig } from "./config";
-import { extractClientIp, hmacIpKey, stripForwardingHeaders } from "./ip";
+import { extractClientIp, hashIpKey, stripForwardingHeaders } from "./ip";
 import {
 	errorFromUnknown,
 	FrameError,
@@ -111,7 +111,7 @@ function asStoreConfig(config: RuntimeConfig): Partial<StoreConfig> {
 
 function trustedIpKey(request: Request): string | null {
 	const value = request.headers.get(INTERNAL_IP_HEADER);
-	return value && /^[A-Za-z0-9_-]{40,128}$/.test(value) ? value : null;
+	return value && /^[A-Za-z0-9_-]{22}$/.test(value) ? value : null;
 }
 
 function challengeFromAttachment(value: unknown, connectionId: string): ChallengeRecord | undefined {
@@ -269,7 +269,8 @@ function editableMessageParams(params: Record<string, unknown>): Record<string, 
 
 export async function fetchEntry(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
-	if (url.pathname !== "/ws") {
+	const rootUpgrade = url.pathname === "/" && isUpgrade(request);
+	if (url.pathname !== "/ws" && !rootUpgrade) {
 		if (env.ASSETS) return env.ASSETS.fetch(request);
 		return responseError(404, "Not found");
 	}
@@ -288,7 +289,7 @@ export async function fetchEntry(request: Request, env: Env): Promise<Response> 
 	const clientIp = extractClientIp(request.headers);
 	if (!clientIp) return responseError(403, "Trusted client address unavailable");
 	if (!env.DEMO) return responseError(503, "Demo capacity unavailable");
-	const key = await hmacIpKey(clientIp, config.ipHmacSecret);
+	const key = await hashIpKey(clientIp);
 	const headers = stripForwardingHeaders(request.headers);
 	headers.set(INTERNAL_IP_HEADER, key);
 	headers.delete("content-length");
@@ -353,7 +354,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		};
 		this.ctx.acceptWebSocket(server);
 		writeAttachment(server, attachment);
-		this.send(server, this.serverAnnouncement());
+		this.send(server, this.serverAnnouncement(origin));
 		await this.rescheduleAlarm();
 		return new Response(null, { status: 101, webSocket: pair[0] });
 	}
@@ -453,7 +454,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		return responseError(status, protocol.message, typeof retry === "number" ? retry : undefined);
 	}
 
-	private serverAnnouncement(): Record<string, unknown> {
+	private serverAnnouncement(origin: string | null): Record<string, unknown> {
 		const limits = this.config.limits;
 		return {
 			method: "server",
@@ -461,7 +462,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 				protocol: 2,
 				name: "apron-cloudflare-demo/1",
 				caps: ["history", "edit"],
-				auth: ["webauthn", "anonymous"],
+				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "anonymous"] : ["anonymous"],
 				demo: {
 					retention_seconds: limits.retentionSeconds,
 					cleanup_seconds: limits.cleanupSeconds,

@@ -147,14 +147,10 @@ function bytesToBase64Url(bytes: ArrayBuffer): string {
 	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-/** Hash the normalized key with a deployment-stable HMAC secret. */
-export async function hmacIpKey(canonical: CanonicalIp | string, secret: string): Promise<string> {
-	const keyName = typeof canonical === "string" ? canonical : canonical.key;
-	const secretBytes = new TextEncoder().encode(secret);
-	if (secretBytes.byteLength < 32) throw new Error("IP HMAC secret is too short");
-	const key = await crypto.subtle.importKey("raw", secretBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-	const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(keyName));
-	return bytesToBase64Url(digest);
+/** Compact, deterministic rate-limit key. This unkeyed hash is not anonymization. */
+export async function hashIpKey(canonical: CanonicalIp): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical.key));
+	return bytesToBase64Url(digest.slice(0, 16));
 }
 
 /** Remove all client-supplied forwarding metadata before the DO sees it. */

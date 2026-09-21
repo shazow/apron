@@ -128,7 +128,6 @@ export interface RuntimeConfig {
 	rpId: string;
 	rpOrigins: readonly string[];
 	rpName: string;
-	ipHmacSecret: string;
 	operatorSecret?: string;
 	admissionOff: boolean;
 }
@@ -184,7 +183,6 @@ type EnvLike = {
 	RP_ID?: string;
 	RP_ORIGINS?: string;
 	RP_NAME?: string;
-	IP_HMAC_SECRET?: string;
 	OPERATOR_SECRET?: string;
 	ADMISSION_OFF?: string;
 	ENVIRONMENT?: string;
@@ -328,22 +326,22 @@ export function loadConfig(env: EnvLike, overrides: Partial<Limits> = {}): Runti
 	const developmentDefaults = String(env.ENVIRONMENT ?? "").toLowerCase() === "development" || String(env.NODE_ENV ?? "").toLowerCase() === "test";
 	if (!hasConfiguredOrigins && !developmentDefaults) throw new ConfigError("ALLOWED_ORIGINS and RP_ORIGINS must be configured");
 	const allowedOrigins = splitList(env.ALLOWED_ORIGINS, ["http://localhost:5173", "http://localhost:8787"]);
+	const allowAnyOrigin = allowedOrigins.length === 1 && allowedOrigins[0] === "*";
 	const rpOrigins = splitList(env.RP_ORIGINS, allowedOrigins);
-	if (allowedOrigins.length === 0 || allowedOrigins.some((origin) => !validOrigin(origin))) {
-		throw new ConfigError("ALLOWED_ORIGINS must contain exact HTTP(S) origins");
+	if (!allowAnyOrigin && (allowedOrigins.length === 0 || allowedOrigins.some((origin) => !validOrigin(origin)))) {
+		throw new ConfigError("ALLOWED_ORIGINS must contain exact HTTP(S) origins or a standalone *");
 	}
+	if (allowAnyOrigin && env.RP_ORIGINS === undefined) throw new ConfigError("RP_ORIGINS must be explicit when ALLOWED_ORIGINS is *");
 	if (rpOrigins.length === 0 || rpOrigins.some((origin) => !validOrigin(origin))) {
 		throw new ConfigError("RP_ORIGINS must contain exact HTTP(S) origins");
 	}
-	if (rpOrigins.some((origin) => !allowedOrigins.includes(origin))) throw new ConfigError("RP_ORIGINS must be a subset of ALLOWED_ORIGINS");
+	if (!allowAnyOrigin && rpOrigins.some((origin) => !allowedOrigins.includes(origin))) throw new ConfigError("RP_ORIGINS must be a subset of ALLOWED_ORIGINS");
 	const rpId = (env.RP_ID === undefined ? "localhost" : String(env.RP_ID)).trim().toLowerCase();
 	if (!rpId || rpId.includes("://") || rpId.includes("/") || rpId.includes(" ")) throw new ConfigError("RP_ID must be a host name");
 	for (const origin of rpOrigins) {
 		const hostname = new URL(origin).hostname.toLowerCase();
 		if (hostname !== rpId && !hostname.endsWith(`.${rpId}`)) throw new ConfigError(`RP_ID is not valid for origin ${origin}`);
 	}
-	const ipHmacSecret = String(env.IP_HMAC_SECRET ?? "");
-	if (new TextEncoder().encode(ipHmacSecret).byteLength < 32) throw new ConfigError("IP_HMAC_SECRET must be at least 32 UTF-8 bytes");
 	if (env.ADMISSION_OFF !== undefined && !["true", "false"].includes(String(env.ADMISSION_OFF).toLowerCase())) throw new ConfigError("ADMISSION_OFF must be true or false");
 	const admissionOff = String(env.ADMISSION_OFF ?? "").toLowerCase() === "true";
 	const rpName = String(env.RP_NAME ?? "Apron Demo");
@@ -356,12 +354,11 @@ export function loadConfig(env: EnvLike, overrides: Partial<Limits> = {}): Runti
 		rpId,
 		rpOrigins,
 		rpName,
-		ipHmacSecret,
 		operatorSecret: env.OPERATOR_SECRET ? String(env.OPERATOR_SECRET) : undefined,
 		admissionOff,
 	};
 }
 
 export function isAllowedOrigin(config: RuntimeConfig, origin: string | null): boolean {
-	return origin === null || config.allowedOrigins.includes(origin);
+	return config.allowedOrigins.includes("*") || origin === null || config.allowedOrigins.includes(origin);
 }

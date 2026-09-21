@@ -1,4 +1,4 @@
-.PHONY: install dev-web dev-server dev-worker check test test-web test-go test-worker test-wire test-interop test-worker-browser build build-web serve run
+.PHONY: install dev-web dev-server dev-worker deploy-worker deploy-web check test test-web test-go test-worker test-wire test-interop test-worker-browser build build-web serve run
 
 install:
 	npm --prefix clients/web ci
@@ -14,6 +14,13 @@ dev-server:
 
 dev-worker: build-web
 	cd servers/cloudflare-worker && npx wrangler dev --port 8080
+
+deploy-worker:
+	cd servers/cloudflare-worker && npx wrangler deploy --config wrangler.production.toml
+
+deploy-web:
+	VITE_DEFAULT_SERVER_URL=wss://server.apron.chat/ npm --prefix clients/web run build
+	cd servers/cloudflare-worker && npx wrangler deploy --config ../../clients/web/wrangler.toml
 
 check:
 	npm --prefix clients/web run check

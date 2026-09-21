@@ -5,7 +5,6 @@ export default defineConfig({
 	plugins: [
 		cloudflareTest({
 			wrangler: { configPath: "./wrangler.toml" },
-			miniflare: { bindings: { IP_HMAC_SECRET: "local-unit-test-secret-at-least-32-bytes" } },
 		}),
 	],
 	test: {

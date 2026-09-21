@@ -15,7 +15,16 @@ npm run build     # writes the static site to build/
 npm run preview
 ```
 
-The default connection is same-origin `/ws` in a browser. **Connect** in the
+The default connection is same-origin `/ws` in a browser unless
+`VITE_DEFAULT_SERVER_URL` is set at build time. `make deploy-web` from the
+repository root builds with `wss://server.apron.chat/` and deploys the static
+frontend to `https://web.apron.chat` using `wrangler.toml`. Deploy the backend
+separately with `make deploy-worker`. The apex `apron.chat` is reserved for docs.
+Local development and ordinary builds retain the same-origin default.
+Explicit server URLs keep their path: a bare hostname connects at `/`, while
+servers that require `/ws` should be entered with that suffix.
+
+**Connect** in the
 sidebar header opens the connect screen: a WebSocket URL or an HTTP(S) server
 base URL, a display name, and a sign-in choice (Guest by default; Passkey signs
 in with an existing passkey once the guest session is up). The server and name

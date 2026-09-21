@@ -2,14 +2,14 @@ name = "apron-cloudflare-demo"
 main = "src/index.ts"
 compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+routes = [
+  { pattern = "server.apron.chat", custom_domain = true }
+]
 
 [observability]
 enabled = true
-
-[assets]
-directory = "../../clients/web/build"
-binding = "ASSETS"
-run_worker_first = ["/", "/ws"]
 
 [durable_objects]
 bindings = [
@@ -21,6 +21,6 @@ tag = "v1"
 new_sqlite_classes = ["ApronDemoServer"]
 
 [vars]
-RP_ID = "localhost"
-RP_ORIGINS = "http://localhost:5173,http://localhost:8787"
-ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:8787"
+RP_ID = "apron.chat"
+RP_ORIGINS = "https://web.apron.chat"
+ALLOWED_ORIGINS = "*"
