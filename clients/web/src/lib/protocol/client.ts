@@ -69,8 +69,9 @@ export interface ClientSnapshot {
 	retryAfterMs?: number;
 	/**
 	 * When the transport dropped (or failed to open) while the client kept
-	 * running; cleared once a connection authenticates again. Rooms, identity,
-	 * and server parameters are retained meanwhile so the UI can stay put.
+	 * running; cleared once a connection authenticates again. The protocol
+	 * state is rebuilt from the new connection, so a UI that wants to stay put
+	 * holds its own copy of the last authenticated snapshot meanwhile.
 	 */
 	disconnectedAt?: number;
 }
@@ -548,19 +549,18 @@ export class ChatClient {
 			this.authRequested = false;
 			this.clearTransientRequests();
 			this.clearTyping();
+			// The protocol view is rebuilt from the next connection's announcements
+			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session). The UI keeps the
+			// last authenticated view on screen meanwhile, keyed off disconnectedAt.
+			this.rooms.clear();
+			this.activeRoomId = undefined;
+			this.server = undefined;
+			this.you = undefined;
 			if (this.running) {
-				// Keep rooms, timelines, identity, and server parameters in place so a
-				// transport blip does not tear down the UI. The server re-announces
-				// rooms after re-auth and handleRoom reconciles them against what we
-				// kept, recovering any history gap where the server supports it.
 				this.disconnectedAt ??= Date.now();
 				this.status = 'reconnecting';
 				this.scheduleReconnect();
 			} else {
-				this.rooms.clear();
-				this.activeRoomId = undefined;
-				this.server = undefined;
-				this.you = undefined;
 				this.status = 'offline';
 			}
 			this.emit();

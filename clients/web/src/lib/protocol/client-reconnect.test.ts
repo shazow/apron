@@ -90,22 +90,27 @@ describe('transport reconnects', () => {
 		vi.useRealTimers();
 	});
 
-	it('keeps rooms, timeline, identity, and server params while the socket is down', async () => {
+	it('clears the protocol view on a drop and records when it happened', async () => {
 		const dropped = Date.now();
 		latest().drop();
 
 		expect(snapshot.status).toBe('reconnecting');
 		expect(snapshot.authenticated).toBe(false);
 		expect(snapshot.disconnectedAt).toBe(dropped);
-		expect(snapshot.rooms.map((room) => room.id)).toEqual(['lobby']);
-		expect(snapshot.activeRoom).toBe('lobby');
-		expect(Object.keys(snapshot.rooms[0].timeline.events)).toEqual(['1724803200001']);
-		expect(snapshot.you?.user_id).toBe('guest-1');
-		expect(snapshot.server?.name).toBe('fake');
+		// Rooms and identity are rebuilt from the next connection's announcements
+		// (PROTOCOL.md §3.4); the UI holds its own copy meanwhile.
+		expect(snapshot.rooms).toEqual([]);
+		expect(snapshot.you).toBeUndefined();
+		expect(snapshot.server).toBeUndefined();
 
 		vi.advanceTimersByTime(5_000);
 		expect(FakeSocket.instances).toHaveLength(2);
 		// The backoff timer keeps disconnectedAt anchored to the original drop.
+		expect(snapshot.disconnectedAt).toBe(dropped);
+
+		latest().open();
+		expect(snapshot.status).toBe('connected');
+		expect(snapshot.authenticated).toBe(false);
 		expect(snapshot.disconnectedAt).toBe(dropped);
 
 		await latest().greet();
@@ -116,22 +121,12 @@ describe('transport reconnects', () => {
 		expect(snapshot.activeRoom).toBe('lobby');
 	});
 
-	it('does not report a stale identity as ready before the new socket authenticates', () => {
-		latest().drop();
-		vi.advanceTimersByTime(5_000);
-		latest().open();
-		expect(snapshot.status).toBe('connected');
-		expect(snapshot.authenticated).toBe(false);
-		expect(snapshot.you?.user_id).toBe('guest-1');
-	});
-
 	it('retryNow skips the backoff and reconnects immediately', async () => {
 		latest().drop();
 		expect(FakeSocket.instances).toHaveLength(1);
 		vi.advanceTimersByTime(50);
 		client.retryNow();
 		expect(FakeSocket.instances).toHaveLength(2);
-		expect(snapshot.rooms.map((room) => room.id)).toEqual(['lobby']);
 		expect(snapshot.disconnectedAt).toBeDefined();
 
 		// A retry while an attempt is stuck opening drops that attempt and opens another.
