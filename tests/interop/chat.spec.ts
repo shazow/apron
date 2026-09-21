@@ -8,6 +8,7 @@ import {
 	moreAction,
 	openChat,
 	sendMessage,
+	setDisplayName,
 	waitForDeletedMessage,
 	waitForMessage
 } from './test-helpers';
@@ -444,6 +445,141 @@ test.describe('chat protocol interoperability', () => {
 		} finally {
 			await contextA.setOffline(false).catch(() => undefined);
 			await Promise.all([contextA.close(), contextB.close()]);
+		}
+	});
+
+	test('names someone from the picker, chips the mention, and pings only the person named', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const named = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await named.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const handle = `dana-${Date.now().toString(36)}`;
+			await setDisplayName(pageB, handle);
+			await sendMessage(pageB, `${handle} is here`);
+			await waitForMessage(pageA, `${handle} is here`);
+
+			// Typing `@` opens the picker on the senders this room has seen.
+			await composer(pageA).fill('Handing this to @dana');
+			const picker = pageA.getByTestId('mention-picker');
+			await expect(picker.getByRole('option', { name: new RegExp(handle) })).toBeVisible();
+			await expect(picker.locator('.ap-mpick-hit').first()).toHaveText('dana');
+			await composer(pageA).press('Tab');
+			await expect(composer(pageA)).toHaveValue(`Handing this to @${handle} `);
+			await expect(picker).toHaveCount(0);
+
+			await composer(pageA).fill(`Handing this to @${handle} and @nobody-here`);
+			await pageA.getByRole('button', { name: 'Send message', exact: true }).click();
+			const sent = await waitForMessage(pageA, 'Handing this to');
+			// The writer isn't the one named: a chip, no tint, and unknown handles stay plain text.
+			await expect(sent.locator('.ap-mention')).toHaveText(`@${handle}`);
+			await expect(sent.locator('.ap-mention-me')).toHaveCount(0);
+			await expect(sent).not.toHaveClass(/ap-msg-mention/);
+			const received = await waitForMessage(pageB, 'Handing this to');
+			await expect(received.locator('.ap-mention-me')).toHaveText(`@${handle}`);
+			await expect(received).toHaveClass(/ap-msg-mention/);
+
+			// A handle inside code is code, and a message you send yourself never pings you.
+			await sendMessage(pageB, `\`@${handle}\` stays code`);
+			const quoted = await waitForMessage(pageB, 'stays code');
+			await expect(quoted.locator('.ap-mention')).toHaveCount(0);
+			await expect(quoted).not.toHaveClass(/ap-msg-mention/);
+		} finally {
+			await Promise.all([writer.close(), named.close()]);
+		}
+	});
+
+	test('turns the jump bar rust when a mention lands above the fold', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const named = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await named.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			await pageB.setViewportSize({ width: 900, height: 700 });
+			const handle = `sam-${Date.now().toString(36)}`;
+			await setDisplayName(pageB, handle);
+
+			await sendMessage(pageA, `${handle}-root`);
+			await (await messageAction(await waitForMessage(pageA, `${handle}-root`), 'Start thread')).click();
+			const threadTab = pageA.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
+			await expect(threadTab).toBeVisible();
+			const threadId = await threadTab.getAttribute('data-thread');
+			await pageA.getByRole('button', { name: 'Edit thread', exact: true }).click();
+			await pageA.getByRole('textbox', { name: 'Thread summary', exact: true }).fill(Array.from({ length: 50 }, (_, line) => `Summary line ${line}`).join('\n\n'));
+			await pageA.getByRole('button', { name: 'Save thread', exact: true }).click();
+
+			await pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
+			await expect(pageB.getByTestId('thread-summary')).toBeVisible();
+			await pageB.getByTestId('message-list').evaluate((node) => { node.scrollTop = 0; });
+			await expect(pageB.getByTestId('jump-button')).toHaveText('Jump to latest');
+
+			// The mention arrives out of sight: the bar turns rust and offers the mention itself.
+			await sendMessage(pageA, `@${handle} can you check the migration logs?`);
+			const jump = pageB.getByTestId('jump-button');
+			await expect(jump).toHaveText('Jump to mention');
+			await expect(pageB.locator('.ap-jumpbar-at')).toBeVisible();
+			await jump.click();
+			const pinged = await waitForMessage(pageB, 'migration logs');
+			await expect(pinged).toBeInViewport();
+			await expect(pinged).toHaveClass(/ap-msg-mention/);
+			await expect(jump).toHaveCount(0);
+		} finally {
+			await Promise.all([writer.close(), named.close()]);
+		}
+	});
+
+	test('picks a range of messages and moves them into one new thread', async ({ browser }) => {
+		const mover = await browser.newContext();
+		const reader = await browser.newContext();
+		try {
+			const pageA = await mover.newPage();
+			const pageB = await reader.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const token = `select-${Date.now().toString(36)}`;
+			for (const suffix of ['one', 'two', 'three']) await sendMessage(pageA, `${token}-${suffix}`);
+			const first = await waitForMessage(pageA, `${token}-one`);
+			const last = await waitForMessage(pageA, `${token}-three`);
+			const firstId = await first.getAttribute('data-message-id');
+			await waitForMessage(pageB, `${token}-three`);
+
+			// Shift-click enters select mode with that message picked; a second one fills the range.
+			await first.click({ modifiers: ['Shift'] });
+			const bar = pageA.getByTestId('selection-bar');
+			await expect(bar).toContainText('1 message selected');
+			await expect(pageA.getByTestId('message-input')).toHaveCount(0);
+			await last.click({ modifiers: ['Shift'] });
+			await expect(bar).toContainText('3 messages selected');
+			await expect(pageA.locator('article.ap-msg-selected')).toHaveCount(3);
+			// Hover actions stand down while messages are being picked.
+			await first.hover();
+			await expect(first.getByRole('button', { name: 'Edit message', exact: true })).toHaveCount(0);
+
+			await pageA.keyboard.press('Escape');
+			await expect(bar).toHaveCount(0);
+			await expect(composer(pageA)).toBeVisible();
+
+			await first.click({ modifiers: ['Shift'] });
+			await last.click({ modifiers: ['Shift'] });
+			await pageA.getByTestId('new-thread').click();
+			const threadTab = pageA.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
+			await expect(threadTab).toBeVisible();
+			const threadId = await threadTab.getAttribute('data-thread');
+			expect(threadId).toMatch(/^t_/);
+			await expect(pageA.getByTestId('selection-bar')).toHaveCount(0);
+			for (const suffix of ['one', 'two', 'three']) await expect(await waitForMessage(pageA, `${token}-${suffix}`)).toBeVisible();
+
+			// The room keeps the thread's root and loses the replies; the other reader sees the same.
+			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
+			await expect(pageA.locator(`article[data-message-id="${firstId}"]`)).toHaveCount(0);
+			await expect(pageA.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`)).toBeVisible();
+			const threadButtonB = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+			await expect(threadButtonB.locator('small')).toHaveText('3');
+			await threadButtonB.click();
+			for (const suffix of ['one', 'three']) await expect(await waitForMessage(pageB, `${token}-${suffix}`)).toBeVisible();
+		} finally {
+			await Promise.all([mover.close(), reader.close()]);
 		}
 	});
 });

@@ -33,6 +33,30 @@ one stop notification when typing ends, to avoid charging a frame per keystroke.
 Explicit server URLs keep their path: a bare hostname connects at `/`, while
 servers that require `/ws` should be entered with that suffix.
 
+Typing `@` in the composer opens the mention picker over the senders this room
+has seen, filtered by what follows: arrows move, Tab or Enter inserts `@name` as
+plain text, Escape dismisses. A rendered body turns an `@handle` that matches a
+sender's name or ID — whole word, case-insensitive, never inside code — into a
+mention chip. A message that names you tints its row with a rust rule, pulses
+once as it arrives (never on replayed history), raises an `@` badge on a room
+you aren't reading, and, when it lands above the fold, turns the jump bar rust
+with **Jump to mention**. Mentions are decided here from the text; the protocol
+carries none.
+
+With the `edit` cap, several of your messages move into one thread at a time:
+shift-click a message (or press `x` on it, long-press it on touch, or pick
+**Select** from its More menu) to enter select mode, shift-click another to fill
+the range, and the selection bar replaces the composer with the count, **Move to
+thread**, **New thread** and Cancel. Each message is its own `message` request;
+denied ones stay selected and the bar says how many didn't move. Escape leaves
+select mode.
+
+When the server advertises an `upload` URL, the composer grows attach and
+microphone buttons: attach posts the file as `multipart/form-data` to that URL
+(§6.1) and sends the returned URL as an embed, and the microphone records a clip
+and sends it as an `audio` embed. Neither example server in this repository
+offers uploads, so both buttons stay hidden there.
+
 **Connect** in the
 sidebar header opens the connect screen: a WebSocket URL or an HTTP(S) server
 base URL, a display name, and a sign-in choice (Guest by default; Passkey signs
@@ -80,7 +104,9 @@ the reference theme; light follows `prefers-color-scheme`), and
 verbatim, so every `ap-*` class in `src/routes/+page.svelte` matches the
 system's React components one to one (thread cards with a preview line, reply
 quotes, the pinned thread summary, the thread editor popover, the profile
-editor's sign-in row and the connect screen included). Re-copy `apron.css` when
+editor's sign-in row, the connect screen, mention chips and their picker, the
+select-mode check column and selection bar, and the composer's glyph buttons
+included). Re-copy `apron.css` when
 the design system changes rather than editing it here; the few `app-*` rules in
 the page are layout glue only.
 

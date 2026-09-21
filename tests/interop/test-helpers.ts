@@ -61,3 +61,12 @@ export async function deleteMessage(page: Page, message: Locator): Promise<void>
 	page.once('dialog', (dialog) => dialog.accept());
 	await (await moreAction(message, 'Delete message')).click();
 }
+
+/** Sets the handle the server knows you by, through the profile editor. */
+export async function setDisplayName(page: Page, name: string): Promise<void> {
+	await page.getByRole('button', { name: /^Your profile on/ }).click();
+	const dialog = page.getByRole('dialog', { name: 'Edit profile', exact: true });
+	await dialog.getByTestId('display-name-input').fill(name);
+	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByRole('button', { name: new RegExp(`^Your profile on .*: ${name}\\.`) })).toBeVisible();
+}

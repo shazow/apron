@@ -10,7 +10,7 @@
 		type OperationHandle,
 		type RoomSnapshot
 	} from '$lib/protocol/client';
-	import { formatBytes, renderMarkdown, safeUrl } from '$lib/protocol/markdown';
+	import { formatBytes, mentionsHandle, renderMarkdown, safeUrl, type MentionPerson } from '$lib/protocol/markdown';
 	import { isJsonObject, type Embed, type JsonObject, type MessageRecord, type Identity, type ServerParams, type ThreadAnnouncement } from '$lib/protocol/types';
 
 	type Feedback = { kind: 'pending' | 'error'; text: string };
@@ -28,6 +28,17 @@
 		| { kind: 'thread'; key: string; entry: ThreadListEntry }
 		| { kind: 'replies'; key: string; count: number };
 	type ProfileStatus = 'idle' | 'saving' | 'altered' | 'declined';
+	/** Bulk select: the messages picked in one pane, and the move they are waiting on. */
+	type Selection = {
+		room: string;
+		thread?: string;
+		ids: string[];
+		/** The last message picked, so a shift-click can fill the range to it. */
+		last?: string;
+		saving: boolean;
+		/** Set after a move the server partly denied: the messages still picked. */
+		denied?: { failed: number; total: number };
+	};
 	type ConnectScheme = 'anonymous' | 'webauthn';
 	type RecentServer = { url: string; label?: string };
 	type HeldSession = { rooms: RoomSnapshot[]; activeRoom?: string; you?: Identity; server?: ServerParams };
@@ -36,6 +47,10 @@
 	/** How long a reconnect may run quietly before the UI escalates and offers a manual retry. */
 	const RECONNECT_STALL_MS = 10_000;
 	const RECENT_SERVERS_MAX = 5;
+	/** How long the mention pulse stays on a row; the animation itself runs once. */
+	const PING_MS = 1200;
+	const LONG_PRESS_MS = 500;
+	const MENTION_MATCHES_MAX = 8;
 	const SCHEMES: Record<ConnectScheme, { label: string; hint: string }> = {
 		anonymous: { label: 'Guest', hint: 'No token needed; the server picks a guest identity.' },
 		webauthn: { label: 'Passkey', hint: 'Your device will ask you to confirm.' }
@@ -76,6 +91,30 @@
 	let pendingThreadStarts = $state<Record<string, PendingThreadStart>>({});
 	let movingId = $state<string | undefined>();
 	let moreId = $state<string | undefined>();
+	/** Message IDs pulsing because a mention of you just arrived. */
+	let pingedIds = $state<string[]>([]);
+	/** Mentions that landed in a room you weren't reading, cleared when you open it. */
+	let roomMentions = $state<Record<string, number>>({});
+	/** Mentions that arrived in this pane while you were scrolled up, oldest first. */
+	let unseenMentions = $state<string[]>([]);
+	/** The text after `@` in the composer, or undefined when the picker is closed. */
+	let mentionQuery = $state<string | undefined>();
+	let mentionActive = $state(0);
+	let mentionAnchor = 0;
+	let selection = $state<Selection | undefined>();
+	let selectMenuOpen = $state(false);
+	let attachInput = $state<HTMLInputElement | undefined>();
+	let recordSeconds = $state<number | undefined>();
+	let recorder: MediaRecorder | undefined;
+	let recordTimer: ReturnType<typeof setInterval> | undefined;
+	let longPressTimer: ReturnType<typeof setTimeout> | undefined;
+	/**
+	 * Message IDs each room has already shown. A room seeds silently the first
+	 * time its timeline arrives, so replayed history never pings; anything new
+	 * after that is an arrival.
+	 */
+	const shownEvents = new Map<string, Set<string>>();
+	const pingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	let mobilePane = $state<'rooms' | 'main'>('main');
 	// Sidebar width is user-resizable by dragging its right border; a plain click on the border collapses/expands it.
 	const SIDEBAR_MIN_W = 160;
@@ -234,6 +273,40 @@
 	));
 	let canEdit = $derived(viewServer?.caps?.includes('edit') === true);
 	let canUpload = $derived(typeof viewServer?.upload === 'string' && viewServer.upload.length > 0);
+	/** The senders this room has seen, most recently active first: who an `@` can name. */
+	let roomPeople = $derived.by((): MentionPerson[] => {
+		const people: MentionPerson[] = [];
+		const seen = new Set<string>();
+		for (let index = allMessages.length - 1; index >= 0; index -= 1) {
+			const from = allMessages[index].from;
+			if (!from?.user_id || seen.has(from.user_id)) continue;
+			seen.add(from.user_id);
+			people.push({
+				id: from.user_id,
+				...(from.name ? { name: from.name } : {}),
+				...(from.avatar ? { avatar: from.avatar } : {}),
+				...(from.user_id === viewYou?.user_id ? { me: true } : {})
+			});
+		}
+		const me = viewYou;
+		if (me?.user_id && !seen.has(me.user_id)) {
+			people.push({ id: me.user_id, ...(me.name ? { name: me.name } : {}), ...(me.avatar ? { avatar: me.avatar } : {}), me: true });
+		}
+		return people;
+	});
+	let mentionMatches = $derived.by((): MentionPerson[] => {
+		if (mentionQuery === undefined) return [];
+		const query = mentionQuery.toLowerCase();
+		return roomPeople
+			.filter((person) => !query || (person.name ?? '').toLowerCase().startsWith(query) || person.id.toLowerCase().startsWith(query))
+			.slice(0, MENTION_MATCHES_MAX);
+	});
+	let mentionOpen = $derived(mentionQuery !== undefined && canCompose && !selection);
+	/** Voice messages need both an upload URL and a browser that can record. */
+	let canRecord = $derived(canUpload && typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia));
+	let selectedIds = $derived(selection?.ids ?? []);
+	let mentionIndex = $derived(Math.min(mentionActive, Math.max(0, mentionMatches.length - 1)));
+	let selectThreads = $derived((activeRoom?.threads ?? []).filter((thread) => thread.thread_id !== activeThread));
 	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== viewYou?.user_id));
 	let typingNames = $derived(roomTyping.map((entry) => entry.from.name || entry.from.user_id));
 	let backendLabel = $derived(viewServer?.name || backendHost(serverInput) || 'Apron');
@@ -302,6 +375,44 @@
 		if (roomId && selectedRoomId !== roomId) setDestination(roomId, undefined);
 	});
 
+	/**
+	 * Mentions of you as they arrive: the row pulses once, a room you aren't
+	 * reading gets an `@` badge, and one that lands above the fold joins the
+	 * jump bar's list. Replayed history is seeded silently and pings nobody.
+	 */
+	$effect(() => {
+		if (!viewYou) return;
+		for (const room of viewRooms) {
+			let shown = shownEvents.get(room.id);
+			const seeding = !shown;
+			if (!shown) {
+				shown = new Set<string>();
+				shownEvents.set(room.id, shown);
+			}
+			for (const id of room.timeline.order) {
+				if (shown.has(id)) continue;
+				shown.add(id);
+				if (seeding) continue;
+				const event = room.timeline.events[id];
+				if (!event || !mentionsMe(event)) continue;
+				pingMessage(id);
+				const here = room.id === activeRoom?.id && event.thread_id === activeThread;
+				if (!here) {
+					roomMentions = { ...roomMentions, [room.id]: (roomMentions[room.id] ?? 0) + 1 };
+				} else if (!latestVisible) {
+					unseenMentions = [...unseenMentions, id];
+				}
+			}
+		}
+	});
+
+	/** A selection belongs to one pane; leaving it, or losing the cap, ends it. */
+	$effect(() => {
+		const current = selection;
+		if (!current) return;
+		if (!canEdit || current.room !== activeRoom?.id || current.thread !== activeThread) selection = undefined;
+	});
+
 	$effect(() => {
 		if (!connectPending || snapshot.authBusy || !sessionReady) return;
 		if (!connectSchemes.includes(connectScheme)) connectScheme = connectSchemes[0];
@@ -365,7 +476,10 @@
 			}
 			observer = new IntersectionObserver(([entry]) => {
 				latestVisible = entry.isIntersecting;
-				if (latestVisible) seenCount = messages.length;
+				if (latestVisible) {
+					seenCount = messages.length;
+					if (unseenMentions.length > 0) unseenMentions = [];
+				}
 			}, { root: scroll });
 			observer.observe(latest);
 		});
@@ -459,6 +573,10 @@
 			if (typingTimer) clearTimeout(typingTimer);
 			if (feedbackTimer) clearTimeout(feedbackTimer);
 			if (highlightTimer) clearTimeout(highlightTimer);
+			if (longPressTimer) clearTimeout(longPressTimer);
+			for (const timer of pingTimers.values()) clearTimeout(timer);
+			pingTimers.clear();
+			stopRecording(false);
 			unsubscribe();
 			client?.stop();
 		};
@@ -668,6 +786,7 @@
 	}
 
 	function chooseRoom(room: RoomSnapshot): void {
+		clearRoomMentions(room.id);
 		client?.selectRoom(room.id);
 		if (holding && held) held = { ...held, activeRoom: room.id };
 		pendingActiveRoom = holding ? room.id : undefined;
@@ -704,6 +823,11 @@
 		threadEditor = undefined;
 		movingId = undefined;
 		moreId = undefined;
+		mentionQuery = undefined;
+		selection = undefined;
+		selectMenuOpen = false;
+		unseenMentions = [];
+		clearRoomMentions(roomId);
 		stickToBottom = true;
 	}
 
@@ -725,6 +849,7 @@
 	}
 
 	function composerInput(): void {
+		refreshMentionQuery();
 		if (!client || !activeRoom) return;
 		if (selectedRoomId) {
 			const key = draftKey(currentServerUrl(), selectedRoomId, activeThread);
@@ -736,10 +861,65 @@
 	}
 
 	function composerKeydown(event: KeyboardEvent): void {
+		if (mentionOpen && !event.isComposing) {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				mentionQuery = undefined;
+				return;
+			}
+			if (mentionMatches.length > 0) {
+				if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+					event.preventDefault();
+					const step = event.key === 'ArrowDown' ? 1 : mentionMatches.length - 1;
+					mentionActive = (mentionActive + step) % mentionMatches.length;
+					return;
+				}
+				if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+					event.preventDefault();
+					pickMention(mentionMatches[Math.min(mentionActive, mentionMatches.length - 1)]);
+					return;
+				}
+			}
+		}
 		if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
 			event.preventDefault();
 			sendMessage();
 		}
+	}
+
+	/** Reads the `@…` the caret sits in; anything else closes the picker. */
+	function refreshMentionQuery(): void {
+		const field = composer;
+		if (!field || !canCompose || selection) {
+			mentionQuery = undefined;
+			return;
+		}
+		const caret = field.selectionStart ?? composerText.length;
+		const match = /(?:^|\s)@([^\s@]{0,64})$/.exec(composerText.slice(0, caret));
+		if (!match) {
+			mentionQuery = undefined;
+			return;
+		}
+		if (mentionQuery === undefined) mentionActive = 0;
+		mentionAnchor = caret - match[1].length - 1;
+		mentionQuery = match[1];
+	}
+
+	/** Inserts the handle as plain text; the body stays Markdown. */
+	function pickMention(person: MentionPerson): void {
+		const field = composer;
+		const caret = field?.selectionStart ?? composerText.length;
+		const handle = person.name?.trim() || person.id;
+		const insert = `@${handle} `;
+		composerText = composerText.slice(0, mentionAnchor) + insert + composerText.slice(caret);
+		mentionQuery = undefined;
+		mentionActive = 0;
+		const at = mentionAnchor + insert.length;
+		if (selectedRoomId) drafts = { ...drafts, [draftKey(currentServerUrl(), selectedRoomId, activeThread)]: composerText };
+		tick().then(() => {
+			field?.focus();
+			field?.setSelectionRange(at, at);
+		});
 	}
 
 	function sendMessage(): void {
@@ -764,12 +944,113 @@
 		});
 		composerText = '';
 		replyId = undefined;
+		mentionQuery = undefined;
 		drafts = { ...drafts, [originKey]: '' };
 		replyDrafts = { ...replyDrafts, [originKey]: undefined };
 		client.sendTyping(roomId, false);
 		if (typingTimer) clearTimeout(typingTimer);
 		stickToBottom = true;
 		composer?.focus();
+	}
+
+	/** Attach: the file picker, then §6.1's upload, then the message that carries it. */
+	function chooseAttachment(): void {
+		if (!canCompose || !canUpload) return;
+		attachInput?.click();
+	}
+
+	async function attachFiles(input: HTMLInputElement): Promise<void> {
+		const files = [...(input.files ?? [])];
+		input.value = '';
+		for (const file of files) await sendUpload(file);
+	}
+
+	/** Uploads one file and sends it as an embed beside whatever is in the composer. */
+	async function sendUpload(file: File): Promise<void> {
+		if (!client || !activeRoom || !canCompose || !canUpload) return;
+		const session = client;
+		const roomId = activeRoom.id;
+		const thread = activeThread;
+		const reply = replyId;
+		const text = composerText;
+		if (feedbackTimer) clearTimeout(feedbackTimer);
+		feedback = { kind: 'pending', text: `Uploading ${file.name}…` };
+		let url: string;
+		try {
+			url = await session.uploadMedia(file);
+		} catch (cause) {
+			feedback = { kind: 'error', text: cause instanceof Error ? cause.message : 'Upload failed' };
+			return;
+		}
+		feedback = undefined;
+		composerText = '';
+		replyId = undefined;
+		mentionQuery = undefined;
+		const originKey = draftKey(currentServerUrl(), roomId, thread);
+		drafts = { ...drafts, [originKey]: '' };
+		replyDrafts = { ...replyDrafts, [originKey]: undefined };
+		stickToBottom = true;
+		track(session.sendMessage(roomId, text, 'markdown', thread, reply, [embedFor(file, url)]), 'Sending…');
+	}
+
+	/** Media kinds come from the file's type; anything else is a plain file (§6.1). */
+	function embedFor(file: File, url: string): Embed {
+		const kind = file.type.startsWith('image/') ? 'image'
+			: file.type.startsWith('video/') ? 'video'
+			: file.type.startsWith('audio/') ? 'audio' : 'file';
+		return {
+			kind, url,
+			...(file.type ? { mime: file.type } : {}),
+			...(kind === 'file' && file.name ? { name: file.name } : {}),
+			...(kind === 'file' && file.size ? { size: file.size } : {})
+		};
+	}
+
+	/** Microphone: record, then send the clip as an audio embed. */
+	async function startRecording(): Promise<void> {
+		if (!client || !canCompose || !canRecord || recorder) return;
+		let stream: MediaStream;
+		try {
+			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		} catch {
+			feedback = { kind: 'error', text: 'Your browser didn’t allow the microphone.' };
+			return;
+		}
+		const chunks: Blob[] = [];
+		const active = new MediaRecorder(stream);
+		recorder = active;
+		recordSeconds = 0;
+		recordTimer = setInterval(() => (recordSeconds = (recordSeconds ?? 0) + 1), 1000);
+		active.ondataavailable = (event) => { if (event.data.size > 0) chunks.push(event.data); };
+		active.onstop = () => {
+			for (const track of stream.getTracks()) track.stop();
+			if (recorder !== active) return;
+			recorder = undefined;
+			if (recordTimer) clearInterval(recordTimer);
+			recordTimer = undefined;
+			const seconds = recordSeconds ?? 0;
+			recordSeconds = undefined;
+			if (chunks.length === 0 || seconds < 1) return;
+			const type = active.mimeType || chunks[0].type || 'audio/webm';
+			void sendUpload(new File(chunks, `voice-message.${type.includes('ogg') ? 'ogg' : 'webm'}`, { type }));
+		};
+		active.start();
+	}
+
+	function stopRecording(send = true): void {
+		const active = recorder;
+		if (!active) return;
+		if (!send) {
+			recorder = undefined;
+			if (recordTimer) clearInterval(recordTimer);
+			recordTimer = undefined;
+			recordSeconds = undefined;
+		}
+		active.stop();
+	}
+
+	function recordingTime(seconds: number): string {
+		return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 	}
 
 	function beginReply(event: MessageRecord): void {
@@ -965,12 +1246,40 @@
 		return before !== undefined && after !== undefined && after - before < GROUP_WINDOW_MS;
 	}
 
+	/** A mention is decided here, from the text: `@` + a sender's name or ID, whole word. */
 	function mentionsMe(event: MessageRecord): boolean {
 		const me = viewYou;
-		if (!me || isOwn(event)) return false;
-		const text = textOf(event);
-		if (!text) return false;
-		return [me.name, me.user_id].some((handle) => handle && text.includes(`@${handle}`));
+		if (!me || isOwn(event) || event.deleted) return false;
+		return mentionsHandle(textOf(event), [me.name, me.user_id]);
+	}
+
+	/** One ring pulse on arrival, then the row settles back. */
+	function pingMessage(id: string): void {
+		const running = pingTimers.get(id);
+		if (running) clearTimeout(running);
+		else pingedIds = [...pingedIds, id];
+		pingTimers.set(id, setTimeout(() => {
+			pingTimers.delete(id);
+			pingedIds = pingedIds.filter((pinged) => pinged !== id);
+		}, PING_MS));
+	}
+
+	function clearRoomMentions(roomId: string): void {
+		if (!roomMentions[roomId]) return;
+		const next = { ...roomMentions };
+		delete next[roomId];
+		roomMentions = next;
+	}
+
+	/** Takes you to the oldest mention that arrived while you were reading back. */
+	function jumpToMention(): void {
+		const target = unseenMentions[0];
+		if (!target) {
+			jumpToLatest();
+			return;
+		}
+		unseenMentions = unseenMentions.slice(1);
+		void jumpToMessage(target);
 	}
 
 	function textOf(event: MessageRecord): string {
@@ -1045,6 +1354,7 @@
 
 	function jumpToLatest(): void {
 		stickToBottom = true;
+		unseenMentions = [];
 		if (messageScroll) messageScroll.scrollTop = messageScroll.scrollHeight;
 	}
 
@@ -1059,7 +1369,171 @@
 	function canMove(event: MessageRecord): boolean {
 		return Boolean(event.thread_id || (activeRoom && activeRoom.threads.length > 0));
 	}
+
+	/** Splits a name around the letters being typed, which the picker reads in accent. */
+	function markQuery(text: string): { before: string; hit: string; after: string } {
+		const query = mentionQuery ?? '';
+		const at = query ? text.toLowerCase().indexOf(query.toLowerCase()) : -1;
+		if (at < 0) return { before: text, hit: '', after: '' };
+		return { before: text.slice(0, at), hit: text.slice(at, at + query.length), after: text.slice(at + query.length) };
+	}
+
+	/** Escape leaves select mode, as it leaves the thread menu. */
+	function windowKeydown(event: KeyboardEvent): void {
+		if (event.key !== 'Escape' || !selection) return;
+		if (selectMenuOpen) {
+			selectMenuOpen = false;
+			return;
+		}
+		cancelSelect();
+	}
+
+	/** Shift-click enters select mode with this message picked; inside it, plain clicks toggle. */
+	function messageClick(event: MouseEvent, record: MessageRecord): void {
+		if ((event.target as HTMLElement | null)?.closest('a, button, input, textarea, select')) return;
+		if (selection) {
+			toggleSelect(record, event.shiftKey);
+			return;
+		}
+		if (event.shiftKey && canSelect(record)) beginSelect(record);
+	}
+
+	/** Keyboard: `x` on a focused message picks it, the same as a shift-click. */
+	function messageKeydown(event: KeyboardEvent, record: MessageRecord): void {
+		if (event.key !== 'x' || event.metaKey || event.ctrlKey || event.altKey) return;
+		if ((event.target as HTMLElement | null)?.closest('input, textarea, select')) return;
+		if (!canSelect(record)) return;
+		event.preventDefault();
+		if (selection) toggleSelect(record);
+		else beginSelect(record);
+	}
+
+	/** Touch has no hover: a long press opens select mode instead. */
+	function messagePointerDown(event: PointerEvent, record: MessageRecord): void {
+		cancelLongPress();
+		if (event.pointerType !== 'touch' || selection || !canSelect(record)) return;
+		longPressTimer = setTimeout(() => {
+			longPressTimer = undefined;
+			beginSelect(record);
+		}, LONG_PRESS_MS);
+	}
+
+	function cancelLongPress(): void {
+		if (!longPressTimer) return;
+		clearTimeout(longPressTimer);
+		longPressTimer = undefined;
+	}
+
+	/** Bulk moves change other people's messages only if the server lets them; this client offers its own. */
+	function canSelect(event: MessageRecord): boolean {
+		return canEdit && isOwn(event) && !event.deleted;
+	}
+
+	function isSelected(id: string): boolean {
+		return selectedIds.includes(id);
+	}
+
+	/** Enters select mode with this message picked, from a shift-click, `x`, long-press or the More menu. */
+	function beginSelect(event: MessageRecord): void {
+		if (!activeRoom || !canSelect(event)) return;
+		moreId = undefined;
+		movingId = undefined;
+		editingId = undefined;
+		mentionQuery = undefined;
+		selection = { room: activeRoom.id, thread: activeThread, ids: [event.message_id], last: event.message_id, saving: false };
+	}
+
+	function toggleSelect(event: MessageRecord, range = false): void {
+		const current = selection;
+		if (!current || current.saving || !canSelect(event)) return;
+		if (range && current.last) {
+			selection = { ...current, ids: idsBetween(current.last, event.message_id), last: event.message_id, denied: undefined };
+			return;
+		}
+		const picked = current.ids.includes(event.message_id);
+		const ids = picked ? current.ids.filter((id) => id !== event.message_id) : [...current.ids, event.message_id];
+		if (ids.length === 0) {
+			selection = undefined;
+			return;
+		}
+		selection = { ...current, ids, last: picked ? current.last : event.message_id, denied: undefined };
+	}
+
+	/** Every selectable message between two, in timeline order. */
+	function idsBetween(from: string, to: string): string[] {
+		const order = messages.filter(canSelect).map((event) => event.message_id);
+		const start = order.indexOf(from);
+		const end = order.indexOf(to);
+		if (start === -1 || end === -1) return [...new Set([...(selection?.ids ?? []), to])];
+		return order.slice(Math.min(start, end), Math.max(start, end) + 1);
+	}
+
+	/** "Select between": fills the gap between the outermost messages already picked. */
+	function selectBetween(): void {
+		const current = selection;
+		if (!current || current.saving || current.ids.length < 2) return;
+		const order = messages.filter(canSelect).map((event) => event.message_id);
+		const picked = current.ids.map((id) => order.indexOf(id)).filter((index) => index >= 0);
+		if (picked.length < 2) return;
+		selection = { ...current, ids: order.slice(Math.min(...picked), Math.max(...picked) + 1), denied: undefined };
+	}
+
+	function cancelSelect(): void {
+		if (selection?.saving) return;
+		selection = undefined;
+		selectMenuOpen = false;
+		composer?.focus();
+	}
+
+	/**
+	 * One `message` request per picked message, all carrying the same thread. The
+	 * server decides each one: denied messages stay selected so they can be retried.
+	 */
+	async function moveSelection(thread: string): Promise<void> {
+		const current = selection;
+		if (!client || !current || current.saving || !canEdit || current.ids.length === 0) return;
+		const session = client;
+		const ids = current.ids;
+		selection = { ...current, saving: true, denied: undefined };
+		selectMenuOpen = false;
+		const results = await Promise.allSettled(ids.map((id) => session.setMessageThread(current.room, id, thread).promise));
+		const failed = ids.filter((_, index) => results[index].status === 'rejected');
+		if (failed.length === 0) {
+			selection = undefined;
+			setDestination(current.room, thread);
+			void session.loadThread(current.room, thread).catch(() => undefined);
+			return;
+		}
+		const reason = results.find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
+		feedback = { kind: 'error', text: reason?.reason instanceof Error ? reason.reason.message : 'Some messages could not be moved' };
+		selection = { ...current, ids: failed, last: failed[failed.length - 1], saving: false, denied: { failed: failed.length, total: ids.length } };
+	}
+
+	/** "New thread": one fresh thread for the whole selection, rooted at its oldest message. */
+	async function moveSelectionToNewThread(): Promise<void> {
+		const current = selection;
+		if (!client || !current || current.saving || !canEdit || current.ids.length === 0) return;
+		const session = client;
+		const order = messages.map((event) => event.message_id);
+		const root = [...current.ids].sort((a, b) => order.indexOf(a) - order.indexOf(b))[0];
+		selection = { ...current, saving: true, denied: undefined };
+		selectMenuOpen = false;
+		let thread: string;
+		try {
+			const result = await session.createThread(current.room, { root_message_id: root }).promise;
+			if (typeof result.thread_id !== 'string') throw new Error('Invalid thread response');
+			thread = result.thread_id;
+		} catch (cause) {
+			feedback = { kind: 'error', text: cause instanceof Error ? cause.message : 'Unable to start thread' };
+			selection = { ...current, saving: false };
+			return;
+		}
+		selection = { ...current, saving: false };
+		await moveSelection(thread);
+	}
 </script>
+
+<svelte:window onkeydown={windowKeydown} />
 
 <svelte:head>
 	<title>Apron</title>
@@ -1138,6 +1612,10 @@
 									<span class="ap-room-name">{room.name}</span>
 									{#if room.topic}<span class="ap-room-topic">{room.topic}</span>{/if}
 								</span>
+								{#if roomMentions[room.id]}
+									{@const mentions = roomMentions[room.id]}
+									<span class="ap-count ap-count-at" data-testid="room-mentions" aria-label={`${mentions} ${mentions === 1 ? 'mention' : 'mentions'}`}>@{mentions > 1 ? mentions : ''}</span>
+								{/if}
 								{#if room.recovering}<span class="app-room-meta" aria-label="Loading history">…</span>{/if}
 							</button>
 							{#if active}
@@ -1330,7 +1808,7 @@
 				{#if activeThreadAnnouncement?.summary?.trim()}
 					<section class="ap-summary" aria-label="Thread summary">
 						<span class="ap-summary-label">Summary</span>
-						<div class="ap-summary-text ap-msg-text markdown" data-testid="thread-summary">{@html renderMarkdown(activeThreadAnnouncement.summary)}</div>
+						<div class="ap-summary-text ap-msg-text markdown" data-testid="thread-summary">{@html renderMarkdown(activeThreadAnnouncement.summary, roomPeople)}</div>
 					</section>
 				{/if}
 				{#if snapshot.showReconnectDivider}
@@ -1378,7 +1856,30 @@
 						{:else}
 							{@const event = item.event}
 							{@const name = senderName(event)}
-							<article data-timeline-item class="ap-msg" class:ap-msg-grouped={item.grouped} class:ap-msg-mention={mentionsMe(event)} class:ap-msg-highlighted={highlightedId === event.message_id} data-message-id={event.message_id} tabindex="-1">
+							{@const selectable = Boolean(selection) && canSelect(event)}
+							{@const picked = selectable && isSelected(event.message_id)}
+							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+							<article
+								data-timeline-item
+								class="ap-msg"
+								class:ap-msg-grouped={item.grouped}
+								class:ap-msg-mention={mentionsMe(event)}
+								class:ap-msg-pinged={pingedIds.includes(event.message_id)}
+								class:ap-msg-highlighted={highlightedId === event.message_id}
+								class:ap-msg-selectable={selectable}
+								class:ap-msg-selected={picked}
+								data-message-id={event.message_id}
+								tabindex="-1"
+								onclick={(mouse) => messageClick(mouse, event)}
+								onkeydown={(key) => messageKeydown(key, event)}
+								onpointerdown={(pointer) => messagePointerDown(pointer, event)}
+								onpointerup={cancelLongPress}
+								onpointermove={cancelLongPress}
+								onpointercancel={cancelLongPress}
+							>
+								{#if selectable}
+									<span class="ap-msg-check" role="checkbox" aria-checked={picked} aria-label="Select message" tabindex="0" onkeydown={(key) => { if (key.key === ' ' || key.key === 'Enter') { key.preventDefault(); toggleSelect(event); } }}>{picked ? '✓' : ''}</span>
+								{/if}
 								<div class="ap-msg-gutter">
 									{#if item.grouped}
 										<span class="ap-msg-hovertime">{eventTime(event)}</span>
@@ -1431,7 +1932,7 @@
 											{#if event.body?.format === 'plain'}
 												<div class="ap-msg-text app-plain">{textOf(event)}</div>
 											{:else}
-												<div class="ap-msg-text markdown">{@html renderMarkdown(textOf(event))}</div>
+												<div class="ap-msg-text markdown">{@html renderMarkdown(textOf(event), roomPeople)}</div>
 											{/if}
 										{/if}
 										{#if embedsOf(event).length > 0}
@@ -1473,7 +1974,7 @@
 										{/if}
 									{/if}
 								</div>
-								{#if hasActions(event) || canRemoveReply(event) || (canCompose && !event.deleted)}
+								{#if !selection && (hasActions(event) || canRemoveReply(event) || (canCompose && !event.deleted))}
 									<div class="ap-msg-actions">
 										<div class="ap-actions" role="toolbar" aria-label="Message actions">
 											{#if event.deleted && canRemoveReply(event)}
@@ -1494,6 +1995,9 @@
 													{#if canMove(event)}
 														<button class="ap-actions-btn" type="button" aria-label="Move message" title="Move to thread" onclick={() => toggleMove(event)}>Move</button>
 													{/if}
+													{#if canSelect(event)}
+														<button class="ap-actions-btn" type="button" data-testid="select-message" aria-label="Select message" title="Select" onclick={() => beginSelect(event)}>Select</button>
+													{/if}
 													<button class="ap-actions-btn ap-actions-danger" type="button" aria-label="Delete message" title="Delete" onclick={() => deleteMessage(event)}>Delete</button>
 												{:else}
 													<button class="ap-actions-btn" type="button" aria-label="More actions" aria-expanded="false" title="More" onclick={() => (moreId = event.message_id)}>⋯</button>
@@ -1509,10 +2013,18 @@
 			</div>
 
 			{#if timeline.length > 0 && !latestVisible}
+				{@const mentions = unseenMentions.length}
 				<div class="app-jump">
-					<div class="ap-jumpbar" role="status">
-						<span class="ap-jumpbar-text">{unseenCount ? (unseenCount === 1 ? '1 new message' : `${unseenCount} new messages`) : 'You’re viewing older messages'}</span>
-						<button class="ap-jumpbar-btn" type="button" onclick={jumpToLatest}>{unseenCount ? 'Jump to new' : 'Jump to latest'}</button>
+					<div class="ap-jumpbar" class:ap-jumpbar-at={mentions > 0} role="status">
+						{#if mentions > 0}<span class="ap-count ap-count-at" aria-hidden="true">@</span>{/if}
+						<span class="ap-jumpbar-text">
+							{#if mentions > 0}
+								{mentions === 1 ? 'You were mentioned' : `You were mentioned ${mentions} times`}{unseenCount ? ` · ${unseenCount} new` : ''}
+							{:else}
+								{unseenCount ? (unseenCount === 1 ? '1 new message' : `${unseenCount} new messages`) : 'You’re viewing older messages'}
+							{/if}
+						</span>
+						<button class="ap-jumpbar-btn" type="button" data-testid="jump-button" onclick={mentions > 0 ? jumpToMention : jumpToLatest}>{mentions > 0 ? 'Jump to mention' : unseenCount ? 'Jump to new' : 'Jump to latest'}</button>
 					</div>
 				</div>
 			{/if}
@@ -1524,16 +2036,110 @@
 				{/if}
 			</div>
 
-			{#if replyId}
-				<div class="app-reply-draft" data-testid="reply-draft" role="status">
-					<span>{`Replying to ${replyPreview(replyId)}`}</span>
-					<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Cancel reply" onclick={cancelReply}>Cancel reply</button>
+			{#if selection}
+				{@const count = selection.ids.length}
+				<div class="ap-selbar" role="toolbar" aria-label="Selected messages" data-testid="selection-bar">
+					<span class="ap-selbar-info">
+						<span class="ap-selbar-count">{count === 1 ? '1 message selected' : `${count} messages selected`}</span>
+						{#if count > 1 && !selection.saving}
+							<button class="ap-link" type="button" onclick={selectBetween}>Select between</button>
+						{/if}
+						{#if selection.denied}
+							<span class="app-selbar-denied" role="alert">{selection.denied.failed} of {selection.denied.total} couldn’t be moved</span>
+						{/if}
+					</span>
+					<span class="ap-selbar-actions">
+						{#if selection.saving}
+							<span class="ap-selbar-status" role="status"><span class="ap-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span> Moving {count}…</span>
+						{:else}
+							<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" onclick={cancelSelect}>Cancel</button>
+							{#if selectThreads.length > 0}
+								<span class="ap-selbar-pick">
+									<button class="ap-btn ap-btn-sm" type="button" aria-haspopup="listbox" aria-expanded={selectMenuOpen} onclick={() => (selectMenuOpen = !selectMenuOpen)}>Move to thread ▾</button>
+									{#if selectMenuOpen}
+										<ul class="ap-menu" role="listbox" aria-label="Move to thread">
+											{#each selectThreads as thread (thread.thread_id)}
+												<li><button class="ap-menu-item" type="button" role="option" aria-selected="false" onclick={() => moveSelection(thread.thread_id)}>{threadTitle(thread.thread_id)}</button></li>
+											{/each}
+										</ul>
+									{/if}
+								</span>
+							{/if}
+							<button class="ap-btn ap-btn-primary ap-btn-sm" type="button" data-testid="new-thread" onclick={moveSelectionToNewThread}>New thread</button>
+						{/if}
+					</span>
+				</div>
+			{:else}
+				{#if replyId}
+					<div class="app-reply-draft" data-testid="reply-draft" role="status">
+						<span>{`Replying to ${replyPreview(replyId)}`}</span>
+						<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Cancel reply" onclick={cancelReply}>Cancel reply</button>
+					</div>
+				{/if}
+				<div class="app-composer-wrap">
+					{#if mentionOpen}
+						{#if mentionMatches.length === 0}
+							<div class="ap-mpick" role="listbox" aria-label="Mention someone" data-testid="mention-picker">
+								<div class="ap-mpick-empty">{mentionQuery ? `No one here matches “${mentionQuery}”` : 'People in this room'}</div>
+							</div>
+						{:else}
+							<ul class="ap-mpick" role="listbox" aria-label="Mention someone" data-testid="mention-picker">
+								{#each mentionMatches as person, index (person.id)}
+									{@const label = person.name?.trim() || person.id}
+									{@const marked = markQuery(label)}
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<li
+										role="option"
+										aria-selected={index === mentionIndex}
+										class="ap-mpick-item"
+										class:ap-mpick-active={index === mentionIndex}
+										onmousedown={(mouse) => { mouse.preventDefault(); pickMention(person); }}
+										onmouseenter={() => (mentionActive = index)}
+									>
+										{#if person.avatar && safeUrl(person.avatar)}
+											<img class="ap-avatar ap-avatar-sm" src={person.avatar} alt="" />
+										{:else}
+											<span class="ap-avatar ap-avatar-sm" aria-hidden="true">{initials(label)}</span>
+										{/if}
+										<span class="ap-mpick-name">{marked.before}{#if marked.hit}<mark class="ap-mpick-hit">{marked.hit}</mark>{/if}{marked.after}</span>
+										{#if person.id !== label}
+											{@const markedId = markQuery(person.id)}
+											<span class="ap-mpick-id">{markedId.before}{#if markedId.hit}<mark class="ap-mpick-hit">{markedId.hit}</mark>{/if}{markedId.after}</span>
+										{/if}
+										{#if index === mentionIndex}<kbd class="ap-mpick-kbd">Tab</kbd>{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					{/if}
+					<form class="ap-composer" class:ap-composer-disabled={!canCompose} aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+						{#if canUpload}
+							<span class="ap-composer-tools">
+								<button class="ap-iconbtn" type="button" aria-label="Attach a file" title="Attach a file" disabled={!canCompose || recordSeconds !== undefined} onclick={chooseAttachment}>
+									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5l-8.8 8.8a5.5 5.5 0 0 1-7.8-7.8L13.6 3.3a3.5 3.5 0 0 1 5 5l-9.2 9.2a1.5 1.5 0 0 1-2.1-2.1L15.9 6.8" /></svg>
+								</button>
+								{#if canRecord}
+									{@const taping = recordSeconds !== undefined}
+									<button class="ap-iconbtn" class:ap-iconbtn-rec={taping} type="button" aria-label={taping ? 'Stop recording' : 'Record a voice message'} aria-pressed={taping} title={taping ? 'Stop recording' : 'Record a voice message'} disabled={!canCompose} onclick={() => (taping ? stopRecording() : startRecording())}>
+										{#if taping}
+											<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+										{:else}
+											<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg>
+										{/if}
+									</button>
+								{/if}
+							</span>
+							<input class="app-sr" type="file" multiple tabindex="-1" aria-hidden="true" bind:this={attachInput} onchange={(change) => attachFiles(change.currentTarget)} />
+						{/if}
+						{#if recordSeconds !== undefined}
+							<span class="ap-composer-recording" role="status"><span class="ap-composer-recdot" aria-hidden="true"></span>Recording <span class="ap-composer-rectime">{recordingTime(recordSeconds)}</span></span>
+						{:else}
+							<textarea class="ap-composer-field" id="message-input" data-testid="message-input" aria-label="Message" bind:this={composer} bind:value={composerText} oninput={composerInput} onkeydown={composerKeydown} onkeyup={refreshMentionQuery} onclick={refreshMentionQuery} onblur={() => (mentionQuery = undefined)} disabled={!canCompose} placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.name}`} rows="1"></textarea>
+						{/if}
+						<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || recordSeconds !== undefined || !composerText.trim()}>Send</button>
+					</form>
 				</div>
 			{/if}
-			<form class="ap-composer" class:ap-composer-disabled={!canCompose} aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); sendMessage(); }}>
-				<textarea class="ap-composer-field" id="message-input" data-testid="message-input" aria-label="Message" bind:this={composer} bind:value={composerText} oninput={composerInput} onkeydown={composerKeydown} disabled={!canCompose} placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.name}`} rows="1"></textarea>
-				<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={!canCompose || !composerText.trim()}>Send</button>
-			</form>
 		{:else}
 			<div class="app-empty app-empty-room">
 				{#if connectionState !== 'connected'}
@@ -1579,6 +2185,9 @@
 	.app { height: 100dvh; min-height: 100%; }
 	.ap-actions { max-width: calc(100vw - 32px); flex-wrap: wrap; }
 	.app-reply-static { cursor: default; }
+	/* The mention picker anchors to the composer and grows upward. */
+	.app-composer-wrap { position: relative; }
+	.app-selbar-denied { color: var(--danger); }
 	.app-reply-static:hover { background: var(--bg-200); }
 	.app-reply-draft { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4); font-size: 13px; line-height: 18px; color: var(--ink-muted); }
 	.app-reply-draft span { min-width: 0; overflow-wrap: anywhere; }

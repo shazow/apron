@@ -3,7 +3,7 @@
 body { margin: 0; font-family: var(--font-sans); font-size: 15px; line-height: 22px; background: var(--bg-100); color: var(--ink); -webkit-font-smoothing: antialiased; }
 .ap-stack { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); }
 .ap-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-4); }
-:where(.ap-btn, .ap-link, .ap-room, .ap-thread, .ap-composer-field, .ap-embed-card, .ap-embed-url, .ap-actions-btn, .ap-jumpbar-btn, .ap-jumpfab, .ap-sect-toggle, .ap-rail-item, .ap-roomhead-back, .ap-roomhead-crumb, .ap-profile-me, .ap-field, .ap-reply, .ap-seg-item, .ap-connect-recent-item):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+:where(.ap-btn, .ap-link, .ap-room, .ap-thread, .ap-composer-field, .ap-embed-card, .ap-embed-url, .ap-actions-btn, .ap-jumpbar-btn, .ap-jumpfab, .ap-sect-toggle, .ap-rail-item, .ap-roomhead-back, .ap-roomhead-crumb, .ap-profile-me, .ap-field, .ap-reply, .ap-seg-item, .ap-connect-recent-item, .ap-msg-check, .ap-menu-item, .ap-iconbtn):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* Button */
 .ap-btn { font: inherit; font-size: 13px; line-height: 18px; font-weight: 600; height: 32px; padding: 0 14px; border-radius: var(--radius-full); border: 1px solid var(--line-strong); background: var(--bg-200); color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
@@ -29,9 +29,20 @@ body { margin: 0; font-family: var(--font-sans); font-size: 15px; line-height: 2
 .ap-msg:hover { background: var(--bg-200); }
 .ap-msg-mention { background: var(--accent-soft); }
 .ap-msg-mention:hover { background: var(--accent-soft); }
+.ap-msg-mention::before { content: ""; position: absolute; left: 0; top: var(--space-1); bottom: var(--space-1); width: 3px; border-radius: 2px; background: var(--accent); }
+.ap-msg-pinged { animation: ap-ping .9s ease-out 1; }
+@keyframes ap-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
 .ap-msg-highlighted, .ap-msg-highlighted:hover { background: var(--bg-300); }
 .ap-msg-actions { position: absolute; top: -14px; right: var(--space-2); z-index: 2; visibility: hidden; }
 .ap-msg:hover .ap-msg-actions, .ap-msg:focus-within .ap-msg-actions, .ap-msg-actions:focus-within { visibility: visible; }
+/* select mode: a check column on the left; the whole row toggles */
+.ap-msg-selectable { grid-template-columns: 24px var(--avatar-md) minmax(0, 1fr); cursor: pointer; user-select: none; }
+.ap-msg-selectable.ap-msg-compact { grid-template-columns: 24px 40px minmax(0, 1fr); }
+.ap-msg-selectable:hover { background: var(--bg-200); }
+.ap-msg-selected, .ap-msg-selected:hover { background: var(--denim-soft); }
+.ap-msg-check { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-top: 3px; box-sizing: border-box; border: 2px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg-100); color: var(--on-accent); font-size: 12px; line-height: 1; font-weight: 700; }
+.ap-msg-selected .ap-msg-check { border-color: var(--accent); background: var(--accent); }
+.ap-msg-selectable .ap-msg-hovertime { visibility: visible; }
 /* compact density: time | sender + text on one line */
 .ap-msg-compact { grid-template-columns: 40px minmax(0, 1fr); column-gap: var(--space-2); margin-top: 0; padding-top: 1px; padding-bottom: 1px; }
 .ap-msg-compact .ap-msg-ctime { font-size: 11px; line-height: 22px; color: var(--ink-muted); text-align: right; font-variant-numeric: tabular-nums; }
@@ -116,6 +127,15 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 /* Composer */
 .ap-composer { display: flex; align-items: flex-end; container-type: normal; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); margin: var(--space-2) var(--space-4) var(--space-4); background: var(--bg-200); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); }
 .ap-composer:focus-within { border-color: var(--focus); }
+.ap-composer-tools { display: inline-flex; gap: 2px; align-self: flex-end; }
+.ap-iconbtn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: calc(var(--radius-lg) - var(--space-2)); background: transparent; color: var(--ink-muted); cursor: pointer; }
+.ap-iconbtn:hover:not(:disabled) { background: var(--bg-300); color: var(--ink); }
+.ap-iconbtn:disabled { opacity: .45; cursor: default; }
+.ap-iconbtn-rec, .ap-iconbtn-rec:hover { color: var(--danger); }
+.ap-composer-recording { flex: 1; display: inline-flex; align-items: center; gap: var(--space-2); height: 28px; box-sizing: border-box; padding: 0 var(--space-1); font-size: 15px; line-height: 22px; color: var(--ink); align-self: flex-end; }
+.ap-composer-recdot { flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--danger); animation: ap-blink 1s steps(1) infinite; }
+.ap-composer-rectime { font-variant-numeric: tabular-nums; color: var(--ink-muted); }
+@keyframes ap-blink { 50% { opacity: .25; } }
 .ap-composer .ap-btn { border-radius: calc(var(--radius-lg) - var(--space-2)); }
 .ap-composer-field { flex: 1; box-sizing: border-box; height: 28px; field-sizing: content; min-height: 28px; max-height: 200px; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; line-height: 22px; padding: 3px var(--space-1); }
 .ap-composer-field::placeholder { color: var(--ink-muted); }
@@ -240,6 +260,8 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 @media (prefers-reduced-motion: reduce) {
   .ap-btn, .ap-room, .ap-thread, .ap-msg, .ap-rail-tile, .ap-actions-btn, .ap-profile-me, .ap-jumpbar-btn, .ap-composer, .ap-field { transition: none; }
   .ap-typing-dots i { animation: none; opacity: .7; }
+  .ap-composer-recdot { animation: none; }
+  .ap-msg-pinged { animation: none; }
 }
 
 /* ReplyPreview — the quoted message above a reply; click to jump */
@@ -292,3 +314,35 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 .ap-connect-recent-item { font: inherit; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .ap-connect-recent-item:hover { background: var(--bg-300); }
 .ap-connect-tile { width: 32px; height: 32px; font-size: 12px; border-radius: var(--radius-md); background: var(--bg-200); }
+
+/* SelectionBar — replaces the composer while messages are being picked */
+.ap-selbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); margin: var(--space-2) var(--space-4) var(--space-4); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); background: var(--bg-200); border: 1px solid var(--accent); border-radius: var(--radius-lg); font-size: 13px; line-height: 18px; }
+.ap-selbar .ap-btn { border-radius: calc(var(--radius-lg) - var(--space-2)); }
+.ap-selbar-count { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ap-selbar-info { display: inline-flex; align-items: center; gap: var(--space-3); white-space: nowrap; }
+.ap-selbar-actions { display: inline-flex; align-items: center; gap: var(--space-2); margin-left: auto; white-space: nowrap; }
+.ap-selbar-status { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--ink-muted); }
+.ap-selbar-pick { position: relative; }
+.ap-menu { position: absolute; right: 0; bottom: calc(100% + var(--space-1)); z-index: 5; min-width: 200px; margin: 0; padding: var(--space-1); list-style: none; background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-popover); }
+.ap-menu-item { font: inherit; display: block; width: 100%; padding: 6px var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.ap-menu-item:hover { background: var(--bg-300); }
+
+/* Mention — the @name chip inside message text */
+.ap-mention { display: inline; padding: 1px 5px; border-radius: var(--radius-sm); background: var(--denim-soft); color: var(--denim); font-weight: 600; white-space: nowrap; }
+.ap-mention-me { background: var(--accent); color: var(--on-accent); }
+.ap-msg-mention .ap-mention-me { box-shadow: 0 0 0 1px var(--bg-100); }
+
+/* MentionPicker — above the composer while typing @… */
+.ap-mpick { position: absolute; left: var(--space-4); bottom: calc(100% + var(--space-1)); z-index: 5; width: min(320px, calc(100% - 2 * var(--space-4))); max-height: 240px; overflow: auto; margin: 0; padding: var(--space-1); list-style: none; background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-popover); }
+.ap-mpick-item { display: flex; align-items: center; gap: var(--space-2); padding: 5px var(--space-2); border-radius: var(--radius-sm); font-size: 14px; line-height: 20px; cursor: pointer; }
+.ap-mpick-active { background: var(--bg-300); }
+.ap-mpick-name { font-weight: 600; }
+.ap-mpick-id { color: var(--ink-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-mpick-hit { background: transparent; color: var(--accent); }
+.ap-mpick-kbd { margin-left: auto; font: inherit; font-size: 11px; line-height: 16px; padding: 0 5px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-muted); }
+.ap-mpick-empty { padding: var(--space-2) var(--space-3); font-size: 13px; color: var(--ink-muted); }
+
+/* Mention counts: an @ badge in accent beside the room, and in the jump bar */
+.ap-count-at { font-weight: 700; }
+.ap-count-quiet { background: var(--bg-300); color: var(--ink); }
+.ap-jumpbar-at { border-color: var(--accent); }

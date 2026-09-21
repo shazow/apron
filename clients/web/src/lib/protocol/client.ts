@@ -13,6 +13,7 @@ import {
 	isLogId,
 	isString,
 	toTransition,
+	type Embed,
 	type MessageRecord,
 	type JsonObject,
 	type JsonValue,
@@ -415,12 +416,35 @@ export class ChatClient {
 		this.passkeyAbort = undefined;
 	}
 
-	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string, replyMessageId?: string): OperationHandle {
+	sendMessage(room: string, text: string, format: 'plain' | 'markdown' = 'markdown', thread?: string, replyMessageId?: string, embeds?: Embed[]): OperationHandle {
 		return this.saveMessage({
-			room_id: room, body: { text, format },
+			room_id: room, body: { text, format, ...(embeds && embeds.length > 0 ? { embeds } : {}) },
 			...(thread ? { thread_id: thread } : {}),
 			...(replyMessageId !== undefined ? { reply_message_id: replyMessageId } : {})
 		});
+	}
+
+	/**
+	 * Media travels over HTTP, not the socket (§6.1): POST the file as
+	 * `multipart/form-data` to the `upload` URL the `server` frame carried and
+	 * take the URL back. A token session sends the same token as bearer; other
+	 * schemes rely on the per-session URL the server re-sent after auth.
+	 */
+	async uploadMedia(file: File, signal?: AbortSignal): Promise<string> {
+		const endpoint = this.server?.upload;
+		if (!endpoint) throw new Error('This backend accepts no uploads');
+		const form = new FormData();
+		form.append('file', file, file.name);
+		const response = await fetch(endpoint, {
+			method: 'POST',
+			body: form,
+			...(signal ? { signal } : {}),
+			...(this.sessionToken ? { headers: { Authorization: `Bearer ${this.sessionToken}` } } : {})
+		});
+		if (!response.ok) throw new Error(`The server refused the upload (${response.status})`);
+		const payload: unknown = await response.json().catch(() => undefined);
+		if (!isJsonObject(payload) || typeof payload.url !== 'string') throw new Error('The server returned no upload URL');
+		return payload.url;
 	}
 
 	setMessageReply(room: string, messageId: string, replyMessageId: string | null): OperationHandle {
