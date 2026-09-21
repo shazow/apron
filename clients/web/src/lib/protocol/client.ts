@@ -149,6 +149,7 @@ export class ChatClient {
 	private readonly rooms = new Map<string, RoomState>();
 	private readonly requests = new Map<string, PendingRequest>();
 	private readonly typing = new Map<string, TypingState>();
+	private readonly sentTypingAt = new Map<string, number>();
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private connectionId = 0;
@@ -470,6 +471,17 @@ export class ChatClient {
 
 	sendTyping(room: string, active: boolean): void {
 		if (!this.authenticated || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+		const previous = this.sentTypingAt.get(room);
+		const now = Date.now();
+		// Refresh halfway through the advertised lifetime, not on every keypress.
+		// Repeated inactive events do not need another notification either.
+		if (active) {
+			if (previous !== undefined && now - previous < 4_000) return;
+			this.sentTypingAt.set(room, now);
+		} else {
+			if (previous === undefined) return;
+			this.sentTypingAt.delete(room);
+		}
 		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: 8 } });
 	}
 
@@ -1155,6 +1167,7 @@ export class ChatClient {
 	}
 
 	private clearTyping(): void {
+		this.sentTypingAt.clear();
 		for (const typing of this.typing.values()) {
 			if (typing.timer) clearTimeout(typing.timer);
 		}

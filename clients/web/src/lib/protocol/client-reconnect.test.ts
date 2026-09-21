@@ -146,6 +146,33 @@ describe('transport reconnects', () => {
 		vi.advanceTimersByTime(60_000);
 		expect(FakeSocket.instances).toHaveLength(1);
 	});
+
+	it('bounds typing traffic while refreshing it before expiry', () => {
+		const socket = latest();
+		const typing = () => socket.sent.filter(frame => frame.method === 'typing');
+		for (let key = 0; key < 200; key++) {
+			client.sendTyping('lobby', true);
+			vi.advanceTimersByTime(100);
+		}
+		expect(typing()).toHaveLength(5);
+		client.sendTyping('lobby', false);
+		client.sendTyping('lobby', false);
+		expect(typing()).toHaveLength(6);
+		expect(typing().at(-1)?.params).toMatchObject({ active: false });
+		client.sendTyping('lobby', true);
+		expect(typing()).toHaveLength(7);
+	});
+
+	it('keeps typing refreshes independent across rooms and transport reconnects', async () => {
+		client.sendTyping('lobby', true);
+		client.sendTyping('another-room', true);
+		expect(latest().sent.filter(frame => frame.method === 'typing')).toHaveLength(2);
+		latest().drop();
+		client.retryNow();
+		await latest().greet();
+		client.sendTyping('lobby', true);
+		expect(latest().sent.filter(frame => frame.method === 'typing')).toHaveLength(1);
+	});
 });
 
 describe('persisted session tokens', () => {
