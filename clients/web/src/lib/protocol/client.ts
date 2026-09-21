@@ -137,7 +137,7 @@ type ValidHistoryResponse = JsonObject & {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
-const MAX_RECONNECT_DELAY_MS = 10_000;
+const MAX_RECONNECT_DELAY_MS = 60_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const DEFAULT_HISTORY_BOUNDARY = '1';
@@ -1368,7 +1368,7 @@ function userFacingRpcError(error: RpcError): string {
 /** Exposed for deterministic UI/client tests without relying on timer scheduling. */
 export function reconnectDelay(attempt: number, random = 0.5, retryAfterMs?: number): number {
 	const boundedAttempt = Math.max(1, Math.floor(attempt));
-	const base = Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(5, boundedAttempt - 1));
+	const base = Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(7, boundedAttempt - 1));
 	const jitter = 0.8 + Math.min(1, Math.max(0, random)) * 0.4;
 	return Math.max(retryAfterMs ?? 0, Math.round(base * jitter));
 }

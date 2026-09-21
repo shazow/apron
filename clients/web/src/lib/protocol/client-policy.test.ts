@@ -47,4 +47,13 @@ describe('client recovery policies', () => {
 		expect(reconnectDelay(2, 0, 0)).toBe(800);
 		expect(reconnectDelay(2, 1, 0)).toBe(1200);
 	});
+
+	it('backs off prolonged failures to roughly one attempt per minute', () => {
+		expect(reconnectDelay(1)).toBe(500);
+		expect(reconnectDelay(6)).toBe(16000);
+		expect(reconnectDelay(8)).toBe(60000);
+		expect(reconnectDelay(100, 0)).toBe(48000);
+		expect(reconnectDelay(100, 1)).toBe(72000);
+		expect(reconnectDelay(100, 0, 3600000)).toBe(3600000);
+	});
 });
