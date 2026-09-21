@@ -586,6 +586,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "thread":
 				await this.handleThread(socket, attachment, request);
 				return;
+			case "nick":
+				await this.handleNick(socket, attachment, request);
+				return;
 			default:
 				if (request.id !== undefined) throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 		}
@@ -733,6 +736,34 @@ export class ApronDemoServer extends DurableObject<Env> {
 				writeAttachment(socket, latest);
 			}
 		}
+	}
+
+	private async handleNick(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		const identity = identityOf(attachment);
+		if (!identity || attachment.tier !== "registered") {
+			throw { name: "denied", message: "Only registered users may change their name" } satisfies ProtocolError;
+		}
+		const name = requiredString(request.params, "name");
+		await this.runMutation(async () => {
+			const result = this.store.commitMutation({
+				userId: identity.user_id, ipKey: attachment.ipKey,
+				requestId: request.id, method: "nick", now: nowMs(),
+				params: request.params, identity,
+			});
+			// Persist first, then refresh every live attachment for this identity so
+			// subsequent messages from other tabs carry the same name. An accepted
+			// retry must not roll back a newer name change.
+			if (!result.deduplicated) {
+				for (const peer of this.ctx.getWebSockets()) {
+					const state = connectionAttachment(peer);
+					if (state?.userId !== identity.user_id) continue;
+					state.name = name;
+					writeAttachment(peer, state);
+				}
+			}
+			const current = connectionAttachment(socket);
+			if (current) this.reply(socket, request, { you: identityOf(current) });
+		});
 	}
 
 	private async handleMessage(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
