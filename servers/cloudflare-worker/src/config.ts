@@ -1,126 +1,6 @@
-export interface Limits {
-	retentionSeconds: number;
-	cleanupSeconds: number;
-	challengeTtlSeconds: number;
-	maxFrameBytes: number;
-	maxTextBytes: number;
-	maxSnapshotBytes: number;
-	maxJsonDepth: number;
-	maxJsonNodes: number;
-	maxRequestIdBytes: number;
-	maxNameCodePoints: number;
-	maxNameBytes: number;
-	maxEmbeds: number;
-	historyDefaultLimit: number;
-	historyMaxLimit: number;
-	historyMaxResponseBytes: number;
-	historyRequestsPerUserMinute: number;
-	historyRequestsPerIpMinute: number;
-	concurrentHistoryPerConnection: number;
-	anonymousPostsPerMinute: number;
-	anonymousPostsPerDay: number;
-	registeredPostsPerMinute: number;
-	registeredPostsPerDay: number;
-	ipPostsPerMinute: number;
-	ipPostsPerDay: number;
-	globalPostsPerMinute: number;
-	globalPostsPerDay: number;
-	registrationsPerIpDay: number;
-	registrationsPerDay: number;
-	registeredIdentityCount: number;
-	authAttemptsPerIpMinute: number;
-	openConnections: number;
-	anonymousConnectionsPerIp: number;
-	registeredConnectionsPerUser: number;
-	connectionsPerIp: number;
-	connectionAdmissionsPerIpMinute: number;
-	connectionAdmissionsPerDay: number;
-	unauthenticatedTimeoutSeconds: number;
-	pendingFramesPerConnection: number;
-	pendingBytesPerConnection: number;
-	framesPerConnectionMinute: number;
-	framesPerIpMinute: number;
-	processedFramesPerDay: number;
-	repeatedPolicyViolations: number;
-	sqlWritesPerDay: number;
-	sqlReadsPerDay: number;
-	foregroundWritesPerDay: number;
-	maintenanceWritesPerDay: number;
-	foregroundReadsPerDay: number;
-	maintenanceReadsPerDay: number;
-	databaseHighWaterBytes: number;
-	databaseHardTargetBytes: number;
-	databaseResumeLowWaterBytes: number;
-	cleanupBatch: number;
-	threadLimit: number;
-	threadMetadataBytes: number;
-	dedupTtlSeconds: number;
-	limiterRecordCap: number;
-	maxCredentialBytes: number;
-	maxChallengeBytes: number;
-}
-
-export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
-	retentionSeconds: 86_400,
-	cleanupSeconds: 3_600,
-	challengeTtlSeconds: 120,
-	maxFrameBytes: 16_384,
-	maxTextBytes: 4_096,
-	maxSnapshotBytes: 8_192,
-	maxJsonDepth: 8,
-	maxJsonNodes: 2_048,
-	maxRequestIdBytes: 128,
-	maxNameCodePoints: 80,
-	maxNameBytes: 320,
-	maxEmbeds: 4,
-	historyDefaultLimit: 20,
-	historyMaxLimit: 50,
-	historyMaxResponseBytes: 262_144,
-	historyRequestsPerUserMinute: 10,
-	historyRequestsPerIpMinute: 30,
-	concurrentHistoryPerConnection: 1,
-	anonymousPostsPerMinute: 5,
-	anonymousPostsPerDay: 100,
-	registeredPostsPerMinute: 20,
-	registeredPostsPerDay: 500,
-	ipPostsPerMinute: 30,
-	ipPostsPerDay: 1_000,
-	globalPostsPerMinute: 60,
-	globalPostsPerDay: 5_000,
-	registrationsPerIpDay: 3,
-	registrationsPerDay: 100,
-	registeredIdentityCount: 10_000,
-	authAttemptsPerIpMinute: 10,
-	openConnections: 100,
-	anonymousConnectionsPerIp: 2,
-	registeredConnectionsPerUser: 3,
-	connectionsPerIp: 10,
-	connectionAdmissionsPerIpMinute: 5,
-	connectionAdmissionsPerDay: 2_000,
-	unauthenticatedTimeoutSeconds: 30,
-	pendingFramesPerConnection: 8,
-	pendingBytesPerConnection: 131_072,
-	framesPerConnectionMinute: 60,
-	framesPerIpMinute: 120,
-	processedFramesPerDay: 100_000,
-	repeatedPolicyViolations: 3,
-	sqlWritesPerDay: 80_000,
-	sqlReadsPerDay: 3_000_000,
-	foregroundWritesPerDay: 60_000,
-	maintenanceWritesPerDay: 20_000,
-	foregroundReadsPerDay: 2_500_000,
-	maintenanceReadsPerDay: 500_000,
-	databaseHighWaterBytes: 96 * 1024 * 1024,
-	databaseHardTargetBytes: 128 * 1024 * 1024,
-	databaseResumeLowWaterBytes: 80 * 1024 * 1024,
-	cleanupBatch: 100,
-	threadLimit: 100,
-	threadMetadataBytes: 2 * 1024,
-	dedupTtlSeconds: 86_400,
-	limiterRecordCap: 10_000,
-	maxCredentialBytes: 16 * 1024,
-	maxChallengeBytes: 16 * 1024,
-});
+import * as budget from "./budget.ts";
+import { DEFAULT_LIMITS, type Limits } from "./budget.ts";
+export { DEFAULT_LIMITS, BOOTSTRAP_ROW_RESERVATION, type Limits } from "./budget.ts";
 
 export interface RuntimeConfig {
 	limits: Limits;
@@ -138,45 +18,6 @@ export class ConfigError extends Error {
 		this.name = "ConfigError";
 	}
 }
-
-// These are deployment ceilings, rather than alternate defaults.  Operators
-// may lower any limit below; a value above one of these bounds would make the
-// corresponding attachment, parser, SQLite, or Free-plan accounting budget
-// unbounded relative to the implementation that consumes it.
-const MAX_FRAME_BYTES = 16 * 1024;
-const MAX_TEXT_BYTES = 4 * 1024;
-const MAX_SNAPSHOT_BYTES = 8 * 1024;
-const MAX_JSON_DEPTH = 8;
-const MAX_JSON_NODES = 2_048;
-const MAX_REQUEST_ID_BYTES = 128;
-const MAX_NAME_CODE_POINTS = 80;
-const MAX_NAME_BYTES = 320;
-const MAX_EMBEDS = 4;
-const MAX_HISTORY_LIMIT = 50;
-const MAX_HISTORY_RESPONSE_BYTES = 256 * 1024;
-const MAX_PENDING_FRAMES = 8;
-const MAX_PENDING_BYTES = 128 * 1024;
-const MAX_CONCURRENT_HISTORY = 1;
-const MAX_CREDENTIAL_BYTES = 16 * 1024;
-const MAX_CHALLENGE_BYTES = 16 * 1024;
-const MAX_OPEN_CONNECTIONS = 100;
-const MAX_REGISTERED_IDENTITIES = 10_000;
-const MAX_LIMITER_RECORDS = 10_000;
-const MAX_PROCESSED_FRAMES = 100_000;
-const MAX_GLOBAL_POSTS_PER_MINUTE = 60;
-const MAX_GLOBAL_POSTS_PER_DAY = 5_000;
-const MAX_REGISTRATIONS_PER_DAY = 100;
-const MAX_CLEANUP_BATCH = 100;
-const MAX_THREAD_LIMIT = 100;
-const MAX_THREAD_METADATA_BYTES = 2 * 1024;
-const MAX_CONNECTION_FRAME_RATE = 120;
-const MAX_SQL_WRITES = 80_000;
-const MAX_SQL_READS = 3_000_000;
-const MAX_DATABASE_HIGH_WATER_BYTES = 96 * 1024 * 1024;
-const MAX_DATABASE_HARD_TARGET_BYTES = 128 * 1024 * 1024;
-const MAINTENANCE_CONTROL_RESERVE = 8;
-export const BOOTSTRAP_ROW_RESERVATION = 512;
-const MAX_SOCKET_QUEUE_ALLOCATION = 32 * 1024 * 1024;
 
 type EnvLike = {
 	ALLOWED_ORIGINS?: string;
@@ -226,47 +67,47 @@ function validateLimits(limits: Limits): void {
 	// Parser, serializer, and attachment bounds are coupled.  Keeping these
 	// relationships here prevents a lower-level store or a socket handler from
 	// receiving a combination that can accept data it cannot carry safely.
-	if (limits.maxFrameBytes > MAX_FRAME_BYTES) fail("maxFrameBytes cannot exceed the demo frame policy");
-	if (limits.maxTextBytes > MAX_TEXT_BYTES || limits.maxTextBytes > limits.maxFrameBytes || limits.maxTextBytes > limits.maxSnapshotBytes) {
+	if (limits.maxFrameBytes > budget.MAX_FRAME_BYTES) fail("maxFrameBytes cannot exceed the demo frame policy");
+	if (limits.maxTextBytes > budget.MAX_TEXT_BYTES || limits.maxTextBytes > limits.maxFrameBytes || limits.maxTextBytes > limits.maxSnapshotBytes) {
 		fail("text payload exceeds the frame or snapshot policy");
 	}
-	if (limits.maxSnapshotBytes > MAX_SNAPSHOT_BYTES || limits.maxSnapshotBytes > limits.maxFrameBytes) {
+	if (limits.maxSnapshotBytes > budget.MAX_SNAPSHOT_BYTES || limits.maxSnapshotBytes > limits.maxFrameBytes) {
 		fail("snapshot payload exceeds the frame policy");
 	}
-	if (limits.maxJsonDepth > MAX_JSON_DEPTH || limits.maxJsonNodes > MAX_JSON_NODES || limits.maxRequestIdBytes > MAX_REQUEST_ID_BYTES) {
+	if (limits.maxJsonDepth > budget.MAX_JSON_DEPTH || limits.maxJsonNodes > budget.MAX_JSON_NODES || limits.maxRequestIdBytes > budget.MAX_REQUEST_ID_BYTES) {
 		fail("JSON policy exceeds calibrated bounds");
 	}
-	if (limits.maxRequestIdBytes > limits.maxFrameBytes || limits.maxNameCodePoints > MAX_NAME_CODE_POINTS || limits.maxNameBytes > MAX_NAME_BYTES) {
+	if (limits.maxRequestIdBytes > limits.maxFrameBytes || limits.maxNameCodePoints > budget.MAX_NAME_CODE_POINTS || limits.maxNameBytes > budget.MAX_NAME_BYTES) {
 		fail("metadata policy exceeds calibrated bounds");
 	}
-	if (limits.maxNameBytes > limits.maxSnapshotBytes || limits.maxEmbeds > MAX_EMBEDS) {
+	if (limits.maxNameBytes > limits.maxSnapshotBytes || limits.maxEmbeds > budget.MAX_EMBEDS) {
 		fail("message metadata cannot fit the snapshot policy");
 	}
-	if (limits.maxCredentialBytes > MAX_CREDENTIAL_BYTES || limits.maxCredentialBytes > limits.maxFrameBytes || limits.maxChallengeBytes > MAX_CHALLENGE_BYTES || limits.maxChallengeBytes > limits.maxFrameBytes) {
+	if (limits.maxCredentialBytes > budget.MAX_CREDENTIAL_BYTES || limits.maxCredentialBytes > limits.maxFrameBytes || limits.maxChallengeBytes > budget.MAX_CHALLENGE_BYTES || limits.maxChallengeBytes > limits.maxFrameBytes) {
 		fail("authentication payload exceeds the frame policy");
 	}
 
-	if (limits.historyMaxLimit > MAX_HISTORY_LIMIT || limits.historyDefaultLimit > limits.historyMaxLimit) {
+	if (limits.historyMaxLimit > budget.MAX_HISTORY_LIMIT || limits.historyDefaultLimit > limits.historyMaxLimit) {
 		fail("history default exceeds the bounded history maximum");
 	}
-	if (limits.historyMaxResponseBytes > MAX_HISTORY_RESPONSE_BYTES || limits.maxSnapshotBytes + 1024 > limits.historyMaxResponseBytes) {
+	if (limits.historyMaxResponseBytes > budget.MAX_HISTORY_RESPONSE_BYTES || limits.maxSnapshotBytes + 1024 > limits.historyMaxResponseBytes) {
 		fail("history response cap cannot contain one snapshot");
 	}
-	if (limits.concurrentHistoryPerConnection > MAX_CONCURRENT_HISTORY) {
+	if (limits.concurrentHistoryPerConnection > budget.MAX_CONCURRENT_HISTORY) {
 		fail("concurrent history is limited to one request per connection");
 	}
 
-	if (limits.pendingFramesPerConnection > MAX_PENDING_FRAMES || limits.pendingBytesPerConnection > MAX_PENDING_BYTES) {
+	if (limits.pendingFramesPerConnection > budget.MAX_PENDING_FRAMES || limits.pendingBytesPerConnection > budget.MAX_PENDING_BYTES) {
 		fail("socket pending-work policy exceeds calibrated bounds");
 	}
 	if (limits.pendingBytesPerConnection < limits.maxFrameBytes || limits.pendingFramesPerConnection > Math.floor(limits.pendingBytesPerConnection / limits.maxFrameBytes)) {
 		fail("pending socket budget cannot hold its configured frames");
 	}
-	if (limits.openConnections > MAX_OPEN_CONNECTIONS || limits.openConnections * limits.pendingBytesPerConnection > MAX_SOCKET_QUEUE_ALLOCATION) {
+	if (limits.openConnections > budget.MAX_OPEN_CONNECTIONS || limits.openConnections * limits.pendingBytesPerConnection > budget.MAX_SOCKET_QUEUE_ALLOCATION) {
 		fail("socket queues exceed the demo memory allocation");
 	}
 
-	if (limits.registeredIdentityCount > MAX_REGISTERED_IDENTITIES || limits.limiterRecordCap > MAX_LIMITER_RECORDS) {
+	if (limits.registeredIdentityCount > budget.MAX_REGISTERED_IDENTITIES || limits.limiterRecordCap > budget.MAX_LIMITER_RECORDS) {
 		fail("identity or limiter records exceed the calibrated bound");
 	}
 	if (limits.anonymousConnectionsPerIp > limits.connectionsPerIp || limits.connectionsPerIp > limits.openConnections || limits.registeredConnectionsPerUser > limits.openConnections) {
@@ -276,33 +117,33 @@ function validateLimits(limits: Limits): void {
 		fail("connection admission minute limit exceeds its daily limit");
 	}
 
-	if (limits.framesPerConnectionMinute > MAX_CONNECTION_FRAME_RATE || limits.framesPerConnectionMinute > limits.framesPerIpMinute || limits.framesPerIpMinute > limits.processedFramesPerDay || limits.processedFramesPerDay > MAX_PROCESSED_FRAMES || limits.repeatedPolicyViolations > limits.framesPerConnectionMinute) {
+	if (limits.framesPerConnectionMinute > budget.MAX_CONNECTION_FRAME_RATE || limits.framesPerConnectionMinute > limits.framesPerIpMinute || limits.framesPerIpMinute > limits.processedFramesPerDay || limits.processedFramesPerDay > budget.MAX_PROCESSED_FRAMES || limits.repeatedPolicyViolations > limits.framesPerConnectionMinute) {
 		fail("connection attachment counters exceed bounded policy");
 	}
-	if (limits.globalPostsPerMinute > MAX_GLOBAL_POSTS_PER_MINUTE || limits.globalPostsPerDay > MAX_GLOBAL_POSTS_PER_DAY || limits.globalPostsPerMinute > limits.globalPostsPerDay) {
+	if (limits.globalPostsPerMinute > budget.MAX_GLOBAL_POSTS_PER_MINUTE || limits.globalPostsPerDay > budget.MAX_GLOBAL_POSTS_PER_DAY || limits.globalPostsPerMinute > limits.globalPostsPerDay) {
 		fail("global posting policy exceeds the demo ceiling");
 	}
 	if (limits.anonymousPostsPerMinute > limits.anonymousPostsPerDay || limits.registeredPostsPerMinute > limits.registeredPostsPerDay || limits.ipPostsPerMinute > limits.ipPostsPerDay) {
 		fail("posting minute limit exceeds its daily limit");
 	}
-	if (limits.registrationsPerIpDay > limits.registrationsPerDay || limits.registrationsPerDay > MAX_REGISTRATIONS_PER_DAY) {
+	if (limits.registrationsPerIpDay > limits.registrationsPerDay || limits.registrationsPerDay > budget.MAX_REGISTRATIONS_PER_DAY) {
 		fail("registration policy exceeds the demo ceiling");
 	}
 
 	if (limits.databaseResumeLowWaterBytes >= limits.databaseHighWaterBytes || limits.databaseHighWaterBytes >= limits.databaseHardTargetBytes) {
 		fail("database watermarks must be low < high < hard target");
 	}
-	if (limits.databaseHighWaterBytes > MAX_DATABASE_HIGH_WATER_BYTES || limits.databaseHardTargetBytes > MAX_DATABASE_HARD_TARGET_BYTES) {
+	if (limits.databaseHighWaterBytes > budget.MAX_DATABASE_HIGH_WATER_BYTES || limits.databaseHardTargetBytes > budget.MAX_DATABASE_HARD_TARGET_BYTES) {
 		fail("resource ceilings exceed the demo allocation");
 	}
 	if (limits.retentionSeconds < limits.cleanupSeconds) fail("retention must be at least one cleanup interval");
-	if (limits.cleanupBatch > MAX_CLEANUP_BATCH || limits.threadLimit > MAX_THREAD_LIMIT || limits.threadMetadataBytes > MAX_THREAD_METADATA_BYTES) {
+	if (limits.cleanupBatch > budget.MAX_CLEANUP_BATCH || limits.threadLimit > budget.MAX_THREAD_LIMIT || limits.threadMetadataBytes > budget.MAX_THREAD_METADATA_BYTES) {
 		fail("metadata or cleanup exceeds calibrated bounds");
 	}
-	if (limits.sqlWritesPerDay > MAX_SQL_WRITES || limits.sqlReadsPerDay > MAX_SQL_READS) {
+	if (limits.sqlWritesPerDay > budget.MAX_SQL_WRITES || limits.sqlReadsPerDay > budget.MAX_SQL_READS) {
 		fail("SQL ceilings exceed the demo allocation");
 	}
-	if (limits.maintenanceReadsPerDay < BOOTSTRAP_ROW_RESERVATION + MAINTENANCE_CONTROL_RESERVE || limits.maintenanceWritesPerDay < BOOTSTRAP_ROW_RESERVATION + MAINTENANCE_CONTROL_RESERVE) {
+	if (limits.maintenanceReadsPerDay < budget.BOOTSTRAP_ROW_RESERVATION + budget.MAINTENANCE_CONTROL_RESERVE || limits.maintenanceWritesPerDay < budget.BOOTSTRAP_ROW_RESERVATION + budget.MAINTENANCE_CONTROL_RESERVE) {
 		fail("maintenance budgets must cover bootstrap and the control reserve");
 	}
 	if (limits.foregroundReadsPerDay + limits.maintenanceReadsPerDay > limits.sqlReadsPerDay || limits.foregroundWritesPerDay + limits.maintenanceWritesPerDay > limits.sqlWritesPerDay) {

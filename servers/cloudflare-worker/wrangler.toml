@@ -24,3 +24,11 @@ new_sqlite_classes = ["ApronDemoServer"]
 RP_ID = "localhost"
 RP_ORIGINS = "http://localhost:5173,http://localhost:8787"
 ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:8787"
+
+# BEGIN GENERATED ADMISSION BUDGET
+# Edit src/budget.ts, then run npm run budget:generate.
+[[ratelimits]]
+name = "CONNECTION_ATTEMPTS"
+namespace_id = "73001"
+simple = { limit = 10, period = 60 }
+# END GENERATED ADMISSION BUDGET

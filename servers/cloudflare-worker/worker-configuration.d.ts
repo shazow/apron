@@ -3,6 +3,7 @@ import type { ApronDemoServer } from "./src/index";
 declare global {
 	interface Env {
 		DEMO: DurableObjectNamespace<ApronDemoServer>;
+		CONNECTION_ATTEMPTS: RateLimit;
 		ASSETS?: Fetcher;
 		ALLOWED_ORIGINS?: string;
 		RP_ID?: string;
@@ -15,6 +16,7 @@ declare global {
 	namespace Cloudflare {
 		interface Env {
 			DEMO: DurableObjectNamespace<ApronDemoServer>;
+			CONNECTION_ATTEMPTS: RateLimit;
 			ASSETS?: Fetcher;
 			ALLOWED_ORIGINS?: string;
 			RP_ID?: string;

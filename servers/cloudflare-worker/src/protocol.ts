@@ -1,3 +1,5 @@
+import { DEFAULT_LIMITS } from "./budget";
+
 export const ERROR_CODES = Object.freeze({
 	parse_error: -32700,
 	invalid_request: -32600,
@@ -84,10 +86,10 @@ export interface ParseOptions {
 }
 
 export const DEFAULT_PARSE_OPTIONS: ParseOptions = {
-	maxFrameBytes: 16_384,
-	maxJsonDepth: 8,
-	maxJsonNodes: 2_048,
-	maxRequestIdBytes: 128,
+	maxFrameBytes: DEFAULT_LIMITS.maxFrameBytes,
+	maxJsonDepth: DEFAULT_LIMITS.maxJsonDepth,
+	maxJsonNodes: DEFAULT_LIMITS.maxJsonNodes,
+	maxRequestIdBytes: DEFAULT_LIMITS.maxRequestIdBytes,
 };
 
 /** Parse one application frame after applying the byte gate. */

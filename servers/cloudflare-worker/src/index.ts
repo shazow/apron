@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { AuthError, AuthTooLargeError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
 import { isAllowedOrigin, loadConfig, type RuntimeConfig } from "./config";
+import { ADMISSION_BUDGET } from "./budget";
 import { extractClientIp, hashIpKey, stripForwardingHeaders } from "./ip";
 import {
 	errorFromUnknown,
@@ -288,8 +289,18 @@ export async function fetchEntry(request: Request, env: Env): Promise<Response> 
 	if (!isUpgrade(request)) return responseError(400, "WebSocket upgrade required");
 	const clientIp = extractClientIp(request.headers);
 	if (!clientIp) return responseError(403, "Trusted client address unavailable");
-	if (!env.DEMO) return responseError(503, "Demo capacity unavailable");
+	if (config.admissionOff) return responseError(503, "Demo admission is closed");
 	const key = await hashIpKey(clientIp);
+	// This counts attempts, including connections subsequently rejected by the DO.
+	// Fail closed if the binding is absent or unavailable; never bypass admission.
+	try {
+		if (!env.CONNECTION_ATTEMPTS) return responseError(503, "Demo admission unavailable");
+		const { success } = await env.CONNECTION_ATTEMPTS.limit({ key });
+		if (!success) return responseError(429, "Connection attempts exceeded", ADMISSION_BUDGET.workerWindowSeconds * 1_000);
+	} catch {
+		return responseError(503, "Demo admission unavailable");
+	}
+	if (!env.DEMO) return responseError(503, "Demo capacity unavailable");
 	const headers = stripForwardingHeaders(request.headers);
 	headers.set(INTERNAL_IP_HEADER, key);
 	headers.delete("content-length");

@@ -16,7 +16,7 @@ dev-worker: build-web
 	cd servers/cloudflare-worker && npx wrangler dev --port 8080
 
 deploy-worker:
-	cd servers/cloudflare-worker && npx wrangler deploy --config wrangler.production.toml
+	npm --prefix servers/cloudflare-worker run deploy
 
 deploy-web:
 	VITE_DEFAULT_SERVER_URL=wss://server.apron.chat/ npm --prefix clients/web run build
