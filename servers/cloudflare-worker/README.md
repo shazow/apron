@@ -235,3 +235,9 @@ reserved counters and limits once per object instance/day. These are conservativ
 reservations, not Cloudflare's measured usage. Compare them with account analytics
 before tuning operation costs. Daily reservations survive redeploys and reset at
 UTC midnight; resetting the object or its counters would discard that protection.
+
+<!-- TODO: Calibrate foreground SQL reservations against representative reconnect,
+auth, and history workloads. On 2026-09-21 the app stopped at 59,976 reserved
+foreground writes after 93 admissions, while account analytics reported about
+13,165 actual writes. Preserve crash/rollback accounting and maintenance headroom
+when reducing over-reservation; aggregate analytics alone cannot justify refunds. -->
