@@ -4,6 +4,8 @@ declare global {
 	interface Env {
 		DEMO: DurableObjectNamespace<ApronDemoServer>;
 		CONNECTION_ATTEMPTS: RateLimit;
+		ACCOUNT_ID?: string;
+		ACCOUNT_ANALYTICS_TOKEN?: string;
 		ASSETS?: Fetcher;
 		ALLOWED_ORIGINS?: string;
 		RP_ID?: string;
@@ -17,6 +19,8 @@ declare global {
 		interface Env {
 			DEMO: DurableObjectNamespace<ApronDemoServer>;
 			CONNECTION_ATTEMPTS: RateLimit;
+			ACCOUNT_ID?: string;
+			ACCOUNT_ANALYTICS_TOKEN?: string;
 			ASSETS?: Fetcher;
 			ALLOWED_ORIGINS?: string;
 			RP_ID?: string;

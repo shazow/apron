@@ -17,6 +17,11 @@ The entry Worker rejects excessive connection attempts before calling the DO.
 See [edge admission operations](docs/edge-admission.md) for applying WAF rules,
 their Free-plan limitations, and the quota-exhaustion runbook.
 
+For an additional delayed account-wide safety stop, configure `ACCOUNT_ID` and
+the `ACCOUNT_ANALYTICS_TOKEN` secret. The Durable Object refreshes account usage
+periodically and keeps local limits as the fallback when analytics is unavailable.
+Provision it with `npx wrangler secret put ACCOUNT_ANALYTICS_TOKEN --config wrangler.production.toml`.
+
 Use **Workers Free**, with SQLite Durable Objects. No paid plan or auxiliary
 service is required. This repository does not deploy as part of installation
 or tests. A paid plan's included allowance is not a spending cap.

@@ -33,6 +33,22 @@ The binding is approximate and local to each Cloudflare location, not a global
 daily counter. NAT users share this limit. Development and production use distinct
 limiter namespaces; additional deployments must use distinct namespace IDs too.
 
+`ACCOUNT_USAGE_POLICY` in `src/budget.ts` defines the lightweight account-usage
+stop. The Durable Object refreshes after about 1,000 incoming events, no more
+often than once per minute, and treats a snapshot older than five minutes as
+stale. Set `ACCOUNT_ID` and the read-only `ACCOUNT_ANALYTICS_TOKEN` secret on a
+deployment to enable it. Without both values, local application limits remain
+active and no analytics request is attempted. Refresh failures retain the last
+successful snapshot and retry with backoff; they do not pause the service.
+Set the token with `npx wrangler secret put ACCOUNT_ANALYTICS_TOKEN --config
+wrangler.production.toml`; never put the token in Wrangler vars or source code.
+
+The snapshot is account-wide and delayed. At 90% of any configured Workers Free
+allowance, the object persists a stop for that UTC day, rejects new connections,
+and closes live sockets. This is an early-stop signal, not an exact remaining-
+quota meter: analytics lag, sampling, and other account workloads can still cause
+an earlier or later platform limit.
+
 The optional Free WAF rate rule uses `edgeRequestsPerIpWindow`,
 `edgeWindowSeconds`, and `edgeBlockSeconds` from the same file. Its counting and
 blocking windows must both be 10 seconds on Free. It is generated disabled because

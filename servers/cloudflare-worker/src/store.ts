@@ -9,6 +9,7 @@
  */
 
 import { BOOTSTRAP_ROW_RESERVATION, DEFAULT_LIMITS, MAINTENANCE_CONTROL_RESERVE } from "./budget";
+import type { AccountUsageSnapshot } from "./account-usage";
 import type {
   AdmissionSnapshot,
   AuthTier,
@@ -517,6 +518,7 @@ interface RawMaintenanceRow {
 const META_EFFECTIVE_NOW = "effective_now_ms";
 const META_NEXT_THREAD = "next_thread_seq";
 const META_ACCOUNTING_UNSAFE = "accounting_unsafe";
+const META_ACCOUNT_USAGE = "account_usage_snapshot";
 
 function isFiniteInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
@@ -1330,6 +1332,31 @@ export class Store {
 
   accountingStatus(): { unsafe: boolean; database_bytes: number | null } {
     return { unsafe: this.accountingUnsafe, database_bytes: this.databaseSize() };
+  }
+
+  accountUsageSnapshot(): AccountUsageSnapshot | null {
+    this.ensureReady();
+    const raw = this.metaValue(META_ACCOUNT_USAGE);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<AccountUsageSnapshot>;
+      const sampledAt = parsed.sampledAt;
+      if (typeof parsed.day !== "string" || typeof sampledAt !== "number" || !Number.isSafeInteger(sampledAt) || sampledAt < 0 ||
+        ["workerRequests", "durableObjectRequests", "durableObjectDurationGbSeconds", "sqlRowsRead", "sqlRowsWritten", "storedBytes"].some(key => {
+          const value = parsed[key as keyof AccountUsageSnapshot];
+          return typeof value !== "number" || !Number.isFinite(value) || value < 0;
+        }) || typeof parsed.stop !== "boolean") return null;
+      return parsed as AccountUsageSnapshot;
+    } catch {
+      return null;
+    }
+  }
+
+  persistAccountUsageSnapshot(snapshot: AccountUsageSnapshot, now = this.clock.now()): void {
+    this.ensureReady();
+    this.reserved({ reads: 8, writes: 8 }, true, now, () => {
+      this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)", META_ACCOUNT_USAGE, JSON.stringify(snapshot));
+    });
   }
 
   budget(now = this.clock.now()): BudgetSnapshot {

@@ -170,3 +170,24 @@ export const ADMISSION_BUDGET = Object.freeze({
 	edgeWindowSeconds: 10,
 	edgeBlockSeconds: 10,
 });
+
+// Account analytics are a delayed safety signal, not an exact quota meter.
+// Keep this policy separate from local application reservations: a refresh can
+// only stop this object after Cloudflare reports that the account is nearing a
+// shared allowance.
+export const ACCOUNT_USAGE_POLICY = Object.freeze({
+	refreshEveryEvents: 1_000,
+	minimumRefreshIntervalMs: 60_000,
+	staleAfterMs: 5 * 60_000,
+	initialRetryMs: 60_000,
+	maxRetryMs: 15 * 60_000,
+	stopRatio: 0.90,
+	freeDaily: Object.freeze({
+		workerRequests: 100_000,
+		durableObjectRequests: 100_000,
+		durableObjectDurationGbSeconds: 13_000,
+		sqlRowsRead: 5_000_000,
+		sqlRowsWritten: 100_000,
+	}),
+	freeStoredBytes: 5 * 1024 * 1024 * 1024,
+});
