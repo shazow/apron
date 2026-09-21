@@ -84,7 +84,7 @@ only for the socket, and IP/resource quotas and retention still apply. Changing
 frontend origins does not give an IP a fresh allowance. Honor `retry_after`.
 
 The server advertises only `anonymous` authentication to custom frontends.
-`web.apron.chat` additionally receives `webauthn`; inspect each connection's
+`web.apron.chat` additionally receives `webauthn` and `token`; inspect each connection's
 `server.params.auth` rather than assuming passkeys are available everywhere.
 A frontend with a Content Security Policy must permit the endpoint in
 `connect-src` (for example, `connect-src wss://server.apron.chat`). Wildcard

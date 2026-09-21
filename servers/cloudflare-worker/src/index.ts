@@ -24,6 +24,9 @@ import { Store, StoreError, type StoreConfig, type StoreThreadRecord, type Store
 const OBJECT_NAME = "public-demo-v1";
 const INTERNAL_IP_HEADER = "X-Apron-Trusted-IP-Key";
 const ATTACHMENT_VERSION = 1;
+/** Key prefix for passkey session records in the object's key-value storage. */
+const SESSION_KEY_PREFIX = "session:";
+const MAX_SESSION_TOKEN_CHARS = 256;
 
 type WebSocketConnection = WebSocket & {
 	serializeAttachment?: (value: unknown) => void;
@@ -48,6 +51,19 @@ interface ConnectionAttachment {
 	closing?: boolean;
 }
 
+/**
+ * A bearer session minted by a verified passkey login (protocol Appendix C,
+ * session resume). Stored under a SHA-256 key so the plaintext token never
+ * rests in storage. Kept in key-value storage rather than the SQL store: it is
+ * throwaway state with its own expiry and needs no schema migration.
+ */
+interface StoredSession {
+	v: 1;
+	userId: string;
+	origin: string;
+	expiresMs: number;
+}
+
 interface IdentityShape {
 	user_id: string;
 	name?: string;
@@ -56,6 +72,17 @@ interface IdentityShape {
 
 function randomId(prefix: string): string {
 	return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+	let binary = "";
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+async function sessionKey(token: string): Promise<string> {
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
+	return SESSION_KEY_PREFIX + Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function nowMs(): number {
@@ -464,6 +491,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 				writeAttachment(socket, attachment);
 			}
 		}
+		try { await this.sweepSessions(now); } catch { /* retried on the next alarm */ }
 		try {
 			const result = this.store.runCleanup(now);
 			if (result?.did_work) this.announceRoomToAll();
@@ -491,7 +519,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 				protocol: 2,
 				name: "apron-cloudflare-demo/1",
 				caps: ["history", "edit"],
-				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "anonymous"] : ["anonymous"],
+				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "anonymous"] : ["anonymous"],
 				demo: {
 					retention_seconds: limits.retentionSeconds,
 					cleanup_seconds: limits.cleanupSeconds,
@@ -634,6 +662,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 			await this.rescheduleAlarm();
 			return;
 		}
+		if (scheme === "token") {
+			await this.handleTokenResume(socket, attachment, request);
+			return;
+		}
 		if (scheme !== "webauthn") throw { name: "unsupported", message: "Unsupported authentication scheme" } satisfies ProtocolError;
 		if (attachment.tier === "registered") throw { name: "denied", message: "Identity switching requires reconnect" } satisfies ProtocolError;
 		const action = requiredString(params, "action");
@@ -684,15 +716,74 @@ export class ApronDemoServer extends DurableObject<Env> {
 		});
 		const latest = connectionAttachment(socket);
 		if (!latest || latest.closing || !openSocket(socket)) return;
-		const activeForUser = this.ctx.getWebSockets().filter(peer => peer !== socket && connectionAttachment(peer)?.userId === finished.identity.user_id).length;
-		if (activeForUser >= this.config.limits.registeredConnectionsPerUser) throw { name: "retry_after", message: "Demo capacity reached", data: { ms: 60_000 } } satisfies ProtocolError;
+		this.assertRegisteredCapacity(socket, finished.identity.user_id);
+		const token = await this.issueSession(finished.identity.user_id, origin, nowMs());
+		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 		attachment.tier = "registered";
 		attachment.userId = finished.identity.user_id;
 		attachment.name = finished.identity.name;
 		writeSessionAttachment(socket, attachment);
-		this.reply(socket, request, { you: identityOf(attachment) });
+		this.reply(socket, request, { you: identityOf(attachment), token });
 		this.announceAuthenticated(socket, attachment);
 		await this.rescheduleAlarm();
+	}
+
+	private assertRegisteredCapacity(socket: WebSocketConnection, userId: string): void {
+		const activeForUser = this.ctx.getWebSockets().filter(peer => peer !== socket && connectionAttachment(peer)?.userId === userId).length;
+		if (activeForUser >= this.config.limits.registeredConnectionsPerUser) throw { name: "retry_after", message: "Demo capacity reached", data: { ms: 60_000 } } satisfies ProtocolError;
+	}
+
+	/**
+	 * Resumes a passkey session through the protocol's `token` scheme. The
+	 * session must come from a ceremony on this same allowed origin and be
+	 * unexpired; a successful resume renews it for a full lifetime. The token is
+	 * not rotated, so several tabs may share one persisted token.
+	 */
+	private async handleTokenResume(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		if (attachment.tier === "registered") throw { name: "denied", message: "Identity switching requires reconnect" } satisfies ProtocolError;
+		const origin = this.requestOrigin(socket);
+		if (!origin || !this.config.rpOrigins.includes(origin)) throw { name: "denied", message: "Frontend origin is not configured for passkeys" } satisfies ProtocolError;
+		const token = requiredString(request.params, "token");
+		if (token.length > MAX_SESSION_TOKEN_CHARS) throw { name: "invalid_params", message: "token is too long" } satisfies ProtocolError;
+		const key = await sessionKey(token);
+		const session = await this.ctx.storage.get<StoredSession>(key);
+		const now = nowMs();
+		const expired = { name: "denied", message: "Session expired; sign in with your passkey" } satisfies ProtocolError;
+		if (!session || session.v !== 1 || session.origin !== origin || session.expiresMs <= now) {
+			if (session && session.expiresMs <= now) await this.ctx.storage.delete(key);
+			throw expired;
+		}
+		const identity = this.store.getIdentity(session.userId);
+		if (!identity) {
+			await this.ctx.storage.delete(key);
+			throw expired;
+		}
+		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
+		this.assertRegisteredCapacity(socket, identity.userId);
+		await this.ctx.storage.put<StoredSession>(key, { ...session, expiresMs: now + this.config.limits.sessionTtlSeconds * 1_000 });
+		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
+		attachment.tier = "registered";
+		attachment.userId = identity.userId;
+		attachment.name = identity.name;
+		writeSessionAttachment(socket, attachment);
+		this.reply(socket, request, { you: identityOf(attachment), token });
+		this.announceAuthenticated(socket, attachment);
+		await this.rescheduleAlarm();
+	}
+
+	private async issueSession(userId: string, origin: string, now: number): Promise<string> {
+		const token = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+		await this.ctx.storage.put<StoredSession>(await sessionKey(token), {
+			v: 1, userId, origin, expiresMs: now + this.config.limits.sessionTtlSeconds * 1_000,
+		});
+		return token;
+	}
+
+	/** Drops expired session records. Runs from the alarm, beside other sweeps. */
+	private async sweepSessions(now: number): Promise<void> {
+		const sessions = await this.ctx.storage.list<StoredSession>({ prefix: SESSION_KEY_PREFIX });
+		const expired = [...sessions].filter(([, session]) => session.expiresMs <= now).map(([key]) => key);
+		if (expired.length) await this.ctx.storage.delete(expired);
 	}
 
 	private requestOrigin(socket: WebSocketConnection): string | null {

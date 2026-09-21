@@ -289,6 +289,11 @@ func (s *Server) authenticateToken(c *client, req request, now time.Time) (any, 
 	if !ok || session.origin != c.origin || !now.Before(session.expires) {
 		return nil, &rpcError{Code: codeDenied, Message: "Session expired; sign in with your passkey"}
 	}
+	// Each successful resume renews the session for a full lifetime, so an
+	// active user is never forced back through a ceremony. The token itself is
+	// not rotated: several tabs may share one persisted token.
+	session.expires = now.Add(sessionLifetime)
+	s.sessions[key] = session
 	c.token = key
 	return s.finishPasskey(c, req, session.user, token)
 }

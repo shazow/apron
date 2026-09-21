@@ -52,7 +52,15 @@ test('passkeys preserve identity and edit ownership through sign-out, login, and
 	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
 	await editMessage(savedMessage, `${message}-resumed`);
 	await waitForMessage(page, `${message}-resumed`);
-	// A reload deliberately drops the in-memory bearer; the passkey restores the account.
+	// A reload resumes the persisted session token: the account survives without a ceremony.
+	await page.reload();
+	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
+	await profile.click();
+	await expect(dialog.locator('code')).toHaveText(identity!);
+	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
+	// Signing out forgets the stored token, so the next reload starts as a guest.
+	await dialog.getByRole('button', { name: 'Sign out', exact: true }).click();
+	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	await page.reload();
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	await profile.click();

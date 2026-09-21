@@ -46,13 +46,16 @@ Browser cancellation and verification errors appear in the profile editor. A
 connection change cancels the active ceremony. Chat requests pause while a
 ceremony is active, preventing edits from crossing an identity change.
 
-The session token stays in memory, scoped to this mounted client and server URL,
-and automatically resumes the same identity after a transport disconnect when the
-server advertises token authentication. A page reload requires signing in again.
-Expired sessions require another passkey login; the client does not automatically
-replace them with a guest identity. Signing out clears the in-memory credentials
-and reconnects as a guest. The Go example's credentials are also in memory and
-are lost on backend restart.
+When the server advertises token authentication, the session token it returns
+is kept in `localStorage`, keyed by server URL, and automatically resumes the
+same identity after a transport disconnect, a page reload, or in a new tab, for
+as long as the server keeps the session alive (the example servers renew it on
+every resume). Servers that offer passkeys without token resume get no stored
+credential; there a reconnect runs another ceremony and a reload starts as a
+guest. Expired sessions require another passkey login; the client does not
+automatically replace them with a guest identity. Signing out clears the stored
+credentials and reconnects as a guest. The Go example's sessions are in memory
+and are lost on backend restart.
 
 The WebAuthn exchange follows [Appendix C of the protocol](../../PROTOCOL.md#appendix-c--webauthn-authentication-optional):
 both registration and login use `action` plus `step: "begin"` or

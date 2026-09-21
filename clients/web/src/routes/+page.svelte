@@ -11,7 +11,7 @@
 		type RoomSnapshot
 	} from '$lib/protocol/client';
 	import { formatBytes, renderMarkdown, safeUrl } from '$lib/protocol/markdown';
-	import { isJsonObject, type Embed, type JsonObject, type MessageRecord, type Identity, type ThreadAnnouncement } from '$lib/protocol/types';
+	import { isJsonObject, type Embed, type JsonObject, type MessageRecord, type Identity, type ServerParams, type ThreadAnnouncement } from '$lib/protocol/types';
 
 	type Feedback = { kind: 'pending' | 'error'; text: string };
 	type PendingThreadStart = { room: string; thread_id: string };
@@ -30,8 +30,11 @@
 	type ProfileStatus = 'idle' | 'saving' | 'altered' | 'declined';
 	type ConnectScheme = 'anonymous' | 'webauthn';
 	type RecentServer = { url: string; label?: string };
+	type HeldSession = { rooms: RoomSnapshot[]; activeRoom?: string; you?: Identity; server?: ServerParams };
 
 	const GROUP_WINDOW_MS = 5 * 60 * 1000;
+	/** How long a reconnect may run quietly before the UI escalates and offers a manual retry. */
+	const RECONNECT_STALL_MS = 10_000;
 	const RECENT_SERVERS_MAX = 5;
 	const SCHEMES: Record<ConnectScheme, { label: string; hint: string }> = {
 		anonymous: { label: 'Guest', hint: 'No token needed; the server picks a guest identity.' },
@@ -39,7 +42,7 @@
 	};
 
 	const blankSnapshot = (): ClientSnapshot => ({
-		status: 'idle', rooms: [], pending: [], typing: [], showReconnectDivider: false
+		status: 'idle', authenticated: false, rooms: [], pending: [], typing: [], showReconnectDivider: false
 	});
 
 	let snapshot = $state<ClientSnapshot>(blankSnapshot());
@@ -58,6 +61,8 @@
 	let profileServerName = $state('');
 	let passkeyError = $state('');
 	let passkeyNotice = $state('');
+	/** True once a dropped connection has stayed down for RECONNECT_STALL_MS. */
+	let reconnectStalled = $state(false);
 	let passkeyUnavailable = $state<string | undefined>();
 	let editingId = $state<string | undefined>();
 	let editDraft = $state('');
@@ -89,7 +94,50 @@
 	let highlightTimer: ReturnType<typeof setTimeout> | undefined;
 	let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 
-	let activeRoom = $derived(snapshot.rooms.find((room) => room.id === snapshot.activeRoom));
+	/** The socket is open and the server has accepted our auth; identity kept from a previous connection does not count. */
+	let sessionReady = $derived(snapshot.status === 'connected' && snapshot.authenticated && Boolean(snapshot.you));
+	/**
+	 * The last authenticated view. The protocol client rebuilds its rooms and
+	 * identity from each new connection, so while a reconnect is in flight (and
+	 * until the fresh rooms have arrived) the page keeps showing this instead of
+	 * collapsing to an empty shell.
+	 */
+	let held = $state<HeldSession | undefined>();
+	/** Room to re-select once the reconnected server announces it. */
+	let pendingActiveRoom = $state<string | undefined>();
+	let holding = $derived(Boolean(held) && (!sessionReady || snapshot.rooms.length === 0) && snapshot.status !== 'offline');
+	let viewRooms = $derived(snapshot.rooms.length ? snapshot.rooms : holding ? held!.rooms : []);
+	let viewActiveRoom = $derived(snapshot.rooms.length ? snapshot.activeRoom : holding ? held!.activeRoom : undefined);
+	let viewYou = $derived(snapshot.you ?? (holding ? held!.you : undefined));
+	let viewServer = $derived(snapshot.server ?? (holding ? held!.server : undefined));
+	let activeRoom = $derived.by(() => {
+		const live = viewRooms.find((room) => room.id === viewActiveRoom);
+		// A freshly announced room starts empty while history recovers; keep the
+		// held copy on screen until the recovered timeline replaces it.
+		if (live && held && live !== held.rooms.find((room) => room.id === live.id) && live.recovering && live.timeline.order.length === 0) {
+			return held.rooms.find((room) => room.id === live.id) ?? live;
+		}
+		return live;
+	});
+	$effect(() => {
+		if (snapshot.status === 'offline') {
+			held = undefined;
+			return;
+		}
+		if (!sessionReady || snapshot.disconnectedAt !== undefined || !snapshot.rooms.length) return;
+		if (snapshot.rooms.some((room) => room.recovering && room.timeline.order.length === 0)) return;
+		held = { rooms: snapshot.rooms, activeRoom: snapshot.activeRoom, you: snapshot.you, server: snapshot.server };
+	});
+	$effect(() => {
+		if (snapshot.disconnectedAt !== undefined && held) pendingActiveRoom = held.activeRoom;
+	});
+	$effect(() => {
+		const target = pendingActiveRoom;
+		if (!target || !sessionReady || !snapshot.rooms.length) return;
+		if (!snapshot.rooms.some((room) => room.id === target)) return;
+		if (snapshot.activeRoom !== target) client?.selectRoom(target);
+		pendingActiveRoom = undefined;
+	});
 	let allMessages = $derived(timelineMessages(activeRoom));
 	let roomMessages = $derived(allMessages.filter((event) => !event.thread_id));
 	let messages = $derived(activeThread ? allMessages.filter((event) => event.thread_id === activeThread) : roomMessages);
@@ -181,21 +229,21 @@
 		return items;
 	});
 	let canCompose = $derived(Boolean(
-		activeRoom && snapshot.status === 'connected' && snapshot.you && !snapshot.authBusy &&
+		activeRoom && sessionReady && !snapshot.authBusy &&
 		(!activeThread || Boolean(activeThreadAnnouncement))
 	));
-	let canEdit = $derived(snapshot.server?.caps?.includes('edit') === true);
-	let canUpload = $derived(typeof snapshot.server?.upload === 'string' && snapshot.server.upload.length > 0);
-	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== snapshot.you?.user_id));
+	let canEdit = $derived(viewServer?.caps?.includes('edit') === true);
+	let canUpload = $derived(typeof viewServer?.upload === 'string' && viewServer.upload.length > 0);
+	let roomTyping = $derived(snapshot.typing.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== viewYou?.user_id));
 	let typingNames = $derived(roomTyping.map((entry) => entry.from.name || entry.from.user_id));
-	let backendLabel = $derived(snapshot.server?.name || backendHost(serverInput) || 'Apron');
+	let backendLabel = $derived(viewServer?.name || backendHost(serverInput) || 'Apron');
 	let threadReplyCount = $derived(activeThreadAnnouncement
 		? messages.filter((event) => event.message_id !== activeThreadAnnouncement?.root_message_id).length
 		: 0);
 	/** Sign-in schemes this client can drive, narrowed to what the connected server offers once it is the one in the field. */
 	let connectSchemes = $derived.by((): ConnectScheme[] => {
 		const supported: ConnectScheme[] = passkeyUnavailable ? ['anonymous'] : ['anonymous', 'webauthn'];
-		const offered = snapshot.server?.auth;
+		const offered = viewServer?.auth;
 		if (!offered || !client || serverInput.trim() !== client.url) return supported;
 		const narrowed = supported.filter((scheme) => offered.includes(scheme));
 		return narrowed.length ? narrowed : supported;
@@ -204,7 +252,7 @@
 		if (!connectPending) return 'idle';
 		if (snapshot.authBusy) return 'authing';
 		if (snapshot.error) return 'idle';
-		if (snapshot.status === 'connected') return snapshot.you ? 'idle' : 'authing';
+		if (snapshot.status === 'connected') return sessionReady ? 'idle' : 'authing';
 		if (snapshot.status === 'connecting' || snapshot.status === 'reconnecting') return 'connecting';
 		return 'idle';
 	});
@@ -214,17 +262,34 @@
 		if (!connectPending || !snapshot.error) return '';
 		return snapshot.error === 'WebSocket connection error' ? 'Can’t reach the server. Check the address and try again.' : snapshot.error;
 	});
-	let canCancelConnect = $derived(snapshot.rooms.length > 0 || (snapshot.status === 'connected' && Boolean(snapshot.you)));
+	let canCancelConnect = $derived(viewRooms.length > 0 || sessionReady);
 	let unseenCount = $derived(stickToBottom ? 0 : Math.max(0, messages.length - seenCount));
 	let connectionState = $derived.by((): 'connected' | 'connecting' | 'reconnecting' | 'offline' | 'error' => {
-		if (snapshot.status === 'connected' && snapshot.you) return 'connected';
-		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'connecting';
-		if (snapshot.status === 'reconnecting') return 'reconnecting';
+		if (sessionReady) return 'connected';
 		if (snapshot.status === 'offline') return 'offline';
+		if (snapshot.disconnectedAt !== undefined || snapshot.status === 'reconnecting') return 'reconnecting';
 		return 'connecting';
 	});
+	/** A transport-level failure during a reconnect is expected noise; anything else (auth refused, bad frames) is worth surfacing. */
+	let reconnectError = $derived(snapshot.error && snapshot.error !== 'WebSocket connection error' ? snapshot.error : '');
+	/** A reconnect that has stalled past the quiet window, or one the server refused. */
+	let reconnectNeedsAttention = $derived(connectionState === 'reconnecting' && (reconnectStalled || Boolean(reconnectError)));
+	$effect(() => {
+		const since = snapshot.disconnectedAt;
+		if (since === undefined || sessionReady) {
+			reconnectStalled = false;
+			return;
+		}
+		const remaining = RECONNECT_STALL_MS - (Date.now() - since);
+		if (remaining <= 0) {
+			reconnectStalled = true;
+			return;
+		}
+		const timer = setTimeout(() => (reconnectStalled = true), remaining);
+		return () => clearTimeout(timer);
+	});
 	let demoRetentionNotice = $derived.by(() => {
-		const seconds = snapshot.server?.demo?.retention_seconds;
+		const seconds = viewServer?.demo?.retention_seconds;
 		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return '';
 		const hours = Math.max(1, Math.round(seconds / 3600));
 		return hours >= 20 && hours <= 28
@@ -238,7 +303,7 @@
 	});
 
 	$effect(() => {
-		if (!connectPending || snapshot.authBusy || snapshot.status !== 'connected' || !snapshot.you) return;
+		if (!connectPending || snapshot.authBusy || !sessionReady) return;
 		if (!connectSchemes.includes(connectScheme)) connectScheme = connectSchemes[0];
 		if (connectScheme === 'webauthn' && !snapshot.passkeySession) {
 			connectPending = false;
@@ -400,14 +465,20 @@
 	});
 
 	function statusLabel(): string {
-		if (snapshot.status === 'connected' && snapshot.you) return 'Connected';
-		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'Connecting…';
-		if (snapshot.status === 'reconnecting') {
+		if (connectionState === 'connected') return 'Connected';
+		if (connectionState === 'offline') return 'Offline';
+		if (connectionState === 'reconnecting') {
 			if (snapshot.retryAfterMs && snapshot.retryAfterMs > 0) return `Connection limited. Retrying in ${retryAfterLabel(snapshot.retryAfterMs)}…`;
-			return 'Connection lost. Reconnecting…';
+			if (reconnectError) return reconnectStalled ? `Still disconnected: ${reconnectError}` : reconnectError;
+			return reconnectStalled ? 'Still trying to reconnect…' : 'Reconnecting…';
 		}
-		if (snapshot.status === 'offline') return 'Offline';
+		if (snapshot.status === 'connecting' || snapshot.status === 'connected') return 'Connecting…';
 		return 'Waiting to connect';
+	}
+
+	function retryConnection(): void {
+		reconnectStalled = false;
+		client?.retryNow();
 	}
 
 	function retryAfterLabel(milliseconds: number): string {
@@ -489,6 +560,8 @@
 			localStorage.setItem('bottomless.displayName', displayName);
 			client.setDisplayName(displayName);
 			connectPending = true;
+			held = undefined;
+			pendingActiveRoom = undefined;
 			if (normalized !== client.url) client.setUrl(normalized);
 			else client.restart();
 		} catch (cause) {
@@ -497,7 +570,7 @@
 	}
 
 	function finishConnect(): void {
-		if (client) rememberServer(client.url, snapshot.server?.name || backendHost(client.url) || undefined);
+		if (client) rememberServer(client.url, viewServer?.name || backendHost(client.url) || undefined);
 		connectPending = false;
 		connectOpen = false;
 	}
@@ -534,7 +607,7 @@
 			closeProfile();
 			return;
 		}
-		profileDraft = snapshot.you?.name || displayName;
+		profileDraft = viewYou?.name || displayName;
 		profileStatus = 'idle';
 		profileServerName = '';
 		passkeyError = '';
@@ -552,9 +625,13 @@
 		passkeyError = '';
 		passkeyNotice = '';
 		try {
-			if (action === 'logout') await client.signOut();
+			if (action === 'logout') {
+				held = undefined;
+				pendingActiveRoom = undefined;
+				await client.signOut();
+			}
 			else await client.usePasskey(action);
-			profileDraft = snapshot.you?.name || displayName;
+			profileDraft = viewYou?.name || displayName;
 			passkeyNotice = action === 'register' ? 'Passkey saved · this backend will ask your device next time'
 				: action === 'login' ? 'Signed in with your passkey.' : 'Signed out.';
 		} catch (cause) {
@@ -592,6 +669,8 @@
 
 	function chooseRoom(room: RoomSnapshot): void {
 		client?.selectRoom(room.id);
+		if (holding && held) held = { ...held, activeRoom: room.id };
+		pendingActiveRoom = holding ? room.id : undefined;
 		setDestination(room.id, undefined);
 		mobilePane = 'main';
 		composer?.focus();
@@ -833,7 +912,7 @@
 	}
 
 	function isOwn(event: MessageRecord): boolean {
-		return Boolean(snapshot.you && event.from?.user_id === snapshot.you.user_id);
+		return Boolean(viewYou && event.from?.user_id === viewYou.user_id);
 	}
 
 	function senderName(event: MessageRecord): string {
@@ -887,7 +966,7 @@
 	}
 
 	function mentionsMe(event: MessageRecord): boolean {
-		const me = snapshot.you;
+		const me = viewYou;
 		if (!me || isOwn(event)) return false;
 		const text = textOf(event);
 		if (!text) return false;
@@ -1049,11 +1128,11 @@
 					<span class="ap-sect-toggle" role="heading" aria-level="2">Rooms</span>
 				</div>
 				<div class="ap-sect-body" data-testid="room-list">
-					{#if snapshot.rooms.length === 0}
+					{#if viewRooms.length === 0}
 						<p class="app-muted">{snapshot.status === 'connected' ? 'No rooms yet.' : 'Waiting for rooms…'}</p>
 					{:else}
-						{#each snapshot.rooms as room (room.id)}
-							{@const active = room.id === snapshot.activeRoom}
+						{#each viewRooms as room (room.id)}
+							{@const active = room.id === viewActiveRoom}
 							<button class="ap-room" class:ap-room-active={active && !activeThread} type="button" data-room={room.id} aria-current={active && !activeThread ? 'page' : undefined} onclick={() => chooseRoom(room)}>
 								<span class="ap-room-text">
 									<span class="ap-room-name">{room.name}</span>
@@ -1081,10 +1160,10 @@
 				<div class="ap-profile-pop" role="dialog" aria-label="Edit profile">
 					<form class="ap-profedit" onsubmit={saveProfile}>
 						<div class="ap-profedit-top">
-							{#if snapshot.you?.avatar && safeUrl(snapshot.you.avatar)}
-								<img class="ap-avatar ap-avatar-lg" src={snapshot.you.avatar} alt="" />
+							{#if viewYou?.avatar && safeUrl(viewYou.avatar)}
+								<img class="ap-avatar ap-avatar-lg" src={viewYou.avatar} alt="" />
 							{:else}
-								<span class="ap-avatar ap-avatar-lg" aria-hidden="true">{initials(profileDraft || snapshot.you?.user_id || '?')}</span>
+								<span class="ap-avatar ap-avatar-lg" aria-hidden="true">{initials(profileDraft || viewYou?.user_id || '?')}</span>
 							{/if}
 							<div class="ap-profedit-av">
 								<span class="ap-profedit-hint">{canUpload ? 'Avatar uploads are not supported by this client yet.' : 'This backend has no upload URL, so your avatar can’t be set here.'}</span>
@@ -1093,13 +1172,13 @@
 						<label class="ap-fieldlabel">Handle
 							<input class="ap-field" data-testid="display-name-input" bind:value={profileDraft} disabled={profileStatus === 'saving'} maxlength="64" autocomplete="nickname" spellcheck="false" />
 						</label>
-						<p class="ap-profedit-hint">ID <code>{snapshot.you?.user_id ?? '—'}</code> · set by the server, can’t be changed</p>
+						<p class="ap-profedit-hint">ID <code>{viewYou?.user_id ?? '—'}</code> · set by the server, can’t be changed</p>
 						{#if profileStatus === 'altered'}
 							<p class="ap-profedit-note" role="status">The server saved your handle as “{profileServerName}”.</p>
 						{:else if profileStatus === 'declined'}
 							<p class="ap-profedit-note ap-profedit-err" role="alert">The server declined this handle. Your old one is still in use.</p>
 						{/if}
-						{#if snapshot.server?.auth.includes('webauthn')}
+						{#if viewServer?.auth.includes('webauthn')}
 							<div class="ap-profedit-signin" role="group" aria-label="Sign-in">
 								<span class="ap-fieldlabel">Sign-in</span>
 								{#if snapshot.authBusy}
@@ -1107,7 +1186,7 @@
 								{:else}
 									<span class="ap-profedit-row">
 										<span class="app-signin-actions">
-											<button class="ap-btn ap-btn-sm" type="button" disabled={!!passkeyUnavailable || !snapshot.you || snapshot.status !== 'connected' || profileStatus === 'saving'} onclick={() => authenticateWithPasskey('register')}>Add passkey</button>
+											<button class="ap-btn ap-btn-sm" type="button" disabled={!!passkeyUnavailable || !viewYou || snapshot.status !== 'connected' || profileStatus === 'saving'} onclick={() => authenticateWithPasskey('register')}>Add passkey</button>
 											{#if snapshot.passkeySession}
 												<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={snapshot.status !== 'connected' || profileStatus === 'saving'} onclick={() => authenticateWithPasskey('logout')}>Sign out</button>
 											{:else}
@@ -1134,14 +1213,14 @@
 					</form>
 				</div>
 			{/if}
-			<button class="ap-profile-me" class:ap-profile-open={profileOpen} type="button" aria-haspopup="dialog" aria-expanded={profileOpen} aria-label={`Your profile on ${backendLabel}: ${snapshot.you?.name || snapshot.you?.user_id || 'not signed in'}. Edit`} onclick={openProfile}>
-				{#if snapshot.you?.avatar && safeUrl(snapshot.you.avatar)}
-					<img class="ap-avatar ap-avatar-md" src={snapshot.you.avatar} alt="" />
+			<button class="ap-profile-me" class:ap-profile-open={profileOpen} type="button" aria-haspopup="dialog" aria-expanded={profileOpen} aria-label={`Your profile on ${backendLabel}: ${viewYou?.name || viewYou?.user_id || 'not signed in'}. Edit`} onclick={openProfile}>
+				{#if viewYou?.avatar && safeUrl(viewYou.avatar)}
+					<img class="ap-avatar ap-avatar-md" src={viewYou.avatar} alt="" />
 				{:else}
-					<span class="ap-avatar ap-avatar-md" aria-hidden="true">{initials(snapshot.you?.name || snapshot.you?.user_id || '?')}</span>
+					<span class="ap-avatar ap-avatar-md" aria-hidden="true">{initials(viewYou?.name || viewYou?.user_id || '?')}</span>
 				{/if}
 				<span class="ap-profile-text">
-					<span class="ap-profile-name">{snapshot.you?.name || snapshot.you?.user_id || 'Not signed in'}</span>
+					<span class="ap-profile-name">{viewYou?.name || viewYou?.user_id || 'Not signed in'}</span>
 					<span class="ap-profile-sub">on {backendLabel}</span>
 				</span>
 				<span class="ap-profile-edit" aria-hidden="true">Edit</span>
@@ -1210,11 +1289,20 @@
 				</section>
 			{/if}
 
-			{#if connectionState !== 'connected'}
+			{#if connectionState === 'reconnecting' && !reconnectNeedsAttention}
+				<!-- A short blip stays quiet: the room, history, and identity are all kept in place while the socket comes back. -->
+				<div class="app-reconnect-quiet" role="status">
+					<span class="ap-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+					<span data-testid="connection-status" aria-live="polite">{statusLabel()}</span>
+				</div>
+			{:else if connectionState !== 'connected'}
 				<div class="app-banner">
 					<div class="ap-status" role="status">
-						<span class="ap-status-dot" class:ap-status-warn={connectionState === 'connecting' || connectionState === 'reconnecting'} class:ap-status-danger={connectionState === 'offline' || connectionState === 'error'} aria-hidden="true"></span>
+						<span class="ap-status-dot" class:ap-status-warn={connectionState === 'connecting'} class:ap-status-danger={connectionState === 'offline' || connectionState === 'error' || reconnectNeedsAttention} aria-hidden="true"></span>
 						<span class="ap-status-text" data-testid="connection-status" aria-live="polite">{statusLabel()}</span>
+						{#if reconnectNeedsAttention}
+							<button class="ap-btn ap-btn-sm" type="button" data-testid="reconnect-retry" onclick={retryConnection}>Try Again</button>
+						{/if}
 					</div>
 				</div>
 			{:else}
@@ -1471,7 +1559,7 @@
 			</div>
 		</div>
 	{/if}
-	{#if snapshot.error}
+	{#if snapshot.error && !(connectionState === 'reconnecting' && !reconnectError)}
 		<div class="app-toast app-toast-right">
 			<div class="ap-status" role="alert">
 				<span class="ap-status-dot ap-status-danger" aria-hidden="true"></span>
@@ -1519,6 +1607,7 @@
 	.ap-roomhead-name { max-width: 100%; }
 	.ap-roomhead-actions { flex: none; }
 	.app-banner { padding: var(--space-2) var(--space-4) 0; }
+	.app-reconnect-quiet { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-4) 0; font-size: 12px; line-height: 16px; color: var(--ink-muted); }
 	.app-demo-notice .ap-status { color: var(--ink-muted); }
 	.app-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 	.app-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }

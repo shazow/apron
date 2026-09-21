@@ -135,6 +135,9 @@ function validateLimits(limits: Limits): void {
 		fail("resource ceilings exceed the demo allocation");
 	}
 	if (limits.retentionSeconds < limits.cleanupSeconds) fail("retention must be at least one cleanup interval");
+	if (!Number.isSafeInteger(limits.sessionTtlSeconds) || limits.sessionTtlSeconds <= 0 || limits.sessionTtlSeconds > 30 * 24 * 60 * 60) {
+		fail("session lifetime must be between one second and thirty days");
+	}
 	if (limits.cleanupBatch > budget.MAX_CLEANUP_BATCH || limits.threadLimit > budget.MAX_THREAD_LIMIT || limits.threadMetadataBytes > budget.MAX_THREAD_METADATA_BYTES) {
 		fail("metadata or cleanup exceeds calibrated bounds");
 	}

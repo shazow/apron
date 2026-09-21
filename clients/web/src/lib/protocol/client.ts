@@ -53,6 +53,8 @@ export interface TypingSnapshot {
 
 export interface ClientSnapshot {
 	status: ConnectionStatus;
+	/** True once the server has accepted this connection's auth request. */
+	authenticated: boolean;
 	authBusy?: boolean;
 	passkeySession?: boolean;
 	error?: string;
@@ -65,6 +67,13 @@ export interface ClientSnapshot {
 	showReconnectDivider: boolean;
 	/** Server supplied retry delay for the most recent temporary limit. */
 	retryAfterMs?: number;
+	/**
+	 * When the transport dropped (or failed to open) while the client kept
+	 * running; cleared once a connection authenticates again. The protocol
+	 * state is rebuilt from the new connection, so a UI that wants to stay put
+	 * holds its own copy of the last authenticated snapshot meanwhile.
+	 */
+	disconnectedAt?: number;
 }
 
 export interface OperationHandle<T extends JsonObject = JsonObject> {
@@ -160,9 +169,11 @@ export class ChatClient {
 	private error?: string;
 	private showReconnectDivider = false;
 	private retryAfterUntil = 0;
+	private disconnectedAt?: number;
 
 	constructor(private serverUrl: string, displayName = '') {
 		this.displayName = displayName.trim();
+		this.loadStoredSession();
 	}
 
 	static fromOptions(options: ChatClientOptions): ChatClient {
@@ -183,6 +194,7 @@ export class ChatClient {
 		this.passkeyRequired = false;
 		this.registeredSession = false;
 		this.retryAfterUntil = 0;
+		this.loadStoredSession();
 		this.resetSession('Server URL changed; pending requests were cancelled');
 		if (this.running) this.restart();
 	}
@@ -259,9 +271,37 @@ export class ChatClient {
 		this.server = undefined;
 		this.you = undefined;
 		if (socket && socket.readyState !== WebSocket.CLOSED) socket.close(1000, 'reconnecting');
+		this.disconnectedAt = undefined;
 		this.status = 'reconnecting';
 		this.scheduleReconnect(0);
 		this.emit();
+	}
+
+	/**
+	 * Skips the remaining backoff and reconnects at once, keeping the current
+	 * session state. Meant for an explicit user action after a reconnect has
+	 * stalled; the exponential backoff restarts from its shortest delay.
+	 */
+	retryNow(): void {
+		if (!this.running) return;
+		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+		this.reconnectTimer = undefined;
+		this.reconnectAttempt = 0;
+		const socket = this.socket;
+		if (socket) {
+			// A socket that is open but never authenticated (or still opening) is
+			// stuck; drop it and start over. Its close handler is ignored because
+			// the connection id advances in connectNow.
+			this.socket = undefined;
+			this.cancelPasskey();
+			this.authenticated = false;
+			this.authRequested = false;
+			this.clearTransientRequests();
+			if (socket.readyState !== WebSocket.CLOSED) socket.close(1000, 'retrying');
+		}
+		this.disconnectedAt ??= Date.now();
+		this.error = undefined;
+		this.connectNow();
 	}
 
 	selectRoom(roomId: string): void {
@@ -280,6 +320,7 @@ export class ChatClient {
 	snapshot(): ClientSnapshot {
 		return {
 			status: this.status,
+			authenticated: this.authenticated,
 			authBusy: Boolean(this.passkeyAbort),
 			passkeySession: Boolean(this.registeredSession && this.authenticated),
 			error: this.error,
@@ -309,7 +350,8 @@ export class ChatClient {
 				.filter((entry) => entry.active)
 				.map(({ room, from, active }) => ({ room, from, active })),
 			showReconnectDivider: this.showReconnectDivider,
-			retryAfterMs: this.retryAfterRemaining()
+			retryAfterMs: this.retryAfterRemaining(),
+			...(this.disconnectedAt !== undefined ? { disconnectedAt: this.disconnectedAt } : {})
 		};
 	}
 
@@ -344,6 +386,7 @@ export class ChatClient {
 	async signOut(): Promise<void> {
 		if (this.passkeyAbort || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
 		this.sessionToken = undefined;
+		this.storeSession(undefined);
 		this.passkeyRequired = false;
 		this.registeredSession = false;
 		this.resetSession('Signed out');
@@ -509,11 +552,15 @@ export class ChatClient {
 			this.authRequested = false;
 			this.clearTransientRequests();
 			this.clearTyping();
+			// The protocol view is rebuilt from the next connection's announcements
+			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session). The UI keeps the
+			// last authenticated view on screen meanwhile, keyed off disconnectedAt.
 			this.rooms.clear();
 			this.activeRoomId = undefined;
 			this.server = undefined;
 			this.you = undefined;
 			if (this.running) {
+				this.disconnectedAt ??= Date.now();
 				this.status = 'reconnecting';
 				this.scheduleReconnect();
 			} else {
@@ -610,7 +657,10 @@ export class ChatClient {
 			if (socket !== this.socket) return;
 			this.authRequested = false;
 			// Never silently downgrade a passkey session to a different guest identity.
-			if (resume) this.sessionToken = undefined;
+			if (resume) {
+				this.sessionToken = undefined;
+				this.storeSession(undefined);
+			}
 			this.error = cause.message;
 			this.emit();
 		});
@@ -632,12 +682,17 @@ export class ChatClient {
 			this.sessionToken = result.token;
 			this.passkeyRequired = true;
 			this.registeredSession = true;
+			// Persist only when the server can actually resume with it, so a reload
+			// against a ceremony-only server does not turn into an unprompted
+			// passkey request at load time.
+			if (this.server?.auth.includes('token')) this.storeSession(result.token);
 		}
 		this.error = undefined;
 		this.retryAfterUntil = 0;
 		this.authenticated = true;
 		this.authRequested = false;
 		this.reconnectAttempt = 0;
+		this.disconnectedAt = undefined;
 		this.showReconnectDivider = this.showReconnectDivider || this.rooms.size > 0;
 		if (this.displayName) this.sendNick();
 		this.emit();
@@ -1045,6 +1100,7 @@ export class ChatClient {
 		this.registeredSession = false;
 		this.passkeyRequired = false;
 		this.error = undefined;
+		this.disconnectedAt = undefined;
 		this.clearTyping();
 		this.emit();
 	}
@@ -1059,6 +1115,7 @@ export class ChatClient {
 	private handleConnectionFailure(id: number, message: string): void {
 		if (id !== this.connectionId) return;
 		this.error = message;
+		if (this.running) this.disconnectedAt ??= Date.now();
 		this.status = this.running ? 'reconnecting' : 'offline';
 		if (this.running) this.scheduleReconnect();
 		this.emit();
@@ -1075,6 +1132,40 @@ export class ChatClient {
 			this.reconnectTimer = undefined;
 			this.connectNow();
 		}, delay);
+	}
+
+	/**
+	 * Session tokens are kept per server URL in localStorage so a reload, a new
+	 * tab, or a browser restart resumes the passkey identity without another
+	 * ceremony, until the server expires the session. Sign-out or a rejected
+	 * resume removes the entry.
+	 */
+	private sessionStorageKey(): string {
+		return `bottomless.session:${this.serverUrl}`;
+	}
+
+	private loadStoredSession(): void {
+		let stored: string | null = null;
+		try {
+			stored = globalThis.localStorage?.getItem(this.sessionStorageKey()) ?? null;
+		} catch {
+			// Storage can be unavailable (private mode, blocked site data).
+		}
+		if (!stored) return;
+		this.sessionToken = stored;
+		this.passkeyRequired = true;
+		this.registeredSession = true;
+	}
+
+	private storeSession(token: string | undefined): void {
+		try {
+			const storage = globalThis.localStorage;
+			if (!storage) return;
+			if (token) storage.setItem(this.sessionStorageKey(), token);
+			else storage.removeItem(this.sessionStorageKey());
+		} catch {
+			// Best effort; the in-memory token still covers this page's lifetime.
+		}
 	}
 
 	private retryAfterRemaining(): number | undefined {

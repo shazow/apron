@@ -3,6 +3,8 @@ export interface Limits {
 	retentionSeconds: number;
 	cleanupSeconds: number;
 	challengeTtlSeconds: number;
+	/** Lifetime of a passkey session token, renewed on every successful resume. */
+	sessionTtlSeconds: number;
 	maxFrameBytes: number;
 	maxTextBytes: number;
 	maxSnapshotBytes: number;
@@ -65,6 +67,7 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	retentionSeconds: 86_400,
 	cleanupSeconds: 3_600,
 	challengeTtlSeconds: 120,
+	sessionTtlSeconds: 12 * 60 * 60,
 	maxFrameBytes: 16_384,
 	maxTextBytes: 4_096,
 	maxSnapshotBytes: 8_192,
