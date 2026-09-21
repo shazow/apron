@@ -72,6 +72,13 @@
 	let movingId = $state<string | undefined>();
 	let moreId = $state<string | undefined>();
 	let mobilePane = $state<'rooms' | 'main'>('main');
+	// Sidebar width is user-resizable by dragging its right border; a plain click on the border collapses/expands it.
+	const SIDEBAR_MIN_W = 160;
+	const SIDEBAR_MAX_W = 480;
+	const SIDEBAR_DEFAULT_W = 248;
+	let sidebarWidth = $state(SIDEBAR_DEFAULT_W);
+	let sidebarCollapsed = $state(false);
+	let sidebarResizing = $state(false);
 	let client: ChatClient | undefined;
 	let composer = $state<HTMLTextAreaElement | undefined>();
 	let messageScroll = $state<HTMLDivElement | undefined>();
@@ -303,8 +310,78 @@
 		};
 	});
 
+	function clampSidebarWidth(width: number): number {
+		return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, Math.round(width)));
+	}
+
+	function loadSidebarPrefs(): void {
+		const savedWidth = Number(localStorage.getItem('bottomless.sidebarWidth'));
+		if (Number.isFinite(savedWidth) && savedWidth > 0) sidebarWidth = clampSidebarWidth(savedWidth);
+		sidebarCollapsed = localStorage.getItem('bottomless.sidebarCollapsed') === '1';
+	}
+
+	function saveSidebarPrefs(): void {
+		localStorage.setItem('bottomless.sidebarWidth', String(sidebarWidth));
+		localStorage.setItem('bottomless.sidebarCollapsed', sidebarCollapsed ? '1' : '0');
+	}
+
+	function toggleSidebar(): void {
+		sidebarCollapsed = !sidebarCollapsed;
+		saveSidebarPrefs();
+	}
+
+	function startSidebarResize(event: PointerEvent): void {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		const handle = event.currentTarget as HTMLElement;
+		const startX = event.clientX;
+		const startWidth = sidebarCollapsed ? 0 : sidebarWidth;
+		let moved = false;
+		handle.setPointerCapture(event.pointerId);
+		sidebarResizing = true;
+
+		const onMove = (e: PointerEvent) => {
+			const dx = e.clientX - startX;
+			if (!moved && Math.abs(dx) < 4) return;
+			moved = true;
+			const next = startWidth + dx;
+			if (next < SIDEBAR_MIN_W / 2) {
+				sidebarCollapsed = true;
+			} else {
+				sidebarCollapsed = false;
+				sidebarWidth = clampSidebarWidth(next);
+			}
+		};
+		const onUp = () => {
+			handle.removeEventListener('pointermove', onMove);
+			handle.removeEventListener('pointerup', onUp);
+			handle.removeEventListener('pointercancel', onUp);
+			handle.releasePointerCapture(event.pointerId);
+			sidebarResizing = false;
+			if (!moved) sidebarCollapsed = !sidebarCollapsed;
+			saveSidebarPrefs();
+		};
+		handle.addEventListener('pointermove', onMove);
+		handle.addEventListener('pointerup', onUp);
+		handle.addEventListener('pointercancel', onUp);
+	}
+
+	// Enter/Space toggle via the button's native click (detail === 0); arrows resize.
+	function sidebarHandleKey(event: KeyboardEvent): void {
+		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+			event.preventDefault();
+			if (sidebarCollapsed) {
+				if (event.key === 'ArrowRight') sidebarCollapsed = false;
+			} else {
+				sidebarWidth = clampSidebarWidth(sidebarWidth + (event.key === 'ArrowLeft' ? -16 : 16));
+			}
+			saveSidebarPrefs();
+		}
+	}
+
 	onMount(() => {
 		passkeyUnavailable = passkeySupportError();
+		loadSidebarPrefs();
 		const savedUrl = localStorage.getItem('bottomless.serverUrl') ?? defaultWebSocketUrl(window.location);
 		const savedName = localStorage.getItem('bottomless.displayName') ?? '';
 		serverInput = savedUrl;
@@ -954,7 +1031,13 @@
 	{/if}
 </div>
 {:else}
-<div class="app ap-shell ap-shell-norail" data-pane={mobilePane}>
+<div
+	class="app ap-shell ap-shell-norail"
+	class:app-side-collapsed={sidebarCollapsed}
+	class:app-side-resizing={sidebarResizing}
+	data-pane={mobilePane}
+	style:--sidebar-w="{sidebarCollapsed ? 0 : sidebarWidth}px"
+>
 	<aside class="ap-shell-side" aria-label="Rooms">
 		<div class="ap-shell-sidehead">
 			<span class="app-backend">{backendLabel}</span>
@@ -1065,6 +1148,16 @@
 			</button>
 		</div>
 	</aside>
+	<button
+		class="app-side-handle"
+		type="button"
+		aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+		aria-expanded={!sidebarCollapsed}
+		title={sidebarCollapsed ? 'Expand sidebar' : 'Drag to resize, click to collapse'}
+		onpointerdown={startSidebarResize}
+		onclick={(e) => { if (e.detail === 0) toggleSidebar(); }}
+		onkeydown={sidebarHandleKey}
+	></button>
 
 	<main class="ap-shell-main" aria-label="Conversation">
 		{#if activeRoom}
@@ -1403,6 +1496,17 @@
 	.app-reply-draft span { min-width: 0; overflow-wrap: anywhere; }
 	.app-backend { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.ap-shell-sidehead { gap: var(--space-2); }
+	/* The sidebar's right border doubles as a resize handle. It sits in the main pane's column so a collapsed sidebar (0px) still leaves a border to grab. */
+	.app.ap-shell { position: relative; }
+	.ap-shell-side { overflow: hidden; }
+	.app-side-collapsed .ap-shell-side { border-right: 0; visibility: hidden; }
+	.app-side-handle { position: absolute; top: 0; bottom: 0; left: calc(var(--sidebar-w) - 4px); width: 9px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; z-index: 4; cursor: col-resize; touch-action: none; }
+	.app-side-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--line); }
+	.app-side-handle:hover::after, .app-side-handle:focus-visible::after, .app-side-resizing .app-side-handle::after { left: 3px; width: 3px; background: var(--denim); }
+	.app-side-handle:focus-visible { outline: none; }
+	.app-side-collapsed .app-side-handle { left: 0; width: 9px; cursor: e-resize; }
+	.app-side-collapsed .app-side-handle::after { left: 0; }
+	.app-side-resizing, .app-side-resizing * { user-select: none; }
 	.ap-connect .ap-btn-ghost { border-radius: calc(var(--radius-lg) - var(--space-2)); }
 	.ap-profile-pop { max-height: calc(100dvh - 96px); overflow-y: auto; }
 	.ap-profile-pop .ap-profedit-actions { flex-wrap: wrap; }
@@ -1449,6 +1553,8 @@
 		.app[data-pane='main'] .ap-shell-side { display: none; }
 		.app[data-pane='rooms'] .ap-shell-main { display: none; }
 		.ap-shell-side { border-right: 0; }
+		.app-side-handle { display: none; }
+		.app-side-collapsed .ap-shell-side { visibility: visible; }
 		.ap-roomhead-back { display: block; }
 		.app-typing-head { display: block; }
 		.app-typing-row { display: none; }
