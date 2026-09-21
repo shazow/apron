@@ -31,7 +31,9 @@ or tests. A paid plan's included allowance is not a spending cap.
 Use Node.js 24 and the repository's existing Nix/devenv environment. From the
 repository root, `make install` installs each package from its lockfile.
 
-No secret provisioning is required for local development or production.
+No secret provisioning is required for local development. Production can run
+with local limits alone; configure the optional analytics secret above to enable
+the delayed account-wide safety stop.
 
 Start `make dev-worker` and `make dev-web` in separate terminals, then open
 `http://localhost:5173`. The existing frontend proxy connects to port 8080.
@@ -155,8 +157,10 @@ The production backend at `wss://server.apron.chat/` uses
 `https://web.apron.chat` using `clients/web/wrangler.toml`; `apron.chat` is
 reserved for static documentation. The production backend has no static assets.
 WebSocket upgrades use `/`; `/ws` remains an alias for existing clients.
-The default Worker config keeps serving the frontend for local development and
-browser tests. Keep bindings, migrations, and compatibility settings in sync.
+The default development Worker is `apron-cloudflare-demo-dev`; it is separate
+from the production Worker `apron-cloudflare-demo`. It keeps serving the
+frontend for local development and browser tests. Keep bindings, migrations,
+and compatibility settings in sync.
 Custom Domains configure DNS and HTTPS through Cloudflare; workers.dev and
 preview URLs are disabled for both deployments.
 

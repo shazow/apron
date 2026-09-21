@@ -59,7 +59,7 @@ Exactly one production object is reachable, e.g. `env.DEMO.getByName("public-dem
 
 Use `new_sqlite_classes` for the initial Wrangler migration. Do not add D1, Workers KV, Queues, or a separate quota DO. Test/staging namespaces count toward account usage if deployed; do not assume an independent free allowance.
 
-Return cheap 404/405 responses for unrelated routes without invoking the DO. Serve the UI as static assets where the repository supports it. No polling endpoint may issue unbounded DO calls. Administrative metrics, if exposed, require an operator secret and contain aggregates only.
+Return cheap 404/405 responses for unrelated routes without invoking the DO. Serve the UI as static assets where the repository supports it. No polling endpoint may issue unbounded DO calls. Administrative metrics, if exposed, require authenticated operator access and contain aggregates only.
 
 Cloudflare recommends the hibernation API for WebSocket servers: [WebSocket guidance](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
 
@@ -475,7 +475,7 @@ Deliver:
 
 - Working source and lockfile; no placeholder auth or quota bypasses.
 - Wrangler config with a fixed DO binding, SQLite migration, tested compatibility date, and no paid-service bindings.
-- Configuration reference for every limit, RP ID/origins, optional operator secret, and feature toggles. Fail startup/config validation for impossible or unsafe relationships.
+- Configuration reference for every limit, RP ID/origins, account analytics, and feature toggles. Fail startup/config validation for impossible or unsafe relationships.
 - Base-protocol history documentation and minimal client integration, including retention recovery fixtures and canonical WebAuthn fixtures.
 - Automated tests, local dev commands, a bounded load/cost report, and a concise implementation summary.
 - README describing Free-plan prerequisites, anonymous identity limitations, rolling history with a permanent room ID, quota exhaustion/recovery, secret setup, and manual deployment steps.

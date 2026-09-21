@@ -11,7 +11,6 @@ declare global {
 		RP_ID?: string;
 		RP_ORIGINS?: string;
 		RP_NAME?: string;
-		OPERATOR_SECRET?: string;
 		ADMISSION_OFF?: string;
 		ENVIRONMENT?: string;
 	}
@@ -26,7 +25,6 @@ declare global {
 			RP_ID?: string;
 			RP_ORIGINS?: string;
 			RP_NAME?: string;
-			OPERATOR_SECRET?: string;
 			ADMISSION_OFF?: string;
 			ENVIRONMENT?: string;
 		}

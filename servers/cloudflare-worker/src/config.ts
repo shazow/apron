@@ -8,7 +8,6 @@ export interface RuntimeConfig {
 	rpId: string;
 	rpOrigins: readonly string[];
 	rpName: string;
-	operatorSecret?: string;
 	admissionOff: boolean;
 }
 
@@ -24,7 +23,6 @@ type EnvLike = {
 	RP_ID?: string;
 	RP_ORIGINS?: string;
 	RP_NAME?: string;
-	OPERATOR_SECRET?: string;
 	ADMISSION_OFF?: string;
 	ENVIRONMENT?: string;
 	NODE_ENV?: string;
@@ -195,7 +193,6 @@ export function loadConfig(env: EnvLike, overrides: Partial<Limits> = {}): Runti
 		rpId,
 		rpOrigins,
 		rpName,
-		operatorSecret: env.OPERATOR_SECRET ? String(env.OPERATOR_SECRET) : undefined,
 		admissionOff,
 	};
 }

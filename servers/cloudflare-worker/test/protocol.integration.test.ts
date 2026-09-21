@@ -1,8 +1,43 @@
 import { SELF } from 'cloudflare:test';
 import { expect, it } from 'vitest';
+import { canonicalizeIp, hashIpKey } from '../src/ip';
 
 type Frame = { id?: string | null; method?: string; result?: any; error?: any; params?: any };
 let nextIp = 1;
+
+// These are server-owned fields that must never cross the protocol boundary.
+// Do not reject arbitrary keys in message bodies or extensions: those are
+// intentionally client-controlled public data and may use any JSON shape.
+const PRIVATE_SERVER_KEYS = new Set([
+	'ipKey', 'ip_key', 'credentialId', 'credential_id', 'publicKey',
+	'userHandle', 'user_handle', 'challengeId', 'identityUserId',
+	'identity_user_id', 'expiresAt', 'expires_at', 'accountUsage', 'account_usage',
+	'resourceBudgets', 'resource_budgets', 'budgetStop', 'budget_stop',
+	'signCount', 'sign_count', 'publicKeyJson', 'public_key_json',
+]);
+
+function serverOwnedValues(frame: Frame): Array<{ key: string; value: unknown }> {
+	const values: Array<{ key: string; value: unknown }> = [];
+	const visit = (value: unknown, path: string[], userControlled = false): void => {
+		if (userControlled || !value || typeof value !== 'object') return;
+		if (Array.isArray(value)) {
+			for (const child of value) visit(child, path, false);
+			return;
+		}
+		for (const [key, child] of Object.entries(value)) {
+			if (PRIVATE_SERVER_KEYS.has(key)) values.push({ key, value: child });
+			const childIsUserControlled = (path.at(-1) === 'message' && (key === 'body' || key === 'extension')) ||
+				(path.length === 1 && path[0] === 'params' && key === 'thread');
+			visit(child, [...path, key], childIsUserControlled);
+		}
+	};
+	visit(frame, [], false);
+	return values;
+}
+
+function expectPublicFrame(frame: Frame): void {
+	expect(serverOwnedValues(frame), `private server data in ${JSON.stringify(frame)}`).toEqual([]);
+}
 
 async function connect(ip = `192.0.2.${nextIp++}`, path = '/ws', origin: string | null = 'http://localhost:5173') {
 	const response = await SELF.fetch(`https://demo.test${path}`, { headers: {
@@ -55,6 +90,60 @@ it('admits clients without Origin as guests without advertising or allowing pass
 		await peer.next(); // Room announcement.
 		peer.send({ id: 'passkey', method: 'auth', params: { scheme: 'webauthn', action: 'register', step: 'begin' } });
 		expect((await peer.next()).error.code).toBe(-32001);
+	} finally { peer.close(); }
+});
+
+it('keeps server-owned state out of public protocol frames', async () => {
+	const ip = `198.51.100.${nextIp++}`;
+	const ipHash = await hashIpKey(canonicalizeIp(ip)!);
+	const peer = await connect(ip);
+	const publicFrames: Frame[] = [];
+	try {
+		const server = await peer.next();
+		publicFrames.push(server);
+		expectPublicFrame(server);
+		expect(server.params.auth).toEqual(['webauthn', 'anonymous']);
+
+		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'anonymous' } });
+		const auth = await peer.next();
+		publicFrames.push(auth);
+		expectPublicFrame(auth);
+		const room = await peer.next();
+		publicFrames.push(room);
+		expectPublicFrame(room);
+
+		peer.send({ id: 'post', method: 'message', params: {
+			room_id: 'general', body: { text: 'disclosure regression', extension: { ipKey: 'client-controlled' } },
+		} });
+		const saved = await peer.next();
+		publicFrames.push(saved);
+		expectPublicFrame(saved);
+		const broadcast = await peer.next();
+		publicFrames.push(broadcast);
+		expectPublicFrame(broadcast);
+
+		peer.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 10 } });
+		const history = await peer.next();
+		publicFrames.push(history);
+		expectPublicFrame(history);
+
+		peer.send({ id: 'bad', method: 'message', params: { room_id: 'private-room', body: { text: 'nope' } } });
+		const error = await peer.next();
+		publicFrames.push(error);
+		expectPublicFrame(error);
+		expect(error.error.code).toBe(-32602);
+
+		peer.send({ id: 'passkey', method: 'auth', params: { scheme: 'webauthn', action: 'register', step: 'begin' } });
+		const challenge = await peer.next();
+		publicFrames.push(challenge);
+		expectPublicFrame(challenge);
+		expect(Object.keys(challenge.result).sort()).toEqual(['challenge_id', 'public_key']);
+		expect(challenge.result.challenge_id).toMatch(/^[A-Za-z0-9_-]+$/);
+		expect(challenge.result.public_key.challenge).toBeTruthy();
+		expect(challenge.result.public_key.user.id).toBeTruthy();
+		// The challenge ID and generated public-key options are the documented
+		// WebAuthn ceremony surface; the internal attachment is never returned.
+		expect(JSON.stringify(publicFrames)).not.toContain(ipHash);
 	} finally { peer.close(); }
 });
 

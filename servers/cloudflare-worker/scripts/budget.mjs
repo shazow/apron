@@ -82,17 +82,59 @@ export function replaceBinding(source, binding) {
 	return `${source.trimEnd()}\n\n${binding}\n`;
 }
 
+function topLevelConfig(source) {
+	const firstTable = source.search(/^\s*\[/m);
+	return source.slice(0, firstTable < 0 ? source.length : firstTable);
+}
+
+function configName(source, file) {
+	const match = topLevelConfig(source).match(/^name\s*=\s*"([^"]+)"\s*$/m);
+	if (!match) throw new Error(`${file} must define a Worker name`);
+	return match[1];
+}
+
+export function validateDeploymentConfiguration({ development, production, packageJson, makefile }) {
+	const developmentName = configName(development, 'wrangler.toml');
+	const productionName = configName(production, 'wrangler.production.toml');
+	const productionTopLevel = topLevelConfig(production);
+	if (developmentName === productionName) {
+		throw new Error('Development and production Worker names must be distinct');
+	}
+	if (!/^workers_dev\s*=\s*false\s*(?:#.*)?$/m.test(productionTopLevel)) {
+		throw new Error('Production Wrangler config must disable workers.dev');
+	}
+	if (!/^preview_urls\s*=\s*false\s*(?:#.*)?$/m.test(productionTopLevel)) {
+		throw new Error('Production Wrangler config must disable preview URLs');
+	}
+	if (/^\[assets\]\s*(?:#.*)?$/m.test(production)) {
+		throw new Error('Production Worker must not bind static assets');
+	}
+	if (!/pattern\s*=\s*"server\.apron\.chat"\s*,\s*custom_domain\s*=\s*true/.test(productionTopLevel)) {
+		throw new Error('Production Wrangler config must use the server custom domain');
+	}
+	if (!packageJson?.scripts?.deploy?.includes('--config wrangler.production.toml')) {
+		throw new Error('The package deploy script must select wrangler.production.toml');
+	}
+	if (!/deploy-worker:\s*\n\s*npm --prefix servers\/cloudflare-worker run deploy/.test(makefile ?? '')) {
+		throw new Error('The Makefile deploy-worker target must use the guarded package deploy script');
+	}
+}
+
 function main() {
 	const check = process.argv[2] === '--check';
 	if (process.argv.length > (check ? 3 : 2)) throw new Error('Usage: node scripts/budget.mjs [--check]');
 	validateAdmission();
 	loadConfig({ NODE_ENV: 'test' });
+	const development = readFileSync(new URL('wrangler.toml', root), 'utf8');
+	const production = readFileSync(new URL('wrangler.production.toml', root), 'utf8');
+	const packageJson = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
+	const makefile = readFileSync(new URL('../../Makefile', root), 'utf8');
+	validateDeploymentConfiguration({ development, production, packageJson, makefile });
 	const outputs = [];
 	for (const [file, namespace] of [['wrangler.toml', '73001'], ['wrangler.production.toml', '73002']]) {
 		const source = readFileSync(new URL(file, root), 'utf8');
 		outputs.push([file, replaceBinding(source, renderBinding(namespace))]);
 	}
-	const production = readFileSync(new URL('wrangler.production.toml', root), 'utf8');
 	const hosts = [...production.matchAll(/pattern\s*=\s*"([a-z0-9.-]+)"\s*,\s*custom_domain\s*=\s*true/g)];
 	if (hosts.length !== 1) throw new Error('Expected exactly one production custom domain');
 	outputs.push(['docs/edge-rules.generated.json', JSON.stringify(renderEdgeRules(hosts[0][1]), null, 2) + '\n']);
