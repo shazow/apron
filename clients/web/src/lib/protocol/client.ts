@@ -173,6 +173,7 @@ export class ChatClient {
 
 	constructor(private serverUrl: string, displayName = '') {
 		this.displayName = displayName.trim();
+		this.loadStoredSession();
 	}
 
 	static fromOptions(options: ChatClientOptions): ChatClient {
@@ -193,6 +194,7 @@ export class ChatClient {
 		this.passkeyRequired = false;
 		this.registeredSession = false;
 		this.retryAfterUntil = 0;
+		this.loadStoredSession();
 		this.resetSession('Server URL changed; pending requests were cancelled');
 		if (this.running) this.restart();
 	}
@@ -384,6 +386,7 @@ export class ChatClient {
 	async signOut(): Promise<void> {
 		if (this.passkeyAbort || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
 		this.sessionToken = undefined;
+		this.storeSession(undefined);
 		this.passkeyRequired = false;
 		this.registeredSession = false;
 		this.resetSession('Signed out');
@@ -654,7 +657,10 @@ export class ChatClient {
 			if (socket !== this.socket) return;
 			this.authRequested = false;
 			// Never silently downgrade a passkey session to a different guest identity.
-			if (resume) this.sessionToken = undefined;
+			if (resume) {
+				this.sessionToken = undefined;
+				this.storeSession(undefined);
+			}
 			this.error = cause.message;
 			this.emit();
 		});
@@ -676,6 +682,10 @@ export class ChatClient {
 			this.sessionToken = result.token;
 			this.passkeyRequired = true;
 			this.registeredSession = true;
+			// Persist only when the server can actually resume with it, so a reload
+			// against a ceremony-only server does not turn into an unprompted
+			// passkey request at load time.
+			if (this.server?.auth.includes('token')) this.storeSession(result.token);
 		}
 		this.error = undefined;
 		this.retryAfterUntil = 0;
@@ -1122,6 +1132,40 @@ export class ChatClient {
 			this.reconnectTimer = undefined;
 			this.connectNow();
 		}, delay);
+	}
+
+	/**
+	 * Session tokens are kept per server URL in localStorage so a reload, a new
+	 * tab, or a browser restart resumes the passkey identity without another
+	 * ceremony, until the server expires the session. Sign-out or a rejected
+	 * resume removes the entry.
+	 */
+	private sessionStorageKey(): string {
+		return `bottomless.session:${this.serverUrl}`;
+	}
+
+	private loadStoredSession(): void {
+		let stored: string | null = null;
+		try {
+			stored = globalThis.localStorage?.getItem(this.sessionStorageKey()) ?? null;
+		} catch {
+			// Storage can be unavailable (private mode, blocked site data).
+		}
+		if (!stored) return;
+		this.sessionToken = stored;
+		this.passkeyRequired = true;
+		this.registeredSession = true;
+	}
+
+	private storeSession(token: string | undefined): void {
+		try {
+			const storage = globalThis.localStorage;
+			if (!storage) return;
+			if (token) storage.setItem(this.sessionStorageKey(), token);
+			else storage.removeItem(this.sessionStorageKey());
+		} catch {
+			// Best effort; the in-memory token still covers this page's lifetime.
+		}
 	}
 
 	private retryAfterRemaining(): number | undefined {

@@ -45,12 +45,12 @@ class FakeSocket {
 	}
 
 	/** Runs the greeting, answers the auth request, and announces one room. */
-	async greet(caps: string[] = []): Promise<void> {
+	async greet(caps: string[] = [], options: { auth?: string[]; token?: string } = {}): Promise<void> {
 		this.open();
-		this.receive({ method: 'server', params: { protocol: 1, name: 'fake', auth: ['anonymous'], caps } });
+		this.receive({ method: 'server', params: { protocol: 1, name: 'fake', auth: options.auth ?? ['anonymous'], caps } });
 		const auth = this.sent.find((frame) => frame.method === 'auth');
 		if (!auth) throw new Error('client did not authenticate');
-		this.receive({ id: auth.id, result: { you: { user_id: 'guest-1', name: 'Guest' } } });
+		this.receive({ id: auth.id, result: { you: { user_id: 'guest-1', name: 'Guest' }, ...(options.token ? { token: options.token } : {}) } });
 		// The auth response settles through a promise before the client applies it.
 		await Promise.resolve();
 		await Promise.resolve();
@@ -145,5 +145,94 @@ describe('transport reconnects', () => {
 		expect(snapshot.disconnectedAt).toBeUndefined();
 		vi.advanceTimersByTime(60_000);
 		expect(FakeSocket.instances).toHaveLength(1);
+	});
+});
+
+describe('persisted session tokens', () => {
+	const storage = new Map<string, string>();
+	const fakeLocalStorage = {
+		getItem: (key: string) => storage.get(key) ?? null,
+		setItem: (key: string, value: string) => void storage.set(key, value),
+		removeItem: (key: string) => void storage.delete(key)
+	};
+	let snapshot: ClientSnapshot;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		storage.clear();
+		FakeSocket.instances = [];
+		vi.stubGlobal('WebSocket', FakeSocket);
+		vi.stubGlobal('localStorage', fakeLocalStorage);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	function authParams(): Record<string, unknown> {
+		const auth = latest().sent.find((frame) => frame.method === 'auth');
+		if (!auth) throw new Error('client did not authenticate');
+		return auth.params as Record<string, unknown>;
+	}
+
+	it('stores a token the server can resume with, keyed by server URL, and presents it on the next start', async () => {
+		const first = new ChatClient('ws://fake.test/');
+		first.subscribe((next) => (snapshot = next));
+		first.start();
+		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'session-1' });
+		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'anonymous' }));
+		expect(storage.get('bottomless.session:ws://fake.test/')).toBe('session-1');
+		first.stop();
+
+		const second = new ChatClient('ws://fake.test/');
+		second.subscribe((next) => (snapshot = next));
+		second.start();
+		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'session-1' });
+		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'token', token: 'session-1' }));
+		expect(snapshot.passkeySession).toBe(true);
+		second.stop();
+
+		// Another server URL has its own entry.
+		const elsewhere = new ChatClient('ws://other.test/');
+		elsewhere.start();
+		latest().open();
+		latest().receive({ method: 'server', params: { protocol: 1, auth: ['webauthn', 'token', 'anonymous'], caps: [] } });
+		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'anonymous' }));
+		elsewhere.stop();
+	});
+
+	it('does not persist a token when the server cannot resume with it', async () => {
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		await latest().greet([], { auth: ['webauthn', 'anonymous'], token: 'session-2' });
+		expect(storage.has('bottomless.session:ws://fake.test/')).toBe(false);
+		client.stop();
+	});
+
+	it('forgets a stored token the server rejects and on sign-out', async () => {
+		storage.set('bottomless.session:ws://fake.test/', 'stale');
+		const client = new ChatClient('ws://fake.test/');
+		client.subscribe((next) => (snapshot = next));
+		client.start();
+		latest().open();
+		latest().receive({ method: 'server', params: { protocol: 1, auth: ['webauthn', 'token', 'anonymous'], caps: [] } });
+		const auth = latest().sent.find((frame) => frame.method === 'auth')!;
+		expect(auth.params).toEqual(expect.objectContaining({ scheme: 'token', token: 'stale' }));
+		latest().receive({ id: auth.id, error: { code: -32001, message: 'Session expired; sign in with your passkey' } });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(storage.has('bottomless.session:ws://fake.test/')).toBe(false);
+		expect(snapshot.error).toBe('Session expired; sign in with your passkey');
+		expect(snapshot.authenticated).toBe(false);
+
+		storage.set('bottomless.session:ws://fake.test/', 'fresh');
+		const again = new ChatClient('ws://fake.test/');
+		again.start();
+		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'fresh' });
+		await again.signOut();
+		expect(storage.has('bottomless.session:ws://fake.test/')).toBe(false);
+		again.stop();
+		client.stop();
 	});
 });

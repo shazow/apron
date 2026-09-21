@@ -233,6 +233,26 @@ func TestPasskeyRegistrationLoginAndSession(t *testing.T) {
 	if result["you"].(map[string]any)["user_id"] != identity {
 		t.Fatal("reconnect changed identity")
 	}
+	// A resume renews the session: a token close to expiry is good for a full
+	// lifetime again after use.
+	app.mu.Lock()
+	for key, session := range app.sessions {
+		session.expires = time.Now().Add(time.Minute)
+		app.sessions[key] = session
+	}
+	app.mu.Unlock()
+	renewed := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+	result = passkeyResult(t, passkeyCall(t, renewed, "resume", "token", "", map[string]any{"token": token}))
+	renewed.read(t)
+	if result["token"] != token {
+		t.Fatalf("resume did not return the presented token: %#v", result["token"])
+	}
+	app.mu.Lock()
+	renewedExpiry := app.sessions[sha256.Sum256([]byte(token))].expires
+	app.mu.Unlock()
+	if renewedExpiry.Before(time.Now().Add(sessionLifetime - time.Minute)) {
+		t.Fatalf("resume did not renew the session: expires %v", renewedExpiry)
+	}
 	app.mu.Lock()
 	for key, session := range app.sessions {
 		session.expires = time.Now().Add(-time.Second)

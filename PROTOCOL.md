@@ -1127,3 +1127,14 @@ and permission to reauthenticate are server policy.
 
 Malformed fields use `invalid_params`; invalid challenges, failed verification,
 or policy rejection use `denied`. Resource limits use ordinary protocol errors.
+
+**Session resume (optional).** A server that also advertises `token` MAY
+include `token` (an opaque bearer string) in a verified `finish` result. The
+client MAY present it on later connections with `scheme: "token"` to resume
+the same identity without a new ceremony; the result carries `you` as usual
+and MAY carry a replacement `token`, which supersedes the one presented.
+Servers issuing such tokens MUST bind them to the allowed origin of the
+ceremony, MUST expire them, and reject an unknown, expired, or mismatched
+token with `denied`. Lifetime, renewal on use, and revocation are server
+policy. Clients that ignore `token` remain conforming: every connection still
+authenticates under §1.2, by ceremony or otherwise.

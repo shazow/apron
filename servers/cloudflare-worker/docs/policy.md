@@ -7,7 +7,7 @@ availability uses the base protocol's `latest_log_id` and nullable
 [retention implementation specification](../SPEC.md#9-rolling-history-and-base-protocol-availability).
 
 WebAuthn uses the canonical [optional authentication scheme](../../../PROTOCOL.md#appendix-c--webauthn-authentication-optional),
-advertised through `auth: ["webauthn", "anonymous"]` only on connections whose
+advertised through `auth: ["webauthn", "token", "anonymous"]` only on connections whose
 origin is in `RP_ORIGINS`. Other connections advertise `auth: ["anonymous"]`
 and reject WebAuthn requests. Server announcements are complete replacements.
 
@@ -34,8 +34,13 @@ rules are defined in protocol Appendix C. This demo limits challenges to 120
 seconds and requires user presence and verification. A new begin replaces the
 pending challenge without extending the initial 30-second authentication
 deadline. A matching finish attempt consumes the challenge even on failure.
-The demo issues no bearer token: each new connection authenticates again.
-Signing out drops the connection and returns as a fresh guest.
+A verified login or registration returns a bearer `token` (protocol Appendix C,
+session resume). Presenting it with `scheme: "token"` on a later connection from
+the same origin resumes the registered identity without a ceremony and renews
+the session for another 12 hours; the token itself does not change. Sessions
+are stored hashed in the object and swept on expiry. Signing out is local to
+the client: it drops the stored token, and the connection returns as a fresh
+guest.
 
 Anonymous identities last for a socket, including hibernation. Repeated anonymous
 authentication on that socket preserves the identity. Reconnecting creates a

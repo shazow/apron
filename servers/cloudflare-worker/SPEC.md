@@ -83,7 +83,7 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":2,"name":"apron-cloudflare-demo/1","caps":["history","edit"],"auth":["webauthn","anonymous"],"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"anonymous_posts_per_minute":5,"registered_posts_per_minute":20}}}
+{"method":"server","params":{"protocol":2,"name":"apron-cloudflare-demo/1","caps":["history","edit"],"auth":["webauthn","token","anonymous"],"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"anonymous_posts_per_minute":5,"registered_posts_per_minute":20}}}
 ```
 
 `demo` is additive server-announcement policy metadata. Authentication uses the canonical `webauthn` scheme in protocol Appendix C, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
@@ -150,7 +150,7 @@ The intermediate response is `{"id":"a1","result":{"challenge_id":"...","public_
 {"method":"auth","id":"a2","params":{"scheme":"webauthn","action":"register","step":"finish","challenge_id":"...","credential":{}}}
 ```
 
-`credential` contains the serialized browser credential response, not the empty illustrative object above. On successful verification return normal `result.you`, store the authenticated tier in the attachment, and establish live room delivery. Login uses the same exchange with `action: "login"`.
+`credential` contains the serialized browser credential response, not the empty illustrative object above. On successful verification return normal `result.you` plus a bearer `token` for session resume (see [policy](docs/policy.md#authentication-policy)), store the authenticated tier in the attachment, and establish live room delivery. Login uses the same exchange with `action: "login"`.
 
 - Challenge TTL: 120 seconds, one outstanding challenge per connection. A challenge is bound to connection, action, RP ID, and allowed origin, and is consumed by a matching finish attempt. Begin replaces an earlier challenge. A challenge does not extend the initial authentication deadline; challenge expiry and unauthenticated timeout are independent.
 - Anonymous users may initiate an upgrade on their authenticated guest socket; they retain guest rights until success. After final registered authentication, identity switching requires reconnect. Failed upgrade grants no higher allowance.
