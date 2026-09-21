@@ -1334,6 +1334,21 @@ export class Store {
     }
   }
 
+  /**
+   * Meter a bounded operation which awaits storage outside SQLite (for
+   * example, Durable Object key-value storage).  The reservation is made
+   * before the first await, so a concurrent request cannot spend the same
+   * daily allowance.  KV work has no SQL cursor to reconcile; callers must
+   * supply a conservative bound for the complete operation.
+   */
+  async withMeterAsync<T>(kind: "foreground" | "maintenance", cost: CostEstimate, fn: () => Promise<T>, now = this.clock.now()): Promise<T> {
+    // The callback may yield while another input-gated operation performs
+    // SQLite work. Do not compare shared observed counters across the await:
+    // this reservation already charges the complete bounded external work.
+    this.reserveCost(cost, kind === "maintenance", now);
+    return await fn();
+  }
+
   private assertReservation(reserved: BudgetCost, beforeReads: number, beforeWrites: number): void {
     const actualReads = this.observed.reads - beforeReads;
     const actualWrites = this.observed.writes - beforeWrites;

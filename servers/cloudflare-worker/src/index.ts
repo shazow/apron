@@ -26,6 +26,11 @@ const INTERNAL_IP_HEADER = "X-Apron-Trusted-IP-Key";
 const ATTACHMENT_VERSION = 1;
 /** Key prefix for passkey session records in the object's key-value storage. */
 const SESSION_KEY_PREFIX = "session:";
+/** Ordered, advisory expiry entries. The session record remains authoritative. */
+const SESSION_EXPIRY_PREFIX = "session-expiry:";
+const SESSION_LEGACY_CURSOR_KEY = "session-legacy-cursor";
+const SESSION_LEGACY_DONE_KEY = "session-legacy-done";
+const SESSION_CLEANUP_BATCH = 16;
 const MAX_SESSION_TOKEN_CHARS = 256;
 
 type WebSocketConnection = WebSocket & {
@@ -64,6 +69,12 @@ interface StoredSession {
 	expiresMs: number;
 }
 
+interface SessionExpiryEntry {
+	v: 1;
+	sessionKey: string;
+	expiresMs: number;
+}
+
 interface IdentityShape {
 	user_id: string;
 	name?: string;
@@ -83,6 +94,12 @@ function bytesToBase64Url(bytes: Uint8Array): string {
 async function sessionKey(token: string): Promise<string> {
 	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
 	return SESSION_KEY_PREFIX + Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function sessionExpiryKey(expiresMs: number, sessionKeyValue: string): string {
+	// Date.now() plus the configured lifetime is well below 16 decimal digits;
+	// the fixed width keeps lexicographic KV listing ordered by expiry.
+	return `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(expiresMs)).toString().padStart(16, "0")}:${sessionKeyValue.slice(SESSION_KEY_PREFIX.length)}`;
 }
 
 function nowMs(): number {
@@ -373,6 +390,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private accountUsageRefresh?: Promise<void>;
 	private accountUsageSnapshot: AccountUsageSnapshot | null = null;
 	private readonly queues = new WeakMap<WebSocketConnection, Promise<void>>();
+	private sessionWorkTail: Promise<void> = Promise.resolve();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -764,27 +782,44 @@ export class ApronDemoServer extends DurableObject<Env> {
 	 * not rotated, so several tabs may share one persisted token.
 	 */
 	private async handleTokenResume(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		return this.withSessionLock(() => this.handleTokenResumeLocked(socket, attachment, request));
+	}
+
+	private async handleTokenResumeLocked(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		if (attachment.tier === "registered") throw { name: "denied", message: "Identity switching requires reconnect" } satisfies ProtocolError;
 		const origin = this.requestOrigin(socket);
 		if (!origin || !this.config.rpOrigins.includes(origin)) throw { name: "denied", message: "Frontend origin is not configured for passkeys" } satisfies ProtocolError;
 		const token = requiredString(request.params, "token");
 		if (token.length > MAX_SESSION_TOKEN_CHARS) throw { name: "invalid_params", message: "token is too long" } satisfies ProtocolError;
 		const key = await sessionKey(token);
-		const session = await this.ctx.storage.get<StoredSession>(key);
+		const session = await this.store.withMeterAsync("foreground", { reads: 1 }, () => this.ctx.storage.get<StoredSession>(key));
 		const now = nowMs();
 		const expired = { name: "denied", message: "Session expired; sign in with your passkey" } satisfies ProtocolError;
 		if (!session || session.v !== 1 || session.origin !== origin || session.expiresMs <= now) {
-			if (session && session.expiresMs <= now) await this.ctx.storage.delete(key);
+			if (session && session.expiresMs <= now) {
+				await this.store.withMeterAsync("foreground", { writes: 1 }, () => this.ctx.storage.delete(key));
+			}
 			throw expired;
 		}
 		const identity = this.store.getIdentity(session.userId);
 		if (!identity) {
-			await this.ctx.storage.delete(key);
+			await this.store.withMeterAsync("foreground", { writes: 1 }, () => this.ctx.storage.delete(key));
 			throw expired;
 		}
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 		this.assertRegisteredCapacity(socket, identity.userId);
-		await this.ctx.storage.put<StoredSession>(key, { ...session, expiresMs: now + this.config.limits.sessionTtlSeconds * 1_000 });
+		const renewed = { ...session, expiresMs: now + this.config.limits.sessionTtlSeconds * 1_000 };
+		await this.store.withMeterAsync("foreground", { writes: 3 }, async () => {
+			// The index is advisory. Writing it first means a crash cannot leave a
+			// live session without an expiry entry; a stale entry is harmless.
+			await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(renewed.expiresMs, key), {
+				v: 1, sessionKey: key, expiresMs: renewed.expiresMs,
+			});
+			await this.ctx.storage.put<StoredSession>(key, renewed);
+			const oldIndex = sessionExpiryKey(session.expiresMs, key);
+			const newIndex = sessionExpiryKey(renewed.expiresMs, key);
+			if (oldIndex !== newIndex) await this.ctx.storage.delete(oldIndex);
+		});
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 		attachment.tier = "registered";
 		attachment.userId = identity.userId;
@@ -796,20 +831,112 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	private async issueSession(userId: string, origin: string, now: number): Promise<string> {
+		return this.withSessionLock(() => this.issueSessionLocked(userId, origin, now));
+	}
+
+	private async issueSessionLocked(userId: string, origin: string, now: number): Promise<string> {
 		const token = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
-		await this.ctx.storage.put<StoredSession>(await sessionKey(token), {
-			v: 1, userId, origin, expiresMs: now + this.config.limits.sessionTtlSeconds * 1_000,
+		const key = await sessionKey(token);
+		const expiresMs = now + this.config.limits.sessionTtlSeconds * 1_000;
+		await this.store.withMeterAsync("foreground", { writes: 2 }, async () => {
+			await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(expiresMs, key), { v: 1, sessionKey: key, expiresMs });
+			await this.ctx.storage.put<StoredSession>(key, { v: 1, userId, origin, expiresMs });
 		});
 		return token;
 	}
 
-	/** Drops expired session records. Runs from the alarm, beside other sweeps. */
+	/**
+	 * Drops expired session records from a bounded expiry index. The separate
+	 * legacy cursor gradually indexes records written before this index existed,
+	 * so deployment does not require a destructive migration or an unbounded
+	 * first alarm. Cursors advance only after their batch has completed.
+	 */
 	private async sweepSessions(now: number): Promise<void> {
-		// TODO: Use a bounded, metered expiry index so authentication alarms do
-		// not repeatedly list every session, including ones far from expiry.
-		const sessions = await this.ctx.storage.list<StoredSession>({ prefix: SESSION_KEY_PREFIX });
-		const expired = [...sessions].filter(([, session]) => session.expiresMs <= now).map(([key]) => key);
-		if (expired.length) await this.ctx.storage.delete(expired);
+		return this.withSessionLock(() => this.sweepSessionsLocked(now));
+	}
+
+	private async sweepSessionsLocked(now: number): Promise<void> {
+		// Socket deadline alarms can be frequent. Probe the bounded expiry index
+		// before reserving a full batch; after legacy migration this is the only
+		// maintenance work performed until an expiry is actually due.
+		const { legacyDone, dueProbe } = await this.store.withMeterAsync("maintenance", { reads: 2 }, async () => ({
+			legacyDone: await this.ctx.storage.get<boolean>(SESSION_LEGACY_DONE_KEY),
+			dueProbe: await this.ctx.storage.list<SessionExpiryEntry>({
+				prefix: SESSION_EXPIRY_PREFIX,
+				end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
+				limit: 1,
+			}),
+		}), now);
+		if (legacyDone === true && dueProbe.size === 0) return;
+		// Up to B index rows + B session reads + B legacy rows + cursor/control
+		// reads; writes cover 2B expiry deletes + B legacy changes + 2 markers.
+		await this.store.withMeterAsync("maintenance", {
+			reads: 3 * SESSION_CLEANUP_BATCH + 4,
+			writes: 3 * SESSION_CLEANUP_BATCH + 2,
+		}, async () => {
+			const indexed = await this.ctx.storage.list<SessionExpiryEntry>({
+				prefix: SESSION_EXPIRY_PREFIX,
+				end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
+				limit: SESSION_CLEANUP_BATCH,
+			});
+			for (const [indexKey, entry] of indexed) {
+				if (!entry || entry.v !== 1 || typeof entry.sessionKey !== "string" || !Number.isSafeInteger(entry.expiresMs)) {
+					await this.ctx.storage.delete(indexKey);
+					continue;
+				}
+				const session = await this.ctx.storage.get<StoredSession>(entry.sessionKey);
+				if (!session || session.v !== 1 || !Number.isSafeInteger(session.expiresMs)) {
+					await this.ctx.storage.delete(indexKey);
+					continue;
+				}
+				if (session.expiresMs <= now) {
+					await this.ctx.storage.delete([entry.sessionKey, indexKey]);
+					continue;
+				}
+				if (entry.expiresMs < session.expiresMs) {
+					await this.ctx.storage.delete(indexKey);
+					continue;
+				}
+				// This should only be reached for a stale/malformed ordering entry;
+				// preserve the live session and discard its obsolete index row.
+				await this.ctx.storage.delete(indexKey);
+			}
+
+			if (legacyDone === true) return;
+			const legacyCursor = await this.ctx.storage.get<string>(SESSION_LEGACY_CURSOR_KEY);
+			const legacy = await this.ctx.storage.list<StoredSession>({
+				prefix: SESSION_KEY_PREFIX,
+				...(legacyCursor ? { startAfter: legacyCursor } : {}),
+				limit: SESSION_CLEANUP_BATCH,
+			});
+			let nextLegacyCursor: string | null = legacyCursor ?? null;
+			for (const [key, session] of legacy) {
+				if (!session || session.v !== 1 || !Number.isSafeInteger(session.expiresMs)) {
+					nextLegacyCursor = key;
+					continue;
+				}
+				if (session.expiresMs <= now) await this.ctx.storage.delete(key);
+				else await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(session.expiresMs, key), { v: 1, sessionKey: key, expiresMs: session.expiresMs });
+				nextLegacyCursor = key;
+			}
+			if (legacy.size === 0 || legacy.size < SESSION_CLEANUP_BATCH) nextLegacyCursor = null;
+			await this.ctx.storage.put(SESSION_LEGACY_CURSOR_KEY, nextLegacyCursor);
+			if (nextLegacyCursor === null) await this.ctx.storage.put(SESSION_LEGACY_DONE_KEY, true);
+		});
+	}
+
+	/** Serialize session KV decisions across fetches and alarms. */
+	private async withSessionLock<T>(fn: () => Promise<T>): Promise<T> {
+		const prior = this.sessionWorkTail;
+		let release!: () => void;
+		const held = new Promise<void>(resolve => { release = resolve; });
+		this.sessionWorkTail = prior.catch(() => undefined).then(() => held);
+		await prior.catch(() => undefined);
+		try {
+			return await fn();
+		} finally {
+			release();
+		}
 	}
 
 	private requestOrigin(socket: WebSocketConnection): string | null {

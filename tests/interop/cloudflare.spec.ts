@@ -82,8 +82,7 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 		const socket = (window as any).socket as WebSocket;
 		await new Promise<void>(resolve => { socket.onclose = () => resolve(); socket.close(); });
 	});
-	// Finish the return visit through the actual client. This shares the same
-	// canonical ceremony as Go, while the Worker does not issue a resume token.
+	// Finish the return visit through the actual client and persist its token.
 	await page.goto('/');
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
@@ -100,6 +99,16 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(dialog).toHaveCount(0);
 	await profile.click();
+	await expect(dialog.getByTestId('display-name-input')).toHaveValue('Returning owner');
+	await profile.click();
+	// No authenticator remains: a reload must resume the stored token without
+	// another passkey ceremony, and retain ownership of the earlier message.
+	await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
+	await page.reload();
+	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
+	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
+	await profile.click();
+	await expect(dialog.locator('code')).toHaveText(userId);
 	await expect(dialog.getByTestId('display-name-input')).toHaveValue('Returning owner');
 	await profile.click();
 	const savedMessage = page.locator(`article[data-message-id="${posted.result.message_id}"]`);

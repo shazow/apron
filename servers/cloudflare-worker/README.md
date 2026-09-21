@@ -17,6 +17,15 @@ The entry Worker rejects excessive connection attempts before calling the DO.
 See [edge admission operations](docs/edge-admission.md) for applying WAF rules,
 their Free-plan limitations, and the quota-exhaustion runbook.
 
+Passkey session cleanup uses an ordered expiry index. Each alarm processes at
+most 16 expired index entries and, during migration, 16 legacy sessions. Existing
+tokens remain valid; a durable cursor makes migration incremental and a completion
+marker prevents repeated scans of live sessions. Once migration finishes, alarms
+with no expired entries perform only a small metered probe. Session issuance,
+renewal, and cleanup share a queue so cleanup cannot delete a concurrent renewal.
+KV operations reserve conservative row allowances before running; an exhausted
+maintenance budget leaves unfinished cleanup for a later alarm.
+
 For an additional delayed account-wide safety stop, configure `ACCOUNT_ID` and
 the `ACCOUNT_ANALYTICS_TOKEN` secret. The Durable Object refreshes account usage
 periodically and keeps local limits as the fallback when analytics is unavailable.

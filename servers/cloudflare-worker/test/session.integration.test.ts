@@ -4,6 +4,14 @@ import { expect, it } from 'vitest';
 type Frame = { id?: string | null; method?: string; result?: any; error?: any; params?: any };
 let nextIp = 40;
 
+type StoredSessionTest = { v: 1; userId: string; origin: string; expiresMs: number };
+
+async function sweepSessions(now: number): Promise<void> {
+	await runInDurableObject(stub(), async (instance) => {
+		await (instance as unknown as { sweepSessions(now: number): Promise<void> }).sweepSessions(now);
+	});
+}
+
 async function connect(origin: string | null = 'http://localhost:5173', ip = `192.0.2.${nextIp++}`) {
 	const response = await SELF.fetch('https://demo.test/ws', { headers: {
 		Upgrade: 'websocket', ...(origin === null ? {} : { Origin: origin }), 'CF-Connecting-IP': ip
@@ -29,6 +37,13 @@ async function connect(origin: string | null = 'http://localhost:5173', ip = `19
 }
 
 const stub = () => env.DEMO.getByName('public-demo-v1');
+const isolatedStub = () => env.DEMO.getByName(`session-cleanup-${crypto.randomUUID()}`);
+
+async function sweepOn(target: ReturnType<typeof env.DEMO.getByName>, now: number): Promise<void> {
+	await runInDurableObject(target, async (instance) => {
+		await (instance as unknown as { sweepSessions(now: number): Promise<void> }).sweepSessions(now);
+	});
+}
 
 /** Registers an identity straight into the object's store, bypassing the ceremony. */
 async function registerIdentity(userId: string): Promise<void> {
@@ -88,6 +103,31 @@ it('resumes a registered identity from a session token, renews it, and rejects b
 		return [...sessions.values()].find((session) => session.userId === 'user_session_one')!.expiresMs;
 	});
 	expect(expiresMs).toBeGreaterThan(Date.now() + 11 * 60 * 60 * 1000);
+	// Simulate a crash between writing a renewed session and removing its old
+	// index row. Cleanup must discard the stale due row while preserving the
+	// still-live authoritative session.
+	await runInDurableObject(stub(), async (_instance, state) => {
+		const entries = await state.storage.list<{ sessionKey: string; expiresMs: number }>({ prefix: 'session-expiry:' });
+		const current = [...entries].find(([, entry]) => entry.expiresMs === expiresMs);
+		expect(current).toBeDefined();
+		const [, entry] = current!;
+		await state.storage.put(`session-expiry:${(Date.now() - 1).toString().padStart(16, '0')}:${entry.sessionKey.slice('session:'.length)}`, {
+			...entry, expiresMs: Date.now() - 1,
+		});
+	});
+	const racePeer = await connect();
+	await racePeer.next();
+	racePeer.send({ id: 'race-resume', method: 'auth', params: { scheme: 'token', token } });
+	const [raceResumed] = await Promise.all([racePeer.next(), sweepSessions(Date.now() + 1)]);
+	expect(raceResumed.result.you.user_id).toBe('user_session_one');
+	racePeer.close();
+	const sessionStillLive = await runInDurableObject(stub(), async (_instance, state) => {
+		const index = await state.storage.list<{ expiresMs: number }>({ prefix: 'session-expiry:' });
+		expect([...index.values()].every((entry) => entry.expiresMs > Date.now())).toBe(true);
+		const sessions = await state.storage.list<StoredSessionTest>({ prefix: 'session:' });
+		return [...sessions.values()].some((session) => session.userId === 'user_session_one' && session.expiresMs > Date.now());
+	});
+	expect(sessionStillLive).toBe(true);
 });
 
 it('binds sessions to their origin and drops expired ones on the alarm', async () => {
@@ -102,10 +142,139 @@ it('binds sessions to their origin and drops expired ones on the alarm', async (
 	await runInDurableObject(stub(), async (instance, state) => {
 		const sessions = await state.storage.list<{ userId: string; expiresMs: number }>({ prefix: 'session:' });
 		for (const [key, session] of sessions) {
-			if (session.userId === 'user_session_two') await state.storage.put(key, { ...session, expiresMs: Date.now() - 1 });
+			if (session.userId === 'user_session_two') {
+				const expiredMs = Date.now() - 1;
+				await state.storage.put(key, { ...session, expiresMs: expiredMs });
+				const index = await state.storage.list<{ sessionKey: string }>({ prefix: 'session-expiry:' });
+				for (const [indexKey, entry] of index) if (entry.sessionKey === key) {
+					await state.storage.delete(indexKey);
+					const suffix = key.slice('session:'.length);
+					await state.storage.put(`session-expiry:${Math.max(0, expiredMs).toString().padStart(16, '0')}:${suffix}`, { ...entry, expiresMs: expiredMs });
+				}
+			}
 		}
 		await (instance as unknown as { sweepSessions(now: number): Promise<void> }).sweepSessions(Date.now());
 		const remaining = await state.storage.list<{ userId: string }>({ prefix: 'session:' });
 		expect([...remaining.values()].some((session) => session.userId === 'user_session_two')).toBe(false);
+	});
+});
+
+it('migrates legacy sessions in bounded batches and preserves live records', async () => {
+	const now = Date.now();
+	const target = isolatedStub();
+	await runInDurableObject(target, async (_instance, state) => {
+		for (let i = 0; i < 40; i++) {
+			await state.storage.put<StoredSessionTest>(`session:legacy-${i.toString().padStart(3, '0')}`, {
+				v: 1, userId: `legacy-${i}`, origin: 'http://localhost:5173', expiresMs: now - 1,
+			});
+		}
+		await state.storage.put<StoredSessionTest>('session:legacy-live', {
+			v: 1, userId: 'legacy-live', origin: 'http://localhost:5173', expiresMs: now + 60_000,
+		});
+	});
+
+	await sweepOn(target, now);
+	const afterFirst = await runInDurableObject(target, async (_instance, state) => ({
+		remaining: (await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).size,
+		cursor: await state.storage.get<string>('session-legacy-cursor'),
+		indexed: (await state.storage.list({ prefix: 'session-expiry:' })).size,
+	}));
+	// The migration walk is bounded independently of the number of old rows.
+	expect(afterFirst.remaining).toBeGreaterThan(24);
+	expect(afterFirst.cursor).toBeTruthy();
+	expect(afterFirst.indexed).toBeGreaterThanOrEqual(0);
+
+	for (let attempt = 0; attempt < 6; attempt++) await sweepOn(target, now);
+	const finished = await runInDurableObject(target, async (_instance, state) => ({
+		remaining: [...(await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].filter((session) => session.userId.startsWith('legacy-')).length,
+		live: [...(await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].some((session) => session.userId === 'legacy-live'),
+	}));
+	expect(finished.remaining).toBe(1);
+	expect(finished.live).toBe(true);
+	const beforeIdle = await runInDurableObject(target, async (_instance, state) => ({
+		keys: [...(await state.storage.list({ prefix: 'session-expiry:' })).keys()],
+		cursor: await state.storage.get('session-legacy-cursor'),
+		done: await state.storage.get('session-legacy-done'),
+	}));
+	expect(beforeIdle.done).toBe(true);
+	await sweepOn(target, now);
+	const afterIdle = await runInDurableObject(target, async (_instance, state) => ({
+		keys: [...(await state.storage.list({ prefix: 'session-expiry:' })).keys()],
+		cursor: await state.storage.get('session-legacy-cursor'),
+	}));
+	expect(afterIdle).toEqual({ keys: beforeIdle.keys, cursor: beforeIdle.cursor });
+});
+
+it('continues legacy cleanup across bounded batches', async () => {
+	const now = Date.now();
+	const target = isolatedStub();
+	await runInDurableObject(target, async (_instance, state) => {
+		for (let i = 0; i < 32; i++) {
+			await state.storage.put<StoredSessionTest>(`session:restart-${i.toString().padStart(3, '0')}`, {
+				v: 1, userId: `restart-${i}`, origin: 'http://localhost:5173', expiresMs: now - 1,
+			});
+		}
+	});
+	await sweepOn(target, now);
+	const cursorAfterFirst = await runInDurableObject(target, async (_instance, state) => state.storage.get<string>('session-legacy-cursor'));
+	expect(cursorAfterFirst).toBeTruthy();
+	// The next bounded batches resume at the durable cursor.
+	for (let attempt = 0; attempt < 4; attempt++) await sweepOn(target, now);
+	const remaining = await runInDurableObject(target, async (_instance, state) => [...(await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].filter((session) => session.userId.startsWith('restart-')).length);
+	expect(remaining).toBe(0);
+});
+
+it('stops session cleanup safely when the maintenance budget is exhausted', async () => {
+	const now = Date.now();
+	const target = isolatedStub();
+	const cursorBefore = await runInDurableObject(target, async (_instance, state) => state.storage.get('session-legacy-cursor'));
+	await runInDurableObject(target, async (instance, state) => {
+		await state.storage.put<StoredSessionTest>('session:budget-expired', {
+			v: 1, userId: 'budget-expired', origin: 'http://localhost:5173', expiresMs: now - 1,
+		});
+		const day = new Date(now).toISOString().slice(0, 10);
+		state.storage.sql.exec(
+			'UPDATE resource_budgets SET maintenance_reads = 100000000, maintenance_writes = 100000000 WHERE day = ?', day,
+		);
+		// The object was initialized before the direct SQL fixture update; force
+		// the Store to reload the durable budget row on the next reservation.
+		const store = (instance as unknown as { store: Record<string, unknown> }).store;
+		store.budgetCache = null;
+		store.budgetCacheDay = null;
+		store.budgetHandoverPending = true;
+	});
+	await expect(sweepOn(target, now)).rejects.toMatchObject({ code: 'retry_after' });
+	const state = await runInDurableObject(target, async (_instance, durableState) => ({
+		remaining: [...(await durableState.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].filter((session) => session.userId === 'budget-expired').length,
+		cursor: await durableState.storage.get('session-legacy-cursor'),
+	}));
+	expect(state.remaining).toBe(1);
+	// Exhaustion must leave the durable migration cursor untouched for retry.
+	expect(state.cursor).toBe(cursorBefore);
+});
+
+it('keeps concurrent async reservations isolated from unrelated SQL work', async () => {
+	const target = isolatedStub();
+	await runInDurableObject(target, async (instance) => {
+		const store = (instance as unknown as {
+			store: {
+				withMeterAsync<T>(kind: 'foreground' | 'maintenance', cost: { reads: number; writes: number }, fn: () => Promise<T>): Promise<T>;
+				getRoomState(): unknown;
+				accountingStatus(): { unsafe: boolean };
+			};
+		}).store;
+		await Promise.all([
+			store.withMeterAsync('foreground', { reads: 1, writes: 1 }, async () => {
+				await Promise.resolve();
+				store.getRoomState();
+				return 'foreground';
+			}),
+			store.withMeterAsync('maintenance', { reads: 1, writes: 1 }, async () => {
+				await Promise.resolve();
+				store.getRoomState();
+				return 'maintenance';
+			}),
+		]);
+		expect(store.accountingStatus().unsafe).toBe(false);
 	});
 });
