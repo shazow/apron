@@ -17,10 +17,10 @@ the sender.
 
 ```jsonc
 // <- server greeting with auth schemes
-{"method": "server", "params": {"protocol": 3, "auth": ["anonymous", "token"]}}
+{"method": "server", "params": {"protocol": 3, "auth": ["guest", "token"]}}
 
-// -> anonymous auth, requesting a display name
-{"method": "auth", "id": "c1", "params": {"scheme": "anonymous", "name": "Ada"}}
+// -> guest auth, requesting a display name
+{"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
 
 // <- assigned identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1", "name": "Ada"}}}
@@ -221,12 +221,13 @@ fresh `server` frame.
 
 `params.scheme` selects the scheme:
 
-- `anonymous`: no credentials; the server assigns identity.
+- `guest`: no credentials; the server assigns identity. A `guest_` prefix on
+  assigned `user_id`s is recommended, so guests are recognizable.
 - `token`: bearer string. The reference default.
 - `webauthn`: optional passkey scheme (Appendix I).
 
 Except for `webauthn`, servers MAY accept `auth` regardless of `scheme` and
-ignore credentials under anonymous-access policies. Token validation,
+ignore credentials under guest-access policies. Token validation,
 identity assignment, and privilege policy are implementation-defined.
 
 `name` is an optional requested display name, valid with any scheme; the
