@@ -269,7 +269,7 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 }
 
 // authenticateToken resumes a passkey session through the protocol's token
-// scheme. Keeping this outside the WebAuthn action space preserves Appendix C's
+// scheme. Keeping this outside the WebAuthn action space preserves Appendix I's
 // register/login action grammar while retaining the example server's bearer
 // token policy.
 func (s *Server) authenticateToken(c *client, req request, now time.Time) (any, *rpcError) {
