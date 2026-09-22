@@ -1,32 +1,25 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "replay",
-  "name": "Repeated and stale snapshots are ignored",
-  "description": "Repeated and stale snapshots are ignored.",
+  "name": "Repeated and stale records are ignored",
+  "description": "Overlapping live and history delivery repeats room records, snapshots, and reaction sets; equal or lower log_ids never replace the kept record.",
   "references": [
-    "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#51-history"
+    "PROTOCOL.md#2-identifiers",
+    "PROTOCOL.md#appendix-a--history"
   ],
-  "room": "general",
   "variants": [
     {
       "name": "overlap",
       "steps": [
         {
           "receive": {
-            "method": "message",
+            "method": "room",
             "params": {
               "room_id": "general",
-              "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "original"
-                }
-              }
+              "log_id": "50",
+              "title": "General",
+              "latest_log_id": "110",
+              "history_log_id": "50"
             }
           }
         },
@@ -34,16 +27,50 @@
           "receive": {
             "method": "message",
             "params": {
+              "message_id": "100",
+              "log_id": "100",
               "room_id": "general",
-              "log_id": "110",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "edited"
+              "from": {
+                "user_id": "alice"
+              },
+              "body": {
+                "text": "original"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "reactions",
+            "params": {
+              "log_id": "105",
+              "message_id": "100",
+              "room_id": "general",
+              "reactions": [
+                {
+                  "from": {
+                    "user_id": "bob"
+                  },
+                  "emojis": [
+                    "👍"
+                  ]
                 }
+              ]
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "100",
+              "log_id": "110",
+              "room_id": "general",
+              "from": {
+                "user_id": "alice"
+              },
+              "body": {
+                "text": "edited"
               }
             }
           }
@@ -52,35 +79,59 @@
           "receive": {
             "id": "history",
             "result": {
+              "rooms": [
+                {
+                  "room_id": "general",
+                  "log_id": "50",
+                  "title": "General"
+                }
+              ],
               "entries": [
                 {
+                  "message_id": "100",
                   "log_id": "100",
-                  "message": {
-                    "message_id": "100",
-                    "from": {
-                      "user_id": "alice"
-                    },
-                    "body": {
-                      "text": "original"
-                    }
+                  "room_id": "general",
+                  "from": {
+                    "user_id": "alice"
+                  },
+                  "body": {
+                    "text": "original"
                   }
                 },
                 {
+                  "message_id": "100",
                   "log_id": "110",
-                  "message": {
-                    "message_id": "100",
-                    "from": {
-                      "user_id": "alice"
-                    },
-                    "body": {
-                      "text": "edited"
-                    }
+                  "room_id": "general",
+                  "from": {
+                    "user_id": "alice"
+                  },
+                  "body": {
+                    "text": "edited"
                   }
                 }
               ],
-              "first_id": "100",
+              "reactions": [
+                {
+                  "log_id": "105",
+                  "message_id": "100",
+                  "room_id": "general",
+                  "reactions": [
+                    {
+                      "from": {
+                        "user_id": "bob"
+                      },
+                      "emojis": [
+                        "👍"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "first_id": "50",
               "last_id": "110",
-              "more": false
+              "more": false,
+              "latest_log_id": "110",
+              "history_log_id": "50"
             }
           }
         },
@@ -88,17 +139,47 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
+              "message_id": "100",
               "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "original"
-                }
+              "room_id": "general",
+              "from": {
+                "user_id": "alice"
+              },
+              "body": {
+                "text": "original"
               }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "reactions",
+            "params": {
+              "log_id": "105",
+              "message_id": "100",
+              "room_id": "general",
+              "reactions": [
+                {
+                  "from": {
+                    "user_id": "bob"
+                  },
+                  "emojis": [
+                    "👍"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room_id": "general",
+              "log_id": "50",
+              "title": "General",
+              "latest_log_id": "110",
+              "history_log_id": "50"
             }
           }
         }
@@ -106,15 +187,32 @@
     }
   ],
   "expected": {
-    "events": [
+    "rooms": [
       {
-        "message_id": "100",
-        "from": {
-          "user_id": "alice"
-        },
-        "body": {
-          "text": "edited"
-        }
+        "room_id": "general",
+        "log_id": "50",
+        "title": "General",
+        "messages": [
+          {
+            "message_id": "100",
+            "log_id": "110",
+            "room_id": "general",
+            "from": {
+              "user_id": "alice"
+            },
+            "body": {
+              "text": "edited"
+            },
+            "reactions": [
+              {
+                "emoji": "👍",
+                "user_ids": [
+                  "bob"
+                ]
+              }
+            ]
+          }
+        ]
       }
     ]
   }

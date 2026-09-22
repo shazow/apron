@@ -1,13 +1,12 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "replay",
-  "name": "Snapshot installs without its creation",
-  "description": "Snapshot installs without its creation.",
+  "name": "A snapshot installs without its creation",
+  "description": "An edit snapshot installs a message that was never loaded; its later-arriving creation snapshot is stale.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#51-history"
+    "PROTOCOL.md#appendix-a--history"
   ],
-  "room": "general",
   "variants": [
     {
       "name": "history",
@@ -18,9 +17,35 @@
             "result": {
               "entries": [
                 {
+                  "message_id": "100",
                   "log_id": "110",
-                  "message": {
+                  "room_id": "general",
+                  "from": {
+                    "user_id": "alice"
+                  },
+                  "body": {
+                    "text": "edited"
+                  }
+                }
+              ],
+              "first_id": "110",
+              "last_id": "110",
+              "more": false,
+              "latest_log_id": "110",
+              "history_log_id": "100"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "room_id": "general",
+                "messages": [
+                  {
                     "message_id": "100",
+                    "log_id": "110",
+                    "room_id": "general",
                     "from": {
                       "user_id": "alice"
                     },
@@ -28,25 +53,7 @@
                       "text": "edited"
                     }
                   }
-                }
-              ],
-              "first_id": "110",
-              "last_id": "110",
-              "more": false
-            }
-          }
-        },
-        {
-          "expect": {
-            "events": [
-              {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "edited"
-                }
+                ]
               }
             ]
           }
@@ -55,16 +62,14 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
+              "message_id": "100",
               "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "original"
-                }
+              "room_id": "general",
+              "from": {
+                "user_id": "alice"
+              },
+              "body": {
+                "text": "original"
               }
             }
           }
@@ -78,31 +83,36 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
+              "message_id": "100",
               "log_id": "110",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "edited"
-                }
+              "room_id": "general",
+              "from": {
+                "user_id": "alice"
+              },
+              "body": {
+                "text": "edited"
               }
             }
           }
         },
         {
           "expect": {
-            "events": [
+            "rooms": [
               {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "edited"
-                }
+                "room_id": "general",
+                "messages": [
+                  {
+                    "message_id": "100",
+                    "log_id": "110",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "alice"
+                    },
+                    "body": {
+                      "text": "edited"
+                    }
+                  }
+                ]
               }
             ]
           }
@@ -111,15 +121,22 @@
     }
   ],
   "expected": {
-    "events": [
+    "rooms": [
       {
-        "message_id": "100",
-        "from": {
-          "user_id": "alice"
-        },
-        "body": {
-          "text": "edited"
-        }
+        "room_id": "general",
+        "messages": [
+          {
+            "message_id": "100",
+            "log_id": "110",
+            "room_id": "general",
+            "from": {
+              "user_id": "alice"
+            },
+            "body": {
+              "text": "edited"
+            }
+          }
+        ]
       }
     ]
   }

@@ -1,11 +1,12 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "session",
-  "name": "Anonymous reconnect and retained history",
-  "description": "A fresh anonymous identity authenticates after transport loss; full recovery retains the original sender and yields each message once. This variant exercises recovery without persistent checkpoints.",
+  "name": "Guest reconnect and retained history",
+  "description": "A fresh guest identity authenticates after transport loss. The client rebuilds its protocol view from the new connection: rooms are empty until announced, and recovery pages the whole retained range again from the lower bound, across message and reaction records, keeping the original sender and yielding each message once. This profile uses no persistent checkpoints.",
   "references": [
     "PROTOCOL.md#32-authentication",
-    "PROTOCOL.md#51-history"
+    "PROTOCOL.md#appendix-a--history",
+    "PROTOCOL.md#d2-reactions"
   ],
   "variants": [
     {
@@ -15,9 +16,9 @@
           "receive": {
             "method": "server",
             "params": {
-              "protocol": 2,
+              "protocol": 3,
               "auth": [
-                "anonymous"
+                "guest"
               ],
               "caps": [
                 "history"
@@ -31,7 +32,7 @@
             "match": {
               "method": "auth",
               "params": {
-                "scheme": "anonymous"
+                "scheme": "guest"
               }
             }
           }
@@ -41,7 +42,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "user_id": "guest-1"
+                "user_id": "guest_1"
               }
             }
           }
@@ -49,7 +50,7 @@
         {
           "expect": {
             "you": {
-              "user_id": "guest-1"
+              "user_id": "guest_1"
             }
           }
         },
@@ -58,9 +59,10 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "name": "General",
-              "latest_log_id": "1724803200200",
-              "history_log_id": "1"
+              "log_id": "100",
+              "title": "General",
+              "latest_log_id": "101",
+              "history_log_id": "100"
             }
           }
         },
@@ -71,8 +73,8 @@
               "method": "history",
               "params": {
                 "room_id": "general",
-                "after": "0",
-                "before": "1724803200200"
+                "after": "100",
+                "before": "101"
               }
             }
           }
@@ -81,26 +83,32 @@
           "reply": {
             "to": "history-before",
             "result": {
+              "rooms": [
+                {
+                  "room_id": "general",
+                  "log_id": "100",
+                  "title": "General"
+                }
+              ],
               "entries": [
                 {
-                  "log_id": "1724803200200",
-                  "message": {
-                    "message_id": "1724803200200",
-                    "from": {
-                      "user_id": "guest-1"
-                    },
-                    "body": {
-                      "text": "retained",
-                      "format": "plain"
-                    }
+                  "message_id": "101",
+                  "log_id": "101",
+                  "room_id": "general",
+                  "from": {
+                    "user_id": "guest_1"
+                  },
+                  "body": {
+                    "text": "retained",
+                    "format": "plain"
                   }
                 }
               ],
-              "first_id": "1724803200200",
-              "last_id": "1724803200200",
+              "first_id": "100",
+              "last_id": "101",
               "more": false,
-              "latest_log_id": "1724803200200",
-              "history_log_id": "1"
+              "latest_log_id": "101",
+              "history_log_id": "100"
             }
           }
         },
@@ -108,14 +116,16 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "General",
-                "topic": null,
-                "events": [
+                "room_id": "general",
+                "log_id": "100",
+                "title": "General",
+                "messages": [
                   {
-                    "message_id": "1724803200200",
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "guest-1"
+                      "user_id": "guest_1"
                     },
                     "body": {
                       "text": "retained",
@@ -128,15 +138,76 @@
           }
         },
         {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "102",
+              "log_id": "102",
+              "room_id": "general",
+              "from": {
+                "user_id": "bob"
+              },
+              "body": {
+                "text": "while connected",
+                "format": "plain"
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "room_id": "general",
+                "log_id": "100",
+                "title": "General",
+                "messages": [
+                  {
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1"
+                    },
+                    "body": {
+                      "text": "retained",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "102",
+                    "log_id": "102",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "while connected",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
           "disconnect": true
+        },
+        {
+          "expect": {
+            "you": null,
+            "caps": [],
+            "rooms": []
+          }
         },
         {
           "receive": {
             "method": "server",
             "params": {
-              "protocol": 2,
+              "protocol": 3,
               "auth": [
-                "anonymous"
+                "guest"
               ],
               "caps": [
                 "history"
@@ -150,7 +221,7 @@
             "match": {
               "method": "auth",
               "params": {
-                "scheme": "anonymous"
+                "scheme": "guest"
               }
             }
           }
@@ -160,7 +231,7 @@
             "to": "auth-again",
             "result": {
               "you": {
-                "user_id": "guest-2"
+                "user_id": "guest_2"
               }
             }
           }
@@ -168,7 +239,7 @@
         {
           "expect": {
             "you": {
-              "user_id": "guest-2"
+              "user_id": "guest_2"
             }
           }
         },
@@ -177,9 +248,10 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "name": "General",
-              "latest_log_id": "1724803200200",
-              "history_log_id": "1"
+              "log_id": "100",
+              "title": "General",
+              "latest_log_id": "104",
+              "history_log_id": "100"
             }
           }
         },
@@ -190,8 +262,8 @@
               "method": "history",
               "params": {
                 "room_id": "general",
-                "after": "0",
-                "before": "1724803200200"
+                "after": "100",
+                "before": "104"
               }
             }
           }
@@ -200,26 +272,73 @@
           "reply": {
             "to": "history-after",
             "result": {
+              "rooms": [
+                {
+                  "room_id": "general",
+                  "log_id": "100",
+                  "title": "General"
+                }
+              ],
               "entries": [
                 {
-                  "log_id": "1724803200200",
-                  "message": {
-                    "message_id": "1724803200200",
-                    "from": {
-                      "user_id": "guest-1"
-                    },
-                    "body": {
-                      "text": "retained",
-                      "format": "plain"
-                    }
+                  "message_id": "101",
+                  "log_id": "101",
+                  "room_id": "general",
+                  "from": {
+                    "user_id": "guest_1"
+                  },
+                  "body": {
+                    "text": "retained",
+                    "format": "plain"
+                  }
+                },
+                {
+                  "message_id": "102",
+                  "log_id": "102",
+                  "room_id": "general",
+                  "from": {
+                    "user_id": "bob"
+                  },
+                  "body": {
+                    "text": "while connected",
+                    "format": "plain"
+                  }
+                },
+                {
+                  "message_id": "103",
+                  "log_id": "103",
+                  "room_id": "general",
+                  "from": {
+                    "user_id": "bob"
+                  },
+                  "body": {
+                    "text": "while away",
+                    "format": "plain"
                   }
                 }
               ],
-              "first_id": "1724803200200",
-              "last_id": "1724803200200",
+              "reactions": [
+                {
+                  "log_id": "104",
+                  "message_id": "101",
+                  "room_id": "general",
+                  "reactions": [
+                    {
+                      "from": {
+                        "user_id": "carol"
+                      },
+                      "emojis": [
+                        "👍"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "first_id": "100",
+              "last_id": "104",
               "more": false,
-              "latest_log_id": "1724803200200",
-              "history_log_id": "1"
+              "latest_log_id": "104",
+              "history_log_id": "100"
             }
           }
         },
@@ -227,17 +346,51 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "General",
-                "topic": null,
-                "events": [
+                "room_id": "general",
+                "log_id": "100",
+                "title": "General",
+                "messages": [
                   {
-                    "message_id": "1724803200200",
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "guest-1"
+                      "user_id": "guest_1"
                     },
                     "body": {
                       "text": "retained",
+                      "format": "plain"
+                    },
+                    "reactions": [
+                      {
+                        "emoji": "👍",
+                        "user_ids": [
+                          "carol"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "message_id": "102",
+                    "log_id": "102",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "while connected",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "103",
+                    "log_id": "103",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "while away",
                       "format": "plain"
                     }
                   }
@@ -273,7 +426,7 @@
           "reply": {
             "to": "send",
             "result": {
-              "message_id": "1724803200201"
+              "message_id": "105"
             }
           }
         },
@@ -281,49 +434,88 @@
           "receive": {
             "method": "message",
             "params": {
+              "message_id": "105",
+              "log_id": "105",
               "room_id": "general",
-              "log_id": "1724803200201",
-              "message": {
-                "message_id": "1724803200201",
-                "from": {
-                  "user_id": "guest-2"
-                },
-                "body": {
-                  "text": "new connection",
-                  "format": "plain"
-                }
+              "from": {
+                "user_id": "guest_2"
+              },
+              "body": {
+                "text": "new connection",
+                "format": "plain"
               }
             }
-          },
-          "echoFrom": "send"
+          }
         }
       ]
     }
   ],
   "expected": {
     "you": {
-      "user_id": "guest-2"
+      "user_id": "guest_2"
+    },
+    "caps": [
+      "history"
+    ],
+    "operations": {
+      "after-reconnect": "fulfilled"
     },
     "rooms": [
       {
-        "id": "general",
-        "name": "General",
-        "topic": null,
-        "events": [
+        "room_id": "general",
+        "log_id": "100",
+        "title": "General",
+        "messages": [
           {
-            "message_id": "1724803200200",
+            "message_id": "101",
+            "log_id": "101",
+            "room_id": "general",
             "from": {
-              "user_id": "guest-1"
+              "user_id": "guest_1"
             },
             "body": {
               "text": "retained",
               "format": "plain"
+            },
+            "reactions": [
+              {
+                "emoji": "👍",
+                "user_ids": [
+                  "carol"
+                ]
+              }
+            ]
+          },
+          {
+            "message_id": "102",
+            "log_id": "102",
+            "room_id": "general",
+            "from": {
+              "user_id": "bob"
+            },
+            "body": {
+              "text": "while connected",
+              "format": "plain"
             }
           },
           {
-            "message_id": "1724803200201",
+            "message_id": "103",
+            "log_id": "103",
+            "room_id": "general",
             "from": {
-              "user_id": "guest-2"
+              "user_id": "bob"
+            },
+            "body": {
+              "text": "while away",
+              "format": "plain"
+            }
+          },
+          {
+            "message_id": "105",
+            "log_id": "105",
+            "room_id": "general",
+            "from": {
+              "user_id": "guest_2"
             },
             "body": {
               "text": "new connection",
@@ -332,9 +524,6 @@
           }
         ]
       }
-    ],
-    "operations": {
-      "after-reconnect": "fulfilled"
-    }
+    ]
   }
 }

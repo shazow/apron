@@ -1,27 +1,28 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "session",
-  "name": "Message saves preserve unedited fields and extensions",
-  "description": "Message saves preserve unedited fields and extensions.",
+  "name": "Message saves resubmit every client field",
+  "description": "Edit, move, and delete are saves built from the latest snapshot: they resubmit room_id, body (only text changed on edit), a bare reply_to, and ext unchanged, including a server-published ext change and \"__proto__\" keys. A move names the destination thread room; a delete omits body.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#51-history",
-    "PROTOCOL.md#62-threads"
+    "PROTOCOL.md#appendix-b--edit",
+    "PROTOCOL.md#34-rooms"
   ],
   "variants": [
     {
-      "name": "session",
+      "name": "result-before-broadcast",
       "steps": [
         {
           "receive": {
             "method": "server",
             "params": {
-              "protocol": 2,
+              "protocol": 3,
               "auth": [
-                "anonymous"
+                "guest"
               ],
               "caps": [
-                "edit"
+                "edit",
+                "rooms"
               ]
             }
           }
@@ -32,7 +33,7 @@
             "match": {
               "method": "auth",
               "params": {
-                "scheme": "anonymous"
+                "scheme": "guest"
               }
             }
           }
@@ -42,7 +43,7 @@
             "to": "auth",
             "result": {
               "you": {
-                "user_id": "alice"
+                "user_id": "guest_1"
               }
             }
           }
@@ -51,7 +52,20 @@
           "receive": {
             "method": "room",
             "params": {
-              "room_id": "general"
+              "room_id": "general",
+              "log_id": "90",
+              "title": "General"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room_id": "97",
+              "log_id": "97",
+              "parent_room_id": "general",
+              "title": "Side"
             }
           }
         },
@@ -59,29 +73,47 @@
           "receive": {
             "method": "message",
             "params": {
+              "message_id": "101",
+              "log_id": "101",
               "room_id": "general",
-              "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice",
-                  "name": "Alice"
-                },
-                "body": {
-                  "text": "original",
-                  "format": "plain",
-                  "embeds": [
-                    {
-                      "kind": "future",
-                      "data": [
-                        1,
-                        null
-                      ]
-                    }
-                  ],
-                  "extra": null
-                },
-                "custom": {
+              "from": {
+                "user_id": "bob"
+              },
+              "body": {
+                "text": "question?",
+                "format": "plain"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "102",
+              "log_id": "102",
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "original",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "ext": {
+                "example.org": {
                   "nested": null
                 },
                 "__proto__": {
@@ -95,19 +127,39 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "general",
-                "topic": null,
-                "events": [
+                "room_id": "97",
+                "log_id": "97",
+                "parent_room_id": "general",
+                "title": "Side",
+                "messages": []
+              },
+              {
+                "room_id": "general",
+                "log_id": "90",
+                "title": "General",
+                "messages": [
                   {
-                    "message_id": "100",
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice",
-                      "name": "Alice"
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "question?",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "102",
+                    "log_id": "102",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1"
                     },
                     "body": {
                       "text": "original",
-                      "format": "plain",
+                      "format": "markdown",
                       "embeds": [
                         {
                           "kind": "future",
@@ -116,200 +168,67 @@
                             null
                           ]
                         }
-                      ],
-                      "extra": null
+                      ]
                     },
-                    "custom": {
-                      "nested": null
+                    "reply_to": {
+                      "message_id": "101"
                     },
-                    "__proto__": {
-                      "opaque": true
+                    "ext": {
+                      "example.org": {
+                        "nested": null
+                      },
+                      "__proto__": {
+                        "opaque": true
+                      }
                     }
                   }
                 ]
               }
             ]
-          }
-        },
-        {
-          "createThread": {
-            "as": "create",
-            "room": "general",
-            "title": "Deploy",
-            "summary": "Investigation"
-          }
-        },
-        {
-          "request": {
-            "as": "create-request",
-            "match": {
-              "method": "thread",
-              "params": {
-                "room_id": "general",
-                "title": "Deploy",
-                "summary": "Investigation"
-              }
-            }
-          }
-        },
-        {
-          "reply": {
-            "to": "create-request",
-            "result": {
-              "thread_id": "t_server"
-            }
-          }
-        },
-        {
-          "receive": {
-            "method": "thread",
-            "params": {
-              "room_id": "general",
-              "thread_id": "t_server",
-              "title": "Deploy",
-              "summary": "Investigation"
-            }
-          }
-        },
-        {
-          "expect": {
-            "operations": {
-              "create": "fulfilled"
-            }
-          }
-        },
-        {
-          "moveThread": {
-            "as": "move",
-            "room": "general",
-            "target": "100",
-            "thread_id": "t_server"
-          }
-        },
-        {
-          "request": {
-            "as": "move-request",
-            "match": {
-              "method": "message",
-              "params": {
-                "room_id": "general",
-                "message_id": "100",
-                "body": {
-                  "text": "original",
-                  "format": "plain",
-                  "embeds": [
-                    {
-                      "kind": "future",
-                      "data": [
-                        1,
-                        null
-                      ]
-                    }
-                  ],
-                  "extra": null
-                },
-                "custom": {
-                  "nested": null
-                },
-                "__proto__": {
-                  "opaque": true
-                },
-                "thread_id": "t_server"
-              }
-            }
-          }
-        },
-        {
-          "reply": {
-            "to": "move-request",
-            "result": {
-              "message_id": "100"
-            }
           }
         },
         {
           "receive": {
             "method": "message",
             "params": {
+              "message_id": "102",
+              "log_id": "103",
               "room_id": "general",
-              "log_id": "110",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice",
-                  "name": "Alice"
-                },
-                "body": {
-                  "text": "original",
-                  "format": "plain",
-                  "embeds": [
-                    {
-                      "kind": "future",
-                      "data": [
-                        1,
-                        null
-                      ]
-                    }
-                  ],
-                  "extra": null
-                },
-                "custom": {
-                  "nested": null
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "original",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
                 },
                 "__proto__": {
                   "opaque": true
-                },
-                "thread_id": "t_server"
+                }
               }
             }
           }
         },
         {
-          "expect": {
-            "rooms": [
-              {
-                "id": "general",
-                "name": "general",
-                "topic": null,
-                "events": [
-                  {
-                    "message_id": "100",
-                    "from": {
-                      "user_id": "alice",
-                      "name": "Alice"
-                    },
-                    "body": {
-                      "text": "original",
-                      "format": "plain",
-                      "embeds": [
-                        {
-                          "kind": "future",
-                          "data": [
-                            1,
-                            null
-                          ]
-                        }
-                      ],
-                      "extra": null
-                    },
-                    "custom": {
-                      "nested": null
-                    },
-                    "__proto__": {
-                      "opaque": true
-                    },
-                    "thread_id": "t_server"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        {
           "editMessage": {
             "as": "edit",
-            "room": "general",
-            "message_id": "100",
+            "message_id": "102",
             "text": "edited"
           }
         },
@@ -319,11 +238,11 @@
             "match": {
               "method": "message",
               "params": {
+                "message_id": "102",
                 "room_id": "general",
-                "message_id": "100",
                 "body": {
                   "text": "edited",
-                  "format": "plain",
+                  "format": "markdown",
                   "embeds": [
                     {
                       "kind": "future",
@@ -332,16 +251,20 @@
                         null
                       ]
                     }
-                  ],
-                  "extra": null
+                  ]
                 },
-                "custom": {
-                  "nested": null
+                "reply_to": {
+                  "message_id": "101"
                 },
-                "__proto__": {
-                  "opaque": true
-                },
-                "thread_id": "t_server"
+                "ext": {
+                  "example.org": {
+                    "nested": null,
+                    "added": 1
+                  },
+                  "__proto__": {
+                    "opaque": true
+                  }
+                }
               }
             }
           }
@@ -350,7 +273,7 @@
           "reply": {
             "to": "edit-request",
             "result": {
-              "message_id": "100"
+              "message_id": "102"
             }
           }
         },
@@ -358,56 +281,89 @@
           "receive": {
             "method": "message",
             "params": {
+              "message_id": "102",
+              "log_id": "104",
               "room_id": "general",
-              "log_id": "120",
-              "message": {
-                "message_id": "100",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "edited",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101",
+                "log_id": "101",
+                "room_id": "general",
                 "from": {
-                  "user_id": "alice",
-                  "name": "Alice"
+                  "user_id": "bob"
                 },
                 "body": {
-                  "text": "edited",
-                  "format": "plain",
-                  "embeds": [
-                    {
-                      "kind": "future",
-                      "data": [
-                        1,
-                        null
-                      ]
-                    }
-                  ],
-                  "extra": null
-                },
-                "custom": {
-                  "nested": null
+                  "text": "question?",
+                  "format": "plain"
+                }
+              },
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
                 },
                 "__proto__": {
                   "opaque": true
-                },
-                "thread_id": "t_server"
+                }
               }
             }
           }
         },
         {
           "expect": {
+            "operations": {
+              "edit": "fulfilled"
+            },
             "rooms": [
               {
-                "id": "general",
-                "name": "general",
-                "topic": null,
-                "events": [
+                "room_id": "97",
+                "log_id": "97",
+                "parent_room_id": "general",
+                "title": "Side",
+                "messages": []
+              },
+              {
+                "room_id": "general",
+                "log_id": "90",
+                "title": "General",
+                "messages": [
                   {
-                    "message_id": "100",
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice",
-                      "name": "Alice"
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "question?",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "102",
+                    "log_id": "104",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1"
                     },
                     "body": {
                       "text": "edited",
-                      "format": "plain",
+                      "format": "markdown",
                       "embeds": [
                         {
                           "kind": "future",
@@ -416,16 +372,20 @@
                             null
                           ]
                         }
-                      ],
-                      "extra": null
+                      ]
                     },
-                    "custom": {
-                      "nested": null
+                    "reply_to": {
+                      "message_id": "101"
                     },
-                    "__proto__": {
-                      "opaque": true
-                    },
-                    "thread_id": "t_server"
+                    "ext": {
+                      "example.org": {
+                        "nested": null,
+                        "added": 1
+                      },
+                      "__proto__": {
+                        "opaque": true
+                      }
+                    }
                   }
                 ]
               }
@@ -433,24 +393,23 @@
           }
         },
         {
-          "moveThread": {
-            "as": "return",
-            "room": "general",
-            "target": "100",
-            "thread_id": null
+          "moveMessage": {
+            "as": "move",
+            "message_id": "102",
+            "room": "97"
           }
         },
         {
           "request": {
-            "as": "return-request",
+            "as": "move-request",
             "match": {
               "method": "message",
               "params": {
-                "room_id": "general",
-                "message_id": "100",
+                "message_id": "102",
+                "room_id": "97",
                 "body": {
                   "text": "edited",
-                  "format": "plain",
+                  "format": "markdown",
                   "embeds": [
                     {
                       "kind": "future",
@@ -459,14 +418,19 @@
                         null
                       ]
                     }
-                  ],
-                  "extra": null
+                  ]
                 },
-                "custom": {
-                  "nested": null
+                "reply_to": {
+                  "message_id": "101"
                 },
-                "__proto__": {
-                  "opaque": true
+                "ext": {
+                  "example.org": {
+                    "nested": null,
+                    "added": 1
+                  },
+                  "__proto__": {
+                    "opaque": true
+                  }
                 }
               }
             }
@@ -474,9 +438,9 @@
         },
         {
           "reply": {
-            "to": "return-request",
+            "to": "move-request",
             "result": {
-              "message_id": "100"
+              "message_id": "102"
             }
           }
         },
@@ -484,30 +448,32 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
-              "log_id": "130",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice",
-                  "name": "Alice"
-                },
-                "body": {
-                  "text": "edited",
-                  "format": "plain",
-                  "embeds": [
-                    {
-                      "kind": "future",
-                      "data": [
-                        1,
-                        null
-                      ]
-                    }
-                  ],
-                  "extra": null
-                },
-                "custom": {
-                  "nested": null
+              "message_id": "102",
+              "log_id": "105",
+              "room_id": "97",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "edited",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
                 },
                 "__proto__": {
                   "opaque": true
@@ -518,21 +484,27 @@
         },
         {
           "expect": {
+            "operations": {
+              "edit": "fulfilled",
+              "move": "fulfilled"
+            },
             "rooms": [
               {
-                "id": "general",
-                "name": "general",
-                "topic": null,
-                "events": [
+                "room_id": "97",
+                "log_id": "97",
+                "parent_room_id": "general",
+                "title": "Side",
+                "messages": [
                   {
-                    "message_id": "100",
+                    "message_id": "102",
+                    "log_id": "105",
+                    "room_id": "97",
                     "from": {
-                      "user_id": "alice",
-                      "name": "Alice"
+                      "user_id": "guest_1"
                     },
                     "body": {
                       "text": "edited",
-                      "format": "plain",
+                      "format": "markdown",
                       "embeds": [
                         {
                           "kind": "future",
@@ -541,14 +513,38 @@
                             null
                           ]
                         }
-                      ],
-                      "extra": null
+                      ]
                     },
-                    "custom": {
-                      "nested": null
+                    "reply_to": {
+                      "message_id": "101"
                     },
-                    "__proto__": {
-                      "opaque": true
+                    "ext": {
+                      "example.org": {
+                        "nested": null,
+                        "added": 1
+                      },
+                      "__proto__": {
+                        "opaque": true
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "room_id": "general",
+                "log_id": "90",
+                "title": "General",
+                "messages": [
+                  {
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "question?",
+                      "format": "plain"
                     }
                   }
                 ]
@@ -559,8 +555,7 @@
         {
           "deleteMessage": {
             "as": "delete",
-            "room": "general",
-            "message_id": "100"
+            "message_id": "102"
           }
         },
         {
@@ -569,15 +564,21 @@
             "match": {
               "method": "message",
               "params": {
-                "room_id": "general",
-                "message_id": "100",
-                "custom": {
-                  "nested": null
+                "message_id": "102",
+                "room_id": "97",
+                "reply_to": {
+                  "message_id": "101"
                 },
-                "__proto__": {
-                  "opaque": true
-                },
-                "deleted": true
+                "deleted": true,
+                "ext": {
+                  "example.org": {
+                    "nested": null,
+                    "added": 1
+                  },
+                  "__proto__": {
+                    "opaque": true
+                  }
+                }
               }
             }
           }
@@ -586,7 +587,7 @@
           "reply": {
             "to": "delete-request",
             "result": {
-              "message_id": "100"
+              "message_id": "102"
             }
           }
         },
@@ -594,22 +595,635 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
-              "log_id": "140",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice",
-                  "name": "Alice"
+              "message_id": "102",
+              "log_id": "106",
+              "room_id": "97",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "deleted": true,
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
                 },
-                "custom": {
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "broadcast-before-result",
+      "steps": [
+        {
+          "receive": {
+            "method": "server",
+            "params": {
+              "protocol": 3,
+              "auth": [
+                "guest"
+              ],
+              "caps": [
+                "edit",
+                "rooms"
+              ]
+            }
+          }
+        },
+        {
+          "request": {
+            "as": "auth",
+            "match": {
+              "method": "auth",
+              "params": {
+                "scheme": "guest"
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "auth",
+            "result": {
+              "you": {
+                "user_id": "guest_1"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room_id": "general",
+              "log_id": "90",
+              "title": "General"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "room",
+            "params": {
+              "room_id": "97",
+              "log_id": "97",
+              "parent_room_id": "general",
+              "title": "Side"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "101",
+              "log_id": "101",
+              "room_id": "general",
+              "from": {
+                "user_id": "bob"
+              },
+              "body": {
+                "text": "question?",
+                "format": "plain"
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "102",
+              "log_id": "102",
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "original",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "ext": {
+                "example.org": {
                   "nested": null
                 },
                 "__proto__": {
                   "opaque": true
-                },
-                "deleted": true
+                }
               }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "room_id": "97",
+                "log_id": "97",
+                "parent_room_id": "general",
+                "title": "Side",
+                "messages": []
+              },
+              {
+                "room_id": "general",
+                "log_id": "90",
+                "title": "General",
+                "messages": [
+                  {
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "question?",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "102",
+                    "log_id": "102",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1"
+                    },
+                    "body": {
+                      "text": "original",
+                      "format": "markdown",
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "data": [
+                            1,
+                            null
+                          ]
+                        }
+                      ]
+                    },
+                    "reply_to": {
+                      "message_id": "101"
+                    },
+                    "ext": {
+                      "example.org": {
+                        "nested": null
+                      },
+                      "__proto__": {
+                        "opaque": true
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "102",
+              "log_id": "103",
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "original",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
+                },
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "editMessage": {
+            "as": "edit",
+            "message_id": "102",
+            "text": "edited"
+          }
+        },
+        {
+          "request": {
+            "as": "edit-request",
+            "match": {
+              "method": "message",
+              "params": {
+                "message_id": "102",
+                "room_id": "general",
+                "body": {
+                  "text": "edited",
+                  "format": "markdown",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ]
+                },
+                "reply_to": {
+                  "message_id": "101"
+                },
+                "ext": {
+                  "example.org": {
+                    "nested": null,
+                    "added": 1
+                  },
+                  "__proto__": {
+                    "opaque": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "102",
+              "log_id": "104",
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "edited",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101",
+                "log_id": "101",
+                "room_id": "general",
+                "from": {
+                  "user_id": "bob"
+                },
+                "body": {
+                  "text": "question?",
+                  "format": "plain"
+                }
+              },
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
+                },
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "edit-request",
+            "result": {
+              "message_id": "102"
+            }
+          }
+        },
+        {
+          "expect": {
+            "operations": {
+              "edit": "fulfilled"
+            },
+            "rooms": [
+              {
+                "room_id": "97",
+                "log_id": "97",
+                "parent_room_id": "general",
+                "title": "Side",
+                "messages": []
+              },
+              {
+                "room_id": "general",
+                "log_id": "90",
+                "title": "General",
+                "messages": [
+                  {
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "question?",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "102",
+                    "log_id": "104",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1"
+                    },
+                    "body": {
+                      "text": "edited",
+                      "format": "markdown",
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "data": [
+                            1,
+                            null
+                          ]
+                        }
+                      ]
+                    },
+                    "reply_to": {
+                      "message_id": "101"
+                    },
+                    "ext": {
+                      "example.org": {
+                        "nested": null,
+                        "added": 1
+                      },
+                      "__proto__": {
+                        "opaque": true
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "moveMessage": {
+            "as": "move",
+            "message_id": "102",
+            "room": "97"
+          }
+        },
+        {
+          "request": {
+            "as": "move-request",
+            "match": {
+              "method": "message",
+              "params": {
+                "message_id": "102",
+                "room_id": "97",
+                "body": {
+                  "text": "edited",
+                  "format": "markdown",
+                  "embeds": [
+                    {
+                      "kind": "future",
+                      "data": [
+                        1,
+                        null
+                      ]
+                    }
+                  ]
+                },
+                "reply_to": {
+                  "message_id": "101"
+                },
+                "ext": {
+                  "example.org": {
+                    "nested": null,
+                    "added": 1
+                  },
+                  "__proto__": {
+                    "opaque": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "102",
+              "log_id": "105",
+              "room_id": "97",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "body": {
+                "text": "edited",
+                "format": "markdown",
+                "embeds": [
+                  {
+                    "kind": "future",
+                    "data": [
+                      1,
+                      null
+                    ]
+                  }
+                ]
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
+                },
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "move-request",
+            "result": {
+              "message_id": "102"
+            }
+          }
+        },
+        {
+          "expect": {
+            "operations": {
+              "edit": "fulfilled",
+              "move": "fulfilled"
+            },
+            "rooms": [
+              {
+                "room_id": "97",
+                "log_id": "97",
+                "parent_room_id": "general",
+                "title": "Side",
+                "messages": [
+                  {
+                    "message_id": "102",
+                    "log_id": "105",
+                    "room_id": "97",
+                    "from": {
+                      "user_id": "guest_1"
+                    },
+                    "body": {
+                      "text": "edited",
+                      "format": "markdown",
+                      "embeds": [
+                        {
+                          "kind": "future",
+                          "data": [
+                            1,
+                            null
+                          ]
+                        }
+                      ]
+                    },
+                    "reply_to": {
+                      "message_id": "101"
+                    },
+                    "ext": {
+                      "example.org": {
+                        "nested": null,
+                        "added": 1
+                      },
+                      "__proto__": {
+                        "opaque": true
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "room_id": "general",
+                "log_id": "90",
+                "title": "General",
+                "messages": [
+                  {
+                    "message_id": "101",
+                    "log_id": "101",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "bob"
+                    },
+                    "body": {
+                      "text": "question?",
+                      "format": "plain"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "deleteMessage": {
+            "as": "delete",
+            "message_id": "102"
+          }
+        },
+        {
+          "request": {
+            "as": "delete-request",
+            "match": {
+              "method": "message",
+              "params": {
+                "message_id": "102",
+                "room_id": "97",
+                "reply_to": {
+                  "message_id": "101"
+                },
+                "deleted": true,
+                "ext": {
+                  "example.org": {
+                    "nested": null,
+                    "added": 1
+                  },
+                  "__proto__": {
+                    "opaque": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "102",
+              "log_id": "106",
+              "room_id": "97",
+              "from": {
+                "user_id": "guest_1"
+              },
+              "reply_to": {
+                "message_id": "101"
+              },
+              "deleted": true,
+              "ext": {
+                "example.org": {
+                  "nested": null,
+                  "added": 1
+                },
+                "__proto__": {
+                  "opaque": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "delete-request",
+            "result": {
+              "message_id": "102"
             }
           }
         }
@@ -617,32 +1231,64 @@
     }
   ],
   "expected": {
+    "you": {
+      "user_id": "guest_1"
+    },
+    "caps": [
+      "edit",
+      "rooms"
+    ],
     "operations": {
-      "create": "fulfilled",
-      "move": "fulfilled",
       "edit": "fulfilled",
-      "return": "fulfilled",
+      "move": "fulfilled",
       "delete": "fulfilled"
     },
     "rooms": [
       {
-        "id": "general",
-        "name": "general",
-        "topic": null,
-        "events": [
+        "room_id": "97",
+        "log_id": "97",
+        "parent_room_id": "general",
+        "title": "Side",
+        "messages": [
           {
-            "message_id": "100",
+            "message_id": "102",
+            "log_id": "106",
+            "room_id": "97",
             "from": {
-              "user_id": "alice",
-              "name": "Alice"
+              "user_id": "guest_1"
             },
-            "custom": {
-              "nested": null
+            "reply_to": {
+              "message_id": "101"
             },
-            "__proto__": {
-              "opaque": true
+            "deleted": true,
+            "ext": {
+              "example.org": {
+                "nested": null,
+                "added": 1
+              },
+              "__proto__": {
+                "opaque": true
+              }
+            }
+          }
+        ]
+      },
+      {
+        "room_id": "general",
+        "log_id": "90",
+        "title": "General",
+        "messages": [
+          {
+            "message_id": "101",
+            "log_id": "101",
+            "room_id": "general",
+            "from": {
+              "user_id": "bob"
             },
-            "deleted": true
+            "body": {
+              "text": "question?",
+              "format": "plain"
+            }
           }
         ]
       }

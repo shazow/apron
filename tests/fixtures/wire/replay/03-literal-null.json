@@ -1,13 +1,12 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "replay",
-  "name": "Extension null is a stored value",
-  "description": "Extension null is a stored value.",
+  "name": "Null is a stored value",
+  "description": "null has no deletion meaning: null values inside ext and embeds are stored and projected literally, distinct from absent keys.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#51-history"
+    "PROTOCOL.md#appendix-b--edit"
   ],
-  "room": "general",
   "variants": [
     {
       "name": "live",
@@ -16,17 +15,17 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
+              "message_id": "100",
               "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "original"
-                },
-                "custom": {
+              "room_id": "general",
+              "from": {
+                "user_id": "alice"
+              },
+              "body": {
+                "text": "original"
+              },
+              "ext": {
+                "example.org": {
                   "flag": true
                 }
               }
@@ -37,17 +36,27 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
+              "message_id": "100",
               "log_id": "110",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "original"
-                },
-                "custom": null
+              "room_id": "general",
+              "from": {
+                "user_id": "alice"
+              },
+              "body": {
+                "text": "original",
+                "embeds": [
+                  {
+                    "kind": "file",
+                    "url": "https://example.org/a",
+                    "mime": null
+                  }
+                ]
+              },
+              "ext": {
+                "example.org": null,
+                "example.net": {
+                  "value": null
+                }
               }
             }
           }
@@ -56,16 +65,35 @@
     }
   ],
   "expected": {
-    "events": [
+    "rooms": [
       {
-        "message_id": "100",
-        "from": {
-          "user_id": "alice"
-        },
-        "body": {
-          "text": "original"
-        },
-        "custom": null
+        "room_id": "general",
+        "messages": [
+          {
+            "message_id": "100",
+            "log_id": "110",
+            "room_id": "general",
+            "from": {
+              "user_id": "alice"
+            },
+            "body": {
+              "text": "original",
+              "embeds": [
+                {
+                  "kind": "file",
+                  "url": "https://example.org/a",
+                  "mime": null
+                }
+              ]
+            },
+            "ext": {
+              "example.org": null,
+              "example.net": {
+                "value": null
+              }
+            }
+          }
+        ]
       }
     ]
   }

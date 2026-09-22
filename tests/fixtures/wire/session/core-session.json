@@ -1,13 +1,15 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "session",
-  "name": "Core session and metadata replacement",
-  "description": "Authenticate, send with either reply ordering, replace capabilities and room metadata, and remove a room without altering retained message state.",
+  "name": "Core session",
+  "description": "Guest authentication, typing, sends with either confirmation order (including a bare reply_to reference answered by an embedded snapshot), server frame replacement, unknown notifications, and room records without log_id (no history cap) replacing in full.",
   "references": [
     "PROTOCOL.md#11-envelope-and-replies",
     "PROTOCOL.md#31-server-frame",
+    "PROTOCOL.md#32-authentication",
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#35-messages"
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#d1-typing"
   ],
   "variants": [
     {
@@ -17,9 +19,9 @@
           "receive": {
             "method": "server",
             "params": {
-              "protocol": 2,
+              "protocol": 3,
               "auth": [
-                "anonymous"
+                "guest"
               ],
               "caps": [
                 "edit"
@@ -36,7 +38,7 @@
             "match": {
               "method": "auth",
               "params": {
-                "scheme": "anonymous"
+                "scheme": "guest"
               }
             }
           }
@@ -46,7 +48,8 @@
             "to": "auth",
             "result": {
               "you": {
-                "user_id": "alice"
+                "user_id": "guest_1",
+                "name": "Ada"
               }
             }
           }
@@ -54,8 +57,12 @@
         {
           "expect": {
             "you": {
-              "user_id": "alice"
-            }
+              "user_id": "guest_1",
+              "name": "Ada"
+            },
+            "caps": [
+              "edit"
+            ]
           }
         },
         {
@@ -63,8 +70,12 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "name": "General",
-              "topic": "Initial topic"
+              "title": "General",
+              "ext": {
+                "example.org": {
+                  "topic": "Initial topic"
+                }
+              }
             }
           }
         },
@@ -117,10 +128,14 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "General",
-                "topic": "Initial topic",
-                "events": []
+                "room_id": "general",
+                "title": "General",
+                "ext": {
+                  "example.org": {
+                    "topic": "Initial topic"
+                  }
+                },
+                "messages": []
               }
             ]
           }
@@ -160,34 +175,39 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
+              "message_id": "1724803200001",
               "log_id": "1724803200001",
-              "message": {
-                "message_id": "1724803200001",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "hello",
-                  "format": "plain"
-                }
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1",
+                "name": "Ada"
+              },
+              "body": {
+                "text": "hello",
+                "format": "plain"
               }
             }
-          },
-          "echoFrom": "send"
+          }
         },
         {
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "General",
-                "topic": "Initial topic",
-                "events": [
+                "room_id": "general",
+                "title": "General",
+                "ext": {
+                  "example.org": {
+                    "topic": "Initial topic"
+                  }
+                },
+                "messages": [
                   {
                     "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice"
+                      "user_id": "guest_1",
+                      "name": "Ada"
                     },
                     "body": {
                       "text": "hello",
@@ -203,12 +223,128 @@
           }
         },
         {
+          "send": {
+            "as": "reply",
+            "room": "general",
+            "text": "**re**",
+            "format": "markdown",
+            "reply_to": "1724803200001"
+          }
+        },
+        {
+          "request": {
+            "as": "send-reply",
+            "match": {
+              "method": "message",
+              "params": {
+                "room_id": "general",
+                "body": {
+                  "text": "**re**",
+                  "format": "markdown"
+                },
+                "reply_to": {
+                  "message_id": "1724803200001"
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "send-reply",
+            "result": {
+              "message_id": "1724803200002"
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "1724803200002",
+              "log_id": "1724803200002",
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1",
+                "name": "Ada"
+              },
+              "body": {
+                "text": "**re**",
+                "format": "markdown"
+              },
+              "reply_to": {
+                "message_id": "1724803200001",
+                "log_id": "1724803200001",
+                "room_id": "general",
+                "from": {
+                  "user_id": "guest_1",
+                  "name": "Ada"
+                },
+                "body": {
+                  "text": "hello",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "room_id": "general",
+                "title": "General",
+                "ext": {
+                  "example.org": {
+                    "topic": "Initial topic"
+                  }
+                },
+                "messages": [
+                  {
+                    "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "1724803200002",
+                    "log_id": "1724803200002",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "**re**",
+                      "format": "markdown"
+                    },
+                    "reply_to": {
+                      "message_id": "1724803200001"
+                    }
+                  }
+                ]
+              }
+            ],
+            "operations": {
+              "message": "fulfilled",
+              "reply": "fulfilled"
+            }
+          }
+        },
+        {
           "receive": {
             "method": "server",
             "params": {
-              "protocol": 2,
+              "protocol": 3,
               "auth": [
-                "anonymous"
+                "guest"
               ]
             }
           }
@@ -227,7 +363,7 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "name": "Renamed"
+              "title": "Renamed"
             }
           }
         },
@@ -236,18 +372,36 @@
             "caps": [],
             "rooms": [
               {
-                "id": "general",
-                "name": "Renamed",
-                "topic": null,
-                "events": [
+                "room_id": "general",
+                "title": "Renamed",
+                "messages": [
                   {
                     "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice"
+                      "user_id": "guest_1",
+                      "name": "Ada"
                     },
                     "body": {
                       "text": "hello",
                       "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "1724803200002",
+                    "log_id": "1724803200002",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "**re**",
+                      "format": "markdown"
+                    },
+                    "reply_to": {
+                      "message_id": "1724803200001"
                     }
                   }
                 ]
@@ -267,27 +421,43 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "Renamed",
-                "topic": null,
-                "events": [
+                "room_id": "general",
+                "title": "Renamed",
+                "messages": [
                   {
                     "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice"
+                      "user_id": "guest_1",
+                      "name": "Ada"
                     },
                     "body": {
                       "text": "hello",
                       "format": "plain"
                     }
+                  },
+                  {
+                    "message_id": "1724803200002",
+                    "log_id": "1724803200002",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "**re**",
+                      "format": "markdown"
+                    },
+                    "reply_to": {
+                      "message_id": "1724803200001"
+                    }
                   }
                 ]
               },
               {
-                "id": "other",
-                "name": "other",
-                "topic": null,
-                "events": []
+                "room_id": "other",
+                "messages": []
               }
             ]
           }
@@ -310,9 +480,9 @@
           "receive": {
             "method": "server",
             "params": {
-              "protocol": 2,
+              "protocol": 3,
               "auth": [
-                "anonymous"
+                "guest"
               ],
               "caps": [
                 "edit"
@@ -329,7 +499,7 @@
             "match": {
               "method": "auth",
               "params": {
-                "scheme": "anonymous"
+                "scheme": "guest"
               }
             }
           }
@@ -339,7 +509,8 @@
             "to": "auth",
             "result": {
               "you": {
-                "user_id": "alice"
+                "user_id": "guest_1",
+                "name": "Ada"
               }
             }
           }
@@ -347,8 +518,12 @@
         {
           "expect": {
             "you": {
-              "user_id": "alice"
-            }
+              "user_id": "guest_1",
+              "name": "Ada"
+            },
+            "caps": [
+              "edit"
+            ]
           }
         },
         {
@@ -356,8 +531,12 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "name": "General",
-              "topic": "Initial topic"
+              "title": "General",
+              "ext": {
+                "example.org": {
+                  "topic": "Initial topic"
+                }
+              }
             }
           }
         },
@@ -410,10 +589,14 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "General",
-                "topic": "Initial topic",
-                "events": []
+                "room_id": "general",
+                "title": "General",
+                "ext": {
+                  "example.org": {
+                    "topic": "Initial topic"
+                  }
+                },
+                "messages": []
               }
             ]
           }
@@ -445,21 +628,19 @@
           "receive": {
             "method": "message",
             "params": {
-              "room_id": "general",
+              "message_id": "1724803200001",
               "log_id": "1724803200001",
-              "message": {
-                "message_id": "1724803200001",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "hello",
-                  "format": "plain"
-                }
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1",
+                "name": "Ada"
+              },
+              "body": {
+                "text": "hello",
+                "format": "plain"
               }
             }
-          },
-          "echoFrom": "send"
+          }
         },
         {
           "reply": {
@@ -473,14 +654,21 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "General",
-                "topic": "Initial topic",
-                "events": [
+                "room_id": "general",
+                "title": "General",
+                "ext": {
+                  "example.org": {
+                    "topic": "Initial topic"
+                  }
+                },
+                "messages": [
                   {
                     "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice"
+                      "user_id": "guest_1",
+                      "name": "Ada"
                     },
                     "body": {
                       "text": "hello",
@@ -496,12 +684,128 @@
           }
         },
         {
+          "send": {
+            "as": "reply",
+            "room": "general",
+            "text": "**re**",
+            "format": "markdown",
+            "reply_to": "1724803200001"
+          }
+        },
+        {
+          "request": {
+            "as": "send-reply",
+            "match": {
+              "method": "message",
+              "params": {
+                "room_id": "general",
+                "body": {
+                  "text": "**re**",
+                  "format": "markdown"
+                },
+                "reply_to": {
+                  "message_id": "1724803200001"
+                }
+              }
+            }
+          }
+        },
+        {
+          "receive": {
+            "method": "message",
+            "params": {
+              "message_id": "1724803200002",
+              "log_id": "1724803200002",
+              "room_id": "general",
+              "from": {
+                "user_id": "guest_1",
+                "name": "Ada"
+              },
+              "body": {
+                "text": "**re**",
+                "format": "markdown"
+              },
+              "reply_to": {
+                "message_id": "1724803200001",
+                "log_id": "1724803200001",
+                "room_id": "general",
+                "from": {
+                  "user_id": "guest_1",
+                  "name": "Ada"
+                },
+                "body": {
+                  "text": "hello",
+                  "format": "plain"
+                }
+              }
+            }
+          }
+        },
+        {
+          "reply": {
+            "to": "send-reply",
+            "result": {
+              "message_id": "1724803200002"
+            }
+          }
+        },
+        {
+          "expect": {
+            "rooms": [
+              {
+                "room_id": "general",
+                "title": "General",
+                "ext": {
+                  "example.org": {
+                    "topic": "Initial topic"
+                  }
+                },
+                "messages": [
+                  {
+                    "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "hello",
+                      "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "1724803200002",
+                    "log_id": "1724803200002",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "**re**",
+                      "format": "markdown"
+                    },
+                    "reply_to": {
+                      "message_id": "1724803200001"
+                    }
+                  }
+                ]
+              }
+            ],
+            "operations": {
+              "message": "fulfilled",
+              "reply": "fulfilled"
+            }
+          }
+        },
+        {
           "receive": {
             "method": "server",
             "params": {
-              "protocol": 2,
+              "protocol": 3,
               "auth": [
-                "anonymous"
+                "guest"
               ]
             }
           }
@@ -520,7 +824,7 @@
             "method": "room",
             "params": {
               "room_id": "general",
-              "name": "Renamed"
+              "title": "Renamed"
             }
           }
         },
@@ -529,18 +833,36 @@
             "caps": [],
             "rooms": [
               {
-                "id": "general",
-                "name": "Renamed",
-                "topic": null,
-                "events": [
+                "room_id": "general",
+                "title": "Renamed",
+                "messages": [
                   {
                     "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice"
+                      "user_id": "guest_1",
+                      "name": "Ada"
                     },
                     "body": {
                       "text": "hello",
                       "format": "plain"
+                    }
+                  },
+                  {
+                    "message_id": "1724803200002",
+                    "log_id": "1724803200002",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "**re**",
+                      "format": "markdown"
+                    },
+                    "reply_to": {
+                      "message_id": "1724803200001"
                     }
                   }
                 ]
@@ -560,27 +882,43 @@
           "expect": {
             "rooms": [
               {
-                "id": "general",
-                "name": "Renamed",
-                "topic": null,
-                "events": [
+                "room_id": "general",
+                "title": "Renamed",
+                "messages": [
                   {
                     "message_id": "1724803200001",
+                    "log_id": "1724803200001",
+                    "room_id": "general",
                     "from": {
-                      "user_id": "alice"
+                      "user_id": "guest_1",
+                      "name": "Ada"
                     },
                     "body": {
                       "text": "hello",
                       "format": "plain"
                     }
+                  },
+                  {
+                    "message_id": "1724803200002",
+                    "log_id": "1724803200002",
+                    "room_id": "general",
+                    "from": {
+                      "user_id": "guest_1",
+                      "name": "Ada"
+                    },
+                    "body": {
+                      "text": "**re**",
+                      "format": "markdown"
+                    },
+                    "reply_to": {
+                      "message_id": "1724803200001"
+                    }
                   }
                 ]
               },
               {
-                "id": "other",
-                "name": "other",
-                "topic": null,
-                "events": []
+                "room_id": "other",
+                "messages": []
               }
             ]
           }
@@ -599,30 +937,50 @@
   ],
   "expected": {
     "you": {
-      "user_id": "alice"
+      "user_id": "guest_1",
+      "name": "Ada"
     },
     "caps": [],
     "rooms": [
       {
-        "id": "general",
-        "name": "Renamed",
-        "topic": null,
-        "events": [
+        "room_id": "general",
+        "title": "Renamed",
+        "messages": [
           {
             "message_id": "1724803200001",
+            "log_id": "1724803200001",
+            "room_id": "general",
             "from": {
-              "user_id": "alice"
+              "user_id": "guest_1",
+              "name": "Ada"
             },
             "body": {
               "text": "hello",
               "format": "plain"
+            }
+          },
+          {
+            "message_id": "1724803200002",
+            "log_id": "1724803200002",
+            "room_id": "general",
+            "from": {
+              "user_id": "guest_1",
+              "name": "Ada"
+            },
+            "body": {
+              "text": "**re**",
+              "format": "markdown"
+            },
+            "reply_to": {
+              "message_id": "1724803200001"
             }
           }
         ]
       }
     ],
     "operations": {
-      "message": "fulfilled"
+      "message": "fulfilled",
+      "reply": "fulfilled"
     },
     "typing": []
   }

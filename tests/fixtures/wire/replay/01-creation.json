@@ -1,15 +1,16 @@
 {
   "format": 2,
   "kind": "replay",
-  "name": "A history snapshot replaces a loaded message",
-  "description": "A newer snapshot from history replaces the message already loaded from live delivery.",
+  "name": "Creation snapshot",
+  "description": "A flat, self-describing creation snapshot (log_id == message_id) installs a message in its room, whether it arrives live or in a history page.",
   "references": [
+    "PROTOCOL.md#2-identifiers",
     "PROTOCOL.md#35-messages",
     "PROTOCOL.md#appendix-a--history"
   ],
   "variants": [
     {
-      "name": "history",
+      "name": "live",
       "steps": [
         {
           "receive": {
@@ -26,7 +27,12 @@
               }
             }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "history",
+      "steps": [
         {
           "receive": {
             "id": "history",
@@ -34,20 +40,20 @@
               "entries": [
                 {
                   "message_id": "100",
-                  "log_id": "110",
+                  "log_id": "100",
                   "room_id": "general",
                   "from": {
                     "user_id": "alice"
                   },
                   "body": {
-                    "text": "edited"
+                    "text": "original"
                   }
                 }
               ],
-              "first_id": "110",
-              "last_id": "110",
+              "first_id": "100",
+              "last_id": "100",
               "more": false,
-              "latest_log_id": "110",
+              "latest_log_id": "100",
               "history_log_id": "100"
             }
           }
@@ -62,13 +68,13 @@
         "messages": [
           {
             "message_id": "100",
-            "log_id": "110",
+            "log_id": "100",
             "room_id": "general",
             "from": {
               "user_id": "alice"
             },
             "body": {
-              "text": "edited"
+              "text": "original"
             }
           }
         ]
