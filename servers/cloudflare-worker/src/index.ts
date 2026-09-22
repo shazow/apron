@@ -689,7 +689,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 				await this.handleName(socket, attachment, request);
 				return;
 			default:
-				if (request.id !== undefined) throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
+				if (request.id === undefined) return;
+				if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
+				throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 		}
 	}
 
@@ -1051,7 +1053,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private async handleMessage(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before posting" } satisfies ProtocolError;
 		requiredString(request.params, "room_id");
-		if (request.params.log_id !== undefined) throw { name: "invalid_params", message: "Clients cannot supply log_id" } satisfies ProtocolError;
+		// Server-owned fields are ignored on input (PROTOCOL.md §2).
+		delete request.params.log_id;
+		delete request.params.from;
 		const messageId = optionalString(request.params, "message_id");
 		if (messageId === undefined && request.params.body === undefined) throw { name: "invalid_params", message: "Missing body" } satisfies ProtocolError;
 		if (request.params.body !== undefined) objectParam(request.params, "body");

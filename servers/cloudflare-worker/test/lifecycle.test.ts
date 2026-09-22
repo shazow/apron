@@ -164,7 +164,7 @@ it("enforces the per-connection frame budget independently of the IP budget", as
 	try {
 		// Unknown notifications are deliberately no-reply frames.  They still
 		// consume the application frame budget and keep this test independent
-		// of posting/authentication quotas.  Use identifiable unsupported
+		// of posting/authentication quotas.  Use identifiable (denied)
 		// requests for the first 60 so each reply drains the native DO queue;
 		// the 61st frame then tests the cap without leaving work in flight for
 		// the next hibernation scenario.
@@ -172,7 +172,8 @@ it("enforces the per-connection frame budget independently of the IP budget", as
 			peer.socket.send(JSON.stringify({ id: `frame-${index}`, method: "lifecycle-noop" }));
 			const reply = await peer.next();
 			expect(reply.id).toBe(`frame-${index}`);
-			expect(reply.error?.code).toBe(-32601);
+			// Unauthenticated requests are denied before method dispatch.
+			expect(reply.error?.code).toBe(-32001);
 		}
 		const closed = waitForClose(peer.socket);
 		peer.socket.send(JSON.stringify({ id: "frame-60", method: "lifecycle-noop" }));
@@ -272,7 +273,7 @@ it("ignores WebAuthn notifications and consumes matching malformed finishes", as
 		expect((await peer.next()).error?.code).toBe(-32601);
 		peer.socket.send(JSON.stringify({ method: "auth", params: { scheme: "webauthn", action: "register", step: "begin" } }));
 		peer.socket.send(JSON.stringify({ id: "notification-barrier", method: "lifecycle-noop" }));
-		expect((await peer.next()).error?.code).toBe(-32601);
+		expect((await peer.next()).error?.code).toBe(-32001);
 		const afterNotification = await runInDurableObject(stub, async (instance) => {
 			const runtime = instance as unknown as { ctx: { getWebSockets(): WebSocket[] } };
 			return runtime.ctx.getWebSockets().map((candidate) => (candidate as WebSocket & { deserializeAttachment(): Record<string, any> }).deserializeAttachment());
