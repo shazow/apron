@@ -261,7 +261,8 @@ MAY comply, decline, or alter it:
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
 ```
 
-Bots and agents are ordinary senders; nothing distinguishes them.
+Bots and agents are ordinary senders; nothing distinguishes them. System
+identities follow a naming convention (Appendix J).
 
 ### 3.4 Rooms
 
@@ -788,7 +789,7 @@ handles loss and renegotiation.
 
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
 only relays; clients SHOULD soft-cap participants. A future cap `rtc.sfu`
-adds a media server joining as member `@sfu`, with which clients negotiate a
+adds a media server joining as member `@sfu` (Appendix J), with which clients negotiate a
 single PeerConnection.
 
 **Exclusions.** Mute and camera state are derivable from media streams.
@@ -842,3 +843,18 @@ presented one. Servers MUST bind such tokens to the ceremony's allowed
 origin, MUST expire them, and reject unknown, expired, or mismatched tokens
 with `denied`. Lifetime, renewal, and revocation are server policy. Clients
 that ignore `token` remain conforming.
+
+---
+
+## Appendix J — System identities (informative)
+
+`user_id`s beginning with `@` are reserved for server-controlled identities,
+such as `@server` for the server itself or `@sfu` for a media server
+(Appendix H). Servers SHOULD NOT assign them to users. They carry an ordinary
+`from` and render like any sender, so clients unaware of the convention
+still work; clients MAY style them as system messages.
+
+```json
+{"method": "message", "params": {"message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
+  "from": {"user_id": "@server", "name": "Server"}, "body": {"text": "Maintenance at 17:00 UTC."}}}
+```
