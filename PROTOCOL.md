@@ -380,31 +380,8 @@ Accept connection → emit `server` → accept one auth scheme → emit ≥1 `ro
 → accept creation-only `message`, return a `result`, broadcast the snapshot
 with conforming IDs → reply `error/unsupported` to unsupported requests and
 ignore unknown notifications. Without cap `edit`, reject `message` carrying
-`message_id` as unsupported. Framing and retries follow §1.
-
-### 3.7 A complete Level 0 session
-
-```jsonc
-// <-
-{"method": "server", "params": {"protocol": 3, "name": "demo/1", "caps": [], "auth": ["token"]}}
-// ->
-{"method": "auth", "id": "a", "params": {"scheme": "token", "token": "hunter2"}}
-// <-
-{"id": "a", "result": {"you": {"user_id": "alice", "name": "Alice"}}}
-// <-
-{"method": "room", "params": {"room_id": "general", "title": "General"}}
-// ->
-{"method": "message", "id": "b", "params": {"room_id": "general", "body": {"text": "hi"}}}
-// <-
-{"id": "b", "result": {"message_id": "1724803200000"}}
-// <- (broadcast)
-{"method": "message", "params": {"message_id": "1724803200000", "log_id": "1724803200000", "room_id": "general",
-  "from": {"user_id": "alice", "name": "Alice"}, "body": {"text": "hi"}}}
-// ->
-{"method": "history", "id": "c", "params": {"room_id": "general", "limit": 50}}
-// <-
-{"id": "c", "error": {"code": -32601, "message": "Unsupported method"}}
-```
+`message_id` as unsupported. Framing and retries follow §1. The opening
+example is a complete Level 0 session.
 
 ---
 
