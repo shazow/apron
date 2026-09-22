@@ -149,10 +149,11 @@ unidentifiable invalid requests (§1.1).
 **Log IDs** (`log_id`) are decimal strings based on Unix epoch milliseconds,
 e.g. `"1724803200042"`. One strictly increasing sequence per server covers
 every logged change: room records (§3.4), message snapshots (§3.5), and
-reaction sets (Appendix D). Generation is implementation-defined. `"0"` is
-reserved for the
-empty-log boundary; entries MUST use positive IDs. A room's log is the
-subsequence of changes that touch that room (Appendix A).
+reaction sets (Appendix D). Each is the commit time, or the previous
+`log_id + 1` when the clock has not advanced past it, so log IDs are usable
+as timestamps. `"0"` is reserved for the empty-log boundary; entries MUST
+use positive IDs. A room's log is the subsequence of changes that touch that
+room (Appendix A).
 
 **Records and replay.** Every logged record has a key: `room_id` for room
 records, `message_id` for message snapshots, `(message_id, user_id)` for
@@ -169,10 +170,10 @@ denotes the creation; later changes carry greater log IDs.
 
 - Compare numerically. Values are below `2^53`; clients MAY parse them as
   integers.
-- Derived timestamps are approximate. There is no separate timestamp field.
+- There is no separate timestamp field; derive times from log IDs.
 - Log IDs are unique only within one server. Namespacing across servers is
   client-defined.
-- Suggested convention: generate as `str(max(unix_epoch_ms(), last_id + 1))`.
+- Reference generator: `str(max(unix_epoch_ms(), last_id + 1))`.
 
 **Opaque IDs** (rooms, sessions, user IDs, client request `id`s) are arbitrary
 strings chosen by whichever side mints them. Room IDs are server-assigned.
@@ -286,13 +287,13 @@ before delivering anything in it. A Level 0 server announces one room.
 ```json
 {
   "method": "room", "params": {
-    "room_id": "general", "log_id": "1", "title": "General",
+    "room_id": "general", "log_id": "1724800000000", "title": "General",
     "intro_message": {
       "message_id": "1724800000001", "log_id": "1724800000001", "room_id": "general",
       "from": {"user_id": "alice", "name": "Alice"},
       "body": {"text": "Ops chatter: deploys, alerts, *incidents*.", "format": "markdown"}
     },
-    "latest_log_id": "1724803200042", "history_log_id": "1"
+    "latest_log_id": "1724803200042", "history_log_id": "1724800000000"
   }
 }
 ```
@@ -474,7 +475,7 @@ Stateless window query over a room's **log**. `rooms` holds room records
       }
     ],
     "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
-    "latest_log_id": "1724806800000", "history_log_id": "1"
+    "latest_log_id": "1724806800000", "history_log_id": "1724800000000"
   }
 }
 ```
