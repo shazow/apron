@@ -151,8 +151,8 @@ e.g. `"1724803200042"`. One strictly increasing sequence per server covers
 every logged change: room records (§3.4), message snapshots (§3.5), and
 reaction sets (Appendix D). Each is the commit time, or the previous
 `log_id + 1` when the clock has not advanced past it, so log IDs are usable
-as timestamps. Log IDs are positive. A room's log is the subsequence of changes that touch that
-room (Appendix A).
+as timestamps. Log IDs are positive. A room's log is the subsequence of
+changes that touch that room (Appendix A).
 
 **Records and replay.** Every logged record has a key: `room_id` for room
 records, `message_id` for message snapshots, `(message_id, user_id)` for
