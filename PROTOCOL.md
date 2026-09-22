@@ -151,8 +151,7 @@ e.g. `"1724803200042"`. One strictly increasing sequence per server covers
 every logged change: room records (§3.4), message snapshots (§3.5), and
 reaction sets (Appendix D). Each is the commit time, or the previous
 `log_id + 1` when the clock has not advanced past it, so log IDs are usable
-as timestamps. `"0"` is reserved for the empty-log boundary; entries MUST
-use positive IDs. A room's log is the subsequence of changes that touch that
+as timestamps. Log IDs are positive. A room's log is the subsequence of changes that touch that
 room (Appendix A).
 
 **Records and replay.** Every logged record has a key: `room_id` for room
@@ -310,7 +309,7 @@ before delivering anything in it. A Level 0 server announces one room.
 | `title`          | editable | optional plain string; absent falls back to `room_id`            |
 | `intro_message`  | editable | optional message object (§3.5): the room's description or summary |
 | `ext`            | editable | optional opaque extension data (§3.5)                            |
-| `latest_log_id`  | delivery | greatest `log_id` in the room's log; `"0"` if none               |
+| `latest_log_id`  | delivery | greatest `log_id` in the room's log                              |
 | `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none  |
 | `removed`        | delivery | `true` when the room leaves the client's visible set             |
 
