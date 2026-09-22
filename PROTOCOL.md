@@ -418,12 +418,18 @@ local policy.
 
 ### 3.6 Level 0 conformance checklist
 
-Accept connection → emit `server` → accept one auth scheme → emit ≥1 `room`
-→ accept creation-only `message`, return a `result`, broadcast the snapshot
-with conforming IDs → reply `error/unsupported` to unsupported requests and
-ignore unknown notifications. Without cap `edit`, reject `message` carrying
-`message_id` as unsupported. Framing and retries follow §1. The opening
-example is a complete Level 0 session.
+A Level 0 server:
+
+1. Sends a `server` frame on connect (§3.1).
+2. Accepts at least one `auth` scheme and replies with `you` (§3.2).
+3. Announces at least one `room` (§3.4).
+4. Accepts `message` creation: replies with `message_id`, then broadcasts the
+   snapshot to the room (§3.5).
+5. Replies `error/unsupported` to unknown requests, including `message` with
+   a `message_id` when cap `edit` is absent; ignores unknown notifications.
+6. Follows §1 for framing and retries and §2 for identifiers.
+
+The opening example is a complete Level 0 session.
 
 ---
 
