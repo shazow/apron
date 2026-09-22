@@ -144,8 +144,8 @@ unidentifiable invalid requests (§1.1).
 **Log IDs** (`log_id`) are decimal strings based on Unix epoch milliseconds,
 e.g. `"1724803200042"`. One strictly increasing sequence per server covers
 every logged change: room records (§3.4), message snapshots (§3.5), and
-reaction sets (Appendix D). Generation is implementation-defined; recommended:
-`id = str(max(unix_epoch_ms(), last_id + 1))`. `"0"` is reserved for the
+reaction sets (Appendix D). Generation is implementation-defined. `"0"` is
+reserved for the
 empty-log boundary; entries MUST use positive IDs. A room's log is the
 subsequence of changes that touch that room (Appendix A).
 
@@ -167,17 +167,16 @@ denotes the creation; later changes carry greater log IDs.
 - Derived timestamps are approximate. There is no separate timestamp field.
 - Log IDs are unique only within one server. Namespacing across servers is
   client-defined.
+- Suggested convention: generate as `str(max(unix_epoch_ms(), last_id + 1))`.
 
 **Opaque IDs** (rooms, sessions, user IDs, client request `id`s) are arbitrary
-strings chosen by whichever side mints them. Room IDs are server-assigned;
-the `log_id` of the room's creation is recommended. Client request `id`s
-SHOULD be random to avoid collisions across devices authenticated as the
-same user. Request IDs identify operations, not log positions.
+strings chosen by whichever side mints them. Room IDs are server-assigned.
+Client request `id`s SHOULD be random to avoid collisions across devices
+authenticated as the same user. Request IDs identify operations, not log
+positions.
 
-Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
-`parent_room_id`, `session_id`). Embedded objects use descriptive names
-(`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id` keeps
-its name.
+- Suggested convention: use a room's creation `log_id` as its `room_id`.
+- Field naming for extensions and future methods: Appendix J.
 
 ---
 
@@ -221,8 +220,8 @@ fresh `server` frame.
 
 `params.scheme` selects the scheme:
 
-- `guest`: no credentials; the server assigns identity. A `guest_` prefix on
-  assigned `user_id`s is recommended, so guests are recognizable.
+- `guest`: no credentials; the server assigns identity. Suggested
+  convention: prefix assigned `user_id`s with `guest_`.
 - `token`: bearer string. The reference default.
 - `webauthn`: optional passkey scheme (Appendix I).
 
@@ -261,8 +260,10 @@ MAY comply, decline, or alter it:
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
 ```
 
-Bots and agents are ordinary senders; nothing distinguishes them. System
-identities follow a naming convention (Appendix J).
+Bots and agents are ordinary senders; nothing distinguishes them.
+
+- Suggested convention: `@`-prefixed `user_id`s such as `@server` are system
+  identities (Appendix J).
 
 ### 3.4 Rooms
 
@@ -846,7 +847,9 @@ that ignore `token` remain conforming.
 
 ---
 
-## Appendix J — System identities (informative)
+## Appendix J — Conventions (informative)
+
+### J.1 System identities
 
 `user_id`s beginning with `@` are reserved for server-controlled identities,
 such as `@server` for the server itself or `@sfu` for a media server
@@ -858,3 +861,10 @@ still work; clients MAY style them as system messages.
 {"method": "message", "params": {"message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
   "from": {"user_id": "@server", "name": "Server"}, "body": {"text": "Maintenance at 17:00 UTC."}}}
 ```
+
+### J.2 Field naming
+
+Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
+`parent_room_id`, `session_id`). Embedded objects use descriptive names
+(`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id` keeps
+its name. Extensions and future methods should follow the same pattern.
