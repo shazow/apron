@@ -38,6 +38,8 @@ function availability() {
 
 function readHistory(params) {
   const limit = Math.min(params.limit ?? 50, 200);
+  check(Number.isInteger(limit) && limit > 0, "Invalid limit");
+  check(["after", "before"].every(key => /^\d+$/.test(params[key] ?? "0")), "Invalid bounds");
   const after = Number(params.after ?? 0);
   const before = Number(params.before ?? lastLogId);
   const matches = log.filter(record => {
@@ -63,8 +65,8 @@ function createMessage(you, params) {
   check(!params.deleted, "Cannot create a deleted message");
   const replyTo = params.reply_to?.message_id;
   // The new ID is minted below, so a known target can never be the message itself.
-  if (params.reply_to) {
-    check(log.some(record => record.message_id === replyTo), "Unknown reply target");
+  if ("reply_to" in params) {
+    check(typeof replyTo === "string" && log.some(record => record.message_id === replyTo), "Unknown reply target");
   }
 
   const id = nextLogId();
@@ -72,7 +74,7 @@ function createMessage(you, params) {
     message_id: id, log_id: id, room_id: "general", from: { ...you },
     body: { format: "plain", ...params.body },
   };
-  if (params.reply_to) message.reply_to = { message_id: replyTo };
+  if ("reply_to" in params) message.reply_to = { message_id: replyTo };
   if (params.ext) message.ext = params.ext;
   append(message);
   // Server.publish includes the sender; ws.publish would exclude it.
@@ -112,6 +114,7 @@ const server = Bun.serve({
       let frame;
       try {
         frame = JSON.parse(raw);
+        if (!frame || typeof frame !== "object" || Array.isArray(frame)) return ws.close(1003, "Invalid frame");
         const result = dispatch(ws, frame.method, frame.params ?? {});
         if ("id" in frame) send(ws, { id: frame.id, result });
         if (frame.method === "auth") {
@@ -120,7 +123,7 @@ const server = Bun.serve({
         }
       } catch (error) {
         if (!error.code) return ws.close(1003, "Invalid frame");
-        if ("id" in frame) send(ws, { id: frame.id, error });
+        if (frame?.id !== undefined) send(ws, { id: frame.id, error });
       }
     },
   },

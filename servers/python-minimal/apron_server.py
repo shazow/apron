@@ -61,7 +61,10 @@ class ApronServer:
         return {"latest_log_id": str(self.last_id), "history_log_id": self.log[0]["log_id"]}
 
     def history(self, p):
-        limit = min(p.get("limit", 50), 200)
+        limit = p.get("limit", 50)
+        require(type(limit) is int and limit > 0, "Invalid limit")
+        require(all(str(p.get(k, "0")).isdigit() for k in ("after", "before")), "Invalid bounds")
+        limit = min(limit, 200)
         after, before = int(p.get("after", "0")), int(p.get("before", self.last_id))
         matches = [r for r in self.log if after <= int(r["log_id"]) <= before]
         page = matches[:limit] if "after" in p else matches[-limit:]
@@ -77,8 +80,9 @@ class ApronServer:
         require(not p.get("deleted"), "Cannot create a deleted message")
         reply_to = p.get("reply_to")
         # The new ID is minted below, so a known target can never be the message itself.
-        if reply_to:
-            require(any(r.get("message_id") == reply_to.get("message_id") for r in self.log),
+        if "reply_to" in p:
+            target = reply_to.get("message_id") if isinstance(reply_to, dict) else None
+            require(isinstance(target, str) and any(r.get("message_id") == target for r in self.log),
                     "Unknown reply target")
         message_id = self.next_id()
         message = {"message_id": message_id, "log_id": message_id, "room_id": "general",
