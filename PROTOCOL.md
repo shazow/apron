@@ -178,7 +178,7 @@ unidentifiable invalid requests (§1.1).
 
 - Clients keep the record with the greatest `log_id` per key, regardless of
   source (live, history, embedded) or arrival order.
-- `log_id` and other server-owned fields are ignored on input.
+- `log_id` and other server fields are ignored on input.
 
 **Opaque IDs** — `room_id`, `user_id`, `session_id`, and request `id`.
 
@@ -307,14 +307,17 @@ before delivering anything in it. A Level 0 server announces one room.
 }
 ```
 
-| field            | owner    | meaning                                                          |
+`server`: assigned by the server, ignored on input. `client`: supplied by the
+client, replaced whole by a save. `delivery`: this client's view, not logged.
+
+| field            | set by   | meaning                                                          |
 |------------------|----------|------------------------------------------------------------------|
 | `room_id`        | server   | required                                                         |
 | `log_id`         | server   | position of this room record (§2)                                |
-| `parent_room_id` | server   | optional, set at creation; marks a thread (Appendix C)           |
-| `title`          | editable | optional plain string; absent falls back to `room_id`            |
-| `intro_message`  | editable | optional message object (§3.5): the room's description or summary |
-| `ext`            | editable | optional opaque extension data (§3.5)                            |
+| `parent_room_id` | client   | optional; fixed at creation; marks a thread (Appendix C)         |
+| `title`          | client   | optional plain string; absent falls back to `room_id`            |
+| `intro_message`  | client   | optional message object (§3.5): the room's description or summary |
+| `ext`            | client   | optional opaque extension data (§3.5)                            |
 | `latest_log_id`  | delivery | greatest `log_id` in the room's log                              |
 | `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none  |
 | `removed`        | delivery | `true` when the room leaves the client's visible set             |
@@ -365,16 +368,16 @@ object as an authoritative **snapshot** at one log position.
 }
 ```
 
-| field        | owner    | meaning                                                          |
+| field        | set by   | meaning                                                          |
 |--------------|----------|------------------------------------------------------------------|
 | `message_id` | server   | permanent ID (§2)                                                |
 | `log_id`     | server   | position of this snapshot in the log (§2)                        |
 | `from`       | server   | author identity (§3.3), preserved across changes                 |
-| `room_id`    | editable | the room the message is in; required on requests                 |
-| `body`       | editable | `text`, `format`, `embeds`                                       |
-| `reply_to`   | editable | optional message object naming the message replied to           |
-| `deleted`    | editable | tombstone marker, default false (Appendix B)                     |
-| `ext`        | editable | optional object of namespaced, opaque extension data             |
+| `room_id`    | client   | the room the message is in; required on requests                 |
+| `body`       | client   | `text`, `format`, `embeds`                                       |
+| `reply_to`   | client   | optional message object naming the message replied to           |
+| `deleted`    | client   | tombstone marker, default false (Appendix B)                     |
+| `ext`        | client   | optional object of namespaced, opaque extension data             |
 
 **Extensions.** `ext` carries data the spec does not define, keyed by
 namespace:
@@ -551,11 +554,11 @@ rooms and load when opened.
 ## Appendix B — `edit`
 
 A `message` request carrying an existing `message_id` **saves** that message:
-it replaces every editable field (§3.5) with the submitted state. Omitted
+it replaces every client field (§3.5) with the submitted state. Omitted
 fields are removed; objects and arrays are replaced whole; `null` has no
-deletion meaning. Clients MUST resubmit every editable field they want kept,
+deletion meaning. Clients MUST resubmit every client field they want kept,
 including `room_id`, `body`, `reply_to`, and `ext`. The server preserves
-`message_id`, `from`, and other server-owned fields. Saves apply in server
+`message_id`, `from`, and other server fields. Saves apply in server
 order with no merge.
 
 ```jsonc
@@ -602,7 +605,7 @@ non-empty set, so reactions follow the message.
 
 **Delete** is a save with `deleted: true`; `body` is then optional and the
 server MUST omit it from the tombstone. `deleted: true` on creation is
-`invalid_params`. Other editable fields keep replacement semantics.
+`invalid_params`. Other client fields keep replacement semantics.
 
 ```jsonc
 // ->
@@ -634,8 +637,9 @@ clients holding the old content drop it on the new tombstone.
 ## Appendix C — `rooms`
 
 `room` is bidirectional, like `message`. A client request without `room_id`
-creates a room; with `room_id` it replaces the editable fields (§3.4),
-including `ext`; omitted fields are cleared. Both return
+creates a room; with `room_id` it replaces the client fields (§3.4) other
+than `parent_room_id`, which is fixed at creation; omitted fields are
+cleared. Both return
 `{"room_id": "..."}` and broadcast the new room record (§3.4).
 
 ```jsonc
