@@ -88,7 +88,7 @@ async function pendingSocket(ip = testIp()) {
 
 async function anonymousSocket(ip = testIp()) {
 	const peer = await pendingSocket(ip);
-	peer.socket.send(JSON.stringify({ id: "auth", method: "auth", params: { scheme: "anonymous" } }));
+	peer.socket.send(JSON.stringify({ id: "auth", method: "auth", params: { scheme: "guest" } }));
 	const auth = await peer.next();
 	expect(auth.result?.you?.user_id).toBeTruthy();
 	expect((await peer.next()).method).toBe("room");
@@ -110,7 +110,8 @@ it("restores hibernated socket attachment state without re-announcing the sessio
 		expect(reply.result?.message_id).toMatch(/^[1-9][0-9]*$/);
 		const broadcast = await peer.next();
 		expect(broadcast.method).toBe("message");
-		expect(broadcast.params?.message?.body?.text).toBe("after hibernation");
+		expect(broadcast.params?.body?.text).toBe("after hibernation");
+		expect(broadcast.params?.room_id).toBe("general");
 	} finally {
 		await peer.close();
 	}

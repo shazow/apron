@@ -57,6 +57,10 @@ export interface Limits {
 	cleanupBatch: number;
 	threadLimit: number;
 	threadMetadataBytes: number;
+	/** Distinct users whose reaction sets one message may carry. */
+	reactionUsersPerMessage: number;
+	/** Distinct emoji in one user's reaction set on one message. */
+	reactionEmojisPerUser: number;
 	dedupTtlSeconds: number;
 	limiterRecordCap: number;
 	maxCredentialBytes: number;
@@ -120,6 +124,8 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	cleanupBatch: 100,
 	threadLimit: 100,
 	threadMetadataBytes: 2 * 1024,
+	reactionUsersPerMessage: 32,
+	reactionEmojisPerUser: 8,
 	dedupTtlSeconds: 86_400,
 	limiterRecordCap: 10_000,
 	maxCredentialBytes: 16 * 1024,
@@ -155,6 +161,11 @@ export const MAX_REGISTRATIONS_PER_DAY = DEFAULT_LIMITS.registrationsPerDay;
 export const MAX_CLEANUP_BATCH = 100;
 export const MAX_THREAD_LIMIT = 100;
 export const MAX_THREAD_METADATA_BYTES = 2 * 1024;
+// A move re-logs every reaction set of the moved message in one record, so the
+// per-message cap bounds that record, its SQL work, and its history response.
+export const MAX_REACTION_USERS_PER_MESSAGE = 64;
+export const MAX_REACTION_EMOJIS_PER_USER = 16;
+export const MAX_EMOJI_BYTES = 64;
 export const MAX_CONNECTION_FRAME_RATE = 120;
 export const MAX_SQL_WRITES = DEFAULT_LIMITS.sqlWritesPerDay;
 export const MAX_SQL_READS = DEFAULT_LIMITS.sqlReadsPerDay;

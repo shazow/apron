@@ -9,7 +9,7 @@ it('shares an anonymous rolling window across identities and calendar-minute bou
 		let now = (Math.floor(Date.now() / DAY) + 1) * DAY + 119_000;
 		const store = new Store(state, {}, { now: () => now });
 		const post = (userId: string) => store.mutate({ userId, ipKey: 'shared-nat', method: 'message', now,
-			identity: { user_id: userId }, params: { body: { text: 'bounded' } } });
+			identity: { user_id: userId }, params: { room_id: 'general', body: { text: 'bounded' } } });
 		for (let index = 0; index < 5; index++) post(`guest-${index}`);
 		now += 1_001;
 		try { post('fresh-guest'); expect.unreachable(); }
@@ -30,7 +30,7 @@ it('uses durable registered identities for twenty posts while preserving the agg
 			credential: { credentialId: userId, userId, publicKey: 'fixture-policy-only', counter: 0 },
 		});
 		const post = (userId: string) => store.mutate({ userId, ipKey: 'shared-nat', method: 'message', now,
-			identity: { user_id: userId }, params: { body: { text: 'bounded' } } });
+			identity: { user_id: userId }, params: { room_id: 'general', body: { text: 'bounded' } } });
 		for (let index = 0; index < 20; index++) post('registered-a');
 		expect(() => post('registered-a')).toThrow('Posting limit reached');
 		for (let index = 0; index < 10; index++) post('registered-b');
@@ -43,7 +43,7 @@ it('returns the longest applicable retry window and never replenishes on a backw
 		let now = (Math.floor(Date.now() / DAY) + 1) * DAY + 43_200_000;
 		const store = new Store(state, { anonymousPostsPerMinute: 1, anonymousPostsPerDay: 1 }, { now: () => now });
 		const post = () => store.mutate({ userId: 'guest', ipKey: 'nat', method: 'message', now,
-			identity: { user_id: 'guest' }, params: { body: { text: 'bounded' } } });
+			identity: { user_id: 'guest' }, params: { room_id: 'general', body: { text: 'bounded' } } });
 		post();
 		now -= 60_000;
 		try { post(); expect.unreachable(); }

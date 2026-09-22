@@ -110,7 +110,7 @@ describe('measured storage accounting', () => {
 			};
 
 			const first = measure('day-0 create', () => store.commitMutation(messageInput(clock, 'audit-user', 'day zero', 'day-0')));
-			const firstMessageId = (first as { messageId?: string }).messageId;
+			const firstMessageId = (first as { result: { message_id?: string } }).result.message_id;
 			expect(firstMessageId).toBeTruthy();
 
 			clock.set(clock.now() + DAY + 2 * HOUR);
@@ -128,12 +128,14 @@ describe('measured storage accounting', () => {
 			const budget = store.budget();
 			const size = store.databaseSize();
 
-			const cleanupResult = cleanup as { history_floor: string; deleted_transitions: number; deleted_messages: number };
-			const history = page as { entries: Array<{ log_id: string; message: { message_id: string } }>; latest_log_id: string; history_log_id: string | null };
-			expect(cleanupResult.deleted_transitions).toBe(2);
+			const cleanupResult = cleanup as { history_floor: string; deleted_records: number; deleted_messages: number };
+			const history = page as { entries: Array<{ log_id: string; message_id: string }>; latest_log_id: string; history_log_id: string | null };
+			// The seeded general room record, the day-0 create, and the day-1
+			// create expire; the day-0 message survives through its day-2 edit.
+			expect(cleanupResult.deleted_records).toBe(3);
 			expect(cleanupResult.deleted_messages).toBe(1);
 			expect(history.entries).toHaveLength(2);
-			expect(history.entries.some((entry) => entry.message.message_id === firstMessageId)).toBe(true);
+			expect(history.entries.some((entry) => entry.message_id === firstMessageId)).toBe(true);
 			expect(history.entries.every((entry) => BigInt(entry.log_id) >= BigInt(history.history_log_id!))).toBe(true);
 			expect(room.history_log_id).toBe(cleanupResult.history_floor);
 			expect(history.latest_log_id).toBe(room.latest_log_id);
@@ -142,7 +144,7 @@ describe('measured storage accounting', () => {
 			return {
 				base,
 				cleanup: cleanupResult,
-				history: { floor: history.history_log_id, entries: history.entries.map((entry) => ({ log_id: entry.log_id, message_id: entry.message.message_id })) },
+				history: { floor: history.history_log_id, entries: history.entries.map((entry) => ({ log_id: entry.log_id, message_id: entry.message_id })) },
 				operationCosts,
 				budget,
 				observed,
@@ -219,7 +221,7 @@ describe('measured storage accounting', () => {
 			}
 			expect(reachedStableDenial).toBe(true);
 
-			const transitions = state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM transitions').one().count;
+			const transitions = state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM records WHERE kind = 'message'").one().count;
 			return {
 				accepted: accepted.result,
 				acceptedAccounting: afterAcceptedAccounting,
@@ -267,7 +269,7 @@ describe('measured storage accounting', () => {
 			}
 			expectRetry(error);
 			const limits = state.storage.sql.exec('SELECT scope, principal_key, post_events_json, day, posts_day FROM principal_limits').toArray();
-			const transitions = state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM transitions').one().count;
+			const transitions = state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM records WHERE kind = 'message'").one().count;
 			return { afterInit, budget: store.budget(), size: store.databaseSize(), limits, transitions: Number(transitions) };
 		});
 		console.info('accounting-persistence', JSON.stringify({ first, second }));
@@ -277,98 +279,153 @@ describe('measured storage accounting', () => {
 		expect(second.size).toBe(first.size);
 	});
 
-	it('measures room and thread listing costs at the 100-thread policy ceiling', async () => {
-		const stub = env.DEMO.getByName('accounting-room-list-v1');
+	it('measures room listing costs at the 100-thread policy ceiling with embedded intro messages', async () => {
+		const stub = env.DEMO.getByName('accounting-room-list-v2');
 		const result = await runInDurableObject(stub, async (_instance, state) => {
 			const clock = new FakeClock(futureUtcNoon());
 			const store = new Store(state, accountingConfig(), clock);
 			store.initialize();
 			state.storage.transactionSync(() => {
 				for (let index = 1; index <= 100; index += 1) {
+					const messageId = `${index}`;
+					const snapshot = JSON.stringify({ message_id: messageId, log_id: messageId, room_id: 'general', from: { user_id: 'lister' }, body: { text: `intro ${index}`, format: 'plain', embeds: [] } });
 					state.storage.sql.exec(
-						`INSERT INTO threads (room_id, thread_id, title, summary, root_message_id, created_ms, updated_ms)
-						 VALUES (?, ?, ?, NULL, NULL, ?, ?)`,
-						'general', `t_${index.toString(36)}`, `Thread ${index}`, clock.now(), clock.now(),
+						'INSERT INTO message_state (message_id, room_id, latest_log_id, snapshot_json, author_id) VALUES (?, ?, ?, ?, ?)',
+						messageId, 'general', clock.now() + index, snapshot, 'lister',
+					);
+					state.storage.sql.exec(
+						`INSERT INTO rooms (room_id, parent_room_id, created_log_id, record_log_id, latest_log_id, intro_message_id, fields_json, created_ms, updated_ms)
+						 VALUES (?, 'general', ?, ?, ?, ?, ?, ?, ?)`,
+						`thread-${index}`, clock.now() + 1_000 + index, clock.now() + 1_000 + index, clock.now() + 1_000 + index, messageId,
+						JSON.stringify({ title: `Thread ${index}` }), clock.now(), clock.now(),
 					);
 				}
 			});
 
-			const beforeRoomBudget = store.budget();
-			const beforeRoomAccounting = store.storageAccounting();
-			const room = store.room();
-			const afterRoomAccounting = store.storageAccounting();
-			const afterRoomBudget = store.budget();
-			const beforeThreadsBudget = store.budget();
-			const beforeThreadsAccounting = store.storageAccounting();
-			const threads = store.getThreads();
-			const afterThreadsAccounting = store.storageAccounting();
-			const afterThreadsBudget = store.budget();
-			const roomObserved = diffAccounting(afterRoomAccounting, beforeRoomAccounting);
-			const roomReserved = diffBudget(afterRoomBudget, beforeRoomBudget);
-			const threadsObserved = diffAccounting(afterThreadsAccounting, beforeThreadsAccounting);
-			const threadsReserved = diffBudget(afterThreadsBudget, beforeThreadsBudget);
-			expect(room.threads).toHaveLength(100);
-			expect(threads).toHaveLength(100);
-			expect(roomObserved.reads).toBeLessThanOrEqual(roomReserved.reads);
-			expect(roomObserved.writes).toBeLessThanOrEqual(roomReserved.writes);
-			expect(threadsObserved.reads).toBeLessThanOrEqual(threadsReserved.reads);
-			expect(threadsObserved.writes).toBeLessThanOrEqual(threadsReserved.writes);
-			return { room: { observed: roomObserved, reserved: roomReserved }, threads: { observed: threadsObserved, reserved: threadsReserved } };
-		});
-		console.info('accounting-room-list', JSON.stringify(result));
-	});
-
-	it('keeps thread history at the 50-entry limit with more than one indexed slice', async () => {
-		const stub = env.DEMO.getByName('accounting-thread-history-cardinality-v1');
-		const result = await runInDurableObject(stub, async (_instance, state) => {
-			const clock = new FakeClock(futureUtcNoon());
-			const store = new Store(state, accountingConfig(), clock);
-			store.initialize();
-			const threadId = 'thread-cardinality';
-			// Each indexed membership branch has 60 rows, so the 51-row source
-			// slice (limit + one) is exercised independently on both indexes.
-			const totalRows = 180;
-			state.storage.transactionSync(() => {
-				state.storage.sql.exec(
-					`INSERT INTO threads (room_id, thread_id, title, summary, root_message_id, created_ms, updated_ms)
-					 VALUES (?, ?, ?, NULL, NULL, ?, ?)`,
-					'general', threadId, 'Indexed cardinality', clock.now(), clock.now(),
-				);
-				for (let index = 1; index <= totalRows; index += 1) {
-					const messageId = `thread-message-${index}`;
-					const snapshot = JSON.stringify({
-						message_id: messageId,
-						from: { user_id: 'thread-history-user' },
-						body: { text: `thread history ${index}`, format: 'plain', embeds: [] },
-					});
-					state.storage.sql.exec(
-						`INSERT INTO transitions
-						 (room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id)
-						 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-						'general', index, clock.now() + index, messageId, snapshot,
-						index % 3 === 0 ? threadId : null,
-						index % 3 === 1 || index % 3 === 0 ? threadId : null,
-					);
-				}
-				state.storage.sql.exec('UPDATE room_state SET last_log_id = ?, last_commit_ms = ? WHERE room_id = ?', totalRows, clock.now() + totalRows, 'general');
-			});
-
-			const beforeAccounting = store.storageAccounting();
 			const beforeBudget = store.budget();
-			const page = store.historyPage({ roomId: 'general', threadId, after: '0', limit: 50, now: clock.now() });
+			const beforeAccounting = store.storageAccounting();
+			const rooms = store.listRooms(clock.now());
 			const afterAccounting = store.storageAccounting();
 			const afterBudget = store.budget();
 			const observed = diffAccounting(afterAccounting, beforeAccounting);
 			const reserved = diffBudget(afterBudget, beforeBudget);
-			expect(page.entries).toHaveLength(50);
+			expect(rooms).toHaveLength(101);
+			expect(rooms[0].room_id).toBe('general');
+			expect(rooms[1].intro_message).toMatchObject({ message_id: '1', body: { text: 'intro 1' } });
+			expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
+			expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
+			return { rooms: rooms.length, observed, reserved };
+		});
+		console.info('accounting-room-list', JSON.stringify(result));
+	});
+
+	it('keeps a 50-record history page across record kinds within its reservation', async () => {
+		const stub = env.DEMO.getByName('accounting-history-cardinality-v2');
+		const result = await runInDurableObject(stub, async (_instance, state) => {
+			const clock = new FakeClock(futureUtcNoon());
+			const store = new Store(state, accountingConfig(), clock);
+			store.initialize();
+			const totalRows = 180;
+			const kinds = ['message', 'reactions', 'room'] as const;
+			state.storage.transactionSync(() => {
+				state.storage.sql.exec('DELETE FROM records');
+				for (let index = 1; index <= totalRows; index += 1) {
+					const kind = kinds[index % 3];
+					const record = kind === 'room'
+						? { room_id: 'general', log_id: `${index}`, title: `General ${index}` }
+						: kind === 'reactions'
+							? { log_id: `${index}`, message_id: '3', room_id: 'general', reactions: [{ from: { user_id: 'reactor' }, emojis: ['👍'] }] }
+							: { message_id: `${index}`, log_id: `${index}`, room_id: 'general', from: { user_id: 'history-user' }, body: { text: `history ${index}`, format: 'plain', embeds: [] } };
+					state.storage.sql.exec(
+						'INSERT INTO records (room_id, log_id, commit_ms, kind, record_json) VALUES (?, ?, ?, ?, ?)',
+						'general', index, clock.now() + index, kind, JSON.stringify(record),
+					);
+				}
+				state.storage.sql.exec('UPDATE rooms SET created_log_id = 1, record_log_id = 1, latest_log_id = ? WHERE room_id = ?', totalRows, 'general');
+				state.storage.sql.exec('UPDATE log_state SET last_log_id = ?, history_floor = 1, last_commit_ms = ?', totalRows, clock.now() + totalRows);
+			});
+
+			const beforeAccounting = store.storageAccounting();
+			const beforeBudget = store.budget();
+			const page = store.historyPage({ roomId: 'general', after: '0', limit: 50, now: clock.now() });
+			const afterAccounting = store.storageAccounting();
+			const afterBudget = store.budget();
+			const observed = diffAccounting(afterAccounting, beforeAccounting);
+			const reserved = diffBudget(afterBudget, beforeBudget);
+			expect((page.rooms?.length ?? 0) + page.entries.length + (page.reactions?.length ?? 0)).toBe(50);
+			expect(page.rooms).toHaveLength(17);
+			expect(page.reactions).toHaveLength(17);
+			expect(page.entries).toHaveLength(16);
 			expect(page.more).toBe(true);
 			expect(page.first_id).toBe('1');
-			expect(page.last_id).toBe('75');
+			expect(page.last_id).toBe('50');
 			expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
 			expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
 			return { observed, reserved, first: page.first_id, last: page.last_id, more: page.more };
 		});
-		console.info('accounting-thread-history-cardinality', JSON.stringify(result));
+		console.info('accounting-history-cardinality', JSON.stringify(result));
+	});
+
+	it('calibrates a move that re-logs the maximum reaction sets', async () => {
+		const stub = env.DEMO.getByName('accounting-move-reactions-v1');
+		const config = accountingConfig({
+			// The calibrated per-message and per-user ceilings, not the defaults.
+			reactionUsersPerMessage: 64,
+			reactionEmojisPerUser: 16,
+			anonymousPostsPerMinute: 1_000,
+			ipPostsPerMinute: 1_000,
+			globalPostsPerMinute: 1_000,
+		});
+		const result = await runInDurableObject(stub, async (_instance, state) => {
+			const clock = new FakeClock(futureUtcNoon());
+			const store = new Store(state, config, clock);
+			store.initialize();
+			const identity = (userId: string) => ({ user_id: userId, name: 'n'.repeat(config.maxNameBytes) });
+			const created = store.commitMutation({
+				userId: 'mover', ipKey: 'move-ip', requestId: 'target', method: 'message', now: clock.now(),
+				params: { room_id: 'general', body: { text: 'moving' } }, identity: identity('mover'),
+			});
+			const messageId = created.result.message_id;
+			// Sixteen distinct 64-byte emoji strings per user.
+			const emojis = Array.from({ length: 16 }, (_, index) => `${String.fromCodePoint(0x1F600 + index)}${'x'.repeat(60)}`);
+			let reactionCost = { observed: { reads: 0, writes: 0 }, reserved: { reads: 0, writes: 0 } };
+			for (let index = 0; index < 64; index += 1) {
+				const beforeBudget = store.budget();
+				const beforeAccounting = store.storageAccounting();
+				store.commitMutation({
+					userId: `reactor-${index}`, ipKey: `react-ip-${index}`, requestId: `react-${index}`, method: 'reactions', now: clock.now(),
+					params: { message_id: messageId, emojis }, identity: identity(`reactor-${index}`),
+				});
+				const observed = diffAccounting(store.storageAccounting(), beforeAccounting);
+				const reserved = diffBudget(store.budget(), beforeBudget);
+				expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
+				expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
+				if (observed.writes >= reactionCost.observed.writes) reactionCost = { observed, reserved };
+			}
+			const thread = store.commitMutation({
+				userId: 'mover', ipKey: 'move-ip', requestId: 'thread', method: 'room', now: clock.now(),
+				params: { parent_room_id: 'general', title: 'Destination' }, identity: identity('mover'),
+			});
+			const beforeBudget = store.budget();
+			const beforeAccounting = store.storageAccounting();
+			const moved = store.commitMutation({
+				userId: 'mover', ipKey: 'move-ip', requestId: 'move', method: 'message', now: clock.now(),
+				params: { message_id: messageId, room_id: thread.result.room_id, body: { text: 'moved' } }, identity: identity('mover'),
+			});
+			const observed = diffAccounting(store.storageAccounting(), beforeAccounting);
+			const reserved = diffBudget(store.budget(), beforeBudget);
+			expect(moved.broadcasts.map((record) => record.method)).toEqual(['message', 'reactions']);
+			expect((moved.broadcasts[1].params.reactions as unknown[]).length).toBe(64);
+			const recordBytes = new TextEncoder().encode(JSON.stringify(moved.broadcasts[1].params)).byteLength;
+			expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
+			expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
+			// The re-logged record still fits one history response.
+			const page = store.historyPage({ roomId: String(thread.result.room_id), after: '0', limit: 50, now: clock.now() });
+			expect(page.reactions?.[0].reactions).toHaveLength(64);
+			expect(recordBytes).toBeLessThan(config.maxHistoryResponseBytes);
+			return { reaction: reactionCost, move: { observed, reserved }, recordBytes };
+		});
+		console.info('accounting-move-reactions', JSON.stringify(result));
 	});
 
 	it('calibrates default costs for maximum snapshots, repeated edits, and a UTC midnight double burst', async () => {
@@ -407,9 +464,9 @@ describe('measured storage accounting', () => {
 			// Preserve a large extension field as part of the snapshot so this
 			// calibration reaches the 8 KiB snapshot ceiling instead of measuring
 			// only the 4 KiB body-text limit.
-			const maximumExtensions = { extension_padding: 'p'.repeat(3_900) };
+			const maximumExtensions = { ext: { padding: 'p'.repeat(3_850) } };
 			const first = measure('maximum snapshot create', () => store.commitMutation(messageInput(clock, 'calibration-user', maximumText, 'maximum-create', undefined, maximumExtensions)));
-			const messageId = (first as { messageId?: string }).messageId;
+			const messageId = (first as { result: { message_id?: string } }).result.message_id;
 			expect(messageId).toBeTruthy();
 			const snapshotBytes = JSON.stringify((first as { message?: unknown }).message).length;
 			expect(snapshotBytes).toBeGreaterThan(8_000);
@@ -515,7 +572,8 @@ describe('measured storage accounting', () => {
 			}>('SELECT day, foreground_writes, maintenance_writes FROM resource_budgets WHERE day IN (?, ?) ORDER BY day', foregroundDay, maintenanceDay).toArray();
 			const foregroundBudget = budgetRows.find((row) => row.day === foregroundDay);
 			const maintenanceBudget = budgetRows.find((row) => row.day === maintenanceDay);
-			expect(cleanup.deleted_transitions).toBe(acceptedMutations);
+			// Every accepted create plus the seeded general room record.
+			expect(cleanup.deleted_records).toBe(acceptedMutations + 1);
 			expect(cleanup.deleted_messages).toBe(acceptedMutations);
 			expect(BigInt(cleanup.history_floor)).toBeGreaterThan(1n);
 			expect(foregroundBudget?.foreground_writes).toBeGreaterThan(0);
@@ -585,25 +643,38 @@ describe('measured storage accounting', () => {
 				userId: 'matrix-user', ipKey: 'matrix-post-ip', requestId: 'matrix-message', method: 'message', now: clock.now(),
 				params: { room_id: 'general', body: { text: 'matrix message', format: 'plain' } }, identity,
 			}));
-			measure('thread create', () => store.commitMutation({
-				userId: 'matrix-user', ipKey: 'matrix-thread-ip', requestId: 'matrix-thread', method: 'thread', now: clock.now(),
-				params: { room_id: 'general', title: 'Matrix thread' }, identity,
+			const messageId = (create as { result: { message_id: string } }).result.message_id;
+			measure('reaction set', () => store.commitMutation({
+				userId: 'matrix-user', ipKey: 'matrix-react-ip', requestId: 'matrix-react', method: 'reactions', now: clock.now(),
+				params: { message_id: messageId, emojis: ['👍', '🎉'] }, identity,
 			}));
-			measure('registered nick mutation', () => store.commitMutation({
-				userId: 'matrix-user', ipKey: 'matrix-nick-ip', requestId: 'matrix-nick', method: 'nick', now: clock.now(),
+			const thread = measure('thread room create', () => store.commitMutation({
+				userId: 'matrix-user', ipKey: 'matrix-thread-ip', requestId: 'matrix-thread', method: 'room', now: clock.now(),
+				params: { parent_room_id: 'general', title: 'Matrix thread', intro_message: { message_id: messageId } }, identity,
+			})) as { result: { room_id: string } };
+			measure('thread room update', () => store.commitMutation({
+				userId: 'matrix-user', ipKey: 'matrix-thread-ip', requestId: 'matrix-thread-update', method: 'room', now: clock.now(),
+				params: { room_id: thread.result.room_id, title: 'Matrix thread renamed', ext: { demo: true } }, identity,
+			}));
+			measure('message move with reactions', () => store.commitMutation({
+				userId: 'matrix-user', ipKey: 'matrix-post-ip', requestId: 'matrix-move', method: 'message', now: clock.now(),
+				params: { message_id: messageId, room_id: thread.result.room_id, body: { text: 'matrix moved', format: 'plain' } }, identity,
+			}));
+			measure('registered name mutation', () => store.commitMutation({
+				userId: 'matrix-user', ipKey: 'matrix-nick-ip', requestId: 'matrix-nick', method: 'name', now: clock.now(),
 				params: { name: 'Matrix renamed' }, identity,
 			}));
 			measure('history page', () => store.historyPage({ roomId: 'general', limit: 50, now: clock.now() }));
 			measure('room state announcement', () => store.getRoomState());
-			measure('thread listing', () => store.getThreads());
-			measure('domain room listing', () => store.room());
+			measure('room join lookup', () => store.getRoom(thread.result.room_id));
+			measure('room listing', () => store.listRooms(clock.now()));
 			measure('admission snapshot', () => store.admission());
 			clock.set(clock.now() + DAY + HOUR + 1);
 			measure('cleanup', () => store.runCleanup(clock.now()));
 			await measureAsync('alarm scheduling', () => store.scheduleAlarm(clock.now() + 1_000, clock.now()));
 
 			expect((create as { result: { message_id?: string } }).result.message_id).toBeTruthy();
-			expect(costs).toHaveLength(21);
+			expect(costs).toHaveLength(24);
 			return { costs };
 		});
 		console.info('accounting-operation-matrix', JSON.stringify(result));
@@ -612,8 +683,8 @@ describe('measured storage accounting', () => {
 		}
 	});
 
-	it('records actual SQLite query plans for history, cleanup, thread, dedup, and limiter paths', async () => {
-		const stub = env.DEMO.getByName('accounting-query-plans-v1');
+	it('records actual SQLite query plans for history, cleanup, room listing, dedup, and limiter paths', async () => {
+		const stub = env.DEMO.getByName('accounting-query-plans-v2');
 		const result = await runInDurableObject(stub, async (_instance, state) => {
 			const clock = new FakeClock(futureUtcNoon());
 			const store = new Store(state, accountingConfig(), clock);
@@ -624,36 +695,35 @@ describe('measured storage accounting', () => {
 			const sql = state.storage.sql;
 			const plans = {
 				history: explain(sql, `EXPLAIN QUERY PLAN
-					SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-					FROM transitions WHERE room_id = ? AND log_id >= ? AND log_id <= ?
-					ORDER BY log_id ASC LIMIT ?`, 'general', 1, Number.MAX_SAFE_INTEGER, 20),
+					SELECT room_id, log_id, kind, record_json FROM records
+					WHERE room_id = ? AND log_id >= ? AND log_id <= ?
+					ORDER BY log_id ASC LIMIT ?`, 'general', 1, Number.MAX_SAFE_INTEGER, 21),
 				cleanup: explain(sql, `EXPLAIN QUERY PLAN
-					SELECT log_id FROM transitions INDEXED BY transitions_retention_idx
-					WHERE room_id = ? AND commit_ms < ? AND log_id >= ?
-					ORDER BY commit_ms ASC, log_id ASC LIMIT ?`, 'general', clock.now() - DAY, 1, 100),
+					SELECT log_id FROM records INDEXED BY records_retention_idx
+					WHERE commit_ms < ? AND log_id >= ?
+					ORDER BY commit_ms, log_id LIMIT ?`, clock.now() - DAY, 1, 100),
 				cleanupDelete: explain(sql, `EXPLAIN QUERY PLAN
-					SELECT log_id FROM transitions
-					WHERE room_id = ? AND log_id < ?
-					ORDER BY log_id ASC LIMIT ?`, 'general', 100, 100),
-				threadBefore: explain(sql, `EXPLAIN QUERY PLAN
-					SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-					FROM transitions WHERE room_id = ? AND log_id >= ? AND log_id <= ? AND previous_thread_id = ?
-					ORDER BY log_id ASC LIMIT ?`, 'general', 1, Number.MAX_SAFE_INTEGER, 't_1', 51),
-				threadAfter: explain(sql, `EXPLAIN QUERY PLAN
-					SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-					FROM transitions WHERE room_id = ? AND log_id >= ? AND log_id <= ? AND thread_id = ?
-					ORDER BY log_id ASC LIMIT ?`, 'general', 1, Number.MAX_SAFE_INTEGER, 't_1', 51),
+					SELECT room_id, log_id FROM records INDEXED BY records_log_idx
+					WHERE log_id < ? ORDER BY log_id LIMIT ?`, 100, 100),
+				messageExpiry: explain(sql, 'EXPLAIN QUERY PLAN SELECT message_id FROM message_state WHERE latest_log_id < ? ORDER BY latest_log_id LIMIT ?', 100, 100),
+				reactionExpiry: explain(sql, 'EXPLAIN QUERY PLAN SELECT message_id, user_id FROM reaction_state WHERE log_id < ? ORDER BY log_id LIMIT ?', 100, 100),
+				moveReactions: explain(sql, 'EXPLAIN QUERY PLAN SELECT message_id, user_id, log_id, from_json, emojis_json FROM reaction_state WHERE message_id = ? AND log_id >= ? ORDER BY log_id, user_id LIMIT ?', '1', 1, 32),
+				roomListing: explain(sql, `EXPLAIN QUERY PLAN
+					SELECT r.room_id, m.snapshot_json FROM rooms r LEFT JOIN message_state m ON m.message_id = r.intro_message_id
+					ORDER BY r.created_log_id ASC LIMIT ?`, 101),
 				dedupExpiry: explain(sql, 'EXPLAIN QUERY PLAN SELECT user_id, request_id FROM accepted_requests WHERE expires_ms <= ? ORDER BY expires_ms ASC LIMIT ?', clock.now(), 100),
 				limiterExpiry: explain(sql, 'EXPLAIN QUERY PLAN SELECT scope, principal_key FROM principal_limits WHERE updated_ms < ? ORDER BY updated_ms ASC LIMIT ?', clock.now() - DAY, 100),
 			};
 			return { plans, databaseSize: store.databaseSize() };
 		});
 		console.info('accounting-query-plans', JSON.stringify(result));
-		expect(result.plans.history.some((detail) => /SEARCH transitions USING/i.test(detail))).toBe(true);
-		expect(result.plans.cleanup.some((detail) => /transitions_retention_idx/i.test(detail))).toBe(true);
-		expect(result.plans.cleanupDelete.some((detail) => /SEARCH transitions USING/i.test(detail))).toBe(true);
-		expect(result.plans.threadBefore.some((detail) => /transitions_thread_before_idx/i.test(detail))).toBe(true);
-		expect(result.plans.threadAfter.some((detail) => /transitions_thread_after_idx/i.test(detail))).toBe(true);
+		expect(result.plans.history.some((detail) => /SEARCH records USING/i.test(detail))).toBe(true);
+		expect(result.plans.cleanup.some((detail) => /records_retention_idx/i.test(detail))).toBe(true);
+		expect(result.plans.cleanupDelete.some((detail) => /records_log_idx/i.test(detail))).toBe(true);
+		expect(result.plans.messageExpiry.some((detail) => /message_state_latest_idx/i.test(detail))).toBe(true);
+		expect(result.plans.reactionExpiry.some((detail) => /reaction_state_log_idx/i.test(detail))).toBe(true);
+		expect(result.plans.moveReactions.some((detail) => /SEARCH reaction_state USING/i.test(detail))).toBe(true);
+		expect(result.plans.roomListing.some((detail) => /SEARCH m USING/i.test(detail))).toBe(true);
 		expect(result.plans.dedupExpiry.some((detail) => /accepted_requests.*expiry|expiry.*accepted_requests/i.test(detail))).toBe(true);
 	});
 });

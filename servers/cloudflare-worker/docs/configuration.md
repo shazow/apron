@@ -97,6 +97,9 @@ defaults:
 - Per-minute and per-day budgets cannot contradict their own windows. Global
   posting, registration, identity, and processed-frame caps are fixed demo
   ceilings. Low, high, and hard storage watermarks must be strictly ordered.
+- A moved message re-logs every reaction set in one record, so
+  `reactionUsersPerMessage` times the per-user bound (emoji at most 64 UTF-8
+  bytes each, escaped, plus the user's name) must fit `historyMaxResponseBytes`.
 - Foreground plus maintenance SQL budgets must fit the daily SQL ceilings.
   Each maintenance budget is at least 520 operations, covering the one-time
   512-row bootstrap reservation and eight control rows for deferred cleanup.
@@ -109,7 +112,8 @@ registered identities and limiter records 10,000 each, processed frames
 100,000/day, global posts 60/minute and 5,000/day, registrations 100/day,
 connection frame rate 120/minute, SQL writes 80,000/day, SQL reads 3,000,000/day,
 database high-water 96 MiB and hard target 128 MiB, cleanup 100 records,
-threads 100 with 2 KiB metadata, and credentials/challenges 16 KiB. Operators
+thread rooms 100 with 2 KiB of client fields, reactions 64 users per message
+and 16 emoji per user, and credentials/challenges 16 KiB. Operators
 may lower these values but cannot raise them without changing the implementation
 and recalibrating its resource model.
 
@@ -133,6 +137,11 @@ monotonic time and UTC calendar date; a backward wall-clock jump cannot reset
 them. Cleanup and deduplication run in bounded batches/records, while
 `foreground*` and `maintenance*` are daily SQL operation budgets.
 
+`threadLimit` counts thread rooms (rooms with a `parent_room_id`) and
+`threadMetadataBytes` bounds a room's serialized client fields (`title`,
+`intro_message` reference, `ext`). The `anonymous*` variables configure the
+guest tier (the protocol v3 `guest` auth scheme); their names are unchanged.
+
 The numeric rows are grouped by their unit and enforcement scope:
 
 - Durations: `retentionSeconds`, `cleanupSeconds`, `challengeTtlSeconds`,
@@ -148,7 +157,8 @@ The numeric rows are grouped by their unit and enforcement scope:
   `registeredIdentityCount`, `openConnections`, `anonymousConnectionsPerIp`,
   `registeredConnectionsPerUser`, `connectionsPerIp`,
   `pendingFramesPerConnection`, `repeatedPolicyViolations`, `cleanupBatch`,
-  `threadLimit`, `limiterRecordCap`.
+  `threadLimit`, `reactionUsersPerMessage`, `reactionEmojisPerUser`,
+  `limiterRecordCap`.
 - Rolling minute budgets: `historyRequestsPerUserMinute`,
   `historyRequestsPerIpMinute`, `anonymousPostsPerMinute`,
   `registeredPostsPerMinute`, `ipPostsPerMinute`, `globalPostsPerMinute`,
@@ -218,6 +228,8 @@ The numeric rows are grouped by their unit and enforcement scope:
 | `cleanupBatch` | 100 |
 | `threadLimit` | 100 |
 | `threadMetadataBytes` | 2048 |
+| `reactionUsersPerMessage` | 32 |
+| `reactionEmojisPerUser` | 8 |
 | `dedupTtlSeconds` | 86400 |
 | `limiterRecordCap` | 10000 |
 | `maxCredentialBytes` | 16384 |

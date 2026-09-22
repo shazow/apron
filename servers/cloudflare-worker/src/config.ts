@@ -141,6 +141,14 @@ function validateLimits(limits: Limits): void {
 	if (limits.cleanupBatch > budget.MAX_CLEANUP_BATCH || limits.threadLimit > budget.MAX_THREAD_LIMIT || limits.threadMetadataBytes > budget.MAX_THREAD_METADATA_BYTES) {
 		fail("metadata or cleanup exceeds calibrated bounds");
 	}
+	if (limits.reactionUsersPerMessage > budget.MAX_REACTION_USERS_PER_MESSAGE || limits.reactionEmojisPerUser > budget.MAX_REACTION_EMOJIS_PER_USER) {
+		fail("reaction policy exceeds calibrated bounds");
+	}
+	// A moved message carries every reaction set in one logged record, which
+	// must still fit one history response (escaped emoji and names included).
+	if (limits.reactionUsersPerMessage * (2 * budget.MAX_EMOJI_BYTES * limits.reactionEmojisPerUser + 2 * limits.maxNameBytes + 256) + 1024 > limits.historyMaxResponseBytes) {
+		fail("a moved message's reaction record cannot fit one history response");
+	}
 	if (limits.sqlWritesPerDay > budget.MAX_SQL_WRITES || limits.sqlReadsPerDay > budget.MAX_SQL_READS) {
 		fail("SQL ceilings exceed the demo allocation");
 	}

@@ -10,7 +10,7 @@ it('rolls back failed writes atomically while keeping their resource reservation
 		const budgetBefore = store.budget(now);
 		// SQLite itself raises after the transition insert, inside transactionSync.
 		// This exercises real rollback rather than substituting a fake database.
-		state.storage.sql.exec(`CREATE TRIGGER fail_snapshot BEFORE INSERT ON messages
+		state.storage.sql.exec(`CREATE TRIGGER fail_snapshot BEFORE INSERT ON message_state
 			BEGIN SELECT RAISE(ABORT, 'injected snapshot failure'); END`);
 		const input = {
 			userId: 'guest-failure', ipKey: 'failure-ip', method: 'message', now,
@@ -19,18 +19,22 @@ it('rolls back failed writes atomically while keeping their resource reservation
 		};
 		expect(() => store.mutate(input)).toThrow('injected snapshot failure');
 		expect(store.getRoomState().latest_log_id).toBe(before.latest_log_id);
-		for (const table of ['transitions', 'messages', 'accepted_requests', 'principal_limits']) {
+		// Only the seeded general room record exists; nothing from the failed write.
+		expect(state.storage.sql.exec('SELECT COUNT(*) AS n FROM records').one().n).toBe(1);
+		for (const table of ['message_state', 'accepted_requests', 'principal_limits']) {
 			expect(state.storage.sql.exec(`SELECT COUNT(*) AS n FROM ${table}`).one().n).toBe(0);
 		}
 		expect(store.budget(now).writes).toBeGreaterThan(budgetBefore.writes);
 		state.storage.sql.exec('DROP TRIGGER fail_snapshot');
 		const committed = store.mutate(input);
-		expect(committed.transition?.message.body?.text).toBe('atomic message');
+		expect(committed.message?.body?.text).toBe('atomic message');
+		expect(committed.broadcasts.map(record => record.method)).toEqual(['message']);
 		// Discard the first result and reconstruct the store as after a lost reply.
 		const restarted = new Store(state, {}, { now: () => now });
 		const replay = restarted.mutate(input);
 		expect(replay.deduplicated).toBe(true);
 		expect(replay.result).toEqual(committed.result);
-		expect(state.storage.sql.exec('SELECT COUNT(*) AS n FROM transitions').one().n).toBe(1);
+		expect(replay.broadcasts).toEqual([]);
+		expect(state.storage.sql.exec("SELECT COUNT(*) AS n FROM records WHERE kind = 'message'").one().n).toBe(1);
 	});
 });

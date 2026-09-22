@@ -40,7 +40,7 @@ During an authorized deployment:
 Neither generation nor local tests inspect or mutate the live account. Changes
 to rules require the normal dashboard or Rulesets API deployment process. Do not
 enable blanket browser challenges on WebSocket handshakes: clients cannot complete
-an interactive challenge there. Anonymous custom frontends remain supported.
+an interactive challenge there. Guest (anonymous) custom frontends remain supported.
 
 ## Verification
 

@@ -55,9 +55,9 @@ it('persists an overrun stop across object eviction', async () => {
 		state.storage.transactionSync(() => {
 			for (let index = 1; index <= 100; index += 1) {
 				state.storage.sql.exec(
-					`INSERT INTO threads (room_id, thread_id, title, summary, root_message_id, created_ms, updated_ms)
-					 VALUES (?, ?, ?, NULL, NULL, ?, ?)`,
-					'general', `budget-thread-${index}`, `Thread ${index}`, now, now,
+					`INSERT INTO rooms (room_id, parent_room_id, created_log_id, record_log_id, latest_log_id, intro_message_id, fields_json, created_ms, updated_ms)
+					 VALUES (?, 'general', ?, ?, ?, NULL, ?, ?, ?)`,
+					`budget-thread-${index}`, index, index, index, JSON.stringify({ title: `Thread ${index}` }), now, now,
 				);
 			}
 		});
@@ -65,7 +65,7 @@ it('persists an overrun stop across object eviction', async () => {
 		// The outer boundary deliberately reserves no operation rows while the
 		// nested room read is bounded but larger than that reservation. The guard
 		// latches unsafe and persists the marker before returning the error.
-		expect(() => store.withMeter('foreground', { reads: 0, writes: 0 }, () => store.room(), now))
+		expect(() => store.withMeter('foreground', { reads: 0, writes: 0 }, () => store.listRooms(now), now))
 			.toThrow('storage cost exceeded its reservation');
 		expect(store.accountingStatus().unsafe).toBe(true);
 	});

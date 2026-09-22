@@ -38,7 +38,6 @@ function messageInput(clock: TestClock, requestId: string, text: string): StoreM
 		ipKey: "maintenance-ip",
 		requestId,
 		method: "message",
-		roomId: "general",
 		now: clock.value,
 		params: { room_id: "general", body: { format: "plain", text } },
 		identity: { user_id: "maintenance-user", name: "Maintenance Tester" },
@@ -46,8 +45,8 @@ function messageInput(clock: TestClock, requestId: string, text: string): StoreM
 }
 
 function oneLog(result: ReturnType<Store["mutate"]>): bigint {
-	const value = result.transition?.log_id;
-	if (value === undefined) throw new Error("mutation did not produce a transition");
+	const value = result.message?.log_id;
+	if (value === undefined) throw new Error("mutation did not produce a message record");
 	return BigInt(value);
 }
 
@@ -84,7 +83,9 @@ it("keeps an early authentication alarm cheap while cleanup is not due", async (
 it("keeps a full day of empty hourly cleanups below one deletion batch", async () => {
 	await withStore("idle-day", {}, (store, clock, state) => {
 		const before = store.storageAccounting();
-		for (let hour = 0; hour < 24; hour++) {
+		// Stay inside the seeded general record's retention window: this test
+		// measures idle hours, not the one expiry of that bootstrap record.
+		for (let hour = 0; hour < 23; hour++) {
 			clock.value += 3_600_000;
 			const cleanup = store.runCleanup(clock.value);
 			expect(cleanup.did_work).toBe(false);
@@ -177,15 +178,21 @@ it("defers exhausted cleanup to the next UTC day and schedules one reset alarm",
 
 it("makes repeated cleanup invocations idempotent across due alarms and wakes", async () => {
 	await withStore("cleanup-idempotence", { cleanupBatch: 1 }, async (store, clock, state) => {
+		// The seeded general room record is the oldest record in the log.
+		const generalLog = BigInt(store.getRoomState().log_id);
 		const firstLog = oneLog(store.mutate(messageInput(clock, "idempotent-1", "first")));
 		const secondLog = oneLog(store.mutate(messageInput(clock, "idempotent-2", "second")));
 		clock.value += RETENTION_MS + 1;
 
+		const seeded = store.runCleanup(clock.value);
+		expect(seeded.history_floor).toBe(String(generalLog + 1n));
+		expect(seeded.deleted_records).toBe(1);
+		clock.value = seeded.next_due_ms + 1;
 		const first = store.runCleanup(clock.value);
 		expect(first.history_floor).toBe(String(firstLog + 1n));
-		expect(first.deleted_transitions).toBe(1);
+		expect(first.deleted_records).toBe(1);
 		const replay = store.runCleanup(clock.value);
-		expect(replay.deleted_transitions).toBe(0);
+		expect(replay.deleted_records).toBe(0);
 		expect(replay.deleted_messages).toBe(0);
 		expect(replay.history_floor).toBe(first.history_floor);
 		expect(replay.latest_id).toBe(String(secondLog));
@@ -193,10 +200,10 @@ it("makes repeated cleanup invocations idempotent across due alarms and wakes", 
 
 		clock.value = first.next_due_ms + 1;
 		const continuation = store.runCleanup(clock.value);
-		expect(continuation.deleted_transitions).toBe(1);
+		expect(continuation.deleted_records).toBe(1);
 		expect(continuation.history_floor).toBe(String(secondLog + 1n));
 		const finalReplay = store.runCleanup(clock.value);
-		expect(finalReplay.deleted_transitions).toBe(0);
+		expect(finalReplay.deleted_records).toBe(0);
 		expect(finalReplay.history_floor).toBe(continuation.history_floor);
 		expect(finalReplay.latest_id).toBe(String(secondLog));
 		expect(finalReplay.did_work).toBe(false);
@@ -205,14 +212,14 @@ it("makes repeated cleanup invocations idempotent across due alarms and wakes", 
 });
 
 it("publishes a floor before a failed physical delete and resumes after restart", async () => {
-	await withStore("cleanup-restart", { cleanupBatch: 1 }, (store, clock, state) => {
+	await withStore("cleanup-restart", { cleanupBatch: 2 }, (store, clock, state) => {
 		const oldLog = oneLog(store.mutate(messageInput(clock, "restart-old", "old message")));
 		const head = store.getRoomState().latest_log_id;
 		clock.value += RETENTION_MS + 1;
 		state.storage.sql.exec("UPDATE maintenance SET next_cleanup_ms = ? WHERE id = 1", clock.value);
 		state.storage.sql.exec(`
-			CREATE TRIGGER fail_transition_delete
-			BEFORE DELETE ON transitions
+			CREATE TRIGGER fail_record_delete
+			BEFORE DELETE ON records
 			BEGIN
 				SELECT RAISE(ABORT, 'injected cleanup deletion failure');
 			END
@@ -228,15 +235,16 @@ it("publishes a floor before a failed physical delete and resumes after restart"
 		expect(failure).toBeDefined();
 		expect(store.getRoomState().history_log_id).toBeNull();
 		expect(store.getRoomState().latest_log_id).toBe(head);
-		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM transitions").count)).toBe(1);
-		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM messages").count)).toBe(1);
+		// The seeded general record and the message are both still stored.
+		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM records").count)).toBe(2);
+		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM message_state").count)).toBe(1);
 		const hidden = store.history({ roomId: "general", after: 0n, limit: 50, now: clock.value });
 		expect(hidden.entries).toEqual([]);
 		expect(hidden.latest_log_id).toBe(head);
 		expect(hidden.history_log_id).toBeNull();
 
-		state.storage.sql.exec("DROP TRIGGER fail_transition_delete");
-		const restarted = new Store(state, { cleanupBatch: 1 }, clock.clock);
+		state.storage.sql.exec("DROP TRIGGER fail_record_delete");
+		const restarted = new Store(state, { cleanupBatch: 2 }, clock.clock);
 		restarted.initialize();
 		let last: ReturnType<Store["runCleanup"]> | undefined;
 		for (let run = 0; run < 5; run += 1) {
@@ -246,8 +254,8 @@ it("publishes a floor before a failed physical delete and resumes after restart"
 		}
 		expect(last?.history_floor).toBe(String(floor));
 		expect(last?.latest_id).toBe(head);
-		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM transitions").count)).toBe(0);
-		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM messages").count)).toBe(0);
+		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM records").count)).toBe(0);
+		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM message_state").count)).toBe(0);
 		expect(restarted.history({ roomId: "general", after: 0n, limit: 50, now: clock.value }).entries).toEqual([]);
 	});
 });

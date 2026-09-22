@@ -65,10 +65,10 @@ async function issueSession(userId: string, origin: string): Promise<string> {
 
 it('advertises token resume only where passkeys are offered', async () => {
 	const trusted = await connect();
-	expect((await trusted.next()).params.auth).toEqual(['webauthn', 'token', 'anonymous']);
+	expect((await trusted.next()).params.auth).toEqual(['webauthn', 'token', 'guest']);
 	trusted.close();
 	const untrusted = await connect(null);
-	expect((await untrusted.next()).params.auth).toEqual(['anonymous']);
+	expect((await untrusted.next()).params.auth).toEqual(['guest']);
 	untrusted.send({ id: 't', method: 'auth', params: { scheme: 'token', token: 'anything' } });
 	expect((await untrusted.next()).error.code).toBe(-32001);
 	untrusted.close();
