@@ -1,16 +1,28 @@
-// Apron Chat v2 for trusted, compliant clients. Requires Bun; no dependencies.
-// Run: bun apron_server.js
-// LAN: HOST=0.0.0.0 PORT=8765 bun apron_server.js
-// One room, anonymous identities, replies, and 1,000 messages of RAM history.
-// Restart clears history; reconnect assigns a new identity. No retry deduplication,
-// edits, threads, uploads, credentials, or rate limits. Clients must send valid
-// protocol frames; malformed input may close the connection.
+// Apron Chat v3 for trusted, compliant clients. Requires Bun; no dependencies.
+// Run: bun apron-server.js
+// LAN: HOST=0.0.0.0 PORT=8765 bun apron-server.js
+// One room, guest identities, names, replies, ext pass-through, and the latest
+// 1,000 log records of RAM history. Restart clears history; reconnect assigns a
+// new identity. No retry deduplication, edits, room changes, reactions, uploads,
+// credentials, or rate limits. Clients must send valid protocol frames;
+// malformed input may close the connection.
 
-const greeting = {
-  protocol: 2, name: "apron-bun/1", auth: ["anonymous"], caps: ["history"],
-};
-const log = [];
+const greeting = { protocol: 3, name: "apron-bun/3", auth: ["guest"], caps: ["history"] };
+const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
+
+function nextLogId() {
+  lastLogId = Math.max(Date.now(), lastLogId + 1);
+  return String(lastLogId);
+}
+
+function append(record) {
+  log.push(record);
+  if (log.length > 1000) log.shift();
+  return record;
+}
+
+const room = append({ room_id: "general", log_id: nextLogId(), title: "General" });
 
 function send(ws, frame) {
   ws.send(JSON.stringify(frame));
@@ -20,68 +32,67 @@ function check(condition, message, code = -32602) {
   if (!condition) throw { code, message };
 }
 
-function historyBounds() {
-  return {
-    latest_log_id: String(lastLogId),
-    history_log_id: log[0]?.log_id ?? null,
-  };
+function availability() {
+  return { latest_log_id: String(lastLogId), history_log_id: log[0].log_id };
 }
 
 function readHistory(params) {
   const limit = Math.min(params.limit ?? 50, 200);
   const after = Number(params.after ?? 0);
   const before = Number(params.before ?? lastLogId);
-  const matches = log.filter(entry => {
-    const logId = Number(entry.log_id);
+  const matches = log.filter(record => {
+    const logId = Number(record.log_id);
     return logId >= after && logId <= before;
   });
-  const entries = "after" in params ? matches.slice(0, limit) : matches.slice(-limit);
-  const result = { entries, more: matches.length > limit, ...historyBounds() };
-  if (entries.length) {
-    result.first_id = entries[0].log_id;
-    result.last_id = entries.at(-1).log_id;
+  const slice = "after" in params ? matches.slice(0, limit) : matches.slice(-limit);
+  const result = {
+    rooms: slice.filter(record => !record.message_id),
+    entries: slice.filter(record => record.message_id),
+    more: matches.length > limit,
+    ...availability(),
+  };
+  if (slice.length) {
+    result.first_id = slice[0].log_id;
+    result.last_id = slice.at(-1).log_id;
   }
   return result;
 }
 
+function createMessage(you, params) {
+  check(params.body && typeof params.body === "object", "Missing body");
+  check(!params.deleted, "Cannot create a deleted message");
+  const replyTo = params.reply_to?.message_id;
+  // The new ID is minted below, so a known target can never be the message itself.
+  if (params.reply_to) {
+    check(log.some(record => record.message_id === replyTo), "Unknown reply target");
+  }
+
+  const id = nextLogId();
+  const message = {
+    message_id: id, log_id: id, room_id: "general", from: { ...you },
+    body: { format: "plain", ...params.body },
+  };
+  if (params.reply_to) message.reply_to = { message_id: replyTo };
+  if (params.ext) message.ext = params.ext;
+  append(message);
+  // Server.publish includes the sender; ws.publish would exclude it.
+  server.publish("general", JSON.stringify({ method: "message", params: message }));
+  return { message_id: id };
+}
+
 // Keep this synchronous: history reads, commits, and broadcasts must stay ordered.
 function dispatch(ws, method, params) {
-  if (method === "auth") {
-    check(params.scheme === "anonymous", "Use anonymous auth", -32001);
-    ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() };
-  }
+  if (method === "auth") ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() }; // Any scheme.
   check(ws.data.you, "Authenticate first", -32001);
   if (method === "auth" || method === "name") {
-    if ("name" in params) {
-      ws.data.you = { ...ws.data.you, name: params.name };
-    }
+    if (typeof params.name === "string") ws.data.you = { ...ws.data.you, name: params.name };
     return { you: ws.data.you };
   }
 
   check(method === "message" || method === "history", "Unsupported method", -32601);
-  if (method === "message") {
-    check(!("message_id" in params), "Editing is unsupported", -32601);
-  }
+  check(method !== "message" || !("message_id" in params), "Editing is unsupported", -32601);
   check(params.room_id === "general", "Unknown room");
-  check(!("thread_id" in params), "Unknown thread");
-  if (method === "history") return readHistory(params);
-
-  if ("reply_message_id" in params) {
-    const targetExists = log.some(entry => entry.log_id === params.reply_message_id);
-    check(targetExists, "Unknown reply target");
-  }
-  lastLogId = Math.max(Date.now(), lastLogId + 1);
-  const messageId = String(lastLogId);
-  const { room_id, from, log_id, ...fields } = params;
-  const message = { ...fields, message_id: messageId, from: { ...ws.data.you } };
-  const entry = { log_id: messageId, message };
-  log.push(entry);
-  if (log.length > 1000) log.shift();
-
-  // Server.publish includes the sender; ws.publish would exclude it.
-  const event = { method: "message", params: { room_id: "general", ...entry } };
-  server.publish("general", JSON.stringify(event));
-  return { message_id: messageId };
+  return method === "history" ? readHistory(params) : createMessage(ws.data.you, params);
 }
 
 const server = Bun.serve({
@@ -93,7 +104,7 @@ const server = Bun.serve({
   },
   websocket: {
     maxPayloadLength: 256 * 1024,
-    closeOnBackpressureLimit: true, // Disconnect slow clients instead of dropping live entries.
+    closeOnBackpressureLimit: true, // Disconnect slow clients instead of dropping live records.
     open(ws) {
       send(ws, { method: "server", params: greeting });
     },
@@ -104,8 +115,7 @@ const server = Bun.serve({
         const result = dispatch(ws, frame.method, frame.params ?? {});
         if ("id" in frame) send(ws, { id: frame.id, result });
         if (frame.method === "auth") {
-          const room = { room_id: "general", name: "General", ...historyBounds() };
-          send(ws, { method: "room", params: room });
+          send(ws, { method: "room", params: { ...room, ...availability() } });
           ws.subscribe("general");
         }
       } catch (error) {
