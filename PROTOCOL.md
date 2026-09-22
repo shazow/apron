@@ -60,8 +60,7 @@ lifetime; `log_id` identifies this change in the server's log (§2).
 
 ### 1.1 Envelope and replies
 
-Request `id`, when present, MUST be a string (§2). Clients SHOULD include `id`
-on every request they want a reply to, including `auth` and mutations.
+Requests carry a string `id` (§2); frames without one are notifications.
 
 ```jsonc
 // ->
@@ -108,11 +107,14 @@ Retries SHOULD preserve `id`, `method`, and `params` across reconnects. New
 operations, including changed parameters, MUST use new IDs. Deduplication
 ignores object key order.
 
-Servers SHOULD deduplicate by `(authenticated user_id, request id)`, return
-the original result for accepted duplicates without re-execution or
-rebroadcast, reject conflicting methods/parameters with `invalid_params`, and
-coalesce concurrent duplicates. Retention across reconnects and restarts is
-implementation-defined. Pre-authentication IDs are connection-scoped;
+Servers SHOULD deduplicate by `(authenticated user_id, request id)`:
+
+- return the original result for a duplicate, without re-executing or
+  rebroadcasting;
+- reject reuse with a different method or params as `invalid_params`;
+- coalesce concurrent duplicates.
+
+Retention across reconnects and restarts is implementation-defined. Pre-authentication IDs are connection-scoped;
 authentication MUST execute on each connection.
 
 ---
@@ -130,6 +132,14 @@ reaction sets (Appendix D). Generation is implementation-defined; recommended:
 empty-log boundary; entries MUST use positive IDs. A room's log is the
 subsequence of changes that touch that room (Appendix A).
 
+**Records and replay.** Every logged record has a key: `room_id` for room
+records, `message_id` for message snapshots, `(message_id, user_id)` for
+reaction sets. A record is the complete state for its key at its `log_id`.
+Clients keep the record with the greatest `log_id` per key and never let an
+older one overwrite a newer one, regardless of arrival order or source (live,
+history, or embedded). `log_id` and other server-owned fields are ignored on
+input.
+
 **Message IDs** (`message_id`) are the `log_id` of the message's creation and
 never change. Because the sequence is server-wide, a `message_id` is unique
 across rooms and is a complete reference on its own. `log_id == message_id`
@@ -145,8 +155,7 @@ denotes the creation; later changes carry greater log IDs.
 strings chosen by whichever side mints them. Room IDs are server-assigned;
 the `log_id` of the room's creation is recommended. Client request `id`s
 SHOULD be random to avoid collisions across devices authenticated as the
-same user. Request IDs
-identify operations, not log positions.
+same user. Request IDs identify operations, not log positions.
 
 Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
 `parent_room_id`, `session_id`). Embedded objects use descriptive names
@@ -252,24 +261,20 @@ before delivering anything in it. A Level 0 server announces one room.
 }}
 ```
 
-| field              | meaning                                                                 |
-|--------------------|-------------------------------------------------------------------------|
-| `room_id`          | required                                                                |
-| `log_id`           | server-owned position of this room state (§2)                           |
-| `title`            | optional plain string; absent falls back to `room_id`                   |
-| `intro_message`    | optional message object (§3.5): the room's description or summary       |
-| `parent_room_id`   | optional; present on a thread, a room nested in another (Appendix C)    |
-| `latest_log_id`    | greatest committed `log_id` in the room's log; `"0"` if none            |
-| `history_log_id`   | inclusive lower bound of retrievable history, or `null` if none         |
-| `removed`          | `true` when the room leaves the client's visible set; default false     |
+| field            | owner    | meaning                                                          |
+|------------------|----------|------------------------------------------------------------------|
+| `room_id`        | server   | required                                                         |
+| `log_id`         | server   | position of this room record (§2)                                |
+| `parent_room_id` | server   | optional, set at creation; marks a thread (Appendix C)           |
+| `title`          | editable | optional plain string; absent falls back to `room_id`            |
+| `intro_message`  | editable | optional message object (§3.5): the room's description or summary |
+| `latest_log_id`  | delivery | greatest `log_id` in the room's log; `"0"` if none               |
+| `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none  |
+| `removed`        | delivery | `true` when the room leaves the client's visible set             |
 
-Each `room` frame carries the complete room state; omitted optional fields
-are cleared. `room_id`, `log_id`, `title`, `intro_message`, and
-`parent_room_id` form a logged **room record**: every change gets a new
-`log_id` in the room's log, and clients keep the record with the greatest
-`log_id`. The remaining fields describe delivery to this client and are not
-logged. A removal is a visibility change, not a room change, so it carries
-only `room_id` and `removed`:
+A `room` frame is a complete room record (§2); omitted fields are cleared.
+Delivery fields describe this client's view and are not logged. A removal
+carries only `room_id` and `removed`:
 
 ```json
 {"method": "room", "params": {"room_id": "general", "removed": true}}
@@ -277,8 +282,7 @@ only `room_id` and `removed`:
 
 `intro_message` is a message like any other. Servers SHOULD embed its
 snapshot in announcements so clients can render it without history; editing
-it is an ordinary message save (Appendix B), and clients re-render from the
-newest snapshot they hold. `log_id`, `latest_log_id`, and `history_log_id`
+it is an ordinary message save (Appendix B). `log_id`, `latest_log_id`, and `history_log_id`
 are REQUIRED when cap `history` is advertised and OPTIONAL otherwise;
 Appendix A defines their use.
 
@@ -314,8 +318,7 @@ object as an authoritative **snapshot** at one log position.
 | `reply_to`   | editable | optional message object naming the message replied to           |
 | `deleted`    | editable | tombstone marker, default false (Appendix B)                     |
 
-Server-owned fields are ignored on input. Unknown fields in a snapshot are
-**extensions**: renderers ignore them, but clients that save an existing
+Unknown fields in a snapshot are **extensions**: renderers ignore them, but clients that save an existing
 message (Appendix B) MUST resubmit the extensions they received, so they are
 not lost. Servers MAY normalize or reject any field by local policy.
 
@@ -329,18 +332,15 @@ not lost. Servers MAY normalize or reject any field by local policy.
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
   confirmation; the broadcast MAY arrive before or after it, and a
   deduplicated retry (§1.2) produces no broadcast.
-- **Snapshots replace.** Clients keep one state per `message_id` and install
-  a snapshot only if its `log_id` is greater than the one they hold, even for
-  messages they have not otherwise loaded. Servers MAY publish a snapshot of
-  any message at any time, including edits, deletions, and moves of messages
-  predating the connection. Support is mandatory regardless of cap `edit`.
-- **Message objects as references.** `reply_to` and `intro_message` (§3.4)
-  hold a message object. `message_id` is required. When `log_id` is present
-  the object is a complete snapshot as of the enclosing frame, and clients
-  install it under the rule above; otherwise it is a bare reference. Clients
-  send bare references; servers MAY embed snapshots. Embedded snapshots carry
-  bare `reply_to`, so nesting stops at one level. Clients MUST tolerate an
-  unavailable or deleted target and still render the referring message.
+- **Snapshots replace** under the replay rule (§2), including for messages
+  the client has not loaded. Servers MAY publish a snapshot of any message at
+  any time, such as edits, deletions, and moves of older messages. Support is
+  mandatory regardless of cap `edit`.
+- **References.** `reply_to` and `intro_message` hold a message object: bare
+  (`message_id` only) from clients, optionally a full snapshot from servers,
+  installed like any other. Embedded snapshots carry a bare `reply_to`.
+  Clients render the referring message even when the target is missing or
+  deleted.
 - `reply_to.message_id` MUST name an existing message other than the message
   itself; it MAY be in another room. Invalid references are `invalid_params`.
 - On a live connection, servers deliver each room's snapshots in ascending
@@ -400,11 +400,10 @@ content (Appendix E).
 
 Three frame idioms cover everything logged or announced:
 
-- **Records** (`room`, `message`): complete state at a `log_id`; the
-  greatest `log_id` wins per `room_id` or `message_id`.
+- **Records** (`room`, `message`): complete state at a `log_id` (§2).
 - **Per-user state** (`reactions`, `typing`): `from` plus the user's complete
-  state for a scope; newest wins per user. `reactions` is logged, `typing`
-  is not.
+  state for a scope; newest wins per user. `reactions` is logged (§2),
+  `typing` is not.
 - **Announcements** (`server`, `rtc`): unlogged, re-sent in full; each
   replaces the last.
 
@@ -434,13 +433,10 @@ Stateless window query over a room's **log**. `rooms` holds room records
 }}
 ```
 
-**Membership.** A change belongs to a room's log when its message is in that
-room immediately before or after the change. A move (Appendix B) therefore
-appears in both the source and destination logs, and the source's clients see
-the message leave. A reaction set belongs to the room the message was in at
-that moment. A message moved in from elsewhere arrives as a snapshot at the
-move, followed by its current reactions (Appendix B); its earlier history
-stays in the source room. Room records belong to their own room.
+**Membership.** A record belongs to every room its message is in just before
+or after it, so a move (Appendix B) appears in both rooms. Room records
+belong to their own room. Earlier history of a moved message stays in the
+source room.
 
 **Bounds and ordering.**
 
@@ -451,9 +447,8 @@ stays in the source room. Room records belong to their own room.
   default. With `after`, select the oldest matches; otherwise the newest.
 - `first_id`/`last_id` are the slice's first and last log IDs before
   compaction; return both or neither. `more` indicates further matching
-  changes in the selected direction within the bounds and available history.
-  An empty slice returns `entries: []`, `more: false`; `rooms` and
-  `reactions` MAY be omitted when empty.
+  changes in the selected direction. An empty slice returns `entries: []`
+  and `more: false`; `rooms` and `reactions` MAY be omitted when empty.
 - Continue forward with `after = last_id + 1`, backward with
   `before = first_id - 1`, computed numerically and encoded as strings.
   Never derive continuation from compacted records.
@@ -473,40 +468,27 @@ history still counts as available, keeps checkpoints valid, and leaves
 
 **Compaction (optional).** After selecting the slice, a server MAY keep only
 the last room record and each message's last snapshot in the slice, and MAY
-fold each message's
-reaction sets into one record carrying each user's last set in the slice,
-under the greatest folded `log_id`. Empty sets are kept so removals replay.
+fold each message's reaction sets into one record carrying each user's last
+set in the slice, under the greatest folded `log_id`. Empty sets are kept so removals replay.
 Retained records keep their original log IDs and contents and never
 incorporate changes after the slice. Compacted and uncompacted pages yield
 the same terminal state.
 
-**Replay.** Room records install by `room_id`, snapshots by `message_id`,
-reaction sets by `(message_id, user_id)`. The greatest `log_id` per key wins, and an older
-record never overwrites a newer one. No earlier state is needed to apply a
-record, and order across the arrays is irrelevant. Embedded reference
-snapshots (§3.5) install under the same rule.
+**Replay** follows §2. No earlier state is needed to apply a record, and
+order across the arrays is irrelevant.
 
 **Recovery**, per room:
 
-1. Capture `H = latest_log_id` when live delivery begins; buffer live changes
-   above H. Let F be `history_log_id`, or `latest_log_id + 1` when null.
-   Track the greatest observed F.
-2. Evict cached records whose `log_id` is below F. A checkpoint C is usable
-   only if `C + 1 >= F`; otherwise clear the room's recovered state and
-   checkpoint, since missed changes may include edits or deletions.
-3. From empty state, page forward from F with `before: H`; from a valid
-   checkpoint, from `after: C + 1`. If F > H there is nothing to page.
-4. Inspect each page's boundary. If it overtakes the next unprocessed
-   position, discard partial recovery and restart from the new boundary;
-   ignore obsolete in-flight responses. Keep H fixed for this recovery.
-5. Page until `more: false`, then apply the buffered live changes. Never
-   resurrect records below the greatest observed boundary.
+1. When live delivery starts, record `H = latest_log_id` and buffer live
+   records above H.
+2. Page forward with `before: H`, from `after: C + 1` given a checkpoint C,
+   otherwise from the start, until `more: false`.
+3. Apply the buffered records. The checkpoint is now H.
 
-A checkpoint records processed coverage of one room's log through a
-position. Neither an announced head, a live maximum, nor a single record
-establishes one. Re-announcements report boundaries but do not advance
-checkpoints. Clients recover each room they display independently; a busy
-room's threads are separate rooms and load when opened.
+If a response's effective lower bound passes the next position you need,
+history was discarded: clear the room's state and restart from that bound.
+Clients recover each room they display independently; threads are separate
+rooms and load when opened.
 
 ---
 
@@ -573,9 +555,8 @@ clients holding the old content drop it on the new tombstone.
 ## Appendix C — `rooms`
 
 `room` is bidirectional, like `message`. A client request without `room_id`
-creates a room; with `room_id` it replaces the editable fields (`title`,
-`intro_message`; omitted fields are cleared). `log_id` is server-owned and
-ignored on input. Both return `{"room_id": "..."}` and broadcast the new
+creates a room; with `room_id` it replaces the editable fields (§3.4);
+omitted fields are cleared. Both return `{"room_id": "..."}` and broadcast the new
 room record (§3.4).
 
 ```jsonc
@@ -589,8 +570,8 @@ room record (§3.4).
   "latest_log_id": "1724803312001", "history_log_id": "1724803312001"}}
 ```
 
-- `parent_room_id` is set at creation and server-owned afterwards. It MUST
-  name an existing visible room. Nesting depth is server policy.
+- `parent_room_id` MUST name an existing visible room. Nesting depth is
+  server policy.
 - `intro_message` is a bare reference on input. It MAY live in any room; for
   a thread it is usually the parent-room message that started it. Its text is
   updated by saving that message (Appendix B), not by `room`. A described
@@ -610,18 +591,13 @@ Membership:
 ```
 
 Both return `{}`; the server emits the corresponding `room` announcement, with
-`removed: true` after a successful leave. Visibility, membership, what
-membership means, and which rooms are announced after authentication are all
-server policy; a room with many threads need not announce them all, and
-clients discover others through embedded snapshots and their announcements.
+`removed: true` after a successful leave. Visibility and membership are
+server policy, including which rooms are announced after authentication.
+Servers need not announce every thread.
 
 ---
 
 ## Appendix D — Per-user state: `typing`, `reactions`
-
-Both carry `from` and the user's complete state for a scope; the newest
-replaces the last. `typing` is ephemeral and unlogged. `reactions` is logged
-and replayed.
 
 ### D.1 `typing`
 
