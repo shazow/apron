@@ -351,7 +351,7 @@ top-level keys. Servers MAY limit `ext` or normalize or reject any field by
 local policy.
 
 - `body` is required on creation. `text` defaults to `""`; `format` ∈
-  `"plain" | "markdown"`, default `"markdown"`; `embeds` defaults to `[]`.
+  `"plain" | "markdown"`, default `"plain"`; `embeds` defaults to `[]`.
   Both formats are mandatory to render. Markdown is CommonMark with fenced
   code blocks as the baseline rich-content path. Clients MUST disable raw
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
