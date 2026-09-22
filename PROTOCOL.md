@@ -206,8 +206,7 @@ frame, unprompted. There is no client hello.
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
-content. After replying `error/unsupported`, servers SHOULD follow with a
-fresh `server` frame.
+content.
 
 ### 3.2 Authentication
 
