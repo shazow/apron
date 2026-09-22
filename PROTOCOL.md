@@ -18,41 +18,52 @@ the sender.
 ```jsonc
 // <- server greeting with auth schemes
 {"method": "server", "params": {"protocol": 3, "auth": ["anonymous", "token"]}}
+
 // -> anonymous auth, requesting a display name
 {"method": "auth", "id": "c1", "params": {"scheme": "anonymous", "name": "Ada"}}
+
 // <- assigned identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1", "name": "Ada"}}}
+
 // <- visible rooms
 {"method": "room", "params": {"room_id": "general", "title": "General"}}
+
 // -> post a message
 {"method": "message", "id": "c2", "params": {"room_id": "general", "body": {"text": "Hello"}}}
+
 // <- confirmation
 {"id": "c2", "result": {"message_id": "1724803200042"}}
+
 // <- broadcast to everyone in the room
-{"method": "message", "params": {"message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
-  "from": {"user_id": "guest_1", "name": "Ada"}, "body": {"text": "Hello"}}}
+{
+  "method": "message", "params": {
+    "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
+    "from": {"user_id": "guest_1", "name": "Ada"},
+    "body": {"text": "Hello"}
+  }
+}
 ```
 
-Request `id` correlates replies. `message_id` identifies the message for its
-lifetime; `log_id` identifies this change in the server's log (§2).
+- Client request `id` corresponds to server reply `id`.
+- `message_id` is a stable message identifier for its lifetime.
+- `log_id` identifies a specific state transition, can be used for append-only logs (§2).
 
 ---
 
 ## 1. Transport & framing
 
-- One WebSocket connection. Each WebSocket text message contains exactly one
-  JSON object (a **frame**).
+- We explore using WebSocket as the reference transport in this specification,
+  but other transports are possible--including peer-to-peer.
+- Each payload contains one JSON object (a **frame**).
 - Frames look like [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
   requests, responses, and notifications (`method`, `params`, `id`, `result`,
-  `error`), minus the `"jsonrpc": "2.0"` key. Unknown keys are ignored, so a
-  JSON-RPC 2.0 client can talk to an Apron server unchanged, but should not
-  expect the `jsonrpc` key in replies.
-- Requests MAY be pipelined; the server processes them in order but MAY reply
+  `error`), minus the `"jsonrpc": "2.0"` key.
+- Unknown keys MUST be ignored, so a JSON-RPC 2.0 client can talk to an Apron
+  server unchanged.
+- Requests MAY be pipelined: The server MAY reply to `id`-carrying requests
   out of order. Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
-  notifications; clients ignore unknown notifications. Unknown *fields* MUST
-  be ignored by both sides, except message extension fields, which clients
-  preserve as described in §3.5.
+  notifications; clients ignore unknown notifications.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
