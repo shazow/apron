@@ -790,8 +790,8 @@ handles loss and renegotiation.
 
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
 only relays; clients SHOULD soft-cap participants. A future cap `rtc.sfu`
-adds a media server joining as member `@sfu` (Appendix J), with which clients negotiate a
-single PeerConnection.
+adds a media server joining as member `@sfu` (Appendix J), with which
+clients negotiate a single PeerConnection.
 
 **Exclusions.** Mute and camera state are derivable from media streams.
 Invite/ring/reject state machines are covered by an `rtc` frame plus a push
