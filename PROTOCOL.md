@@ -6,8 +6,8 @@ an ecosystem of many Apron Chat apps and servers that can speak with each
 other: local bridges to other protocols, coding harnesses, internal message
 rooms.
 
-The protocol is incremental. The mandatory core (§3, "Level 0") should be
-implementable in about a hundred lines. Everything else is an optional
+The protocol is incremental. The mandatory core (§3) is all a minimal
+implementation needs, about a hundred lines. Everything else is an optional
 capability: §4 lists them, the appendices specify them.
 
 A first exchange. After the WebSocket opens, the server announces itself,
@@ -191,10 +191,10 @@ unidentifiable invalid requests (§1.1).
 
 ---
 
-## 3. Core (Level 0)
+## 3. Core
 
-A Level 0 server implements this section. Optional features are advertised
-through capabilities (§4).
+Every server implements this section; a minimal server implements only this
+section. Optional features are advertised through capabilities (§4).
 
 ### 3.1 `server` frame
 
@@ -291,7 +291,8 @@ Bots and agents are ordinary senders; nothing distinguishes them.
 
 A room is a log with a server-chosen `room_id`. After authentication,
 servers MUST announce all currently visible rooms, and MUST announce a room
-before delivering anything in it. A Level 0 server announces one room.
+before delivering anything in it. A minimal server may announce just one
+room.
 
 ```json
 {
@@ -416,9 +417,9 @@ local policy.
 - On a live connection, servers deliver each room's snapshots in ascending
   `log_id`, and each snapshot once per connection.
 
-### 3.6 Level 0 conformance checklist
+### 3.6 Core conformance checklist
 
-A Level 0 server:
+Every server:
 
 1. Sends a `server` frame on connect (§3.1).
 2. Accepts at least one `auth` scheme and replies with `you` (§3.2).
@@ -429,7 +430,7 @@ A Level 0 server:
    a `message_id` when cap `edit` is absent; ignores unknown notifications.
 6. Follows §1 for framing and retries and §2 for identifiers.
 
-The opening example is a complete Level 0 session.
+The opening example is a complete session with a minimal server.
 
 ---
 
