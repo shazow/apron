@@ -46,28 +46,32 @@ the sender.
 
 - Client request `id` corresponds to server reply `id`.
 - `message_id` is a stable message identifier for its lifetime.
-- `log_id` identifies a specific state transition, can be used for append-only logs (§2).
+- `log_id` identifies one change. The protocol is built around an append-only
+  log: every change to a room, message, or reaction is a record in it (§2).
 
 ---
 
 ## 1. Transport & framing
 
-- We explore using WebSocket as the reference transport in this specification,
-  but other transports are possible--including peer-to-peer.
-- Each payload contains one JSON object (a **frame**).
+- WebSocket is the reference transport; others work if they deliver whole
+  frames in order.
+- A **frame** is one JSON object: one WebSocket text message, or one line on
+  a byte-stream transport such as TCP or stdio (newline-delimited JSON).
 - Frames look like [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
   requests, responses, and notifications (`method`, `params`, `id`, `result`,
   `error`), minus the `"jsonrpc": "2.0"` key.
 - Unknown keys MUST be ignored, so a JSON-RPC 2.0 client can talk to an Apron
-  server unchanged.
+  server unchanged, but it should not expect the `jsonrpc` key in replies.
 - Requests MAY be pipelined: The server MAY reply to `id`-carrying requests
-  out of order. Server announcements and broadcasts are notifications.
+  out of order.
+- Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
-- Liveness uses WebSocket ping/pong; there is no application-level heartbeat.
+- There is no application-level heartbeat; on WebSocket, liveness uses
+  ping/pong.
 
 ### 1.1 Envelope and replies
 
@@ -125,8 +129,9 @@ Servers SHOULD deduplicate by `(authenticated user_id, request id)`:
 - reject reuse with a different method or params as `invalid_params`;
 - coalesce concurrent duplicates.
 
-Retention across reconnects and restarts is implementation-defined. Pre-authentication IDs are connection-scoped;
-authentication MUST execute on each connection.
+Retention across reconnects and restarts is implementation-defined.
+Pre-authentication IDs are connection-scoped; authentication MUST execute on
+each connection.
 
 ---
 
