@@ -60,8 +60,9 @@ the sender.
 - Frames look like [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
   requests, responses, and notifications (`method`, `params`, `id`, `result`,
   `error`), minus the `"jsonrpc": "2.0"` key.
-- Unknown keys MUST be ignored, so a JSON-RPC 2.0 client can talk to an Apron
-  server unchanged, but it should not expect the `jsonrpc` key in replies.
+- Unknown keys MUST be ignored and MAY be dropped, so a JSON-RPC 2.0 client
+  can talk to an Apron server unchanged, but it should not expect the
+  `jsonrpc` key in replies. Extension data goes in `ext` (§3.5).
 - Servers MAY process requests concurrently and reply in any order. A client
   that needs one request applied before another waits for the first reply.
 - Server announcements and broadcasts are notifications.
@@ -284,6 +285,7 @@ before delivering anything in it. A Level 0 server announces one room.
 | `parent_room_id` | server   | optional, set at creation; marks a thread (Appendix C)           |
 | `title`          | editable | optional plain string; absent falls back to `room_id`            |
 | `intro_message`  | editable | optional message object (§3.5): the room's description or summary |
+| `ext`            | editable | optional opaque extension data (§3.5)                            |
 | `latest_log_id`  | delivery | greatest `log_id` in the room's log; `"0"` if none               |
 | `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none  |
 | `removed`        | delivery | `true` when the room leaves the client's visible set             |
@@ -333,10 +335,20 @@ object as an authoritative **snapshot** at one log position.
 | `body`       | editable | `text`, `format`, `embeds`                                       |
 | `reply_to`   | editable | optional message object naming the message replied to           |
 | `deleted`    | editable | tombstone marker, default false (Appendix B)                     |
+| `ext`        | editable | optional object of namespaced, opaque extension data             |
 
-Unknown fields in a snapshot are **extensions**: renderers ignore them, but clients that save an existing
-message (Appendix B) MUST resubmit the extensions they received, so they are
-not lost. Servers MAY normalize or reject any field by local policy.
+**Extensions.** `ext` carries data the spec does not define, keyed by
+namespace:
+
+```json
+"ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
+```
+
+Clients need not parse `ext`, and MUST send it back unchanged when saving a
+message (Appendix B) or room (Appendix C) unless they mean to change it.
+Data that must survive other clients' saves belongs in `ext`, not in unknown
+top-level keys. Servers MAY limit `ext` or normalize or reject any field by
+local policy.
 
 - `body` is required on creation. `text` defaults to `""`; `format` ∈
   `"plain" | "markdown"`, default `"markdown"`; `embeds` defaults to `[]`.
@@ -514,7 +526,7 @@ A `message` request carrying an existing `message_id` **saves** that message:
 it replaces every editable field (§3.5) with the submitted state. Omitted
 fields are removed; objects and arrays are replaced whole; `null` has no
 deletion meaning. Clients MUST resubmit every editable field they want kept,
-including `room_id`, `body`, `reply_to`, and extensions. The server preserves
+including `room_id`, `body`, `reply_to`, and `ext`. The server preserves
 `message_id`, `from`, and other server-owned fields. Saves apply in server
 order with no merge.
 
@@ -571,9 +583,9 @@ clients holding the old content drop it on the new tombstone.
 ## Appendix C — `rooms`
 
 `room` is bidirectional, like `message`. A client request without `room_id`
-creates a room; with `room_id` it replaces the editable fields (§3.4);
-omitted fields are cleared. Both return `{"room_id": "..."}` and broadcast the new
-room record (§3.4).
+creates a room; with `room_id` it replaces the editable fields (§3.4),
+including `ext`; omitted fields are cleared. Both return
+`{"room_id": "..."}` and broadcast the new room record (§3.4).
 
 ```jsonc
 // -> start a thread on an existing message
