@@ -54,7 +54,7 @@ the sender.
 ## 1. Transport & framing
 
 - WebSocket is the reference transport; others work if they deliver whole
-  frames in order.
+  frames.
 - A **frame** is one JSON object: one WebSocket text message, or one line on
   a byte-stream transport such as TCP or stdio (newline-delimited JSON).
 - Frames look like [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
@@ -62,8 +62,8 @@ the sender.
   `error`), minus the `"jsonrpc": "2.0"` key.
 - Unknown keys MUST be ignored, so a JSON-RPC 2.0 client can talk to an Apron
   server unchanged, but it should not expect the `jsonrpc` key in replies.
-- Requests MAY be pipelined: The server MAY reply to `id`-carrying requests
-  out of order.
+- Servers MAY process requests concurrently and reply in any order. A client
+  that needs one request applied before another waits for the first reply.
 - Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications.
