@@ -440,13 +440,13 @@ The opening example is a complete session with a minimal server.
 not authorization; servers still apply local policy per request. Absence of a
 cap obligates the client to the fallback:
 
-| cap         | adds                                              | fallback                                   | spec       |
-|-------------|---------------------------------------------------|--------------------------------------------|------------|
-| `history`   | `history`: page and recover a room's log          | session-only scrollback                    | Appendix A |
-| `edit`      | `message` saves: edit, move, delete               | no edit/move/delete UI                     | Appendix B |
-| `rooms`     | `room` create/update, `room_join`, `room_leave`   | fixed room list, no threads                | Appendix C |
-| `reactions` | `reactions`: emoji reactions on messages          | reaction controls hidden                   | Appendix D |
-| `push`      | `push_register`, `push_unregister`                | no mobile wake-ups                         | Appendix F |
+| cap         | adds                                            | fallback                    | spec       |
+|-------------|-------------------------------------------------|-----------------------------|------------|
+| `history`   | page and recover a room's log                   | session-only scrollback     | Appendix A |
+| `edit`      | `message` saves: edit, move, delete             | no edit/move/delete UI      | Appendix B |
+| `rooms`     | `room` create/update, `room_join`, `room_leave` | fixed room list, no threads | Appendix C |
+| `reactions` | emoji reactions on messages                     | reaction controls hidden    | Appendix D |
+| `push`      | `push_register`, `push_unregister`              | no mobile wake-ups          | Appendix F |
 
 Features without a cap: `typing` (Appendix D) is ephemeral and clients MAY
 send it blind; uploads follow `server.upload` (Appendix E); embeds are body
