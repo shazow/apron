@@ -152,7 +152,8 @@ unidentifiable invalid requests (§1.1).
 - One strictly increasing sequence per server, covering every record: room
   records (§3.4), message snapshots (§3.5), reaction sets (Appendix D).
 - Value is the commit time, or the previous `log_id + 1` if the clock has not
-  advanced past it. Clients MAY use it as a timestamp; there is no other.
+  advanced past it.
+- Clients MAY use it as a timestamp (this is the only one).
 - Positive, below `2^53`, compared numerically. Clients MAY parse as integers.
 - Unique within one server only; namespacing across servers is client-defined.
 - A room's log is the subsequence of records that touch that room
