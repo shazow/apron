@@ -80,7 +80,12 @@ Requests carry a string `id` (§2); frames without one are notifications.
 
 ```jsonc
 // ->
-{"method": "message", "id": "c42", "params": {"room_id": "general", "body": {"text": "hello", "format": "plain"}}}
+{
+  "method": "message", "id": "c42", "params": {
+    "room_id": "general",
+    "body": {"text": "hello", "format": "plain"}
+  }
+}
 // <-
 {"id": "c42", "result": {"message_id": "1724803200042"}}
 ```
@@ -191,10 +196,13 @@ Upon accepting a connection, the server MUST immediately send a `server`
 frame, unprompted. There is no client hello.
 
 ```json
-{"method": "server", "params": {
-  "protocol": 3, "name": "impl-name/1.0", "caps": ["history", "edit"], "auth": ["token"],
-  "upload": "https://example/upload"
-}}
+{
+  "method": "server", "params": {
+    "protocol": 3, "name": "impl-name/1.0",
+    "caps": ["history", "edit"], "auth": ["token"],
+    "upload": "https://example/upload"
+  }
+}
 ```
 
 - `protocol`: required integer. Current value `3`.
@@ -212,7 +220,12 @@ content.
 
 ```jsonc
 // ->
-{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "name": "Alice", "client": "bottomless-web/0.3"}}
+{
+  "method": "auth", "id": "c1", "params": {
+    "scheme": "token", "token": "...",
+    "name": "Alice", "client": "bottomless-web/0.3"
+  }
+}
 // <-
 {"id": "c1", "result": {"you": {"user_id": "alice", "name": "Alice"}}}
 ```
@@ -271,13 +284,17 @@ servers MUST announce all currently visible rooms, and MUST announce a room
 before delivering anything in it. A Level 0 server announces one room.
 
 ```json
-{"method": "room", "params": {
-  "room_id": "general", "log_id": "1", "title": "General",
-  "intro_message": {"message_id": "1724800000001", "log_id": "1724800000001", "room_id": "general",
-    "from": {"user_id": "alice", "name": "Alice"},
-    "body": {"text": "Ops chatter: deploys, alerts, *incidents*.", "format": "markdown"}},
-  "latest_log_id": "1724803200042", "history_log_id": "1"
-}}
+{
+  "method": "room", "params": {
+    "room_id": "general", "log_id": "1", "title": "General",
+    "intro_message": {
+      "message_id": "1724800000001", "log_id": "1724800000001", "room_id": "general",
+      "from": {"user_id": "alice", "name": "Alice"},
+      "body": {"text": "Ops chatter: deploys, alerts, *incidents*.", "format": "markdown"}
+    },
+    "latest_log_id": "1724803200042", "history_log_id": "1"
+  }
+}
 ```
 
 | field            | owner    | meaning                                                          |
@@ -320,12 +337,22 @@ object as an authoritative **snapshot** at one log position.
 
 ```jsonc
 // ->
-{"method": "message", "id": "c3", "params": {"room_id": "general", "body": {"text": "hello *world*", "format": "markdown"}}}
+{
+  "method": "message", "id": "c3", "params": {
+    "room_id": "general",
+    "body": {"text": "hello *world*", "format": "markdown"}
+  }
+}
 // <-
 {"id": "c3", "result": {"message_id": "1724803200042"}}
 // <- broadcast to every client in the room, including the sender
-{"method": "message", "params": {"message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
-  "from": {"user_id": "alice", "name": "Alice"}, "body": {"text": "hello *world*", "format": "markdown"}}}
+{
+  "method": "message", "params": {
+    "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
+    "from": {"user_id": "alice", "name": "Alice"},
+    "body": {"text": "hello *world*", "format": "markdown"}
+  }
+}
 ```
 
 | field        | owner    | meaning                                                          |
@@ -424,20 +451,32 @@ Stateless window query over a room's **log**. `rooms` holds room records
 
 ```jsonc
 // ->
-{"method": "history", "id": "c9", "params": {"room_id": "general", "after": "1724803200000", "before": "1724806800000", "limit": 200}}
+{
+  "method": "history", "id": "c9", "params": {
+    "room_id": "general",
+    "after": "1724803200000", "before": "1724806800000", "limit": 200
+  }
+}
 // <-
-{"id": "c9", "result": {
-  "rooms": [],
-  "entries": [
-    {"message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general", "from": {...}, "body": {...}}
-  ],
-  "reactions": [
-    {"log_id": "1724803312011", "message_id": "1724803200042", "room_id": "general",
-     "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]}
-  ],
-  "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
-  "latest_log_id": "1724806800000", "history_log_id": "1"
-}}
+{
+  "id": "c9", "result": {
+    "rooms": [],
+    "entries": [
+      {
+        "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
+        "from": {...}, "body": {...}
+      }
+    ],
+    "reactions": [
+      {
+        "log_id": "1724803312011", "message_id": "1724803200042", "room_id": "general",
+        "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
+      }
+    ],
+    "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
+    "latest_log_id": "1724806800000", "history_log_id": "1"
+  }
+}
 ```
 
 **Membership.** A record belongs to every room its message is in just before
@@ -511,13 +550,22 @@ order with no merge.
 
 ```jsonc
 // -> edit
-{"method": "message", "id": "c12", "params": {"message_id": "1724803200042", "room_id": "general",
-  "body": {"text": "hello world", "format": "plain"}}}
+{
+  "method": "message", "id": "c12", "params": {
+    "message_id": "1724803200042", "room_id": "general",
+    "body": {"text": "hello world", "format": "plain"}
+  }
+}
 // <-
 {"id": "c12", "result": {"message_id": "1724803200042"}}
 // <- snapshot with a new log_id
-{"method": "message", "params": {"message_id": "1724803200042", "log_id": "1724803312007", "room_id": "general",
-  "from": {"user_id": "alice", "name": "Alice"}, "body": {"text": "hello world", "format": "plain"}}}
+{
+  "method": "message", "params": {
+    "message_id": "1724803200042", "log_id": "1724803312007", "room_id": "general",
+    "from": {"user_id": "alice", "name": "Alice"},
+    "body": {"text": "hello world", "format": "plain"}
+  }
+}
 ```
 
 An unknown `message_id` is `invalid_params`; a save never creates a message.
@@ -533,8 +581,13 @@ non-empty set, so reactions follow the message.
 
 ```jsonc
 // -> move Bob's reply into thread room 1724803312001
-{"method": "message", "id": "c15", "params": {"message_id": "1724803200043", "room_id": "1724803312001",
-  "reply_to": {"message_id": "1724803200042"}, "body": {"text": "Hello back!"}}}
+{
+  "method": "message", "id": "c15", "params": {
+    "message_id": "1724803200043", "room_id": "1724803312001",
+    "reply_to": {"message_id": "1724803200042"},
+    "body": {"text": "Hello back!"}
+  }
+}
 ```
 
 **Delete** is a save with `deleted: true`; `body` is then optional and the
@@ -543,10 +596,19 @@ server MUST omit it from the tombstone. `deleted: true` on creation is
 
 ```jsonc
 // ->
-{"method": "message", "id": "c14", "params": {"message_id": "1724803200043", "room_id": "1724803312001", "deleted": true}}
+{
+  "method": "message", "id": "c14", "params": {
+    "message_id": "1724803200043", "room_id": "1724803312001", "deleted": true
+  }
+}
 // <-
-{"method": "message", "params": {"message_id": "1724803200043", "log_id": "1724803312050", "room_id": "1724803312001",
-  "from": {"user_id": "bob", "name": "Bob"}, "deleted": true}}
+{
+  "method": "message", "params": {
+    "message_id": "1724803200043", "log_id": "1724803312050", "room_id": "1724803312001",
+    "from": {"user_id": "bob", "name": "Bob"},
+    "deleted": true
+  }
+}
 ```
 
 Clients render tombstones and hide their reactions.
@@ -568,13 +630,26 @@ including `ext`; omitted fields are cleared. Both return
 
 ```jsonc
 // -> start a thread on an existing message
-{"method": "room", "id": "c20", "params": {"parent_room_id": "general", "title": "Deploy", "intro_message": {"message_id": "1724803200042"}}}
+{
+  "method": "room", "id": "c20", "params": {
+    "parent_room_id": "general", "title": "Deploy",
+    "intro_message": {"message_id": "1724803200042"}
+  }
+}
 // <-
 {"id": "c20", "result": {"room_id": "1724803312001"}}
 // <- (broadcast; the server embedded the intro snapshot)
-{"method": "room", "params": {"room_id": "1724803312001", "log_id": "1724803312001", "parent_room_id": "general", "title": "Deploy",
-  "intro_message": {"message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general", "from": {...}, "body": {...}},
-  "latest_log_id": "1724803312001", "history_log_id": "1724803312001"}}
+{
+  "method": "room", "params": {
+    "room_id": "1724803312001", "log_id": "1724803312001",
+    "parent_room_id": "general", "title": "Deploy",
+    "intro_message": {
+      "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
+      "from": {...}, "body": {...}
+    },
+    "latest_log_id": "1724803312001", "history_log_id": "1724803312001"
+  }
+}
 ```
 
 - `parent_room_id` MUST name an existing visible room. Nesting depth is
@@ -614,7 +689,12 @@ Clients MAY send `typing` without capability discovery; servers MAY drop it.
 // ->
 {"method": "typing", "params": {"room_id": "general", "active": true, "timeout": 8}}
 // <- (broadcast)
-{"method": "typing", "params": {"room_id": "general", "from": {"user_id": "alice"}, "active": true, "timeout": 8}}
+{
+  "method": "typing", "params": {
+    "room_id": "general", "from": {"user_id": "alice"},
+    "active": true, "timeout": 8
+  }
+}
 ```
 
 `timeout` (optional, seconds) is how long the indicator persists without
@@ -633,8 +713,12 @@ broadcast carries the state.
 // <-
 {"id": "c17", "result": {}}
 // <- (broadcast)
-{"method": "reactions", "params": {"log_id": "1724803312011", "message_id": "1724803200043", "room_id": "1724803312001",
-  "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]}}
+{
+  "method": "reactions", "params": {
+    "log_id": "1724803312011", "message_id": "1724803200043", "room_id": "1724803312001",
+    "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
+  }
+}
 ```
 
 - The request names only the message. The logged record carries the room the
@@ -756,8 +840,13 @@ request returning connection configuration, and an opaque relay frame.
 
 ```jsonc
 // <-
-{"method": "rtc", "params": {"room_id": "general", "session_id": "call_7", "kind": "voice",
-  "members": [{"user_id": "alice", "name": "Alice"}], "active": true}}
+{
+  "method": "rtc", "params": {
+    "room_id": "general", "session_id": "call_7", "kind": "voice",
+    "members": [{"user_id": "alice", "name": "Alice"}],
+    "active": true
+  }
+}
 ```
 
 Re-sent on membership change; `"active": false` ends the session.
@@ -771,7 +860,14 @@ a fresh `session_id`; the server confirms with an `rtc` frame or replies
 // ->
 {"method": "rtc_join", "id": "c40", "params": {"room_id": "general", "session_id": "call_7"}}
 // <-
-{"id": "c40", "result": {"ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}]}}
+{
+  "id": "c40", "result": {
+    "ice": [
+      {"urls": "stun:stun.example:3478"},
+      {"urls": "turn:turn.example", "username": "u", "credential": "c"}
+    ]
+  }
+}
 // ->
 {"method": "rtc_leave", "id": "c41", "params": {"session_id": "call_7"}}
 ```
@@ -782,9 +878,19 @@ handles loss and renegotiation.
 
 ```jsonc
 // ->
-{"method": "rtc_signal", "params": {"session_id": "call_7", "to": {"user_id": "bob"}, "payload": {"sdp_type": "offer", "sdp": "v=0..."}}}
+{
+  "method": "rtc_signal", "params": {
+    "session_id": "call_7", "to": {"user_id": "bob"},
+    "payload": {"sdp_type": "offer", "sdp": "v=0..."}
+  }
+}
 // <-
-{"method": "rtc_signal", "params": {"session_id": "call_7", "from": {"user_id": "alice", "name": "Alice"}, "payload": {"sdp_type": "offer", "sdp": "v=0..."}}}
+{
+  "method": "rtc_signal", "params": {
+    "session_id": "call_7", "from": {"user_id": "alice", "name": "Alice"},
+    "payload": {"sdp_type": "offer", "sdp": "v=0..."}
+  }
+}
 ```
 
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
@@ -857,8 +963,13 @@ such as `@server` for the server itself or `@sfu` for a media server
 still work; clients MAY style them as system messages.
 
 ```json
-{"method": "message", "params": {"message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
-  "from": {"user_id": "@server", "name": "Server"}, "body": {"text": "Maintenance at 17:00 UTC."}}}
+{
+  "method": "message", "params": {
+    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
+    "from": {"user_id": "@server", "name": "Server"},
+    "body": {"text": "Maintenance at 17:00 UTC."}
+  }
+}
 ```
 
 ### J.2 Field naming
