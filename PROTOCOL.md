@@ -118,17 +118,17 @@ Success returns a `result` object (`{}` if empty). Errors contain integer
 | -32003 | `too_large`       | message too large                           |
 
 Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
-and invalid envelopes whose request ID cannot be determined use `id: null`,
+and invalid envelopes whose `id` cannot be determined use `id: null`,
 as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
 never receive error replies.
 
 ### 1.2 Retries and deduplication
 
 Retries SHOULD preserve `id`, `method`, and `params` across reconnects. New
-operations, including changed parameters, MUST use new IDs. Deduplication
+operations, including changed parameters, MUST use a new `id`. Deduplication
 ignores object key order.
 
-Servers SHOULD deduplicate by `(authenticated user_id, request id)`:
+Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated `user_id`:
 
 - return the original result for a duplicate, without re-executing or
   rebroadcasting;
@@ -136,50 +136,55 @@ Servers SHOULD deduplicate by `(authenticated user_id, request id)`:
 - coalesce concurrent duplicates.
 
 Retention across reconnects and restarts is implementation-defined.
-Pre-authentication IDs are connection-scoped; authentication MUST execute on
-each connection.
+Request `id`s sent before authentication are connection-scoped;
+authentication MUST execute on each connection.
 
 ---
 
 ## 2. Identifiers
 
-All IDs on the wire are **strings**, except the `null` response ID used for
+All IDs are strings. The only exception is `id: null` on replies to
 unidentifiable invalid requests (§1.1).
 
-**Log IDs** (`log_id`) are decimal strings based on Unix epoch milliseconds,
-e.g. `"1724803200042"`. One strictly increasing sequence per server covers
-every logged change: room records (§3.4), message snapshots (§3.5), and
-reaction sets (Appendix D). Each is the commit time, or the previous
-`log_id + 1` when the clock has not advanced past it, so log IDs are usable
-as timestamps. Log IDs are positive. A room's log is the subsequence of
-changes that touch that room (Appendix A).
+**`log_id`** — position of one change in the server's append-only log.
 
-**Records and replay.** Every logged record has a key: `room_id` for room
-records, `message_id` for message snapshots, `(message_id, user_id)` for
-reaction sets. A record is the complete state for its key at its `log_id`.
-Clients keep the record with the greatest `log_id` per key and never let an
-older one overwrite a newer one, regardless of arrival order or source (live,
-history, or embedded). `log_id` and other server-owned fields are ignored on
-input.
-
-**Message IDs** (`message_id`) are the `log_id` of the message's creation and
-never change. Because the sequence is server-wide, a `message_id` is unique
-across rooms and is a complete reference on its own. `log_id == message_id`
-denotes the creation; later changes carry greater log IDs.
-
-- Compare numerically. Values are below `2^53`; clients MAY parse them as
-  integers.
-- There is no separate timestamp field; derive times from log IDs.
-- Log IDs are unique only within one server. Namespacing across servers is
-  client-defined.
+- Decimal string of Unix epoch milliseconds, e.g. `"1724803200042"`.
+- One strictly increasing sequence per server, covering every record: room
+  records (§3.4), message snapshots (§3.5), reaction sets (Appendix D).
+- Value is the commit time, or the previous `log_id + 1` if the clock has not
+  advanced past it. Clients MAY use it as a timestamp; there is no other.
+- Positive, below `2^53`, compared numerically. Clients MAY parse as integers.
+- Unique within one server only; namespacing across servers is client-defined.
+- A room's log is the subsequence of records that touch that room
+  (Appendix A).
 - Reference generator: `str(max(unix_epoch_ms(), last_id + 1))`.
 
-**Opaque IDs** (rooms, sessions, user IDs, client request `id`s) are arbitrary
-strings chosen by whichever side mints them. Room IDs are server-assigned.
-Client request `id`s SHOULD be random to avoid collisions across devices
-authenticated as the same user. Request IDs identify operations, not log
-positions.
+**`message_id`** — permanent identity of a message.
 
+- Equal to the `log_id` of its creation; never changes.
+- Unique across rooms, so it is a complete reference on its own.
+- `log_id == message_id` marks the creation; later changes have greater
+  `log_id`s.
+
+**Records and replay.** Every record is the complete state for its key at its
+`log_id`:
+
+| record           | key                     |
+|------------------|-------------------------|
+| room record      | `room_id`               |
+| message snapshot | `message_id`            |
+| reaction set     | `(message_id, user_id)` |
+
+- Clients keep the record with the greatest `log_id` per key, regardless of
+  source (live, history, embedded) or arrival order.
+- `log_id` and other server-owned fields are ignored on input.
+
+**Opaque IDs** — `room_id`, `user_id`, `session_id`, and request `id`.
+
+- Arbitrary strings minted by whichever side creates them; `room_id` and
+  `user_id` are server-assigned.
+- Request `id`s SHOULD be random, to avoid collisions across devices of the
+  same user. They identify operations, not log positions.
 - Suggested convention: use a room's creation `log_id` as its `room_id`.
 - Field naming for extensions and future methods: Appendix J.
 
@@ -283,7 +288,7 @@ Bots and agents are ordinary senders; nothing distinguishes them.
 
 ### 3.4 Rooms
 
-A room is a log with a server-chosen ID. After authentication,
+A room is a log with a server-chosen `room_id`. After authentication,
 servers MUST announce all currently visible rooms, and MUST announce a room
 before delivering anything in it. A Level 0 server announces one room.
 
@@ -490,12 +495,12 @@ source room.
 
 **Bounds and ordering.**
 
-- `after`/`before` are inclusive log-ID bounds; either MAY be omitted.
+- `after`/`before` are inclusive `log_id` bounds; either MAY be omitted.
 - Intersect the bounds with available history, then select a contiguous
   slice of the room's changes of either kind. `limit` is a positive count of
   changes, applied before compaction; servers MAY clamp it and supply a
   default. With `after`, select the oldest matches; otherwise the newest.
-- `first_id`/`last_id` are the slice's first and last log IDs before
+- `first_id`/`last_id` are the slice's first and last `log_id`s before
   compaction; return both or neither. `more` indicates further matching
   changes in the selected direction. An empty slice returns `entries: []`
   and `more: false`; `rooms` and `reactions` MAY be omitted when empty.
@@ -520,7 +525,7 @@ history still counts as available, keeps checkpoints valid, and leaves
 the last room record and each message's last snapshot in the slice, and MAY
 fold each message's reaction sets into one record carrying each user's last
 set in the slice, under the greatest folded `log_id`. Empty sets are kept so removals replay.
-Retained records keep their original log IDs and contents and never
+Retained records keep their original `log_id`s and contents and never
 incorporate changes after the slice. Compacted and uncompacted pages yield
 the same terminal state.
 
