@@ -198,8 +198,10 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 3, "name": "impl-name/1.0",
-    "caps": ["history", "edit"], "auth": ["token"],
+    "protocol": 3,
+    "name": "impl-name/1.0",
+    "caps": ["history", "edit"],
+    "auth": ["token"],
     "upload": "https://example/upload"
   }
 }
@@ -222,8 +224,10 @@ content.
 // ->
 {
   "method": "auth", "id": "c1", "params": {
-    "scheme": "token", "token": "...",
-    "name": "Alice", "client": "bottomless-web/0.3"
+    "scheme": "token",
+    "token": "...",
+    "name": "Alice",
+    "client": "bottomless-web/0.3"
   }
 }
 // <-
