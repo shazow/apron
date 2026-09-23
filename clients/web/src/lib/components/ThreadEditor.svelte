@@ -13,23 +13,28 @@
 	let { client, thread, enabled, onclose }: Props = $props();
 
 	// The form starts from the thread as it was opened; the caller remounts it per thread.
-	const initialTitle = untrack(() => thread.title ?? thread.thread_id);
+	const initialTitle = untrack(() => thread.title);
 	let title = $state(initialTitle);
-	let text = $state(untrack(() => thread.summary ?? ''));
 	let saving = $state(false);
 	let error = $state<string | undefined>();
 
-	/** Sends only what changed; the next `thread` frame is the truth, since a server may alter or decline. */
+	/**
+	 * Saves the title with `room` (Appendix C); the intro message and `ext`
+	 * are resubmitted unchanged. The next `room` frame is the truth, since a
+	 * server may alter or decline.
+	 */
 	async function save(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
 		if (saving || !enabled) return;
+		const next = title.trim();
+		if (next === initialTitle) {
+			onclose();
+			return;
+		}
 		saving = true;
 		error = undefined;
 		try {
-			await client.updateThread(thread.room_id, thread.thread_id, {
-				...(title.trim() !== initialTitle ? { title: title.trim() } : {}),
-				summary: text.trim() ? text : ''
-			}).promise;
+			await client.updateRoom(thread.id, { title: next || null }).promise;
 			onclose();
 		} catch (cause) {
 			saving = false;
@@ -40,11 +45,8 @@
 
 <section class="ap-roomhead-pop" aria-label="Edit thread">
 	<form class="ap-tedit" onsubmit={save}>
-		<label class="ap-fieldlabel">Name
-			<input class="ap-field" aria-label="Thread name" bind:value={title} disabled={saving} maxlength="120" />
-		</label>
-		<label class="ap-fieldlabel"><span class="ap-fieldlabel-row">Summary<span class="ap-fieldlabel-hint">Markdown</span></span>
-			<textarea class="ap-field ap-field-multi" aria-label="Thread summary" bind:value={text} rows="6" disabled={saving} placeholder="What this thread settled. Lists, links and code are fine."></textarea>
+		<label class="ap-fieldlabel">Title
+			<input class="ap-field" aria-label="Thread title" bind:value={title} disabled={saving} maxlength="120" />
 		</label>
 		{#if error}<p class="ap-profedit-note ap-profedit-err" role="alert">{error}</p>{/if}
 		<div class="ap-profedit-actions">

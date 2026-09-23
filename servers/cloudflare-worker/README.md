@@ -1,11 +1,12 @@
 # Apron public demo Worker
 
-A single SQLite Durable Object serves the permanent `general` room over
-hibernating WebSockets. The backend supports anonymous access, discoverable
-passkeys, complete-snapshot history, message replacement/deletion/restoration,
-threads, and a rolling retention floor. It speaks protocol 2 with `history` and
-`edit`; see [authentication and policy](docs/policy.md) and [the implementation
-specification](SPEC.md).
+A single SQLite Durable Object serves the permanent `general` room and its
+thread rooms over hibernating WebSockets. The backend supports guest access,
+discoverable passkeys, complete-snapshot history, message
+replacement/deletion/restoration/moves, thread rooms, emoji reactions, and a
+rolling retention floor. It speaks protocol 3 with `history`, `edit`, `rooms`,
+and `reactions`; see [authentication and policy](docs/policy.md) and [the
+implementation specification](SPEC.md).
 
 See the [configuration reference](docs/configuration.md) for all policy variables
 and the [local cost report](docs/cost-report.md) for measured bounds and assumptions.
@@ -18,10 +19,8 @@ See [edge admission operations](docs/edge-admission.md) for applying WAF rules,
 their Free-plan limitations, and the quota-exhaustion runbook.
 
 Passkey session cleanup uses an ordered expiry index. Each alarm processes at
-most 16 expired index entries and, during migration, 16 legacy sessions. Existing
-tokens remain valid; a durable cursor makes migration incremental and a completion
-marker prevents repeated scans of live sessions. Once migration finishes, alarms
-with no expired entries perform only a small metered probe. Session issuance,
+most 16 expired index entries; alarms with no expired entries perform only a
+small metered probe. Session issuance,
 renewal, and cleanup share a queue so cleanup cannot delete a concurrent renewal.
 KV operations reserve conservative row allowances before running; an exhausted
 maintenance budget leaves unfinished cleanup for a later alarm.
@@ -79,20 +78,22 @@ socket.onmessage = ({ data }) => {
   const frame = JSON.parse(data);
   console.log(frame);
   if (frame.method === 'server') {
-    socket.send(JSON.stringify({ id: 'guest', method: 'auth', params: { scheme: 'anonymous' } }));
+    socket.send(JSON.stringify({ id: 'guest', method: 'auth', params: { scheme: 'guest' } }));
   } else if (frame.id === 'guest' && frame.result) {
     socket.send(JSON.stringify({ id: 'history', method: 'history', params: { room_id: 'general' } }));
   }
 };
 ```
 
-Use the protocol's `message` and `thread` requests to exercise posting, editing,
-deletion/restoration, and threads. This is a shared public `general` room, not
+Use the protocol's `message`, `room`, and `reactions` requests to exercise
+posting, editing, deletion/restoration, moves, threads, and reactions. The demo
+only creates thread rooms: `room` requests need `parent_room_id: "general"`,
+and `general` itself cannot be edited or left. This is a shared public room, not
 an isolated sandbox: test messages are visible to others, guest ownership lasts
 only for the socket, and IP/resource quotas and retention still apply. Changing
 frontend origins does not give an IP a fresh allowance. Honor `retry_after`.
 
-The server advertises only `anonymous` authentication to custom frontends.
+The server advertises only `guest` authentication to custom frontends.
 `web.apron.chat` additionally receives `webauthn` and `token`; inspect each connection's
 `server.params.auth` rather than assuming passkeys are available everywhere.
 A frontend with a Content Security Policy must permit the endpoint in
@@ -101,30 +102,35 @@ admission cannot override the frontend's own browser policies.
 
 ## User-visible policies
 
-Only roughly the last day of transitions is retained. Hourly cleanup normally
-exposes 24–25 hours; quota exhaustion may delay physical deletion. The room ID
-and historical head never rotate. Recent edits can keep old messages visible.
+Only roughly the last day of records (messages, reactions, and room changes)
+is retained. Hourly cleanup normally exposes 24–25 hours; quota exhaustion may
+delay physical deletion. The `general` room ID and the log head never rotate.
+Recent edits can keep old messages visible. Rooms keep their current record
+after its log entry expires; a thread room whose whole log has expired is
+removed (announced with `removed: true`), which frees its slot under the
+100-thread ceiling.
 This is not secure erasure, and says nothing about provider backups or copies
 on clients.
 
-Anonymous identities last only for their socket, including hibernation. A
-reconnect receives a new guest identity, so earlier anonymous messages cannot
+Guest identities last only for their socket, including hibernation. A
+reconnect receives a new guest identity, so earlier guest messages cannot
 be edited or deduplicated across that reconnect. A passkey creates a separate,
 stable registered identity; it does not inherit guest message ownership.
 Passkeys require authentication on each new connection and do not prevent
 multiple registrations by one person.
 
-Anonymous posting is shared by IP (native IPv6 grouped by /64): five accepted
+Guest posting is shared by IP (native IPv6 grouped by /64): five accepted
 mutations per rolling minute and 100 per UTC day. Registered users receive
 20/minute and 500/day, subject to the common IP and global limits. NAT users
-share allowances. Creates, edits, deletion, restoration, and thread changes
-all consume posting quota. Matching accepted request retries consume lookup
-and frame resources, but do not post again. Request deduplication lasts 24 hours.
+share allowances. Creates, edits, deletion, restoration, moves, reaction
+changes, and thread room creation or edits all consume posting quota.
+Matching accepted request retries consume lookup and frame resources, but do
+not post again. Request deduplication lasts 24 hours.
 
 Temporary limits return `retry_after` with `data.ms`; clients back off. Daily
 posting/write exhaustion makes the demo read-only while affordable reads remain
 available. History exhaustion returns an error. Registration caps do not revoke
-existing passkeys. Permanent identity/thread caps return `denied`. Storage
+existing passkeys. Permanent identity/thread-room caps return `denied`. Storage
 pressure suspends growth and retains the published history boundary; it never
 shortens history to accept another post. Global frame exhaustion closes sockets
 and rejects new admissions until replenishment.
@@ -165,7 +171,7 @@ The production backend at `wss://server.apron.chat/` uses
 `wrangler.production.toml`. The frontend is deployed separately at
 `https://web.apron.chat` using `clients/web/wrangler.toml`; `apron.chat` is
 reserved for static documentation. The production backend has no static assets.
-WebSocket upgrades use `/`; `/ws` remains an alias for existing clients.
+WebSocket upgrades use `/` or `/ws`.
 The default development Worker is `apron-cloudflare-demo-dev`; it is separate
 from the production Worker `apron-cloudflare-demo`. It keeps serving the
 frontend for local development and browser tests. Keep bindings, migrations,
@@ -214,9 +220,16 @@ For direct Wrangler production commands, always pass
 5. Review `wrangler.production.toml`: fixed DO binding, `new_sqlite_classes` migration,
    no paid-service bindings. Apply the initial migration once using the normal
    Wrangler deployment workflow. Do not rename or recreate the production
-   object to work around a quota or schema issue.
+   object to work around a quota or schema issue. Stored data is not migrated
+   between schema versions: a deploy that changes the storage schema (the
+   protocol v3 release does) resets the demo on the object's first wake (see
+   [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
+   identities, sessions, and limiter windows are deleted; users must register
+   their passkeys again, and saved session tokens fall back to sign-in. Only the
+   current day's resource reservations are carried over. Deploy the matching
+   frontend together with this backend.
 6. When deployment is authorized, run `make deploy-worker deploy-web` from the
-   repository root. Verify anonymous access, passkey registration/login, edits, history,
+   repository root. Verify guest access, passkey registration/login, edits, threads, reactions, history,
    duplicate retries, custom-origin guest access, and rejection of passkey
    requests from unapproved origins against the deployed endpoint.
 7. Exercise idle **hibernation and wake**, then a real redeploy/reconnect. Check

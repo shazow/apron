@@ -19,7 +19,7 @@ import {
 	type ProtocolError,
 	type RequestFrame,
 } from "./protocol";
-import { Store, StoreError, type StoreConfig, type StoreThreadRecord, type StoreMutationInput } from "./store";
+import { Store, StoreError, type Broadcast, type StoreConfig, type StoreMutationInput } from "./store";
 
 const OBJECT_NAME = "public-demo-v1";
 const INTERNAL_IP_HEADER = "X-Apron-Trusted-IP-Key";
@@ -28,8 +28,6 @@ const ATTACHMENT_VERSION = 1;
 const SESSION_KEY_PREFIX = "session:";
 /** Ordered, advisory expiry entries. The session record remains authoritative. */
 const SESSION_EXPIRY_PREFIX = "session-expiry:";
-const SESSION_LEGACY_CURSOR_KEY = "session-legacy-cursor";
-const SESSION_LEGACY_DONE_KEY = "session-legacy-done";
 const SESSION_CLEANUP_BATCH = 16;
 const MAX_SESSION_TOKEN_CHARS = 256;
 
@@ -120,6 +118,8 @@ function asStoreConfig(config: RuntimeConfig): Partial<StoreConfig> {
 		maxEmbeds: limits.maxEmbeds,
 		maxThreads: limits.threadLimit,
 		maxThreadMetadataBytes: limits.threadMetadataBytes,
+		reactionUsersPerMessage: limits.reactionUsersPerMessage,
+		reactionEmojisPerUser: limits.reactionEmojisPerUser,
 		maxHistoryLimit: limits.historyMaxLimit,
 		historyDefaultLimit: limits.historyDefaultLimit,
 		maxHistoryResponseBytes: limits.historyMaxResponseBytes,
@@ -295,22 +295,15 @@ function passkeyCredentialParam(params: Record<string, unknown>, action: "regist
 	return credential;
 }
 
+/** The wire identity (section 3.3); the internal quota tier stays private. */
+function publicIdentity(attachment: ConnectionAttachment): { user_id: string; name?: string } | null {
+	const identity = identityOf(attachment);
+	return identity ? { user_id: identity.user_id, ...(identity.name ? { name: identity.name } : {}) } : null;
+}
+
 function identityOf(attachment: ConnectionAttachment): IdentityShape | null {
 	if (!attachment.userId || (attachment.tier !== "anonymous" && attachment.tier !== "registered")) return null;
 	return { user_id: attachment.userId, ...(attachment.name ? { name: attachment.name } : {}), tier: attachment.tier };
-}
-
-function editableMessageParams(params: Record<string, unknown>): Record<string, unknown> {
-	const message: Record<string, unknown> = Object.create(null);
-	for (const [key, value] of Object.entries(params)) {
-		if (["room_id", "message_id", "log_id", "body", "thread_id", "reply_message_id", "deleted"].includes(key)) continue;
-		message[key] = value;
-	}
-	if (params.body !== undefined) message.body = params.body;
-	if (params.thread_id !== undefined) message.thread_id = params.thread_id;
-	if (params.reply_message_id !== undefined) message.reply_message_id = params.reply_message_id;
-	if (params.deleted !== undefined) message.deleted = params.deleted;
-	return message;
 }
 
 // Browsers hide failed WebSocket handshake responses. An explicit, read-only
@@ -397,9 +390,19 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.runtimeEnv = env;
 		this.config = loadConfig(env);
 		this.store = new Store(ctx as unknown as ConstructorParameters<typeof Store>[0], asStoreConfig(this.config));
-		this.store.initialize();
-		this.accountUsageSnapshot = this.store.accountUsageSnapshot();
 		this.webAuthn = new WebAuthnService(this.config);
+		if (this.store.requiresReset()) {
+			// Stored data from another schema version is wiped, not migrated. The
+			// input gate holds every event until the fresh schema exists.
+			void ctx.blockConcurrencyWhile(async () => {
+				await this.store.resetStorage();
+				this.accountUsageSnapshot = this.store.accountUsageSnapshot();
+				console.warn(JSON.stringify({ event: "storage_schema_reset" }));
+			});
+		} else {
+			this.store.initialize();
+			this.accountUsageSnapshot = this.store.accountUsageSnapshot();
+		}
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -533,16 +536,28 @@ export class ApronDemoServer extends DurableObject<Env> {
 			}
 		}
 		try { await this.sweepSessions(now); } catch { /* retried on the next alarm */ }
+		let result: ReturnType<Store["runCleanup"]> | undefined;
 		try {
-			const result = this.store.runCleanup(now);
-			if (result?.did_work) this.announceRoomToAll();
-			await this.rescheduleAlarm();
+			result = this.store.runCleanup(now);
 		} catch {
 			// A metered maintenance failure is deferred. Do not spin an alarm loop.
-			// The floor may already be durable even if a physical deletion failed.
-			try { this.announceRoomToAll(); } catch { /* announcement also requires capacity */ }
-			await this.rescheduleAlarm();
+			// The floor may already be durable even if a physical deletion failed,
+			// so re-announce every room below.
 		}
+		// Committed removals need no store access; announce them before any
+		// listing that could fail on an exhausted budget.
+		for (const roomId of result?.removed_rooms ?? []) this.broadcast({ method: "room", params: { room_id: roomId, removed: true } });
+		if (!result || result.history_floor !== result.previous_floor) {
+			try {
+				// Only rooms whose history_log_id moved need a new announcement.
+				const rooms = this.store.listRooms(nowMs(), {
+					maintenance: true,
+					...(result ? { changedSinceFloor: Number(result.previous_floor) } : {}),
+				});
+				for (const room of rooms) this.broadcast({ method: "room", params: room });
+			} catch { /* announcement also requires capacity; clients see the floor on their next history page */ }
+		}
+		await this.rescheduleAlarm();
 	}
 
 	private storeResponseError(error: unknown): Response {
@@ -558,17 +573,17 @@ export class ApronDemoServer extends DurableObject<Env> {
 		return {
 			method: "server",
 			params: {
-				protocol: 2,
-				name: "apron-cloudflare-demo/1",
-				caps: ["history", "edit"],
-				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "anonymous"] : ["anonymous"],
+				protocol: 3,
+				name: "apron-cloudflare-demo/2",
+				caps: ["history", "edit", "rooms", "reactions"],
+				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["guest"],
 				demo: {
 					retention_seconds: limits.retentionSeconds,
 					cleanup_seconds: limits.cleanupSeconds,
 					max_frame_bytes: limits.maxFrameBytes,
 					max_message_text_bytes: limits.maxTextBytes,
 					max_snapshot_bytes: limits.maxSnapshotBytes,
-					anonymous_posts_per_minute: limits.anonymousPostsPerMinute,
+					guest_posts_per_minute: limits.anonymousPostsPerMinute,
 					registered_posts_per_minute: limits.registeredPostsPerMinute,
 				},
 			},
@@ -671,14 +686,25 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "message":
 				await this.handleMessage(socket, attachment, request);
 				return;
-			case "thread":
-				await this.handleThread(socket, attachment, request);
+			case "room":
+				await this.handleRoom(socket, attachment, request);
 				return;
-			case "nick":
-				await this.handleNick(socket, attachment, request);
+			case "room_join":
+				await this.handleRoomJoin(socket, attachment, request);
+				return;
+			case "room_leave":
+				await this.handleRoomLeave(socket, attachment, request);
+				return;
+			case "reactions":
+				await this.handleReactions(socket, attachment, request);
+				return;
+			case "name":
+				await this.handleName(socket, attachment, request);
 				return;
 			default:
-				if (request.id !== undefined) throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
+				if (request.id === undefined) return;
+				if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
+				throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 		}
 	}
 
@@ -689,9 +715,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.store.reserveAuthAttempt({ ipKey: attachment.ipKey, now: nowMs() });
 		const params = request.params;
 		const scheme = requiredString(params, "scheme");
-		if (scheme === "anonymous") {
+		if (scheme === "guest") {
 			if (attachment.tier === "anonymous" || attachment.tier === "registered") {
-				this.reply(socket, request, { you: identityOf(attachment) });
+				this.reply(socket, request, { you: publicIdentity(attachment) });
 				return;
 			}
 			const userId = randomId("guest");
@@ -699,7 +725,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 			attachment.userId = userId;
 			attachment.name = `Guest ${userId.slice(-6)}`.slice(0, Math.min(this.config.limits.maxNameCodePoints, this.config.limits.maxNameBytes));
 			writeAttachment(socket, attachment);
-			this.reply(socket, request, { you: identityOf(attachment) });
+			this.reply(socket, request, { you: publicIdentity(attachment) });
 			this.announceAuthenticated(socket, attachment);
 			await this.rescheduleAlarm();
 			return;
@@ -765,7 +791,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		attachment.userId = finished.identity.user_id;
 		attachment.name = finished.identity.name;
 		writeSessionAttachment(socket, attachment);
-		this.reply(socket, request, { you: identityOf(attachment), token });
+		this.reply(socket, request, { you: publicIdentity(attachment), token });
 		this.announceAuthenticated(socket, attachment);
 		await this.rescheduleAlarm();
 	}
@@ -825,7 +851,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		attachment.userId = identity.userId;
 		attachment.name = identity.name;
 		writeSessionAttachment(socket, attachment);
-		this.reply(socket, request, { you: identityOf(attachment), token });
+		this.reply(socket, request, { you: publicIdentity(attachment), token });
 		this.announceAuthenticated(socket, attachment);
 		await this.rescheduleAlarm();
 	}
@@ -845,34 +871,25 @@ export class ApronDemoServer extends DurableObject<Env> {
 		return token;
 	}
 
-	/**
-	 * Drops expired session records from a bounded expiry index. The separate
-	 * legacy cursor gradually indexes records written before this index existed,
-	 * so deployment does not require a destructive migration or an unbounded
-	 * first alarm. Cursors advance only after their batch has completed.
-	 */
+	/** Drops expired session records from a bounded, ordered expiry index. */
 	private async sweepSessions(now: number): Promise<void> {
 		return this.withSessionLock(() => this.sweepSessionsLocked(now));
 	}
 
 	private async sweepSessionsLocked(now: number): Promise<void> {
 		// Socket deadline alarms can be frequent. Probe the bounded expiry index
-		// before reserving a full batch; after legacy migration this is the only
-		// maintenance work performed until an expiry is actually due.
-		const { legacyDone, dueProbe } = await this.store.withMeterAsync("maintenance", { reads: 2 }, async () => ({
-			legacyDone: await this.ctx.storage.get<boolean>(SESSION_LEGACY_DONE_KEY),
-			dueProbe: await this.ctx.storage.list<SessionExpiryEntry>({
-				prefix: SESSION_EXPIRY_PREFIX,
-				end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
-				limit: 1,
-			}),
+		// before reserving a full batch; this is the only maintenance work
+		// performed until an expiry is actually due.
+		const dueProbe = await this.store.withMeterAsync("maintenance", { reads: 1 }, () => this.ctx.storage.list<SessionExpiryEntry>({
+			prefix: SESSION_EXPIRY_PREFIX,
+			end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
+			limit: 1,
 		}), now);
-		if (legacyDone === true && dueProbe.size === 0) return;
-		// Up to B index rows + B session reads + B legacy rows + cursor/control
-		// reads; writes cover 2B expiry deletes + B legacy changes + 2 markers.
+		if (dueProbe.size === 0) return;
+		// Up to B index rows + B session reads; writes cover 2B expiry deletes.
 		await this.store.withMeterAsync("maintenance", {
-			reads: 3 * SESSION_CLEANUP_BATCH + 4,
-			writes: 3 * SESSION_CLEANUP_BATCH + 2,
+			reads: 2 * SESSION_CLEANUP_BATCH + 2,
+			writes: 2 * SESSION_CLEANUP_BATCH,
 		}, async () => {
 			const indexed = await this.ctx.storage.list<SessionExpiryEntry>({
 				prefix: SESSION_EXPIRY_PREFIX,
@@ -902,26 +919,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 				await this.ctx.storage.delete(indexKey);
 			}
 
-			if (legacyDone === true) return;
-			const legacyCursor = await this.ctx.storage.get<string>(SESSION_LEGACY_CURSOR_KEY);
-			const legacy = await this.ctx.storage.list<StoredSession>({
-				prefix: SESSION_KEY_PREFIX,
-				...(legacyCursor ? { startAfter: legacyCursor } : {}),
-				limit: SESSION_CLEANUP_BATCH,
-			});
-			let nextLegacyCursor: string | null = legacyCursor ?? null;
-			for (const [key, session] of legacy) {
-				if (!session || session.v !== 1 || !Number.isSafeInteger(session.expiresMs)) {
-					nextLegacyCursor = key;
-					continue;
-				}
-				if (session.expiresMs <= now) await this.ctx.storage.delete(key);
-				else await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(session.expiresMs, key), { v: 1, sessionKey: key, expiresMs: session.expiresMs });
-				nextLegacyCursor = key;
-			}
-			if (legacy.size === 0 || legacy.size < SESSION_CLEANUP_BATCH) nextLegacyCursor = null;
-			await this.ctx.storage.put(SESSION_LEGACY_CURSOR_KEY, nextLegacyCursor);
-			if (nextLegacyCursor === null) await this.ctx.storage.put(SESSION_LEGACY_DONE_KEY, true);
 		});
 	}
 
@@ -946,22 +943,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	private announceAuthenticated(socket: WebSocketConnection, attachment: ConnectionAttachment): void {
 		try {
-			const room = this.store.getRoomState();
-			const threads = this.store.getThreads();
-			const roomFrame = {
-				method: "room",
-				params: {
-					room_id: room.room_id ?? "general",
-					name: room.name ?? "General",
-					latest_log_id: room.latest_log_id,
-					history_log_id: room.history_log_id,
-					...(room.topic ? { topic: room.topic } : {}),
-				},
-			};
-			this.send(socket, roomFrame);
-			if (Array.isArray(threads)) for (const thread of threads) this.send(socket, { method: "thread", params: thread });
+			// Every room is visible to every authenticated client.
+			for (const room of this.store.listRooms(nowMs())) this.send(socket, { method: "room", params: room });
 		} catch {
-			// A session without its initial room boundary cannot safely receive live entries.
+			// A session without its initial room boundaries cannot safely receive live records.
 			this.closePolicy(socket, attachment, 1013, "History temporarily unavailable; reconnect later");
 		}
 	}
@@ -970,21 +955,18 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before loading history" } satisfies ProtocolError;
 		if (attachment.historyInFlight >= this.config.limits.concurrentHistoryPerConnection) throw { name: "retry_after", message: "History request already in progress", data: { ms: 250 } } satisfies ProtocolError;
 		const params = request.params;
-		const roomId = optionalString(params, "room_id") ?? "general";
-		if (roomId !== "general") throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
+		const roomId = requiredString(params, "room_id");
 		const after = asDecimalId(params.after, "after");
 		const before = asDecimalId(params.before, "before");
 		const limit = positiveIntParam(params, "limit");
-		const threadId = optionalString(params, "thread_id");
 		attachment.historyInFlight += 1;
 		writeAttachment(socket, attachment);
 		try {
 			const page = this.store.history({
 				roomId,
-				after: after === undefined ? undefined : BigInt(after),
-				before: before === undefined ? undefined : BigInt(before),
+				after,
+				before,
 				limit: limit ?? this.config.limits.historyDefaultLimit,
-				threadId,
 				maxBytes: this.config.limits.historyMaxResponseBytes,
 				now: nowMs(),
 				userId: attachment.userId,
@@ -1000,7 +982,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 	}
 
-	private async handleNick(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+	private async handleName(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity || attachment.tier !== "registered") {
 			throw { name: "denied", message: "Only registered users may change their name" } satisfies ProtocolError;
@@ -1009,7 +991,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		await this.runMutation(async () => {
 			const result = this.store.commitMutation({
 				userId: identity.user_id, ipKey: attachment.ipKey,
-				requestId: request.id, method: "nick", now: nowMs(),
+				requestId: request.id, method: "name", now: nowMs(),
 				params: request.params, identity,
 			});
 			// Persist first, then refresh every live attachment for this identity so
@@ -1024,75 +1006,65 @@ export class ApronDemoServer extends DurableObject<Env> {
 				}
 			}
 			const current = connectionAttachment(socket);
-			if (current) this.reply(socket, request, { you: identityOf(current) });
+			if (current) this.reply(socket, request, { you: publicIdentity(current) });
 		});
 	}
 
-	private async handleMessage(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+	/** Shared path for logged mutations: dedup, quotas, commit, reply, broadcast. */
+	private async commitAndBroadcast(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame, method: "message" | "room" | "reactions", action: string): Promise<void> {
 		const identity = identityOf(attachment);
-		if (!identity) throw { name: "denied", message: "Authenticate before posting" } satisfies ProtocolError;
-		const roomId = optionalString(request.params, "room_id") ?? "general";
-		if (roomId !== "general") throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
-		if (request.params.log_id !== undefined) throw { name: "invalid_params", message: "Clients cannot supply log_id" } satisfies ProtocolError;
-		const messageId = optionalString(request.params, "message_id");
-		const body = request.params.body;
-		if (messageId === undefined && body === undefined) throw { name: "invalid_params", message: "Missing body" } satisfies ProtocolError;
-		if (body !== undefined) objectParam(request.params, "body");
+		if (!identity) throw { name: "denied", message: `Authenticate before ${action}` } satisfies ProtocolError;
 		const input: StoreMutationInput = {
 			userId: identity.user_id,
 			tier: identity.tier,
 			ipKey: attachment.ipKey,
 			requestId: request.id,
-			method: "message",
-			roomId,
+			method,
 			now: nowMs(),
-			messageId,
-			message: editableMessageParams(request.params),
-			body: body as Record<string, unknown> | undefined,
-			threadId: optionalString(request.params, "thread_id"),
-			replyMessageId: optionalString(request.params, "reply_message_id"),
-			deleted: request.params.deleted === true,
 			params: request.params,
 			identity,
 		};
 		await this.runMutation(async () => {
 			const result = this.store.mutate(input);
-			if (result?.deduplicated) {
-				this.reply(socket, request, result.result);
-				return;
-			}
 			this.reply(socket, request, result.result);
-			if (result.transition) this.broadcastTransition(result.transition, request.id);
+			// A deduplicated retry carries no records and is never rebroadcast.
+			for (const record of result.broadcasts) this.broadcastRecord(record);
 		});
 	}
 
-	private async handleThread(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
-		const identity = identityOf(attachment);
-		if (!identity) throw { name: "denied", message: "Authenticate before creating a thread" } satisfies ProtocolError;
-		const roomId = optionalString(request.params, "room_id") ?? "general";
-		if (roomId !== "general") throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
-		const input: StoreMutationInput = {
-			userId: identity.user_id,
-			tier: identity.tier,
-			ipKey: attachment.ipKey,
-			requestId: request.id,
-			method: "thread",
-			roomId,
-			now: nowMs(),
-			thread: {
-				threadId: optionalString(request.params, "thread_id"),
-				title: optionalString(request.params, "title"),
-				summary: optionalString(request.params, "summary"),
-				rootMessageId: optionalString(request.params, "root_message_id"),
-			},
-			params: request.params,
-			identity,
-		};
-		await this.runMutation(async () => {
-			const result = this.store.mutateThread(input);
-			this.reply(socket, request, result.result);
-			if (result.thread) this.broadcastThread(result.thread, request.id);
-		});
+	private async handleMessage(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before posting" } satisfies ProtocolError;
+		requiredString(request.params, "room_id");
+		// Server-owned fields are ignored on input (PROTOCOL.md §2).
+		delete request.params.log_id;
+		delete request.params.from;
+		const messageId = optionalString(request.params, "message_id");
+		if (messageId === undefined && request.params.body === undefined) throw { name: "invalid_params", message: "Missing body" } satisfies ProtocolError;
+		if (request.params.body !== undefined) objectParam(request.params, "body");
+		await this.commitAndBroadcast(socket, attachment, request, "message", "posting");
+	}
+
+	private async handleRoom(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		await this.commitAndBroadcast(socket, attachment, request, "room", "changing rooms");
+	}
+
+	private async handleReactions(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		await this.commitAndBroadcast(socket, attachment, request, "reactions", "reacting");
+	}
+
+	/** Every room is visible to everyone; joining re-sends its announcement. */
+	private async handleRoomJoin(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before joining rooms" } satisfies ProtocolError;
+		const roomId = requiredString(request.params, "room_id");
+		const room = this.store.getRoom(roomId, nowMs());
+		if (!room) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
+		this.reply(socket, request, {});
+		this.send(socket, { method: "room", params: room });
+	}
+
+	private async handleRoomLeave(_socket: WebSocketConnection, attachment: ConnectionAttachment, _request: RequestFrame): Promise<void> {
+		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before leaving rooms" } satisfies ProtocolError;
+		throw { name: "denied", message: "Every demo room stays visible to all clients" } satisfies ProtocolError;
 	}
 
 	private async runMutation(fn: () => Promise<void>): Promise<void> {
@@ -1104,7 +1076,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		catch (error) {
 			if (!(error instanceof StoreError) || error.code === "internal_error") {
 				// A platform/accounting failure may make commit visibility uncertain.
-				// Force recovery so no recipient can silently skip a durable transition.
+				// Force recovery so no recipient can silently skip a durable record.
 				for (const peer of this.ctx.getWebSockets()) {
 					const state = connectionAttachment(peer);
 					if (state) this.closePolicy(peer, state, 1011, "Delivery interrupted; reconnect to recover");
@@ -1114,20 +1086,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 		} finally { release(); }
 	}
 
-	private broadcastTransition(transition: { room_id: string; log_id: string; message: Record<string, unknown> }, echo?: string): void {
-		this.broadcast({
-			method: "message",
-			params: {
-				room_id: transition.room_id,
-				log_id: transition.log_id,
-				...(echo !== undefined ? { echo } : {}),
-				message: transition.message,
-			},
-		});
-	}
-
-	private broadcastThread(thread: StoreThreadRecord, echo?: string): void {
-		this.broadcast({ method: "thread", params: { ...thread, room_id: "general", ...(echo !== undefined ? { echo } : {}) } });
+	/**
+	 * Broadcast one committed record. Every authenticated client sees every
+	 * room, so a moved message's snapshot reaches both rooms' viewers in one
+	 * frame, delivered once per connection (section 3.5).
+	 */
+	private broadcastRecord(record: Broadcast): void {
+		this.broadcast({ method: record.method, params: record.params });
 	}
 
 	private broadcast(value: unknown, only?: WebSocketConnection): void {
@@ -1142,11 +1107,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 				try { socket.close(1011, "Delivery failed; reconnect to recover"); } catch { /* closed */ }
 			}
 		}
-	}
-
-	private announceRoomToAll(): void {
-		const room = this.store.getRoomState();
-		this.broadcast({ method: "room", params: { room_id: "general", name: room.name ?? "General", latest_log_id: room.latest_log_id, history_log_id: room.history_log_id, ...(room.topic ? { topic: room.topic } : {}) } });
 	}
 
 	private recordViolation(socket: WebSocketConnection, error: ProtocolError): void {

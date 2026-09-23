@@ -26,8 +26,8 @@ function serverOwnedValues(frame: Frame): Array<{ key: string; value: unknown }>
 		}
 		for (const [key, child] of Object.entries(value)) {
 			if (PRIVATE_SERVER_KEYS.has(key)) values.push({ key, value: child });
-			const childIsUserControlled = (path.at(-1) === 'message' && (key === 'body' || key === 'extension')) ||
-				(path.length === 1 && path[0] === 'params' && key === 'thread');
+			// Message bodies and ext objects are client-controlled public data.
+			const childIsUserControlled = key === 'body' || key === 'ext';
 			visit(child, [...path, key], childIsUserControlled);
 		}
 	};
@@ -64,29 +64,48 @@ async function connect(ip = `192.0.2.${nextIp++}`, path = '/ws', origin: string 
 	};
 }
 
-async function authenticate(peer: Awaited<ReturnType<typeof connect>>) {
+/** Drain frames until one matches; earlier frames are returned for inspection. */
+async function until(peer: Awaited<ReturnType<typeof connect>>, match: (frame: Frame) => boolean): Promise<{ frame: Frame; skipped: Frame[] }> {
+	const skipped: Frame[] = [];
+	for (;;) {
+		const frame = await peer.next();
+		if (match(frame)) return { frame, skipped };
+		skipped.push(frame);
+	}
+}
+
+async function authenticate(peer: Awaited<ReturnType<typeof connect>>, scheme = 'guest') {
 	const server = await peer.next();
 	expect(server.method).toBe('server');
+	expect(server.params.protocol).toBe(3);
+	expect(server.params.caps).toEqual(['history', 'edit', 'rooms', 'reactions']);
 	expect(server.params.auth).toContain('webauthn');
 	expect(server.params.extensions).toBeUndefined();
-	peer.send({ method: 'auth', id: 'auth', params: { scheme: 'anonymous' } });
+	peer.send({ method: 'auth', id: 'auth', params: { scheme } });
 	const auth = await peer.next();
-	expect(auth.result.you.user_id).toBeTruthy();
+	expect(auth.result.you.user_id).toMatch(/^guest_/);
+	// Every visible room is announced; general is first.
 	const room = await peer.next();
 	expect(room.method).toBe('room');
 	expect(room.params.room_id).toBe('general');
-	expect(room.params.latest_log_id).toMatch(/^(0|[1-9][0-9]*)$/);
-	if (room.params.latest_log_id === '0') expect(room.params.history_log_id).toBeNull();
-	else expect(room.params.history_log_id).toMatch(/^[1-9][0-9]*$/);
+	expect(room.params.title).toBe('General');
+	expect(room.params.log_id).toMatch(/^[1-9][0-9]*$/);
+	expect(room.params.latest_log_id).toMatch(/^[1-9][0-9]*$/);
+	expect(room.params.history_log_id).toMatch(/^[1-9][0-9]*$/);
 	return auth.result.you;
+}
+
+/** Skip further room announcements that precede the next request's reply. */
+async function reply(peer: Awaited<ReturnType<typeof connect>>, id: string): Promise<Frame> {
+	return (await until(peer, frame => frame.id === id)).frame;
 }
 
 it('admits clients without Origin as guests without advertising or allowing passkeys', async () => {
 	const peer = await connect(undefined, '/', null);
 	try {
-		expect((await peer.next()).params.auth).toEqual(['anonymous']);
-		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'anonymous' } });
-		expect((await peer.next()).result.you.user_id).toBeTruthy();
+		expect((await peer.next()).params.auth).toEqual(['guest']);
+		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
+		expect((await peer.next()).result.you.user_id).toMatch(/^guest_/);
 		await peer.next(); // Room announcement.
 		peer.send({ id: 'passkey', method: 'auth', params: { scheme: 'webauthn', action: 'register', step: 'begin' } });
 		expect((await peer.next()).error.code).toBe(-32001);
@@ -102,9 +121,9 @@ it('keeps server-owned state out of public protocol frames', async () => {
 		const server = await peer.next();
 		publicFrames.push(server);
 		expectPublicFrame(server);
-		expect(server.params.auth).toEqual(['webauthn', 'token', 'anonymous']);
+		expect(server.params.auth).toEqual(['webauthn', 'token', 'guest']);
 
-		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'anonymous' } });
+		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
 		const auth = await peer.next();
 		publicFrames.push(auth);
 		expectPublicFrame(auth);
@@ -113,15 +132,17 @@ it('keeps server-owned state out of public protocol frames', async () => {
 		expectPublicFrame(room);
 
 		peer.send({ id: 'post', method: 'message', params: {
-			room_id: 'general', body: { text: 'disclosure regression', extension: { ipKey: 'client-controlled' } },
+			room_id: 'general', body: { text: 'disclosure regression' }, ext: { demo: { ipKey: 'client-controlled' } },
 		} });
-		const saved = await peer.next();
+		const saved = await reply(peer, 'post');
 		publicFrames.push(saved);
 		expectPublicFrame(saved);
 		const broadcast = await peer.next();
 		publicFrames.push(broadcast);
 		expectPublicFrame(broadcast);
 
+		peer.send({ id: 'react', method: 'reactions', params: { message_id: saved.result.message_id, emojis: ['👍'] } });
+		publicFrames.push(await peer.next(), await peer.next());
 		peer.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 10 } });
 		const history = await peer.next();
 		publicFrames.push(history);
@@ -159,23 +180,23 @@ it('authenticates on the root WebSocket endpoint and still serves the homepage',
 	expect(denied.status).toBe(403);
 });
 
-it('commits once for canonical retries, preserves extensions, and sends no reply to notifications', async () => {
+it('commits once for canonical retries, passes ext through, and sends no reply to notifications', async () => {
 	const peer = await connect();
 	try {
 		const you = await authenticate(peer);
 		peer.send({ jsonrpc: '2.0', id: '', method: 'message', params: {
-			room_id: 'general', body: { text: 'hello', format: 'plain' }, extension: { z: 1, a: 2 }, from: { user_id: 'spoof' }
+			room_id: 'general', body: { text: 'hello' }, ext: { z: 1, a: 2 }, from: { user_id: 'spoof' }, stray: true,
 		} });
-		const saved = await peer.next();
-		expect(saved.id).toBe('');
+		const saved = await reply(peer, '');
 		expect(saved.result.message_id).toMatch(/^[1-9][0-9]*$/);
 		const broadcast = await peer.next();
-		expect(broadcast.method).toBe('message');
-		expect(broadcast.params.echo).toBe('');
-		expect(broadcast.params.message.from.user_id).toBe(you.user_id);
-		expect(broadcast.params.message.extension).toEqual({ a: 2, z: 1 });
+		// A flat, self-describing snapshot.
+		expect(broadcast).toEqual({ method: 'message', params: {
+			message_id: saved.result.message_id, log_id: saved.result.message_id, room_id: 'general',
+			from: you, body: { text: 'hello', format: 'plain', embeds: [] }, ext: { z: 1, a: 2 },
+		} });
 		peer.send({ id: '', method: 'message', params: {
-			from: { user_id: 'spoof' }, extension: { a: 2, z: 1 }, body: { format: 'plain', text: 'hello' }, room_id: 'general'
+			stray: true, from: { user_id: 'spoof' }, ext: { a: 2, z: 1 }, body: { text: 'hello' }, room_id: 'general'
 		} });
 		expect((await peer.next()).result).toEqual(saved.result);
 		peer.send({ method: 'unimplemented-notification', params: {} });
@@ -184,14 +205,13 @@ it('commits once for canonical retries, preserves extensions, and sends no reply
 		} });
 		const page = await peer.next();
 		expect(page.id).toBe('history');
-		expect(page.result.entries).toHaveLength(1);
-		expect(page.result.entries[0].message.extension).toEqual({ a: 2, z: 1 });
+		expect(page.result.entries).toEqual([broadcast.params]);
 		peer.send({ id: '', method: 'message', params: { room_id: 'general', body: { text: 'changed request' } } });
 		expect((await peer.next()).error.code).toBe(-32602);
 	} finally { peer.close(); }
 });
 
-it('counts anonymous posting across sockets and returns retained retries after posting exhaustion', async () => {
+it('counts guest posting across sockets and returns retained retries after posting exhaustion', async () => {
 	const ip = `198.51.100.${nextIp++}`;
 	const first = await connect(ip);
 	const second = await connect(ip);
@@ -218,11 +238,11 @@ it('counts anonymous posting across sockets and returns retained retries after p
 	} finally { first.close(); second.close(); }
 });
 
-it('pipelined anonymous auth precedes mutation and errors preserve identifiable IDs', async () => {
+it('pipelined guest auth precedes mutation and errors preserve identifiable IDs', async () => {
 	const peer = await connect();
 	try {
 		expect((await peer.next()).method).toBe('server');
-		peer.send({ id: 'a', method: 'auth', params: { scheme: 'anonymous' } });
+		peer.send({ id: 'a', method: 'auth', params: { scheme: 'guest' } });
 		peer.send({ id: 'm', method: 'message', params: { room_id: 'general', body: { text: 'pipelined' } } });
 		expect((await peer.next()).id).toBe('a');
 		expect((await peer.next()).method).toBe('room');
@@ -237,4 +257,109 @@ it('pipelined anonymous auth precedes mutation and errors preserve identifiable 
 		expect(unsupported.id).toBe('unknown');
 		expect(unsupported.error.code).toBe(-32601);
 	} finally { peer.close(); }
+});
+
+// Tests below create thread rooms, which every later authentication announces.
+
+it('rejects requests without a room and operations guests may not perform', async () => {
+	// Three invalid requests within a minute close a socket, so spread them.
+	const peer = await connect();
+	const other = await connect();
+	try {
+		await authenticate(peer);
+		await authenticate(other);
+		peer.send({ id: 'no-room', method: 'message', params: { body: { text: 'where?' } } });
+		expect((await peer.next()).error.code).toBe(-32602);
+		peer.send({ id: 'no-room-history', method: 'history', params: { limit: 5 } });
+		expect((await peer.next()).error.code).toBe(-32602);
+		peer.send({ id: 'top-level', method: 'room', params: { title: 'Top level' } });
+		expect((await peer.next()).error.code).toBe(-32001);
+		peer.send({ id: 'leave', method: 'room_leave', params: { room_id: 'general' } });
+		expect((await peer.next()).error.code).toBe(-32001);
+		// Guests keep their assigned name.
+		peer.send({ id: 'rename', method: 'name', params: { name: 'Ada' } });
+		expect((await peer.next()).error.code).toBe(-32001);
+		other.send({ id: 'unknown-history', method: 'history', params: { room_id: 'missing' } });
+		expect((await other.next()).error.code).toBe(-32602);
+		other.send({ id: 'join-missing', method: 'room_join', params: { room_id: 'missing' } });
+		expect((await other.next()).error.code).toBe(-32602);
+	} finally { peer.close(); other.close(); }
+});
+
+it('creates threads, moves messages into them, and delivers reactions to every client', async () => {
+	const alice = await connect();
+	const bob = await connect();
+	try {
+		const aliceId = await authenticate(alice);
+		const bobId = await authenticate(bob);
+		const both = async (method: string) => {
+			const frames = [(await until(alice, frame => frame.method === method)).frame, (await until(bob, frame => frame.method === method)).frame];
+			expect(frames[1]).toEqual(frames[0]);
+			return frames[0].params;
+		};
+
+		alice.send({ id: 'post', method: 'message', params: { room_id: 'general', body: { text: 'belongs in a thread' } } });
+		const messageId = (await reply(alice, 'post')).result.message_id;
+		const original = await both('message');
+
+		bob.send({ id: 'react', method: 'reactions', params: { message_id: messageId, emojis: ['👍', '👍'] } });
+		expect((await reply(bob, 'react')).result).toEqual({});
+		const reaction = await both('reactions');
+		expect(reaction).toEqual({
+			log_id: reaction.log_id, message_id: messageId, room_id: 'general',
+			reactions: [{ from: bobId, emojis: ['👍'] }],
+		});
+		bob.send({ id: 'react-missing', method: 'reactions', params: { message_id: '404', emojis: ['👍'] } });
+		expect((await reply(bob, 'react-missing')).error.code).toBe(-32602);
+
+		alice.send({ id: 'thread', method: 'room', params: { parent_room_id: 'general', title: 'Deploy', intro_message: { message_id: messageId } } });
+		const roomId = (await reply(alice, 'thread')).result.room_id;
+		const room = await both('room');
+		expect(room).toEqual({
+			room_id: roomId, log_id: roomId, parent_room_id: 'general', title: 'Deploy',
+			intro_message: original, latest_log_id: roomId, history_log_id: roomId,
+		});
+
+		alice.send({ id: 'move', method: 'message', params: { message_id: messageId, room_id: roomId, body: { text: 'moved' }, reply_to: { message_id: messageId } } });
+		expect((await reply(alice, 'move')).error.code).toBe(-32602);
+		alice.send({ id: 'move-2', method: 'message', params: { message_id: messageId, room_id: roomId, body: { text: 'moved' } } });
+		expect((await reply(alice, 'move-2')).result).toEqual({ message_id: messageId });
+		const moved = await both('message');
+		expect(moved).toMatchObject({ message_id: messageId, room_id: roomId, from: aliceId, body: { text: 'moved' } });
+		const followed = await both('reactions');
+		expect(followed).toMatchObject({ message_id: messageId, room_id: roomId, reactions: [{ from: bobId, emojis: ['👍'] }] });
+		expect(BigInt(followed.log_id)).toBeGreaterThan(BigInt(moved.log_id));
+
+		bob.send({ id: 'general-history', method: 'history', params: { room_id: 'general', after: original.log_id } });
+		const general = (await reply(bob, 'general-history')).result;
+		expect(general.entries.map((entry: any) => [entry.log_id, entry.room_id])).toEqual([[original.log_id, 'general'], [moved.log_id, roomId]]);
+		expect(general.reactions).toEqual([reaction]);
+		bob.send({ id: 'thread-history', method: 'history', params: { room_id: roomId } });
+		const thread = (await reply(bob, 'thread-history')).result;
+		// History room records carry the room's current delivery fields.
+		expect(thread.rooms).toEqual([{ ...room, latest_log_id: followed.log_id }]);
+		expect(thread.entries).toEqual([moved]);
+		expect(thread.reactions).toEqual([followed]);
+		expect([thread.first_id, thread.last_id, thread.more]).toEqual([roomId, followed.log_id, false]);
+		expect([thread.latest_log_id, thread.history_log_id]).toEqual([followed.log_id, roomId]);
+
+		bob.send({ id: 'rename', method: 'room', params: { room_id: roomId, title: 'Deploys', parent_room_id: 'ignored' } });
+		expect((await reply(bob, 'rename')).result).toEqual({ room_id: roomId });
+		const renamed = await both('room');
+		expect(renamed).toMatchObject({ room_id: roomId, parent_room_id: 'general', title: 'Deploys' });
+		expect(renamed.intro_message).toBeUndefined();
+
+		bob.send({ id: 'join', method: 'room_join', params: { room_id: roomId } });
+		expect((await reply(bob, 'join')).result).toEqual({});
+		expect((await bob.next())).toEqual({ method: 'room', params: renamed });
+	} finally { alice.close(); bob.close(); }
+
+	// A later session is told about the thread right after general.
+	const late = await connect();
+	try {
+		await authenticate(late);
+		const announcement = await late.next();
+		expect(announcement.method).toBe('room');
+		expect(announcement.params.parent_room_id).toBe('general');
+	} finally { late.close(); }
 });

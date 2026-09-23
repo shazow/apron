@@ -13,9 +13,11 @@ Defaults:
 - WebSocket endpoint: `/ws`
 - health endpoint: `/healthz`
 - WebSocket origins: `localhost`, `127.0.0.1`, and `::1` during development
-- capabilities: `history`, `edit`
-- room: `general`
-- authentication: WebAuthn passkeys, bearer-token resume, and anonymous guests
+- protocol: Apron v3 (`PROTOCOL.md` at the repository root)
+- capabilities: `history`, `edit`, `rooms`, `reactions`
+- seeded room: `general` (title `General`)
+- authentication: WebAuthn passkeys, bearer-token resume, and `guest`; guest
+  user IDs are `guest_<n>` and honor an optional requested `name`
 - passkey RP ID: `localhost`; frontend origins: `http://localhost:5173` and
   `http://localhost:8080`
 
@@ -24,20 +26,81 @@ same listener. Use `-origin <pattern,...>` for a deployment-specific origin
 allowlist, or `-allow-any-origin` only when the deployment provides its own
 cross-site protections. `-addr` changes the listener address.
 
-The implementation keeps complete message snapshots and thread metadata in
-memory. `message` creates a message when `message_id` is absent and replaces
-its entire editable state when the ID is supplied. It assigns `from.user_id`
-from the authenticated connection and preserves the original author on edits.
-Edits, deletion, and moves require the creating identity. Unknown extension
-fields are retained; omitted editable fields are removed on replacement.
+## Log and history
 
-`thread` creates metadata with a server-assigned ID and optional title, summary,
-and advisory root. Adding messages requires a separate `message` save. Empty
-threads retain their metadata; the client decides how to display them. History
-can filter by `thread_id`, including transitions that move messages out of the
-thread. Unfiltered history contains all room transitions, including threads.
-Request IDs deduplicate accepted chat operations for the connection's current
-user. Switching identities clears that cache.
+Every change is a record in one append-only log with a single server-wide
+`log_id` sequence (commit time in milliseconds, or the previous ID + 1) shared
+by room records, message snapshots, and reaction sets across all rooms. A
+message's `message_id` is its creation `log_id`, and a room created by a client
+uses its creation `log_id` as its `room_id`. Nothing is compacted or discarded,
+so each room's `history_log_id` is the `log_id` of its creation record
+(including the seeded `general` room) and `latest_log_id` is the newest record
+in that room's log.
+
+`history` returns a window of one room's log partitioned into `rooms`,
+`entries`, and `reactions` (always present, possibly empty). `limit` (default
+100, clamped to 1000) counts records of every kind, and `first_id`/`last_id`
+span all of them.
+
+## Messages
+
+Message notifications and history entries are flat snapshots:
+`{message_id, log_id, room_id, from, body?, reply_to?, deleted?, ext?}`.
+`message` creates a message when `message_id` is absent and, when it is
+present, replaces every client field (`room_id`, `body`, `reply_to`, `deleted`,
+`ext`) with the submitted state. `from` is assigned from the authenticated
+connection and preserved across edits; `log_id` and `from` in requests are
+ignored, and unknown top-level keys are dropped (extension data belongs in
+`ext`, which is passed through unchanged). Edits, deletion, and moves require
+the creating identity. `body` is stored as submitted; a missing `body.format`
+means `plain`. Deletion is a save with `deleted: true` and yields a tombstone
+without `body`.
+
+`reply_to` is a bare `{"message_id": ...}` reference on input and in
+snapshots. It may name a message in any room, including a tombstone, but not
+the message itself.
+
+A save with a different `room_id` moves the message. The destination must
+exist. The move snapshot is logged in and broadcast to both rooms, so it
+appears in both rooms' history; earlier snapshots stay in the source room. If
+the message has reactions, a `reactions` record carrying every non-empty set
+is then logged in the destination room.
+
+## Rooms and threads
+
+A thread is a room with `parent_room_id`. `room` without `room_id` creates a
+room (optional `parent_room_id`, `title`, `intro_message`, `ext`); with
+`room_id` it replaces every client field except `parent_room_id`, which is
+fixed at creation.
+Omitted fields are cleared. Both return `{"room_id": ...}` and broadcast the
+new room record, which is logged in the room's own log. Any authenticated
+user may create top-level rooms or threads (nested threads are allowed) and
+update any room. A thread saved without a title is titled from the first line
+of its intro message, or `Thread`.
+
+`intro_message` is stored as a reference and announced with the referenced
+message's snapshot embedded. After authentication the server announces every
+room in creation order, so parents precede their threads. Every room is
+visible to every user: `room_join` on a known room returns `{}` and re-sends
+its announcement, and `room_leave` is `denied`.
+
+## Reactions
+
+`reactions` sets the caller's complete emoji set on a message and returns `{}`;
+the logged record is broadcast as
+`{log_id, message_id, room_id, reactions: [{from, emojis}]}`, with `room_id`
+the message's current room. Duplicate emoji collapse, `[]` clears, and a
+request that leaves the set unchanged logs nothing. Unknown messages, non-string
+or empty entries, entries over 64 bytes, and more than 20 distinct emoji per
+user are `invalid_params`.
+
+## Requests
+
+Request IDs deduplicate accepted operations for the connection's current user:
+a retry returns the original result without re-executing or rebroadcasting,
+and reuse with a different method or params is `invalid_params`. Switching
+identities clears that cache. `name` renames the current identity. `typing` is
+relayed to all clients. Unknown requests return `unsupported`.
 
 ## Passkeys
 
@@ -62,7 +125,7 @@ go run ./cmd/aprond -static-dir ../../clients/web/build \
 list of exact origins, including ports. The RP ID must be a domain valid for the
 frontend origin. Changing the RP ID creates a different credential scope.
 `-allow-any-origin` does not relax WebAuthn origin validation. The default
-`127.0.0.1` chat URL still supports anonymous chat; use `localhost` for passkeys.
+`127.0.0.1` chat URL still supports guest chat; use `localhost` for passkeys.
 
 The implementation uses [go-webauthn](https://github.com/go-webauthn/webauthn)
 for registration and signature verification. Challenges are random, expire after
@@ -85,21 +148,21 @@ another passkey login.
 credentials, including passkeys still present in your authenticator. Add a new
 passkey after restarting, and remove obsolete entries using your device's
 passkey manager. Durable credential storage, credential removal/account recovery,
-and deployment rate limits are future work. There is no upload service, room
-management, or push registration.
+and deployment rate limits are future work. There is no upload service or push
+registration.
 
 ### Example WebAuthn exchange
 
 These examples define the Go server's bearer-token policy alongside the canonical
-protocol exchange. All steps use `auth` requests with fresh IDs over the same
-WebSocket; no HTTP authentication endpoints are needed.
+protocol exchange (Appendix I). All steps use `auth` requests with fresh IDs
+over the same WebSocket; no HTTP authentication endpoints are needed.
 
 | `params.action` and `params.step` | Other parameters | Result |
 | --- | --- | --- |
 | `action: "register", step: "begin"` | None; current connection must be authenticated | `{challenge_id, public_key}` creation options |
-| `action: "register", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room/thread announcements |
+| `action: "register", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room announcements |
 | `action: "login", step: "begin"` | None | `{challenge_id, public_key}` discoverable request options |
-| `action: "login", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room/thread announcements |
+| `action: "login", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room announcements |
 
 Bearer resumption uses the separate `token` authentication scheme:
 `{"scheme":"token","token":"..."}`. Dropping the token and reconnecting
@@ -116,6 +179,6 @@ should pause chat operations while switching identities and must start a new
 ceremony after a disconnect.
 
 Embedding applications opt in through `Config.WebAuthn`, using a validated
-`webauthn.WebAuthn` instance. A nil value leaves anonymous authentication enabled.
+`webauthn.WebAuthn` instance. A nil value leaves only guest authentication enabled.
 
 Run `go test -race ./...` and `go vet ./...` from this directory to validate it.

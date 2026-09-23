@@ -1,4 +1,4 @@
-import type { ChatClient, ClientSnapshot, RoomSnapshot } from '$lib/protocol/client';
+import { canEdit, canManageRooms, canReact, capabilitiesOf, type ChatClient, type ClientSnapshot, type RoomSnapshot } from '$lib/protocol/client';
 import type { Identity, ServerParams } from '$lib/protocol/types';
 import { connectionStateOf, isSessionReady, reconnectErrorOf } from './connection';
 
@@ -8,7 +8,7 @@ type HeldSession = { rooms: RoomSnapshot[]; activeRoom?: string; you?: Identity;
 export const RECONNECT_STALL_MS = 10_000;
 
 export const blankSnapshot = (): ClientSnapshot => ({
-	status: 'idle', authenticated: false, rooms: [], pending: [], typing: [], showReconnectDivider: false
+	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], showReconnectDivider: false
 });
 
 /**
@@ -47,7 +47,12 @@ export class SessionView {
 		}
 		return live;
 	});
-	readonly canEdit = $derived(this.server?.caps?.includes('edit') === true);
+	/** Edit, move, and delete (cap `edit`). */
+	readonly canEdit = $derived(canEdit(this.server));
+	/** Create and update rooms and threads (cap `rooms`). */
+	readonly canManageRooms = $derived(canManageRooms(this.server));
+	/** Reaction chips and the React action (cap `reactions`). */
+	readonly canReact = $derived(canReact(this.server));
 	readonly canUpload = $derived(typeof this.server?.upload === 'string' && this.server.upload.length > 0);
 
 	/** Takes the client's next snapshot and keeps the held view in step with it. */

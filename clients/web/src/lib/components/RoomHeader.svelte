@@ -2,14 +2,17 @@
 	import type { RoomSnapshot } from '$lib/protocol/client';
 
 	interface Props {
+		/** The top-level room. */
 		room: RoomSnapshot;
+		/** The room whose history the header reports on: the open thread, else the room. */
+		pane: RoomSnapshot;
 		/** The open thread's title; undefined in the room view. */
 		threadTitle?: string;
 		/** Names typing in this room, other than the viewer. */
 		typing: string[];
-		/** Replies in the open thread, when it is announced. */
+		/** Replies in the open thread, once its history has loaded. */
 		replyCount?: number;
-		/** Show the thread's Edit button. */
+		/** Show the thread's Edit button (cap `rooms`). */
 		canEditThread: boolean;
 		editorOpen: boolean;
 		editDisabled: boolean;
@@ -17,7 +20,7 @@
 		onroom: () => void;
 		onedit: () => void;
 	}
-	let { room, threadTitle, typing, replyCount, canEditThread, editorOpen, editDisabled, onback, onroom, onedit }: Props = $props();
+	let { room, pane, threadTitle, typing, replyCount, canEditThread, editorOpen, editDisabled, onback, onroom, onedit }: Props = $props();
 </script>
 
 <header class="ap-roomhead">
@@ -25,24 +28,22 @@
 	<div class="ap-roomhead-text">
 		{#if threadTitle !== undefined}
 			<h1 class="ap-roomhead-name">
-				<button class="ap-roomhead-crumb" type="button" aria-label="Back to room" onclick={onroom}>{room.name}</button>
+				<button class="ap-roomhead-crumb" type="button" aria-label="Back to room" onclick={onroom}>{room.title}</button>
 				<span class="ap-roomhead-sep" aria-hidden="true"> › </span>
 				{threadTitle}
 			</h1>
 		{:else}
-			<h1 class="ap-roomhead-name">{room.name}</h1>
+			<h1 class="ap-roomhead-name">{room.title}</h1>
 		{/if}
 		{#if typing.length > 0}
 			<p class="ap-roomhead-sub ap-roomhead-typing typing-head">{typing.length === 1 ? `${typing[0]} is typing…` : `${typing.length} people are typing…`}</p>
 		{:else if replyCount !== undefined}
 			<p class="ap-roomhead-sub">{replyCount} {replyCount === 1 ? 'reply' : 'replies'}</p>
-		{:else if threadTitle === undefined && room.topic}
-			<p class="ap-roomhead-sub">{room.topic}</p>
 		{/if}
 	</div>
-	{#if room.recovering}
+	{#if pane.recovering || pane.loading}
 		<span class="ap-roomhead-sub" role="status">Loading history…</span>
-	{:else if room.recoveryError}
+	{:else if pane.recoveryError}
 		<span class="ap-roomhead-sub" role="status">History unavailable</span>
 	{/if}
 	{#if canEditThread}

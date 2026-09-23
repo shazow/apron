@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { passkeySupportError } from '$lib/protocol/webauthn';
-	import { ChatClient, defaultWebSocketUrl, normalizeWebSocketUrl, timelineMessages, type RoomSnapshot } from '$lib/protocol/client';
-	import { renderMarkdown } from '$lib/protocol/markdown';
+	import { ChatClient, childRooms, defaultWebSocketUrl, findMessage, normalizeWebSocketUrl, timelineMessages, type RoomSnapshot } from '$lib/protocol/client';
 	import type { MessageRecord } from '$lib/protocol/types';
 	import Composer from '$lib/components/Composer.svelte';
 	import ConnectScreen from '$lib/components/ConnectScreen.svelte';
@@ -20,13 +19,18 @@
 	import { FeedbackState } from '$lib/ui/feedback.svelte';
 	import { MentionTracker } from '$lib/ui/mentions.svelte';
 	import { embedFor, isOwn, mentionsMe, peopleIn, replySnippet, senderName } from '$lib/ui/messages';
+	import { reactionChips, type ReactionChip } from '$lib/ui/reactions';
 	import { MessageSelection } from '$lib/ui/selection.svelte';
 	import { SessionView } from '$lib/ui/session.svelte';
 	import { SidebarLayout } from '$lib/ui/sidebar.svelte';
 	import { loadDisplayName, loadRecentServers, loadServerUrl, rememberServer, type RecentServer } from '$lib/ui/storage';
-	import { buildTimeline, threadEntries } from '$lib/ui/timeline';
+	import { buildRoomTimeline, buildThreadTimeline, threadEntries, threadTitleFor } from '$lib/ui/timeline';
 
-	type PendingThreadStart = { room: string; thread_id: string };
+	/** A thread this viewer created, opened once the server has announced it. */
+	type PendingOpen = { room: string; thread: string };
+
+	/** How long a jump waits for its target to render (a thread's history may still be loading). */
+	const JUMP_WAIT_MS = 4000;
 
 	const session = new SessionView();
 	const feedback = new FeedbackState();
@@ -44,12 +48,15 @@
 	let highlightedId = $state<string | undefined>();
 	let editingId = $state<string | undefined>();
 	let threadEditorOpen = $state(false);
+	/** The open thread's `room_id`; undefined in the room view. */
 	let activeThread = $state<string | undefined>();
 	let selectedRoomId = $state<string | undefined>();
 	let drafts = $state<Record<string, string>>({});
 	let replyDrafts = $state<Record<string, string | undefined>>({});
 	let replyId = $state<string | undefined>();
-	let pendingThreadStarts = $state<Record<string, PendingThreadStart>>({});
+	let pendingOpen = $state<PendingOpen | undefined>();
+	/** Messages a thread is being started from, for the button's "Starting…". */
+	let startingThreads = $state<Record<string, true>>({});
 	let mobilePane = $state<'rooms' | 'main'>('main');
 	let composer = $state<Composer | undefined>();
 	let messageScroll = $state<HTMLDivElement | undefined>();
@@ -57,32 +64,35 @@
 	let latestVisible = $state(true);
 	let seenCount = $state(0);
 	let typingTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Where the last automatic scroll to the latest item left the list. */
+	let autoScrollTop: number | undefined;
 	let highlightTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let snapshot = $derived(session.snapshot);
+	/** The top-level room open in the pane (or behind the open thread). */
 	let activeRoom = $derived(session.activeRoom);
-	let allMessages = $derived(timelineMessages(activeRoom));
-	let messages = $derived(activeThread ? allMessages.filter((event) => event.thread_id === activeThread) : allMessages.filter((event) => !event.thread_id));
-	let threads = $derived(threadEntries(activeRoom, allMessages));
-	let threadsById = $derived(new Map(threads.map((entry) => [entry.thread_id, entry])));
-	let threadsByRoot = $derived(new Map(threads.filter((entry) => entry.announced && entry.root_message_id).map((entry) => [entry.root_message_id!, entry])));
-	let activeThreadEntry = $derived.by(() => {
-		const entry = activeThread ? threadsById.get(activeThread) : undefined;
-		return entry?.announced ? entry : undefined;
-	});
-	let timeline = $derived(buildTimeline({ messages: allMessages, threadsByRoot, thread: activeThread, threadRoot: activeThreadEntry?.root_message_id }));
-	let canCompose = $derived(Boolean(activeRoom && session.ready && !snapshot.authBusy && (!activeThread || activeThreadEntry)));
-	let people = $derived(peopleIn(allMessages, session.you));
+	let threads = $derived(threadEntries(session.rooms, activeRoom?.id));
+	let activeThreadEntry = $derived(activeThread ? threads.find((entry) => entry.id === activeThread) : undefined);
+	let threadRoom = $derived(activeThreadEntry ? session.rooms.find((room) => room.id === activeThreadEntry.id) : undefined);
+	/** The room the pane shows and the composer posts to: the open thread (itself a room), else the room. */
+	let paneRoom = $derived(activeThread ? threadRoom : activeRoom);
+	let messages = $derived(timelineMessages(paneRoom));
+	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
+	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro }) : buildRoomTimeline({ messages, threads }));
+	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
+	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you));
 	let typingNames = $derived(snapshot.typing
-		.filter((entry) => entry.room === activeRoom?.id && entry.from.user_id !== session.you?.user_id)
+		.filter((entry) => entry.room === paneRoom?.id && entry.from.user_id !== session.you?.user_id)
 		.map((entry) => entry.from.name || entry.from.user_id));
 	let backendLabel = $derived(session.server?.name || backendHost(serverInput) || 'Apron');
-	let threadReplyCount = $derived(activeThreadEntry ? messages.filter((event) => event.message_id !== activeThreadEntry?.root_message_id).length : undefined);
+	let threadReplyCount = $derived(threadRoom?.loaded ? messages.filter((event) => event.message_id !== intro?.message_id).length : undefined);
 	let unseenCount = $derived(stickToBottom ? 0 : Math.max(0, messages.length - seenCount));
 	let demoNotice = $derived(demoRetentionNotice(session.server));
 	/** The pane's messages this viewer may pick, in order: what shift-click ranges run along. */
 	let selectableOrder = $derived(messages.filter(canSelect).map((event) => event.message_id));
-	let selectThreads = $derived(threads.filter((entry) => entry.announced && entry.thread_id !== activeThread));
+	let selectThreads = $derived(threads.filter((entry) => entry.id !== activeThread));
+	/** New threads hang off a top-level room; this client keeps threads one level deep. */
+	let canStartThreads = $derived(session.canManageRooms && Boolean(activeRoom) && activeRoom?.parentRoomId === undefined);
 
 	$effect(() => {
 		const roomId = activeRoom?.id;
@@ -90,7 +100,7 @@
 	});
 
 	$effect(() => {
-		mentions.observe(session.rooms, session.you, { room: activeRoom?.id, thread: activeThread }, latestVisible);
+		mentions.observe(session.rooms, session.you, paneRoom?.id, latestVisible);
 	});
 
 	// Leaving a pane ends its selection in setDestination; losing the cap ends it here.
@@ -98,36 +108,56 @@
 		if (!session.canEdit) selection.cancel();
 	});
 
-	// A thread this viewer just started opens once the server has moved its root into it.
+	// A thread this viewer just created opens once the server has announced it.
 	$effect(() => {
-		const room = activeRoom;
-		if (!room) return;
-		for (const [eventId, pending] of Object.entries(pendingThreadStarts)) {
-			if (pending.room !== room.id) continue;
-			const event = room.timeline.events[eventId];
-			if (!event) continue;
-			if (event.thread_id === pending.thread_id) {
-				forgetThreadStart(eventId);
-				setDestination(room.id, pending.thread_id);
-				break;
-			}
-			if (event.thread_id) forgetThreadStart(eventId);
-		}
+		const pending = pendingOpen;
+		if (!pending || !session.rooms.some((room) => room.id === pending.thread)) return;
+		pendingOpen = undefined;
+		untrack(() => openDestination(pending.room, pending.thread));
+	});
+
+	// Threads don't recover with their parent: the open one loads its own history,
+	// again after a reconnect, which announces it afresh.
+	$effect(() => {
+		const room = threadRoom;
+		if (!client || !room || !session.ready || room.loaded || room.loading || room.recoveryError) return;
+		untrack(() => loadThread(room.id));
 	});
 
 	$effect(() => {
-		if (editingId && (!activeRoom?.timeline.events[editingId] || activeRoom.timeline.events[editingId].deleted || !messages.some((event) => event.message_id === editingId))) {
+		if (editingId && !timeline.some((item) => item.kind === 'message' && item.event.message_id === editingId && !item.event.deleted)) {
 			editingId = undefined;
 		}
 	});
 
 	$effect(() => {
 		messages.length;
-		activeRoom?.id;
+		paneRoom?.id;
 		if (!stickToBottom || !messageScroll) return;
 		requestAnimationFrame(() => {
-			if (messageScroll && stickToBottom) messageScroll.scrollTop = messageScroll.scrollHeight;
+			if (stickToBottom) scrollToLatest();
 		});
+	});
+
+	// Stay pinned to the latest item while the pane fills in: a room's history, its threads'
+	// cards and intros land over several updates, not all of which change what the effect
+	// above tracks. Follow the rendered content instead.
+	$effect(() => {
+		const scroll = messageScroll;
+		if (!scroll) return;
+		let frame = 0;
+		const observer = new MutationObserver(() => {
+			if (!stickToBottom || frame) return;
+			frame = requestAnimationFrame(() => {
+				frame = 0;
+				if (stickToBottom) scrollToLatest();
+			});
+		});
+		observer.observe(scroll, { childList: true, subtree: true, characterData: true });
+		return () => {
+			observer.disconnect();
+			cancelAnimationFrame(frame);
+		};
 	});
 
 	$effect(() => {
@@ -189,7 +219,8 @@
 		saveCurrentDraft();
 		selectedRoomId = undefined;
 		activeThread = undefined;
-		pendingThreadStarts = {};
+		pendingOpen = undefined;
+		startingThreads = {};
 		composerText = '';
 		replyId = undefined;
 		threadEditorOpen = false;
@@ -213,13 +244,19 @@
 		composer?.focus();
 	}
 
-	function draftKey(roomId: string, thread: string | undefined): string {
-		return JSON.stringify([client?.url ?? serverInput, roomId, thread ?? null]);
+	/** Drafts are kept per room, and a thread is a room of its own. */
+	function draftKey(roomId: string): string {
+		return JSON.stringify([client?.url ?? serverInput, roomId]);
+	}
+
+	/** The room the composer's draft belongs to: the open thread, else the room. */
+	function paneKey(): string | undefined {
+		return selectedRoomId ? draftKey(activeThread ?? selectedRoomId) : undefined;
 	}
 
 	function saveCurrentDraft(): void {
-		if (!selectedRoomId) return;
-		const key = draftKey(selectedRoomId, activeThread);
+		const key = paneKey();
+		if (!key) return;
 		drafts = { ...drafts, [key]: composerText };
 		replyDrafts = { ...replyDrafts, [key]: replyId };
 	}
@@ -230,7 +267,7 @@
 		saveCurrentDraft();
 		selectedRoomId = roomId;
 		activeThread = thread;
-		const key = draftKey(roomId, thread);
+		const key = draftKey(thread ?? roomId);
 		composerText = drafts[key] ?? '';
 		replyId = replyDrafts[key];
 		editingId = undefined;
@@ -242,19 +279,31 @@
 		stickToBottom = true;
 	}
 
+	/** Opens a room, or a thread under it, switching the top-level room first when it differs. */
+	function openDestination(roomId: string, thread: string | undefined): void {
+		if (!client) return;
+		if (activeRoom?.id !== roomId) session.chooseRoom(client, roomId);
+		setDestination(roomId, thread);
+		mobilePane = 'main';
+	}
+
 	function chooseThread(thread: string): void {
 		if (!activeRoom) return;
 		setDestination(activeRoom.id, thread);
 		stickToBottom = false;
 		seenCount = messages.length;
 		requestAnimationFrame(() => { if (messageScroll) messageScroll.scrollTop = 0; });
-		loadThread(activeRoom.id, thread);
+		// A failed load stays failed until the thread is opened again.
+		if (session.rooms.find((room) => room.id === thread)?.recoveryError) loadThread(thread);
 		mobilePane = 'main';
 		composer?.focus();
 	}
 
-	function loadThread(roomId: string, thread: string): void {
-		client?.loadThread(roomId, thread).catch((cause: Error) => feedback.error(cause));
+	/** Loads a thread's history (Appendix A); a failure the client recorded is reported once. */
+	function loadThread(roomId: string): void {
+		client?.loadRoom(roomId).catch((cause: unknown) => {
+			if (session.rooms.find((room) => room.id === roomId)?.recoveryError) feedback.error(cause, 'Unable to load thread');
+		});
 	}
 
 	function backToRoom(): void {
@@ -264,36 +313,31 @@
 	}
 
 	function threadTitle(thread: string): string {
-		return threadsById.get(thread)?.title || thread;
-	}
-
-	function forgetThreadStart(eventId: string): void {
-		const next = { ...pendingThreadStarts };
-		delete next[eventId];
-		pendingThreadStarts = next;
+		return threads.find((entry) => entry.id === thread)?.title ?? thread;
 	}
 
 	// --- Composing ---
 
 	function composerInput(): void {
-		if (!client || !activeRoom) return;
-		if (selectedRoomId) drafts = { ...drafts, [draftKey(selectedRoomId, activeThread)]: composerText };
-		client.sendTyping(activeRoom.id, true);
+		if (!client || !paneRoom) return;
+		const key = paneKey();
+		if (key) drafts = { ...drafts, [key]: composerText };
+		const roomId = paneRoom.id;
+		client.sendTyping(roomId, true);
 		if (typingTimer) clearTimeout(typingTimer);
-		typingTimer = setTimeout(() => client?.sendTyping(activeRoom?.id ?? '', false), 5000);
+		typingTimer = setTimeout(() => client?.sendTyping(roomId, false), 5000);
 	}
 
 	function sendMessage(): void {
-		if (!client || !activeRoom || !canCompose || !composerText.trim()) return;
+		if (!client || !paneRoom || !canCompose || !composerText.trim()) return;
 		const draft = composerText;
-		const roomId = activeRoom.id;
-		const thread = activeThread;
+		const roomId = paneRoom.id;
 		const reply = replyId;
-		const originKey = draftKey(roomId, thread);
-		const handle = client.sendMessage(roomId, draft, 'markdown', thread, reply);
+		const originKey = draftKey(roomId);
+		const handle = client.send(roomId, draft, 'markdown', reply ? { replyTo: reply } : {});
 		feedback.track(handle, 'Sending…', () => {
 			// A failed send gives the draft back, unless something else has been typed since.
-			const currentKey = selectedRoomId ? draftKey(selectedRoomId, activeThread) : undefined;
+			const currentKey = paneKey();
 			if (!drafts[originKey] && !replyDrafts[originKey] && !(currentKey === originKey && (composerText || replyId))) {
 				drafts = { ...drafts, [originKey]: draft };
 				replyDrafts = { ...replyDrafts, [originKey]: reply };
@@ -304,27 +348,26 @@
 				composer?.focus();
 			}
 		});
-		clearComposer(roomId, thread);
+		clearComposer(roomId);
 		client.sendTyping(roomId, false);
 		if (typingTimer) clearTimeout(typingTimer);
 		stickToBottom = true;
 		composer?.focus();
 	}
 
-	function clearComposer(roomId: string, thread: string | undefined): void {
-		const key = draftKey(roomId, thread);
+	function clearComposer(roomId: string): void {
+		const key = draftKey(roomId);
 		composerText = '';
 		replyId = undefined;
 		drafts = { ...drafts, [key]: '' };
 		replyDrafts = { ...replyDrafts, [key]: undefined };
 	}
 
-	/** Uploads one file (§6.1) and sends it as an embed beside whatever is in the composer. */
+	/** Uploads one file (Appendix E) and sends it as an embed beside whatever is in the composer. */
 	async function sendUpload(file: File): Promise<void> {
-		if (!client || !activeRoom || !canCompose || !session.canUpload) return;
+		if (!client || !paneRoom || !canCompose || !session.canUpload) return;
 		const chat = client;
-		const roomId = activeRoom.id;
-		const thread = activeThread;
+		const roomId = paneRoom.id;
 		const reply = replyId;
 		const text = composerText;
 		feedback.pending(`Uploading ${file.name}…`);
@@ -335,9 +378,9 @@
 			feedback.error(cause, 'Upload failed');
 			return;
 		}
-		clearComposer(roomId, thread);
+		clearComposer(roomId);
 		stickToBottom = true;
-		feedback.track(chat.sendMessage(roomId, text, 'markdown', thread, reply, [embedFor(file, url)]), 'Sending…');
+		feedback.track(chat.send(roomId, text, 'markdown', { ...(reply ? { replyTo: reply } : {}), embeds: [embedFor(file, url)] }), 'Sending…');
 	}
 
 	function beginReply(event: MessageRecord): void {
@@ -353,27 +396,73 @@
 		composer?.focus();
 	}
 
+	/**
+	 * A message by ID in any room: a reply target (`reply_to` may cross rooms)
+	 * or a thread's intro. Visible rooms' timelines first, so this follows
+	 * every snapshot; then anything else the client has stored.
+	 */
+	function resolveMessage(id: string): MessageRecord | undefined {
+		return findMessage(session.rooms, id) ?? client?.message(id);
+	}
+
 	function replyPreview(id: string): string {
-		const target = activeRoom?.timeline.events[id];
+		const target = resolveMessage(id);
 		if (!target) return 'Message unavailable';
 		if (target.deleted) return 'Message deleted';
 		return `${senderName(target)}: ${replySnippet(target)}`;
 	}
 
+	/** A message's reaction chips, from the timeline of the room it lives in (an intro may live in the parent). */
+	function reactionsFor(event: MessageRecord): ReactionChip[] {
+		const room = session.rooms.find((candidate) => candidate.id === event.room_id);
+		return reactionChips(room?.timeline.reactions[event.message_id], session.you?.user_id, event.deleted === true);
+	}
+
+	function react(event: MessageRecord, emoji: string): void {
+		if (!client || !session.canReact || event.deleted) return;
+		feedback.track(client.toggleReaction(event.message_id, emoji), 'Reacting…');
+	}
+
 	// --- Reading ---
 
-	/** Scrolls the timeline to a message and highlights it for a moment, opening its thread first if it lives in one. */
-	async function jumpToMessage(id: string): Promise<void> {
-		const room = activeRoom;
-		const target = room?.timeline.events[id];
-		if (!room || !target) return;
-		if (target.thread_id !== activeThread) {
-			setDestination(room.id, target.thread_id);
-			stickToBottom = false;
-			if (target.thread_id) loadThread(room.id, target.thread_id);
-			await tick();
+	/**
+	 * Where a message shows: a thread's messages in the thread; a room's own
+	 * message in the room, unless it introduces one of the room's threads,
+	 * which is pinned at the top of that thread instead.
+	 */
+	function destinationOf(target: MessageRecord): { room: string; thread?: string } | undefined {
+		const rooms = session.rooms;
+		const home = rooms.find((room) => room.id === target.room_id);
+		if (!home) return undefined;
+		if (home.parentRoomId !== undefined && rooms.some((room) => room.id === home.parentRoomId)) return { room: home.parentRoomId, thread: home.id };
+		if (activeThread && activeRoom?.id === home.id && activeThreadEntry?.introMessageId === target.message_id) return { room: home.id, thread: activeThread };
+		const introduced = childRooms(rooms, home.id).find((room) => room.introMessageId === target.message_id);
+		return introduced ? { room: home.id, thread: introduced.id } : { room: home.id };
+	}
+
+	async function renderedMessage(id: string): Promise<HTMLElement | undefined> {
+		const started = performance.now();
+		await tick();
+		for (;;) {
+			const node = messageScroll?.querySelector<HTMLElement>(`article[data-message-id="${CSS.escape(id)}"]`);
+			if (node || performance.now() - started > JUMP_WAIT_MS) return node ?? undefined;
+			await new Promise((resolve) => requestAnimationFrame(resolve));
 		}
-		const node = messageScroll?.querySelector<HTMLElement>(`article[data-message-id="${CSS.escape(id)}"]`);
+	}
+
+	/**
+	 * Scrolls the timeline to a message and highlights it for a moment, first
+	 * opening the room or thread it lives in (and loading a thread's history).
+	 */
+	async function jumpToMessage(id: string): Promise<void> {
+		const target = resolveMessage(id);
+		const destination = target ? destinationOf(target) : undefined;
+		if (!destination) return;
+		if (destination.room !== activeRoom?.id || destination.thread !== activeThread) {
+			openDestination(destination.room, destination.thread);
+			stickToBottom = false;
+		}
+		const node = await renderedMessage(id);
 		if (!node) return;
 		stickToBottom = false;
 		node.scrollIntoView({ block: 'center' });
@@ -386,7 +475,13 @@
 	function jumpToLatest(): void {
 		stickToBottom = true;
 		mentions.clearUnseen();
-		if (messageScroll) messageScroll.scrollTop = messageScroll.scrollHeight;
+		scrollToLatest();
+	}
+
+	function scrollToLatest(): void {
+		if (!messageScroll) return;
+		messageScroll.scrollTop = messageScroll.scrollHeight;
+		autoScrollTop = messageScroll.scrollTop;
 	}
 
 	/** Takes you to the oldest mention that arrived while you were reading back. */
@@ -398,6 +493,11 @@
 
 	function trackScroll(): void {
 		if (!messageScroll) return;
+		// The event for our own scroll to the latest item can arrive after the pane grew again
+		// (a room's history and its threads' cards land over several snapshots): the reader
+		// hasn't scrolled up, so stay pinned and let the next update scroll down again.
+		if (stickToBottom && autoScrollTop !== undefined && Math.abs(messageScroll.scrollTop - autoScrollTop) < 2) return;
+		autoScrollTop = undefined;
 		const atBottom = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 96;
 		if (!atBottom && stickToBottom) seenCount = messages.length;
 		stickToBottom = atBottom;
@@ -405,8 +505,9 @@
 
 	// --- Editing ---
 
+	/** Your own messages in the open pane can be picked for a move (cap `edit`); a thread's intro from another room can't. */
 	function canSelect(event: MessageRecord): boolean {
-		return session.canEdit && isOwn(event, session.you) && !event.deleted;
+		return session.canEdit && isOwn(event, session.you) && !event.deleted && event.room_id === paneRoom?.id;
 	}
 
 	/** What the toolbar offers: only what the server can do, and only on messages this viewer may change. */
@@ -415,72 +516,84 @@
 		return {
 			reply: canCompose && !event.deleted,
 			edit: own && !event.deleted,
-			startThread: own && !event.deleted && !event.thread_id && !activeThread,
-			select: own && !event.deleted,
-			removeReply: own && Boolean(event.reply_message_id)
+			startThread: canStartThreads && canCompose && !event.deleted && !activeThread && event.room_id === activeRoom?.id,
+			select: canSelect(event),
+			removeReply: own && Boolean(event.reply_to),
+			react: session.canReact && canCompose && !event.deleted
 		};
 	}
 
 	function saveEdit(event: MessageRecord, text: string): void {
-		if (!client || !activeRoom || !session.canEdit) return;
-		feedback.track(client.updateMessage(activeRoom.id, event.message_id, text), 'Saving edit…');
+		if (!client || !session.canEdit) return;
+		feedback.track(client.editMessage(event.message_id, text), 'Saving edit…');
 		editingId = undefined;
 	}
 
 	function deleteMessage(event: MessageRecord): void {
-		if (!client || !activeRoom || !session.canEdit) return;
+		if (!client || !session.canEdit) return;
 		if (!confirm('Delete this message? This cannot be undone.')) return;
-		feedback.track(client.deleteMessage(activeRoom.id, event.message_id), 'Deleting message…');
+		feedback.track(client.deleteMessage(event.message_id), 'Deleting message…');
 	}
 
 	function removeReply(event: MessageRecord): void {
-		if (!client || !activeRoom || !session.canEdit) return;
-		feedback.track(client.setMessageReply(activeRoom.id, event.message_id, null), 'Removing reply reference…');
+		if (!client || !session.canEdit) return;
+		feedback.track(client.setMessageReply(event.message_id, null), 'Removing reply reference…');
 	}
 
-	/** Proposes a thread rooted at this message: the server assigns the ID, then the message is saved into it. */
+	/**
+	 * Starts a thread on a message (cap `rooms`): a room under this one whose
+	 * intro is the message, which stays where it is. The thread opens once the
+	 * server has announced it.
+	 */
 	async function startThread(event: MessageRecord): Promise<void> {
-		if (!client || !activeRoom || !canSelect(event) || event.thread_id) return;
+		if (!client || !activeRoom || !canStartThreads || event.deleted || startingThreads[event.message_id]) return;
 		const chat = client;
 		const roomId = activeRoom.id;
-		pendingThreadStarts = { ...pendingThreadStarts, [event.message_id]: { room: roomId, thread_id: '' } };
+		const id = event.message_id;
+		startingThreads = { ...startingThreads, [id]: true };
 		feedback.pending('Starting thread…');
 		try {
-			const result = await chat.createThread(roomId, { root_message_id: event.message_id }).promise;
-			if (typeof result.thread_id !== 'string') throw new Error('Invalid thread response');
-			pendingThreadStarts = { ...pendingThreadStarts, [event.message_id]: { room: roomId, thread_id: result.thread_id } };
-			await chat.setMessageThread(roomId, event.message_id, result.thread_id).promise;
+			const result = await chat.createRoom({ parentRoomId: roomId, title: threadTitleFor(event), introMessageId: id }).promise;
+			if (typeof result.room_id !== 'string') throw new Error('Invalid room response');
+			pendingOpen = { room: roomId, thread: result.room_id };
 			feedback.clear();
 		} catch (cause) {
-			forgetThreadStart(event.message_id);
 			feedback.error(cause, 'Unable to start thread');
+		} finally {
+			const next = { ...startingThreads };
+			delete next[id];
+			startingThreads = next;
 		}
 	}
 
 	// --- Select mode ---
 
 	function beginSelect(event: MessageRecord): void {
-		if (!activeRoom || !canSelect(event)) return;
+		if (!paneRoom || !canSelect(event)) return;
 		editingId = undefined;
 		composer?.reset();
-		selection.begin(activeRoom.id, activeThread, event.message_id);
+		selection.begin(paneRoom.id, event.message_id);
 	}
 
-	/** Moves the selection; a new thread is opened once it exists, an existing destination leaves the pane as it is. */
-	async function moveSelection(thread: string | null | 'new'): Promise<void> {
-		if (!client || !activeRoom || !session.canEdit) return;
+	/**
+	 * Moves the selection to a thread or back to the room (cap `edit`), or into
+	 * a new thread (cap `rooms`), which opens once it exists. An existing
+	 * destination leaves the pane as it is.
+	 */
+	async function moveSelection(target: string | 'new'): Promise<void> {
+		if (!client || !activeRoom || !paneRoom || !session.canEdit) return;
 		const roomId = activeRoom.id;
-		const result = thread === 'new'
-			? await selection.moveToNewThread(client, messages.map((event) => event.message_id))
-			: await selection.move(client, thread);
+		const result = target === 'new'
+			? await selection.moveToNewThread(client, messages.map((event) => event.message_id), {
+				parentRoomId: roomId,
+				title: (introId) => threadTitleFor(resolveMessage(introId))
+			})
+			: await selection.move(client, target);
 		if (!result.moved) {
 			if (result.error !== undefined) feedback.error(result.error, 'Some messages could not be moved');
 			return;
 		}
-		if (thread === 'new' && result.thread) {
-			setDestination(roomId, result.thread);
-			loadThread(roomId, result.thread);
-		}
+		if (target === 'new') pendingOpen = { room: roomId, thread: result.room };
 	}
 
 	/** Escape leaves select mode, as it leaves the thread menu. */
@@ -528,17 +641,18 @@
 		{#if activeRoom}
 			<RoomHeader
 				room={activeRoom}
+				pane={paneRoom ?? activeRoom}
 				threadTitle={activeThread ? threadTitle(activeThread) : undefined}
 				typing={typingNames}
-				replyCount={activeThread && activeThreadEntry ? threadReplyCount : undefined}
-				canEditThread={Boolean(activeThread && session.canEdit && activeThreadEntry)}
+				replyCount={activeThread ? threadReplyCount : undefined}
+				canEditThread={Boolean(activeThread && session.canManageRooms && activeThreadEntry)}
 				editorOpen={threadEditorOpen}
 				editDisabled={!canCompose}
 				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)}
 			/>
 			{#if threadEditorOpen && activeThreadEntry}
-				{#key activeThreadEntry.thread_id}
-					<ThreadEditor {client} thread={activeThreadEntry} enabled={canCompose && session.canEdit} onclose={() => (threadEditorOpen = false)} />
+				{#key activeThreadEntry.id}
+					<ThreadEditor {client} thread={activeThreadEntry} enabled={canCompose && session.canManageRooms} onclose={() => (threadEditorOpen = false)} />
 				{/key}
 			{/if}
 
@@ -576,20 +690,14 @@
 				</div>
 			{/if}
 
-			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.name} messages`}>
-				{#if activeThreadEntry?.summary?.trim()}
-					<section class="ap-summary" aria-label="Thread summary">
-						<span class="ap-summary-label">Summary</span>
-						<div class="ap-summary-text ap-msg-text markdown" data-testid="thread-summary">{@html renderMarkdown(activeThreadEntry.summary, people)}</div>
-					</section>
-				{/if}
+			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.title} messages`}>
 				{#if snapshot.showReconnectDivider}
 					<div class="ap-divider ap-divider-gap" role="separator" data-testid="reconnect-divider"><span>Reconnected · earlier messages aren’t available</span></div>
 				{/if}
-				{#if timeline.length === 0 && !activeRoom.recovering}
+				{#if timeline.length === 0 && !(paneRoom?.recovering || paneRoom?.loading)}
 					<div class="empty">
 						<h2>{activeThread ? 'No replies yet' : 'Nothing here yet'}</h2>
-						<p>{activeThread ? 'Reply below to continue the thread.' : `Start the conversation in ${activeRoom.name}.`}</p>
+						<p>{activeThread ? 'Reply below to continue the thread.' : `Start the conversation in ${activeRoom.title}.`}</p>
 					</div>
 				{:else}
 					{#each timeline as item (item.key)}
@@ -598,13 +706,14 @@
 						{:else if item.kind === 'replies'}
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count} {item.count === 1 ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
-							<ThreadCard entry={item.entry} onopen={() => chooseThread(item.entry.thread_id)} />
+							<ThreadCard entry={item.entry} onopen={() => chooseThread(item.entry.id)} />
 						{:else}
 							{@const event = item.event}
 							<Message
 								{event}
 								grouped={item.grouped}
-								room={activeRoom}
+								resolve={resolveMessage}
+								reactions={reactionsFor(event)}
 								{people}
 								mention={mentionsMe(event, session.you)}
 								pinged={mentions.pinged.includes(event.message_id)}
@@ -612,7 +721,7 @@
 								selecting={selection.active}
 								selected={selection.has(event.message_id)}
 								editing={editingId === event.message_id}
-								startingThread={Boolean(pendingThreadStarts[event.message_id])}
+								startingThread={Boolean(startingThreads[event.message_id])}
 								caps={capsFor(event)}
 								onreply={() => beginReply(event)}
 								onjump={jumpToMessage}
@@ -622,6 +731,7 @@
 								ondelete={() => deleteMessage(event)}
 								onremovereply={() => removeReply(event)}
 								onstartthread={() => startThread(event)}
+								onreact={(emoji) => react(event, emoji)}
 								onbeginselect={() => beginSelect(event)}
 								onselect={(range) => selection.toggle(event.message_id, selectableOrder, range)}
 							/>
@@ -643,15 +753,15 @@
 
 			{#if selection.active}
 				<SelectionBar
-					{selection} threads={selectThreads} inThread={Boolean(activeThread)}
-					onmove={moveSelection} onnewthread={() => moveSelection('new')} onfill={() => selection.fillBetween(selectableOrder)}
+					{selection} threads={selectThreads} parentRoom={activeThread ? activeRoom.id : undefined} canCreateThread={canStartThreads}
+					onmove={(room) => moveSelection(room)} onnewthread={() => moveSelection('new')} onfill={() => selection.fillBetween(selectableOrder)}
 					oncancel={() => { selection.cancel(); composer?.focus(); }}
 				/>
 			{:else}
 				<Composer
 					bind:this={composer}
 					bind:value={composerText}
-					placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.name}`}
+					placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.title}`}
 					disabled={!canCompose}
 					canUpload={session.canUpload}
 					{people}
@@ -703,8 +813,6 @@
 	.empty h2 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 600; color: var(--ink); }
 	.empty p { margin: 0; }
 	.empty .ap-btn { margin-top: var(--space-2); }
-	.ap-summary-text :global(p) { margin: 0; }
-	.ap-summary-text :global(p + p) { margin-top: var(--space-1); }
 	.typing-row { min-height: 20px; padding-top: var(--space-1); }
 	.toast { position: fixed; z-index: 10; left: 50%; bottom: calc(var(--space-4) + 64px); transform: translateX(-50%); max-width: min(480px, calc(100% - var(--space-8))); }
 	.toast :global(.ap-status) { box-shadow: var(--shadow-float); }

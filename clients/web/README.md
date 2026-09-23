@@ -44,17 +44,36 @@ you aren't reading, and, when it lands above the fold, turns the jump bar rust
 with **Jump to mention**. Mentions are decided here from the text; the protocol
 carries none.
 
-With the `edit` cap, several of your messages move into one thread at a time:
-shift-click a message (or press `x` on it, long-press it on touch, or pick
-**Select** from its More menu) to enter select mode, shift-click another to fill
-the range, and the selection bar replaces the composer with the count, **Move to
-thread**, **New thread** and Cancel. Each message is its own `message` request;
-denied ones stay selected and the bar says how many didn't move. Escape leaves
-select mode.
+Threads are rooms with a `parent_room_id`. The sidebar lists top-level rooms
+and the open room's threads under it; the room feed shows each thread as a card
+that previews its intro message (or, without one, its latest loaded message).
+With the `rooms` cap, **Start thread** on a message creates a thread under the
+room with that message as its intro; the message stays in the room, where its
+card stands in for it, and leads the thread's timeline, pinned under the header.
+A thread's header offers **Edit** for its title. Threads load their history when
+opened; drafts are kept per room, threads included.
+
+With the `edit` cap, several of your messages move at a time: shift-click a
+message (or press `x` on it, long-press it on touch, or pick **Select** from its
+More menu) to enter select mode, shift-click another to fill the range, and the
+selection bar replaces the composer with the count, **Move to thread** (or, in a
+thread, back to the room), **New thread** (with the `rooms` cap) and Cancel. A
+move is a save of the message with the destination's `room_id`, one request per
+message; a new thread is created first and the moves follow once the server has
+named it. Denied ones stay selected and the bar says how many didn't move.
+Escape leaves select mode.
+
+A reply's quote may point into another room: clicking it opens that room or
+thread, loading the thread's history if needed, and highlights the message.
+
+With the `reactions` cap, a message's **React** action opens a small emoji
+palette, and reactions show as chips under the message: emoji and count,
+highlighted when one is yours, with a tooltip naming who reacted. Clicking a
+chip toggles your reaction. Tombstones show no reactions.
 
 When the server advertises an `upload` URL, the composer grows attach and
 microphone buttons: attach posts the file as `multipart/form-data` to that URL
-(§6.1) and sends the returned URL as an embed, and the microphone records a clip
+(Appendix E) and sends the returned URL as an embed, and the microphone records a clip
 and sends it as an `audio` embed. Neither example server in this repository
 offers uploads, so both buttons stay hidden there.
 
@@ -64,7 +83,7 @@ base URL, a display name, and a sign-in choice (Guest by default; Passkey signs
 in with an existing passkey once the guest session is up). The server and name
 are stored in local storage, and the last few backends are listed under the
 form. The profile bar at the foot of the sidebar edits your handle, which is
-sent with the protocol `nick` request after authentication; the editor shows
+sent with the protocol `name` request after authentication; the editor shows
 what the server actually kept.
 
 The profile editor's Sign-in row offers **Add passkey**, **Sign in with passkey**,
@@ -91,7 +110,7 @@ automatically replace them with a guest identity. Signing out clears the stored
 credentials and reconnects as a guest. The Go example's sessions are in memory
 and are lost on backend restart.
 
-The WebAuthn exchange follows [Appendix C of the protocol](../../PROTOCOL.md#appendix-c--webauthn-authentication-optional):
+The WebAuthn exchange follows [Appendix I of the protocol](../../PROTOCOL.md#appendix-i--webauthn-authentication-optional):
 both registration and login use `action` plus `step: "begin"` or
 `step: "finish"`, with the server's `challenge_id` and `public_key` and the
 browser's standard JSON credential representation. The implementation details
@@ -105,37 +124,47 @@ the reference theme; light follows `prefers-color-scheme`), and
 verbatim. The Svelte components under `src/lib/components` wrap its `ap-*`
 classes one to one with the system's React components — `ConnectScreen`,
 `Sidebar` and `ProfileBar`, `RoomHeader` and `ThreadEditor`, `ThreadCard`,
-`Message`, `Composer` with its `MentionPicker`, `SelectionBar`, `JumpBar`,
+`Message` with its `ReactionBar`, `Composer` with its `MentionPicker`, `SelectionBar`, `JumpBar`,
 `StatusBanner`, `Avatar` — and carry only the layout glue each needs. Re-copy
 `apron.css` when the design system changes rather than editing it here.
 
 `src/routes/+page.svelte` owns the session and the navigation (which room or
-thread is open, per-destination drafts) and composes the components. The
+thread is open, per-room drafts) and composes the components. The
 reactive state behind it lives in `src/lib/ui` as small classes — `SessionView`
 (the last authenticated view, held through a reconnect), `MentionTracker`,
 `MessageSelection`, `FeedbackState`, `SidebarLayout` — beside pure, unit-tested
-helpers: `timeline.ts` builds the room and thread views, `messages.ts` and
-`time.ts` read messages, `connection.ts` words the connection state, and
+helpers: `timeline.ts` groups threads under their rooms and builds the room and
+thread views, `reactions.ts` turns reaction summaries into chips, `messages.ts`
+and `time.ts` read messages, `connection.ts` words the connection state, and
 `storage.ts` keeps everything remembered between visits under `apron.*` keys.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol`. Recovery uses the base protocol's `latest_log_id` and
-`history_log_id` fields. It tracks the monotonic effective boundary and a
-per-scope checkpoint, captures a fixed room head, pages complete snapshots from
-the retained boundary, and buffers bounded live snapshots until recovery
-finishes. A checkpoint at `history_log_id - 1` resumes safely; if retention
-overtakes the next uncovered range, the client rebuilds from the new boundary
-and ignores obsolete replies. `history_log_id: null` means the effective
-boundary is `latest_log_id + 1`. Sparse timestamp log IDs are expected.
-Opening a thread fetches its history independently with `thread_id` and a fixed
-head, without advancing room coverage. The reducer installs the greatest
-`log_id` for each `message_id`, so overlapping history and live delivery cannot
-revert newer state. The UI displays a notice that the demo retains roughly the
-last day and honors server retry delays with jittered reconnect backoff.
+`src/lib/protocol` and speak Apron protocol v3. `reducer.ts` keeps one store
+of room records, message snapshots, and per-user reaction sets for every room;
+each record replaces the stored one only when its `log_id` is greater, so
+overlapping history and live delivery cannot revert newer state, and a move
+snapshot re-homes a message into its new room. Embedded `reply_to` and
+`intro_message` snapshots install like any other record. Reactions aggregate
+per message (counts per emoji, who reacted, whether you did) and are hidden on
+tombstones.
+
+Recovery is per room and uses `latest_log_id` and `history_log_id`. For each
+top-level room the client tracks the monotonic effective lower bound and a
+checkpoint, captures a fixed head when the room is announced, pages every
+record kind from the bound (or the checkpoint), and buffers bounded live
+records until recovery finishes; the room's published timeline is held until
+then. If retention overtakes the next uncovered position the client rebuilds
+from the new bound and ignores obsolete replies. `history_log_id: null` means
+the effective bound is `latest_log_id + 1`. Sparse timestamp log IDs are
+expected. Threads are rooms with a `parent_room_id`; they load their own
+history with `loadRoom` when opened. The UI displays a notice that the demo
+retains roughly the last day and honors server retry delays with jittered
+reconnect backoff.
 
 Edits, moves, and deletion use the same `message` request as creation, with an
-existing `message_id` and complete editable state. The client preserves unknown
-extensions, embeds, and other fields it is not changing. Starting a thread first
-requests server-assigned metadata through `thread`, then saves the message with
-the returned `thread_id`. Thread titles fall back to the root excerpt or ID in
-the UI; empty threads remain available.
+existing `message_id`, and resubmit every client field of the latest snapshot
+(`room_id`, `body`, a bare `reply_to`, and `ext` unchanged). A move is a save
+with another `room_id`. Rooms and threads are created and updated with the
+`room` request (cap `rooms`); updates resubmit `title`, a bare `intro_message`,
+and `ext`. Reactions use the `reactions` request (cap `reactions`) with your
+complete emoji set.

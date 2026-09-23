@@ -7,9 +7,9 @@
 	import { saveDisplayName, saveServerUrl, type RecentServer } from '$lib/ui/storage';
 	import TypingDots from './TypingDots.svelte';
 
-	type Scheme = 'anonymous' | 'webauthn';
+	type Scheme = 'guest' | 'webauthn';
 	const SCHEMES: Record<Scheme, { label: string; hint: string }> = {
-		anonymous: { label: 'Guest', hint: 'No token needed; the server picks a guest identity.' },
+		guest: { label: 'Guest', hint: 'No token needed; the server picks a guest identity.' },
 		webauthn: { label: 'Passkey', hint: 'Your device will ask you to confirm.' }
 	};
 
@@ -31,13 +31,13 @@
 	let { client, session, serverInput = $bindable(), displayName = $bindable(), passkeyUnavailable, recentServers, canCancel, onconnect, onconnected, oncancel }: Props = $props();
 
 	// The initial choice follows the current session; the segmented control owns it from then on.
-	let scheme = $state<Scheme>(untrack(() => (session.snapshot.passkeySession && !passkeyUnavailable ? 'webauthn' : 'anonymous')));
+	let scheme = $state<Scheme>(untrack(() => (session.snapshot.passkeySession && !passkeyUnavailable ? 'webauthn' : 'guest')));
 	let pending = $state(false);
 	let error = $state('');
 	let snapshot = $derived(session.snapshot);
 	/** Sign-in schemes this client can drive, narrowed to what the connected server offers once it is the one in the field. */
 	let schemes = $derived.by((): Scheme[] => {
-		const supported: Scheme[] = passkeyUnavailable ? ['anonymous'] : ['anonymous', 'webauthn'];
+		const supported: Scheme[] = passkeyUnavailable ? ['guest'] : ['guest', 'webauthn'];
 		const offered = session.server?.auth;
 		if (!offered || serverInput.trim() !== client.url) return supported;
 		const narrowed = supported.filter((candidate) => offered.includes(candidate));
@@ -97,7 +97,7 @@
 		onconnected();
 	}
 
-	/** Waits out the nick request that follows guest auth, then swaps in the passkey identity. */
+	/** Waits out the `name` request that follows guest auth, then swaps in the passkey identity. */
 	async function finishWithPasskey(): Promise<void> {
 		for (let attempt = 0; ; attempt += 1) {
 			try {

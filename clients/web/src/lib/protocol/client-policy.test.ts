@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defaultWebSocketUrl, normalizeWebSocketUrl, reconnectDelay, recoveryBufferFits } from './client';
-import type { Transition } from './types';
+import { capabilitiesOf, canEdit, canManageRooms, canReact, defaultWebSocketUrl, hasHistory, normalizeWebSocketUrl, reconnectDelay, recoveryBufferFits } from './client';
+import type { MessageRecord } from './types';
 
-const transition: Transition = {
-	log_id: '1724803200001',
-	message: { message_id: '1724803200001', from: { user_id: 'alice' }, body: { text: 'live' } }
+const transition: MessageRecord = {
+	message_id: '1724803200001', log_id: '1724803200001', room_id: 'general', from: { user_id: 'alice' }, body: { text: 'live' }
 };
 
 describe('default server URL', () => {
@@ -55,5 +54,14 @@ describe('client recovery policies', () => {
 		expect(reconnectDelay(100, 0)).toBe(48000);
 		expect(reconnectDelay(100, 1)).toBe(72000);
 		expect(reconnectDelay(100, 0, 3600000)).toBe(3600000);
+	});
+});
+
+describe('capability gating', () => {
+	it('derives feature flags from the latest server frame', () => {
+		const server = { protocol: 3, auth: ['guest'], caps: ['history', 'reactions'] };
+		expect(capabilitiesOf(server)).toEqual({ history: true, edit: false, rooms: false, reactions: true, push: false });
+		expect(capabilitiesOf(undefined)).toEqual({ history: false, edit: false, rooms: false, reactions: false, push: false });
+		expect([canEdit(server), canManageRooms(server), canReact(server), hasHistory(server)]).toEqual([false, false, true, true]);
 	});
 });

@@ -8,30 +8,38 @@
  * for a complete mutation before exposing its result.
  */
 
-import { BOOTSTRAP_ROW_RESERVATION, DEFAULT_LIMITS, MAINTENANCE_CONTROL_RESERVE } from "./budget";
+import {
+  BOOTSTRAP_ROW_RESERVATION,
+  DEFAULT_LIMITS,
+  MAINTENANCE_CONTROL_RESERVE,
+  MAX_EMOJI_BYTES,
+  MAX_THREAD_LIMIT,
+} from "./budget";
 import type { AccountUsageSnapshot } from "./account-usage";
 import type {
   AdmissionSnapshot,
   AuthTier,
   CleanupResult as DomainCleanupResult,
   DedupRecord,
-  HistoryEntry as DomainHistoryEntry,
-  HistoryPage,
-  HistoryQuery as DomainHistoryQuery,
   Identity as DomainIdentity,
-  MutationCommit,
-  MutationInput as DomainMutationInput,
-  RoomState as DomainRoomState,
   StoredCredential,
   StoredIdentity,
-  ThreadRecord as DomainThreadRecord,
 } from "./domain.js";
 // @ts-expect-error Workers' nodejs_compat runtime supplies this module; the
 // worker type package intentionally omits Node's full module declarations.
 import { createHash } from "node:crypto";
 
+/** The seeded, permanent top-level room. */
 export const ROOM_ID = "general";
-export const SCHEMA_VERSION = 1;
+export const ROOM_TITLE = "General";
+/**
+ * Schema 2 stores the protocol v3 server-wide log: room records, flat message
+ * snapshots, and reaction sets. Stored data from any other schema version is
+ * not migrated: the object is wiped and started fresh (see resetStorage()).
+ */
+export const SCHEMA_VERSION = 2;
+/** Title the demo supplies for a thread room created or saved without one. */
+export const DEFAULT_THREAD_TITLE = "Thread";
 export const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
 export const RETENTION_MS = DEFAULT_LIMITS.retentionSeconds * 1000;
 export const DEDUP_TTL_MS = DEFAULT_LIMITS.dedupTtlSeconds * 1000;
@@ -100,6 +108,7 @@ export interface DurableStorageLike {
   sql: SqlStorageLike;
   transactionSync?: <T>(closure: () => T) => T;
   setAlarm?: (time: number | Date) => Promise<void>;
+  deleteAll?: () => Promise<void>;
   getAlarm?: () => Promise<number | null>;
 }
 
@@ -123,8 +132,12 @@ export interface StoreConfig {
   maxNameBytes: number;
   maxNameCodePoints: number;
   maxEmbeds: number;
+  /** Thread rooms (rooms with a parent) that may exist at once. */
   maxThreads: number;
+  /** Serialized client fields of one room record. */
   maxThreadMetadataBytes: number;
+  reactionUsersPerMessage: number;
+  reactionEmojisPerUser: number;
   maxHistoryLimit: number;
   historyDefaultLimit: number;
   maxHistoryResponseBytes: number;
@@ -197,6 +210,8 @@ const DEFAULT_CONFIG: StoreConfig = {
   maxEmbeds: DEFAULT_LIMITS.maxEmbeds,
   maxThreads: DEFAULT_LIMITS.threadLimit,
   maxThreadMetadataBytes: DEFAULT_LIMITS.threadMetadataBytes,
+  reactionUsersPerMessage: DEFAULT_LIMITS.reactionUsersPerMessage,
+  reactionEmojisPerUser: DEFAULT_LIMITS.reactionEmojisPerUser,
   maxHistoryLimit: DEFAULT_LIMITS.historyMaxLimit,
   historyDefaultLimit: DEFAULT_LIMITS.historyDefaultLimit,
   maxHistoryResponseBytes: DEFAULT_LIMITS.historyMaxResponseBytes,
@@ -280,88 +295,78 @@ export interface Identity {
   tier?: Tier;
 }
 
-export interface StoreThreadRecord {
-  room_id: string;
-  thread_id: string;
-  title?: string;
-  summary?: string;
-  root_message_id?: string;
-  created_at?: number;
-  updated_at?: number;
-  [key: string]: unknown;
-}
-
+/** A flat, self-describing message snapshot (protocol v3 section 3.5). */
 export interface MessageSnapshot {
   message_id: string;
+  log_id: string;
+  room_id: string;
   from: Identity;
   body?: Record<string, unknown>;
-  reply_message_id?: string;
-  thread_id?: string;
+  reply_to?: { message_id: string };
   deleted?: boolean;
-  [key: string]: unknown;
+  ext?: Record<string, unknown>;
 }
 
-export interface Transition {
+/** A room record plus this server's delivery fields (protocol v3 section 3.4). */
+export interface RoomRecord {
   room_id: string;
   log_id: string;
-  commit_ms: number;
-  message_id: string;
-  message: MessageSnapshot;
-  previous_thread_id?: string;
-  thread_id?: string;
-}
-
-export interface StoreRoomState {
-  room_id: string;
+  parent_room_id?: string;
+  title?: string;
+  intro_message?: Record<string, unknown>;
+  ext?: Record<string, unknown>;
   latest_log_id: string;
   history_log_id: string | null;
-  last_commit_ms: number;
-  name: string;
-  topic?: string;
 }
+
+/** One logged reaction change (protocol v3 Appendix D.2). */
+export interface ReactionsRecord {
+  log_id: string;
+  message_id: string;
+  room_id: string;
+  reactions: Array<{ from: Identity; emojis: string[] }>;
+}
+
+export type RecordKind = "room" | "message" | "reactions";
+
+/** A committed record, in log order, ready to broadcast as a notification. */
+export interface Broadcast {
+  method: RecordKind;
+  params: Record<string, unknown>;
+}
+
+export type MutationMethod = "message" | "room" | "reactions" | "name";
 
 export interface StoreMutationInput {
   userId: string;
   tier?: Tier;
   ipKey: string;
   requestId?: string;
-  method?: "message" | "thread" | string;
-  roomId?: string;
+  method?: MutationMethod | string;
   now?: number;
-  /** Pre-parsed protocol parameters, when the runtime already validated them. */
+  /** The complete request parameters; saves replace every client field. */
   params: Record<string, unknown>;
   identity: Identity;
   digest?: string;
-  /** Existing message ID selects replacement; absent creates a message. */
-  messageId?: string;
-  /** Complete client editable message fields. Server-owned fields are ignored. */
-  message?: Record<string, unknown>;
-  body?: Record<string, unknown>;
-  threadId?: string;
-  replyMessageId?: string;
-  deleted?: boolean;
-  /** Set for a thread creation/edit operation. */
-  thread?: {
-    threadId?: string;
-    title?: string;
-    summary?: string;
-    rootMessageId?: string;
-  };
 }
 
 export interface StoreMutationResult {
   result: Record<string, unknown>;
-  transition?: Transition;
-  thread?: StoreThreadRecord;
+  /** Records committed by this operation, in ascending log order. */
+  broadcasts: Broadcast[];
+  /** The saved message snapshot, for message operations. */
+  message?: MessageSnapshot;
+  /** The saved room record, for room operations. */
+  room?: RoomRecord;
+  /** An accepted retry: the original result, with no new records. */
   deduplicated?: boolean;
 }
 
 export interface StoreHistoryQuery {
-  roomId?: string;
-  after?: string;
-  before?: string;
+  roomId: string;
+  after?: string | bigint;
+  before?: string | bigint;
   limit?: number;
-  threadId?: string;
   now?: number;
   /** Request identity for history quota accounting. */
   userId?: string;
@@ -369,13 +374,10 @@ export interface StoreHistoryQuery {
   maxBytes?: number;
 }
 
-export interface StoreHistoryEntry {
-  log_id: string;
-  message: MessageSnapshot;
-}
-
 export interface StoreHistoryResult {
-  entries: StoreHistoryEntry[];
+  rooms?: RoomRecord[];
+  entries: MessageSnapshot[];
+  reactions?: ReactionsRecord[];
   first_id?: string;
   last_id?: string;
   more: boolean;
@@ -384,18 +386,22 @@ export interface StoreHistoryResult {
 }
 
 export interface StoreCleanupResult {
+  /** The internal server-wide retention floor F after this run. */
   history_floor: string;
+  /** F before this run; rooms' history_log_id changed when these differ. */
+  previous_floor: string;
+  /** The server-wide log head. */
   latest_id: string;
-  deleted_transitions: number;
+  deleted_records: number;
   deleted_messages: number;
+  deleted_reactions: number;
   deleted_requests: number;
   deleted_limiters: number;
+  /** Thread rooms whose entire log expired; announce them as removed. */
+  removed_rooms: string[];
   next_due_ms: number;
   did_work: boolean;
 }
-
-/** Legacy/domain adapter input used by the websocket runtime. */
-export type MutationInput = StoreMutationInput;
 
 export interface BudgetCost {
   reads: number;
@@ -428,43 +434,61 @@ interface RawBudgetRow {
   maintenance_writes: number;
 }
 
-interface RawRoomRow {
-  room_id: string;
+interface RawLogState {
   last_log_id: number;
   history_floor: number;
   last_commit_ms: number;
-  metadata_json: string;
 }
 
-interface RawTransitionRow {
+interface RawRoomRow {
   room_id: string;
-  log_id: number;
-  commit_ms: number;
-  message_id: string;
-  snapshot_json: string;
-  previous_thread_id: string | null;
-  thread_id: string | null;
-}
-
-interface RawMessageRow {
-  room_id: string;
-  message_id: string;
+  parent_room_id: string | null;
+  created_log_id: number;
+  record_log_id: number;
   latest_log_id: number;
-  latest_commit_ms: number;
-  snapshot_json: string;
-  author_id: string;
-  thread_id: string | null;
-}
-
-interface RawThreadRow {
-  room_id: string;
-  thread_id: string;
-  title: string | null;
-  summary: string | null;
-  root_message_id: string | null;
+  intro_message_id: string | null;
+  fields_json: string;
   created_ms: number;
   updated_ms: number;
 }
+
+interface RawRoomListRow extends RawRoomRow {
+  intro_snapshot_json: string | null;
+  intro_log_id: number | null;
+}
+
+interface RawRecordRow {
+  room_id: string;
+  log_id: number;
+  kind: string;
+  record_json: string;
+}
+
+interface RawMessageRow {
+  message_id: string;
+  room_id: string;
+  latest_log_id: number;
+  snapshot_json: string;
+  author_id: string;
+}
+
+interface RawReactionRow {
+  message_id: string;
+  user_id: string;
+  log_id: number;
+  from_json: string;
+  emojis_json: string;
+}
+
+/** Allocation and room bookkeeping for one committed operation. */
+interface CommitContext {
+  state: RawLogState;
+  commitMs: number;
+  /** Greatest log_id appended to each existing room during this commit. */
+  touched: Map<string, number>;
+}
+
+const ROOM_COLUMNS = "room_id, parent_room_id, created_log_id, record_log_id, latest_log_id, intro_message_id, fields_json, created_ms, updated_ms";
 
 interface RawDedupRow {
   user_id: string;
@@ -516,13 +540,8 @@ interface RawMaintenanceRow {
 }
 
 const META_EFFECTIVE_NOW = "effective_now_ms";
-const META_NEXT_THREAD = "next_thread_seq";
 const META_ACCOUNTING_UNSAFE = "accounting_unsafe";
 const META_ACCOUNT_USAGE = "account_usage_snapshot";
-
-function isFiniteInteger(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0;
-}
 
 function numericId(value: string, field = "id"): number {
   if (typeof value !== "string" || !/^\d+$/.test(value)) {
@@ -550,15 +569,7 @@ function idString(value: number): string {
 }
 
 function utf8Bytes(value: string): number {
-  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(value).byteLength;
-  // Workers and current Node always provide TextEncoder.  This fallback keeps
-  // small pure-logic tests usable in older JS runtimes.
-  let bytes = 0;
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
-  }
-  return bytes;
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function parseJson<T>(value: string, fallback?: T): T {
@@ -636,12 +647,23 @@ function integerColumn(value: unknown, fallback = 0): number {
   return Number.isFinite(number) ? Math.trunc(number) : fallback;
 }
 
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+/**
+ * A room's inclusive history lower bound. It is the server-wide retention
+ * floor F, raised to the room's creation record. It never decreases: F is
+ * monotonic, and a room reports null (effective bound latest + 1) only while
+ * F > latest, so any later record in the room is at least F.
+ */
+function roomHistoryFloor(room: Pick<RawRoomRow, "created_log_id">, floor: number): number {
+  return Math.max(floor, room.created_log_id);
 }
 
-function historyLogId(head: number, floor: number): string | null {
-  return floor <= head ? idString(floor) : null;
+function roomHistoryLogId(room: Pick<RawRoomRow, "created_log_id" | "latest_log_id">, floor: number): string | null {
+  const lower = roomHistoryFloor(room, floor);
+  return lower <= room.latest_log_id ? idString(lower) : null;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function ensureText(value: unknown, field: string, maxBytes: number): string {
@@ -649,6 +671,125 @@ function ensureText(value: unknown, field: string, maxBytes: number): string {
   if (utf8Bytes(value) > maxBytes) throw new StoreError("too_large", `${field} is too large`);
   return value;
 }
+
+/**
+ * Schema 2. Tables that hold authority independent of chat content keep their
+ * schema 1 definitions, so an upgraded object uses them unchanged.
+ */
+const SCHEMA_V2_DDL = `
+  CREATE TABLE IF NOT EXISTS _meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS log_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_log_id INTEGER NOT NULL,
+    history_floor INTEGER NOT NULL,
+    last_commit_ms INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS rooms (
+    room_id TEXT PRIMARY KEY,
+    parent_room_id TEXT,
+    created_log_id INTEGER NOT NULL,
+    record_log_id INTEGER NOT NULL,
+    latest_log_id INTEGER NOT NULL,
+    intro_message_id TEXT,
+    fields_json TEXT NOT NULL,
+    created_ms INTEGER NOT NULL,
+    updated_ms INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS records (
+    room_id TEXT NOT NULL,
+    log_id INTEGER NOT NULL,
+    commit_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    PRIMARY KEY (room_id, log_id)
+  );
+  CREATE INDEX IF NOT EXISTS records_log_idx ON records (log_id);
+  CREATE INDEX IF NOT EXISTS records_retention_idx ON records (commit_ms, log_id);
+  CREATE TABLE IF NOT EXISTS message_state (
+    message_id TEXT PRIMARY KEY,
+    room_id TEXT NOT NULL,
+    latest_log_id INTEGER NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    author_id TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS message_state_latest_idx ON message_state (latest_log_id);
+  CREATE TABLE IF NOT EXISTS reaction_state (
+    message_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    log_id INTEGER NOT NULL,
+    from_json TEXT NOT NULL,
+    emojis_json TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS reaction_state_log_idx ON reaction_state (log_id);
+  CREATE TABLE IF NOT EXISTS identities (
+    user_id TEXT PRIMARY KEY,
+    user_handle TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    created_ms INTEGER NOT NULL,
+    updated_ms INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS credentials (
+    credential_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,
+    public_key_json TEXT NOT NULL,
+    sign_count INTEGER NOT NULL,
+    transports_json TEXT,
+    created_ms INTEGER NOT NULL,
+    updated_ms INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS credentials_user_idx ON credentials (user_id);
+  CREATE TABLE IF NOT EXISTS accepted_requests (
+    user_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    transition_json TEXT,
+    expires_ms INTEGER NOT NULL,
+    PRIMARY KEY (user_id, request_id)
+  );
+  CREATE INDEX IF NOT EXISTS accepted_requests_expiry_idx
+    ON accepted_requests (expires_ms);
+  CREATE TABLE IF NOT EXISTS resource_budgets (
+    day TEXT PRIMARY KEY,
+    reads_reserved INTEGER NOT NULL DEFAULT 0,
+    writes_reserved INTEGER NOT NULL DEFAULT 0,
+    frames_reserved INTEGER NOT NULL DEFAULT 0,
+    admissions_reserved INTEGER NOT NULL DEFAULT 0,
+    posts_reserved INTEGER NOT NULL DEFAULT 0,
+    registrations_reserved INTEGER NOT NULL DEFAULT 0,
+    foreground_reads INTEGER NOT NULL DEFAULT 0,
+    foreground_writes INTEGER NOT NULL DEFAULT 0,
+    maintenance_reads INTEGER NOT NULL DEFAULT 0,
+    maintenance_writes INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS principal_limits (
+    scope TEXT NOT NULL,
+    principal_key TEXT NOT NULL,
+    post_events_json TEXT NOT NULL DEFAULT '[]',
+    auth_events_json TEXT NOT NULL DEFAULT '[]',
+    history_events_json TEXT NOT NULL DEFAULT '[]',
+    admission_events_json TEXT NOT NULL DEFAULT '[]',
+    day TEXT NOT NULL,
+    posts_day INTEGER NOT NULL DEFAULT 0,
+    registrations_day INTEGER NOT NULL DEFAULT 0,
+    updated_ms INTEGER NOT NULL,
+    PRIMARY KEY (scope, principal_key)
+  );
+  CREATE INDEX IF NOT EXISTS principal_limits_updated_idx
+    ON principal_limits (updated_ms);
+  CREATE TABLE IF NOT EXISTS maintenance (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    next_cleanup_ms INTEGER NOT NULL,
+    cleanup_cutoff_ms INTEGER,
+    cleanup_cursor INTEGER,
+    schema_version INTEGER NOT NULL
+  );
+`;
 
 export class Store {
   readonly config: StoreConfig;
@@ -707,7 +848,7 @@ export class Store {
     // DDL is deliberately one initialization batch. The schema version marker
     // is checked before DDL so a wake/restart does not rewrite schema state.
     const version = this.readSchemaVersion();
-    if (version > SCHEMA_VERSION) throw new Error(`unsupported storage schema ${version}`);
+    if (version !== 0 && version !== SCHEMA_VERSION) throw new Error(`storage schema ${version} requires resetStorage()`);
     if (version === SCHEMA_VERSION) {
       const persistedEffective = Number(this.metaValue(META_EFFECTIVE_NOW));
       if (Number.isSafeInteger(persistedEffective) && persistedEffective >= 0) this.lastEffectiveMs = persistedEffective;
@@ -738,137 +879,10 @@ export class Store {
       this.initialized = true;
       return;
     }
-    try {
-      this.transaction(() => {
-      this.rawScript(`
-        CREATE TABLE IF NOT EXISTS _meta (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS room_state (
-          room_id TEXT PRIMARY KEY,
-          last_log_id INTEGER NOT NULL,
-          history_floor INTEGER NOT NULL,
-          last_commit_ms INTEGER NOT NULL,
-          metadata_json TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS transitions (
-          room_id TEXT NOT NULL,
-          log_id INTEGER NOT NULL,
-          commit_ms INTEGER NOT NULL,
-          message_id TEXT NOT NULL,
-          snapshot_json TEXT NOT NULL,
-          previous_thread_id TEXT,
-          thread_id TEXT,
-          PRIMARY KEY (room_id, log_id)
-        );
-        CREATE INDEX IF NOT EXISTS transitions_retention_idx
-          ON transitions (room_id, commit_ms, log_id);
-        CREATE INDEX IF NOT EXISTS transitions_message_idx
-          ON transitions (room_id, message_id, log_id);
-        CREATE INDEX IF NOT EXISTS transitions_thread_before_idx
-          ON transitions (room_id, previous_thread_id, log_id);
-        CREATE INDEX IF NOT EXISTS transitions_thread_after_idx
-          ON transitions (room_id, thread_id, log_id);
-        CREATE TABLE IF NOT EXISTS messages (
-          room_id TEXT NOT NULL,
-          message_id TEXT NOT NULL,
-          latest_log_id INTEGER NOT NULL,
-          latest_commit_ms INTEGER NOT NULL,
-          snapshot_json TEXT NOT NULL,
-          author_id TEXT NOT NULL,
-          thread_id TEXT,
-          PRIMARY KEY (room_id, message_id)
-        );
-        CREATE INDEX IF NOT EXISTS messages_latest_idx
-          ON messages (room_id, latest_log_id);
-        CREATE TABLE IF NOT EXISTS threads (
-          room_id TEXT NOT NULL,
-          thread_id TEXT NOT NULL,
-          title TEXT,
-          summary TEXT,
-          root_message_id TEXT,
-          created_ms INTEGER NOT NULL,
-          updated_ms INTEGER NOT NULL,
-          PRIMARY KEY (room_id, thread_id)
-        );
-        CREATE TABLE IF NOT EXISTS identities (
-          user_id TEXT PRIMARY KEY,
-          user_handle TEXT NOT NULL,
-          name TEXT NOT NULL,
-          tier TEXT NOT NULL,
-          created_ms INTEGER NOT NULL,
-          updated_ms INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS credentials (
-          credential_id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL UNIQUE,
-          public_key_json TEXT NOT NULL,
-          sign_count INTEGER NOT NULL,
-          transports_json TEXT,
-          created_ms INTEGER NOT NULL,
-          updated_ms INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS credentials_user_idx ON credentials (user_id);
-        CREATE TABLE IF NOT EXISTS accepted_requests (
-          user_id TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          digest TEXT NOT NULL,
-          result_json TEXT NOT NULL,
-          transition_json TEXT,
-          expires_ms INTEGER NOT NULL,
-          PRIMARY KEY (user_id, request_id)
-        );
-        CREATE INDEX IF NOT EXISTS accepted_requests_expiry_idx
-          ON accepted_requests (expires_ms);
-        CREATE TABLE IF NOT EXISTS resource_budgets (
-          day TEXT PRIMARY KEY,
-          reads_reserved INTEGER NOT NULL DEFAULT 0,
-          writes_reserved INTEGER NOT NULL DEFAULT 0,
-          frames_reserved INTEGER NOT NULL DEFAULT 0,
-          admissions_reserved INTEGER NOT NULL DEFAULT 0,
-          posts_reserved INTEGER NOT NULL DEFAULT 0,
-          registrations_reserved INTEGER NOT NULL DEFAULT 0,
-          foreground_reads INTEGER NOT NULL DEFAULT 0,
-          foreground_writes INTEGER NOT NULL DEFAULT 0,
-          maintenance_reads INTEGER NOT NULL DEFAULT 0,
-          maintenance_writes INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS principal_limits (
-          scope TEXT NOT NULL,
-          principal_key TEXT NOT NULL,
-          post_events_json TEXT NOT NULL DEFAULT '[]',
-          auth_events_json TEXT NOT NULL DEFAULT '[]',
-          history_events_json TEXT NOT NULL DEFAULT '[]',
-          admission_events_json TEXT NOT NULL DEFAULT '[]',
-          day TEXT NOT NULL,
-          posts_day INTEGER NOT NULL DEFAULT 0,
-          registrations_day INTEGER NOT NULL DEFAULT 0,
-          updated_ms INTEGER NOT NULL,
-          PRIMARY KEY (scope, principal_key)
-        );
-        CREATE INDEX IF NOT EXISTS principal_limits_updated_idx
-          ON principal_limits (updated_ms);
-        CREATE TABLE IF NOT EXISTS maintenance (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          next_cleanup_ms INTEGER NOT NULL,
-          cleanup_cutoff_ms INTEGER,
-          cleanup_cursor INTEGER,
-          schema_version INTEGER NOT NULL
-        );
-      `);
+    const now = this.transaction(() => {
+      this.rawScript(SCHEMA_V2_DDL);
       const now = this.effectiveNow(this.clock.now());
-      this.rawExec(
-        "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', ?), ('effective_now_ms', ?), ('next_thread_seq', '0'), ('identity_count', '0'), ('thread_count', '0'), ('principal_limit_count', '0'), ('budget_stop_day', ''), ('accounting_unsafe', '0')",
-        String(SCHEMA_VERSION),
-        String(now),
-      );
-      this.rawExec(
-        "INSERT OR REPLACE INTO maintenance (id, next_cleanup_ms, cleanup_cutoff_ms, cleanup_cursor, schema_version) VALUES (1, ?, NULL, NULL, ?)",
-        now + this.config.cleanupIntervalMs,
-        SCHEMA_VERSION,
-      );
-      this.ensureRoomRow();
+      this.bootstrapSchema(now);
       // Charge the one-time schema/bootstrap work to the maintenance reserve.
       // This marker is written only during a schema-version transition, never
       // on hibernation wakes or ordinary constructor calls.
@@ -892,15 +906,114 @@ export class Store {
       );
       this.observed.reservedReads += startupCost.reads;
       this.observed.reservedWrites += startupCost.writes;
-      });
-    } catch (error) {
-      throw error;
-    }
+      return now;
+    });
     this.budgetCacheDay = null;
     this.budgetCache = null;
     this.budgetHandoverPending = true;
-    this.budgetPruneDay = dayFor(Math.max(this.lastEffectiveMs, this.clock.now()));
+    this.budgetPruneDay = dayFor(Math.max(this.lastEffectiveMs, now, this.clock.now()));
     this.initialized = true;
+  }
+
+  /** Seed control rows and the permanent `general` room in a new object. */
+  private bootstrapSchema(now: number): void {
+    this.rawExec(
+      "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', ?), ('effective_now_ms', ?), ('identity_count', '0'), ('thread_count', '0'), ('principal_limit_count', '0'), ('budget_stop_day', ''), ('accounting_unsafe', '0')",
+      String(SCHEMA_VERSION),
+      String(now),
+    );
+    this.rawExec(
+      "INSERT OR REPLACE INTO maintenance (id, next_cleanup_ms, cleanup_cutoff_ms, cleanup_cursor, schema_version) VALUES (1, ?, NULL, NULL, ?)",
+      now + this.config.cleanupIntervalMs,
+      SCHEMA_VERSION,
+    );
+    this.seedGeneralRoom({ last_log_id: 0, history_floor: 1, last_commit_ms: 0 }, now);
+  }
+
+  /** True when the object holds data from another schema version. */
+  requiresReset(): boolean {
+    const version = this.readSchemaVersion();
+    return version !== 0 && version !== SCHEMA_VERSION;
+  }
+
+  /**
+   * Wipe every SQLite table and key-value entry (identities, credentials,
+   * passkey sessions, chat, limiter windows) and initialize a fresh schema.
+   * Used whenever the stored schema version differs from this code's, in
+   * either direction; there is no data migration.
+   *
+   * Only the current UTC day's resource reservations are carried over, when
+   * the old schema's budget row is readable, so a deploy cannot replenish the
+   * daily SQL allowance the platform has already metered. The fresh schema's
+   * bootstrap reservation is added to that row without a capacity check, so
+   * the reset itself can never fail on, or be blocked by, an exhausted budget;
+   * an exhausted day simply stays exhausted until UTC midnight. The
+   * accounting-unsafe latch is not carried: a reset is the operator's recovery
+   * path for it. Callers must hold the object's input gate (the runtime uses
+   * blockConcurrencyWhile) so no request observes the empty storage.
+   */
+  async resetStorage(): Promise<void> {
+    const deleteAll = this.durableStorage?.deleteAll;
+    if (typeof deleteAll !== "function") throw new Error("storage reset requires deleteAll()");
+    const day = dayFor(Math.max(this.clock.now(), this.lastEffectiveMs));
+    let carried: RawBudgetRow | null = null;
+    try {
+      carried = this.rawRows<RawBudgetRow>(
+        `SELECT day, reads_reserved, writes_reserved, frames_reserved,
+            admissions_reserved, posts_reserved, registrations_reserved,
+            foreground_reads, foreground_writes, maintenance_reads, maintenance_writes
+         FROM resource_budgets WHERE day = ? LIMIT 1`,
+        day,
+      )[0] ?? null;
+    } catch {
+      // An unreadable old budget table carries nothing.
+    }
+    await deleteAll.call(this.durableStorage);
+    this.initialized = false;
+    this.accountingUnsafe = false;
+    this.accountingUnsafePersisted = false;
+    this.accountingUnsafePending = false;
+    this.lastEffectiveMs = 0;
+    this.scheduledAlarmAt = undefined;
+    this.initialize();
+    if (!carried) return;
+    const columns = ["reads_reserved", "writes_reserved", "frames_reserved", "admissions_reserved", "posts_reserved",
+      "registrations_reserved", "foreground_reads", "foreground_writes", "maintenance_reads", "maintenance_writes"] as const;
+    const values = columns.map((column) => Math.max(0, integerColumn(carried![column])));
+    this.transaction(() => {
+      this.rawExec(
+        `INSERT OR IGNORE INTO resource_budgets (day, ${columns.join(", ")}) VALUES (?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`,
+        day,
+      );
+      this.rawExec(
+        `UPDATE resource_budgets SET ${columns.map((column) => `${column} = ${column} + ?`).join(", ")} WHERE day = ?`,
+        ...values,
+        day,
+      );
+    });
+    this.budgetCacheDay = null;
+    this.budgetCache = null;
+  }
+
+  /** Log the `general` room's creation record as the next server record. */
+  private seedGeneralRoom(state: RawLogState, now: number): void {
+    const context: CommitContext = { state: { ...state }, commitMs: Math.max(now, state.last_commit_ms), touched: new Map() };
+    const logId = this.allocateLogId(context);
+    const record = { room_id: ROOM_ID, log_id: idString(logId), title: ROOM_TITLE };
+    this.rawExec(
+      `INSERT INTO rooms (${ROOM_COLUMNS}) VALUES (?, NULL, ?, ?, ?, NULL, ?, ?, ?)`,
+      ROOM_ID, logId, logId, logId, JSON.stringify({ title: ROOM_TITLE }), context.commitMs, context.commitMs,
+    );
+    this.rawExec(
+      "INSERT INTO records (room_id, log_id, commit_ms, kind, record_json) VALUES (?, ?, ?, 'room', ?)",
+      ROOM_ID, logId, context.commitMs, JSON.stringify(record),
+    );
+    this.rawExec(
+      "INSERT INTO log_state (id, last_log_id, history_floor, last_commit_ms) VALUES (1, ?, ?, ?)",
+      logId,
+      state.history_floor,
+      context.commitMs,
+    );
   }
 
   private readSchemaVersion(): number {
@@ -916,14 +1029,6 @@ export class Store {
 
   private ensureReady(): void {
     if (!this.initialized) this.initialize();
-  }
-
-  private ensureRoomRow(): void {
-    this.rawExec(
-      "INSERT OR IGNORE INTO room_state (room_id, last_log_id, history_floor, last_commit_ms, metadata_json) VALUES (?, 0, 1, 0, ?)",
-      ROOM_ID,
-      JSON.stringify({ name: "General" }),
-    );
   }
 
   private metaValue(key: string): string {
@@ -1470,102 +1575,102 @@ export class Store {
     }
   }
 
-  private roomRow(): RawRoomRow {
-    this.ensureReady();
-    const rows = this.rawRows<RawRoomRow>(
-      "SELECT room_id, last_log_id, history_floor, last_commit_ms, metadata_json FROM room_state WHERE room_id = ? LIMIT 1",
-      ROOM_ID,
+  private logState(): RawLogState {
+    const rows = this.rawRows<RawLogState>(
+      "SELECT last_log_id, history_floor, last_commit_ms FROM log_state WHERE id = 1 LIMIT 1",
     );
-    if (!rows.length) throw new StoreError("internal_error", "general room state is missing");
-    return rows[0];
+    if (!rows.length) throw new StoreError("internal_error", "log state is missing");
+    return { ...rows[0] };
   }
 
-  /** Runtime-facing room metadata. IDs stay bigint inside the domain boundary. */
-  room(): DomainRoomState {
-    this.ensureReady();
-    return this.reserved({ reads: 256 }, false, this.clock.now(), () => {
-      const row = this.roomRow();
-      const metadata = parseJson<Record<string, unknown>>(row.metadata_json, { name: "General" });
-      void metadata;
-      return {
-        roomId: ROOM_ID,
-        latestId: BigInt(row.last_log_id),
-        historyFloor: BigInt(row.history_floor),
-        threads: this.threadRecords(),
-      };
-    });
-  }
-
-  getRoomState(): StoreRoomState {
-    this.ensureReady();
-    return this.reserved({ reads: 8 }, false, this.clock.now(), () => {
-      const row = this.roomRow();
-      const metadata = parseJson<Record<string, unknown>>(row.metadata_json, { name: "General" });
-      return {
-        room_id: ROOM_ID,
-        latest_log_id: idString(row.last_log_id),
-        history_log_id: historyLogId(row.last_log_id, row.history_floor),
-        last_commit_ms: row.last_commit_ms,
-        name: typeof metadata.name === "string" ? metadata.name : "General",
-        topic: typeof metadata.topic === "string" ? metadata.topic : undefined,
-      };
-    });
-  }
-
-  private threadRecords(): DomainThreadRecord[] {
-    const rows = this.rawRows<RawThreadRow>(
-      "SELECT thread_id, title, summary FROM threads WHERE room_id = ? ORDER BY thread_id ASC",
-      ROOM_ID,
-    );
-    return rows.map((row) => ({
-      threadId: row.thread_id,
-      ...(row.title !== null ? { title: row.title } : {}),
-      ...(row.summary !== null ? { summary: row.summary } : {}),
-    }));
-  }
-
-  getThreads(): StoreThreadRecord[] {
-    this.ensureReady();
-    return this.reserved({ reads: 256 }, false, this.clock.now(), () => {
-      const rows = this.rawRows<RawThreadRow>(
-        "SELECT room_id, thread_id, title, summary, root_message_id, created_ms, updated_ms FROM threads WHERE room_id = ? ORDER BY thread_id ASC LIMIT ?",
-        ROOM_ID,
-        this.config.maxThreads,
-      );
-      return rows.map((row) => ({
-        room_id: row.room_id,
-        thread_id: row.thread_id,
-        ...(row.title !== null ? { title: row.title } : {}),
-        ...(row.summary !== null ? { summary: row.summary } : {}),
-        ...(row.root_message_id !== null ? { root_message_id: row.root_message_id } : {}),
-        created_at: row.created_ms,
-        updated_at: row.updated_ms,
-      }));
-    });
-  }
-
-  private threadRow(threadId: string): RawThreadRow | null {
-    const rows = this.rawRows<RawThreadRow>(
-      "SELECT room_id, thread_id, title, summary, root_message_id, created_ms, updated_ms FROM threads WHERE room_id = ? AND thread_id = ? LIMIT 1",
-      ROOM_ID,
-      threadId,
-    );
+  private roomRow(roomId: string): RawRoomRow | null {
+    const rows = this.rawRows<RawRoomRow>(`SELECT ${ROOM_COLUMNS} FROM rooms WHERE room_id = ? LIMIT 1`, roomId);
     return rows[0] ?? null;
   }
 
-  getThread(threadId: string): StoreThreadRecord | null {
+  /**
+   * The complete room record with this server's delivery fields. The intro
+   * message is embedded as its current retained snapshot when available.
+   */
+  private roomRecord(row: RawRoomRow, floor: number, intro?: { snapshot_json: string | null; latest_log_id: number | null } | null): RoomRecord {
+    const fields = parseJson<{ title?: unknown; ext?: unknown }>(row.fields_json, {});
+    const record: Record<string, unknown> = { room_id: row.room_id, log_id: idString(row.record_log_id) };
+    if (row.parent_room_id !== null) record.parent_room_id = row.parent_room_id;
+    if (typeof fields.title === "string") record.title = fields.title;
+    if (row.intro_message_id !== null) {
+      record.intro_message = intro && intro.snapshot_json !== null && intro.latest_log_id !== null && intro.latest_log_id >= floor
+        ? parseJson<Record<string, unknown>>(intro.snapshot_json)
+        : { message_id: row.intro_message_id };
+    }
+    if (isPlainObject(fields.ext)) record.ext = fields.ext;
+    record.latest_log_id = idString(row.latest_log_id);
+    record.history_log_id = roomHistoryLogId(row, floor);
+    return record as unknown as RoomRecord;
+  }
+
+  private introFor(row: RawRoomRow): { snapshot_json: string | null; latest_log_id: number | null } | null {
+    if (row.intro_message_id === null) return null;
+    const message = this.currentMessage(row.intro_message_id);
+    return message ? { snapshot_json: message.snapshot_json, latest_log_id: message.latest_log_id } : null;
+  }
+
+  /** Reads reserved for listing every room, bounded by the calibrated thread cap. */
+  private roomListingReads(): number {
+    // One room row plus one indexed intro-message lookup per room, with slack
+    // for index pages; test/accounting.integration.test.ts measures the cap.
+    return 32 + 4 * (MAX_THREAD_LIMIT + 1);
+  }
+
+  /**
+   * Every visible room record, oldest first, for authentication announcements.
+   * Maintenance callers (retention re-announcements) charge the maintenance
+   * budget, and may keep only rooms whose history_log_id differs from what it
+   * was under an earlier retention floor.
+   */
+  listRooms(now = this.clock.now(), options: { maintenance?: boolean; changedSinceFloor?: number } = {}): RoomRecord[] {
+    this.ensureReady();
+    return this.reserved({ reads: this.roomListingReads() }, options.maintenance === true, now, () => {
+      const floor = this.logState().history_floor;
+      // The rooms table is capped at one top-level room plus the calibrated
+      // thread ceiling, so this ordered scan is bounded by that cap.
+      const rows = this.rawRows<RawRoomListRow>(
+        `SELECT r.room_id, r.parent_room_id, r.created_log_id, r.record_log_id, r.latest_log_id,
+            r.intro_message_id, r.fields_json, r.created_ms, r.updated_ms,
+            m.snapshot_json AS intro_snapshot_json, m.latest_log_id AS intro_log_id
+         FROM rooms r LEFT JOIN message_state m ON m.message_id = r.intro_message_id
+         ORDER BY r.created_log_id ASC LIMIT ?`,
+        MAX_THREAD_LIMIT + 1,
+      );
+      const since = options.changedSinceFloor;
+      return rows
+        .filter((row) => since === undefined || roomHistoryLogId(row, since) !== roomHistoryLogId(row, floor))
+        .map((row) => this.roomRecord(row, floor, { snapshot_json: row.intro_snapshot_json, latest_log_id: row.intro_log_id }));
+    });
+  }
+
+  /** One room's record, or null when the room does not exist. */
+  getRoom(roomId: string, now = this.clock.now()): RoomRecord | null {
+    this.ensureReady();
+    return this.reserved({ reads: 16 }, false, now, () => {
+      const row = this.roomRow(roomId);
+      if (!row) return null;
+      return this.roomRecord(row, this.logState().history_floor, this.introFor(row));
+    });
+  }
+
+  /** The room record for `general` (or another room); throws when missing. */
+  getRoomState(roomId = ROOM_ID): RoomRecord {
+    const room = this.getRoom(roomId);
+    if (!room) throw new StoreError("invalid_params", "unknown room");
+    return room;
+  }
+
+  /** The server-wide log head and retention floor. */
+  logBounds(): { latest_log_id: string; history_floor: string } {
     this.ensureReady();
     return this.reserved({ reads: 8 }, false, this.clock.now(), () => {
-      const row = this.threadRow(threadId);
-      return row ? {
-        room_id: row.room_id,
-        thread_id: row.thread_id,
-        ...(row.title !== null ? { title: row.title } : {}),
-        ...(row.summary !== null ? { summary: row.summary } : {}),
-        ...(row.root_message_id !== null ? { root_message_id: row.root_message_id } : {}),
-        created_at: row.created_ms,
-        updated_at: row.updated_ms,
-      } : null;
+      const state = this.logState();
+      return { latest_log_id: idString(state.last_log_id), history_floor: idString(state.history_floor) };
     });
   }
 
@@ -1763,7 +1868,7 @@ export class Store {
         const retry = Math.max(1, previousEvents[previousEvents.length - allowance] + POST_WINDOW_MS - now);
         if (retry > retryAfterMs) {
           retryAfterMs = retry;
-          reason = index === 0 && tier === "anonymous" ? "Anonymous posting limit reached" : "Posting limit reached";
+          reason = index === 0 && tier === "anonymous" ? "Guest posting limit reached" : "Posting limit reached";
         }
       }
       const count = row.day === daily ? row.posts_day : 0;
@@ -2043,9 +2148,6 @@ export class Store {
       );
       const frames = frameRows.length && frameRows[0].day === day ? integerColumn(frameRows[0].posts_day) : 0;
       return {
-        // Kept for the legacy inspection API; callers must use
-        // getWebSockets() for the live value.
-        openConnections: 0,
         globalFrames: frames,
         globalPosts: this.limitEventCount("post", "global", "post", now),
       };
@@ -2072,9 +2174,7 @@ export class Store {
 
   private currentMessage(messageId: string, floor?: number): RawMessageRow | null {
     const rows = this.rawRows<RawMessageRow>(
-      `SELECT room_id, message_id, latest_log_id, latest_commit_ms, snapshot_json, author_id, thread_id
-       FROM messages WHERE room_id = ? AND message_id = ? LIMIT 1`,
-      ROOM_ID,
+      "SELECT message_id, room_id, latest_log_id, snapshot_json, author_id FROM message_state WHERE message_id = ? LIMIT 1",
       messageId,
     );
     if (!rows.length) return null;
@@ -2082,7 +2182,7 @@ export class Store {
     return rows[0];
   }
 
-  private identityForMessage(input: DomainMutationInput): Identity {
+  private identityForMessage(input: StoreMutationInput): Identity {
     const name = typeof input.identity.name === "string" ? input.identity.name : undefined;
     return { user_id: input.identity.user_id, ...(name ? { name } : {}) };
   }
@@ -2090,7 +2190,8 @@ export class Store {
   private normalizedBody(value: unknown): Record<string, unknown> {
     const body = jsonObject(value, "body");
     const text = body.text === undefined ? "" : ensureText(body.text, "body.text", this.config.maxTextBytes);
-    const format = body.format === undefined ? "markdown" : body.format;
+    // Protocol v3 defaults an omitted format to plain text.
+    const format = body.format === undefined ? "plain" : body.format;
     if (format !== "plain" && format !== "markdown") throw new StoreError("invalid_params", "body.format is invalid");
     const embeds = body.embeds === undefined ? [] : body.embeds;
     if (!Array.isArray(embeds)) throw new StoreError("invalid_params", "body.embeds must be an array");
@@ -2098,64 +2199,291 @@ export class Store {
     return { ...clone(body), text, format, embeds: clone(embeds) };
   }
 
-  private validateSnapshot(snapshot: MessageSnapshot): void {
-    const serialized = JSON.stringify(snapshot);
-    if (utf8Bytes(serialized) > this.config.maxSnapshotBytes) throw new StoreError("too_large", "message snapshot is too large");
-    if (snapshot.deleted === true) {
-      delete snapshot.body;
-    } else if (!snapshot.body) {
-      throw new StoreError("invalid_params", "message body is required");
-    }
-    if (snapshot.reply_message_id !== undefined) ensureText(snapshot.reply_message_id, "reply_message_id", 256);
-    if (snapshot.thread_id !== undefined) ensureText(snapshot.thread_id, "thread_id", 256);
+  private optionalExt(value: unknown, field = "ext"): Record<string, unknown> | undefined {
+    if (value === undefined) return undefined;
+    if (!isPlainObject(value)) throw new StoreError("invalid_params", `${field} must be an object`);
+    return clone(value);
   }
 
-  private messageFromParams(input: DomainMutationInput, current: RawMessageRow | null, messageId: string, historyFloor?: number): MessageSnapshot {
+  /**
+   * Validate a bare message reference (`reply_to`, `intro_message`). Only the
+   * `message_id` is kept. A new reference must name a retained message; a save
+   * that resubmits its current reference unchanged is accepted even after the
+   * target has expired, so old replies remain editable.
+   */
+  private messageReference(value: unknown, field: string, floor: number, options: { self?: string; unchanged?: string } = {}): string | undefined {
+    if (value === undefined) return undefined;
+    if (!isPlainObject(value) || typeof value.message_id !== "string" || value.message_id.length === 0) {
+      throw new StoreError("invalid_params", `${field}.message_id must be a non-empty string`);
+    }
+    const messageId = ensureText(value.message_id, `${field}.message_id`, 256);
+    if (options.self !== undefined && messageId === options.self) throw new StoreError("invalid_params", `${field} cannot name the message itself`);
+    if (messageId !== options.unchanged && !this.currentMessage(messageId, floor)) {
+      throw new StoreError("invalid_params", `${field} names an unknown or expired message`);
+    }
+    return messageId;
+  }
+
+  private allocateLogId(context: CommitContext): number {
+    const state = context.state;
+    const candidate = Math.max(Math.trunc(context.commitMs), state.last_log_id + 1, state.history_floor);
+    if (!Number.isSafeInteger(candidate) || candidate <= 0 || candidate > MAX_SAFE_ID) throw new StoreError("internal_error", "log identifier range exhausted");
+    state.last_log_id = candidate;
+    return candidate;
+  }
+
+  /** Append one record to each room whose log it belongs to. */
+  private appendRecord(context: CommitContext, roomIds: string[], kind: RecordKind, logId: number, json: string): void {
+    for (const roomId of roomIds) {
+      this.rawExec(
+        "INSERT INTO records (room_id, log_id, commit_ms, kind, record_json) VALUES (?, ?, ?, ?, ?)",
+        roomId, logId, context.commitMs, kind, json,
+      );
+      context.touched.set(roomId, Math.max(context.touched.get(roomId) ?? 0, logId));
+    }
+  }
+
+  /** Advance each touched room's head and the server-wide head. */
+  private finishCommit(context: CommitContext, startLogId: number): void {
+    if (context.state.last_log_id === startLogId) return;
+    for (const [roomId, logId] of context.touched) {
+      this.rawExec("UPDATE rooms SET latest_log_id = MAX(latest_log_id, ?) WHERE room_id = ?", logId, roomId);
+    }
+    this.rawExec(
+      "UPDATE log_state SET last_log_id = ?, last_commit_ms = ? WHERE id = 1",
+      context.state.last_log_id,
+      Math.max(context.commitMs, context.state.last_commit_ms),
+    );
+  }
+
+  /** Create, save, delete, restore, or move a message (section 3.5, Appendix B). */
+  private commitMessage(input: StoreMutationInput, context: CommitContext, floor: number): StoreMutationResult {
     const params = input.params;
-    const suppliedMessageId = params.message_id;
-    if (suppliedMessageId !== undefined && typeof suppliedMessageId !== "string") throw new StoreError("invalid_params", "message_id must be a string");
     if (params.log_id !== undefined) throw new StoreError("invalid_params", "log_id is server assigned");
-    const replacing = current !== null;
-    if (replacing && current && current.author_id !== input.userId) throw new StoreError("denied", "Only the original author may edit this message");
+    const roomId = params.room_id;
+    if (typeof roomId !== "string" || roomId.length === 0) throw new StoreError("invalid_params", "room_id must be a non-empty string");
+    const messageIdParam = params.message_id;
+    if (messageIdParam !== undefined && typeof messageIdParam !== "string") throw new StoreError("invalid_params", "message_id must be a string");
+    const current = messageIdParam === undefined ? null : this.currentMessage(ensureText(messageIdParam, "message_id", 256), floor);
+    if (messageIdParam !== undefined && !current) throw new StoreError("invalid_params", "unknown or expired message");
+    if (current && current.author_id !== input.userId) throw new StoreError("denied", "Only the original author may edit this message");
+    if (!this.roomRow(roomId)) throw new StoreError("invalid_params", "unknown room");
     const deleted = params.deleted === undefined ? false : params.deleted;
     if (typeof deleted !== "boolean") throw new StoreError("invalid_params", "deleted must be boolean");
-    if (!replacing && deleted) throw new StoreError("invalid_params", "deleted messages must be created through an existing message");
-
-    const threadValue = params.thread_id;
-    if (threadValue !== undefined && typeof threadValue !== "string") throw new StoreError("invalid_params", "thread_id must be a string");
-    if (typeof threadValue === "string" && !this.threadRow(threadValue)) throw new StoreError("invalid_params", "unknown thread");
-    const replyValue = params.reply_message_id;
-    if (replyValue !== undefined && typeof replyValue !== "string") throw new StoreError("invalid_params", "reply_message_id must be a string");
-    if (typeof replyValue === "string") {
-      if (replyValue === messageId) throw new StoreError("invalid_params", "a message cannot reply to itself");
-      if (!this.currentMessage(replyValue, historyFloor)) throw new StoreError("invalid_params", "unknown or expired reply target");
-    }
-
+    if (!current && deleted) throw new StoreError("invalid_params", "a message cannot be created deleted");
+    const previous = current ? parseJson<MessageSnapshot>(current.snapshot_json) : null;
+    const replyId = this.messageReference(params.reply_to, "reply_to", floor, {
+      ...(typeof messageIdParam === "string" ? { self: messageIdParam } : {}),
+      ...(previous?.reply_to ? { unchanged: previous.reply_to.message_id } : {}),
+    });
     let body: Record<string, unknown> | undefined;
     if (!deleted) {
+      if (params.body === undefined) throw new StoreError("invalid_params", "message body is required");
       body = this.normalizedBody(params.body);
-      const embeds = body.embeds as unknown[];
-      if (body.text === "" && embeds.length === 0) throw new StoreError("invalid_params", "message cannot be empty");
+      if (body.text === "" && (body.embeds as unknown[]).length === 0) throw new StoreError("invalid_params", "message cannot be empty");
     }
-    const from = replacing && current ? parseJson<MessageSnapshot>(current.snapshot_json).from : this.identityForMessage(input);
+    const ext = this.optionalExt(params.ext);
+    const from = previous ? previous.from : this.identityForMessage(input);
     if (!from || typeof from.user_id !== "string") throw new StoreError("internal_error", "message author is missing");
-    const snapshot: MessageSnapshot = {
-      message_id: messageId,
-      from: clone(from),
-    };
-    // All fields beside routing/server-owned fields are editable extension
-    // fields. This preserves extensions without allowing clients to spoof ID
-    // or author fields.
-    for (const [key, value] of Object.entries(params)) {
-      if (["room_id", "message_id", "log_id", "body", "from", "echo", "thread_id", "reply_message_id", "deleted"].includes(key)) continue;
-      Object.defineProperty(snapshot, key, { value: clone(value), enumerable: true, configurable: true, writable: true });
-    }
+
+    const logId = this.allocateLogId(context);
+    const messageId = previous ? previous.message_id : idString(logId);
+    // Deletion omits the body from the tombstone; the other client fields keep
+    // replacement semantics, so omitted fields are removed.
+    const snapshot: MessageSnapshot = { message_id: messageId, log_id: idString(logId), room_id: roomId, from: clone(from) };
     if (body) snapshot.body = body;
-    if (typeof threadValue === "string") snapshot.thread_id = threadValue;
-    if (typeof replyValue === "string") snapshot.reply_message_id = replyValue;
+    if (replyId !== undefined) snapshot.reply_to = { message_id: replyId };
     if (deleted) snapshot.deleted = true;
-    this.validateSnapshot(snapshot);
-    return snapshot;
+    if (ext) snapshot.ext = ext;
+    const json = JSON.stringify(snapshot);
+    if (utf8Bytes(json) > this.config.maxSnapshotBytes) throw new StoreError("too_large", "message snapshot is too large");
+
+    const moved = current !== null && current.room_id !== roomId;
+    // A move belongs to the source and destination logs (Appendix A).
+    this.appendRecord(context, moved ? [current.room_id, roomId] : [roomId], "message", logId, json);
+    this.rawExec(
+      `INSERT INTO message_state (message_id, room_id, latest_log_id, snapshot_json, author_id)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (message_id) DO UPDATE SET
+         room_id = excluded.room_id,
+         latest_log_id = excluded.latest_log_id,
+         snapshot_json = excluded.snapshot_json`,
+      messageId, roomId, logId, json, from.user_id,
+    );
+    const broadcasts: Broadcast[] = [{ method: "message", params: clone(snapshot) as unknown as Record<string, unknown> }];
+    if (moved) {
+      // Reactions follow a moved message: one record in the destination with
+      // every retained non-empty set. The per-message cap bounds this read.
+      const rows = this.rawRows<RawReactionRow>(
+        `SELECT message_id, user_id, log_id, from_json, emojis_json FROM reaction_state
+         WHERE message_id = ? AND log_id >= ? ORDER BY log_id, user_id LIMIT ?`,
+        messageId, floor, this.config.reactionUsersPerMessage,
+      );
+      if (rows.length) {
+        const reactionLogId = this.allocateLogId(context);
+        const record: ReactionsRecord = {
+          log_id: idString(reactionLogId),
+          message_id: messageId,
+          room_id: roomId,
+          reactions: rows.map((row) => ({ from: parseJson<Identity>(row.from_json), emojis: parseJson<string[]>(row.emojis_json) })),
+        };
+        this.appendRecord(context, [roomId], "reactions", reactionLogId, JSON.stringify(record));
+        // The sets' latest record is now the moved copy; retention follows it.
+        this.rawExec("UPDATE reaction_state SET log_id = ? WHERE message_id = ? AND log_id >= ?", reactionLogId, messageId, floor);
+        broadcasts.push({ method: "reactions", params: clone(record) as unknown as Record<string, unknown> });
+      }
+    }
+    return { result: { message_id: messageId }, broadcasts, message: snapshot };
+  }
+
+  /** Normalize a reaction set: strings, duplicates collapsed, bounded. */
+  private normalizedEmojis(value: unknown): string[] {
+    if (!Array.isArray(value)) throw new StoreError("invalid_params", "emojis must be an array");
+    const emojis: string[] = [];
+    for (const item of value) {
+      if (typeof item !== "string" || item.length === 0) throw new StoreError("invalid_params", "each emoji must be a non-empty string");
+      // eslint-disable-next-line no-control-regex
+      if (utf8Bytes(item) > MAX_EMOJI_BYTES || /[\u0000-\u001f\u007f]/.test(item)) {
+        throw new StoreError("invalid_params", "emoji is not a single bounded sequence");
+      }
+      if (!emojis.includes(item)) emojis.push(item);
+    }
+    if (emojis.length > this.config.reactionEmojisPerUser) throw new StoreError("invalid_params", "too many distinct emoji in one reaction set");
+    return emojis;
+  }
+
+  /** Replace the caller's reaction set on one message (Appendix D.2). */
+  private commitReactions(input: StoreMutationInput, context: CommitContext, floor: number): StoreMutationResult {
+    const params = input.params;
+    const messageIdParam = params.message_id;
+    if (typeof messageIdParam !== "string" || messageIdParam.length === 0) throw new StoreError("invalid_params", "message_id must be a non-empty string");
+    const emojis = this.normalizedEmojis(params.emojis);
+    const message = this.currentMessage(ensureText(messageIdParam, "message_id", 256), floor);
+    if (!message) throw new StoreError("invalid_params", "unknown or expired message");
+    const snapshot = parseJson<MessageSnapshot>(message.snapshot_json);
+    // Clients hide a tombstone's reactions; the demo stores no new ones.
+    if (snapshot.deleted === true && emojis.length) throw new StoreError("invalid_params", "cannot react to a deleted message");
+    const existing = this.rawRows<RawReactionRow>(
+      "SELECT message_id, user_id, log_id, from_json, emojis_json FROM reaction_state WHERE message_id = ? AND user_id = ? LIMIT 1",
+      message.message_id, input.userId,
+    )[0];
+    const currentSet = existing && existing.log_id >= floor ? parseJson<string[]>(existing.emojis_json, []) : [];
+    // An unchanged set produces no record (Appendix D.2 permits no change).
+    if (currentSet.length === emojis.length && emojis.every((emoji) => currentSet.includes(emoji))) {
+      return { result: {}, broadcasts: [] };
+    }
+    if (!existing && emojis.length) {
+      // Count every stored set, including logically expired ones awaiting
+      // cleanup, so the move-time read of this message stays within its cap.
+      const count = integerColumn(this.rawRows<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM (SELECT 1 FROM reaction_state WHERE message_id = ? LIMIT ?)",
+        message.message_id, this.config.reactionUsersPerMessage,
+      )[0]?.count);
+      if (count >= this.config.reactionUsersPerMessage) throw new StoreError("invalid_params", "reaction limit reached for this message");
+    }
+    const logId = this.allocateLogId(context);
+    const from = this.identityForMessage(input);
+    const record: ReactionsRecord = {
+      log_id: idString(logId),
+      message_id: message.message_id,
+      room_id: message.room_id,
+      reactions: [{ from, emojis }],
+    };
+    this.appendRecord(context, [message.room_id], "reactions", logId, JSON.stringify(record));
+    if (emojis.length) {
+      this.rawExec(
+        `INSERT INTO reaction_state (message_id, user_id, log_id, from_json, emojis_json) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (message_id, user_id) DO UPDATE SET
+           log_id = excluded.log_id, from_json = excluded.from_json, emojis_json = excluded.emojis_json`,
+        message.message_id, input.userId, logId, JSON.stringify(from), JSON.stringify(emojis),
+      );
+    } else if (existing) {
+      this.rawExec("DELETE FROM reaction_state WHERE message_id = ? AND user_id = ?", message.message_id, input.userId);
+    }
+    return { result: {}, broadcasts: [{ method: "reactions", params: clone(record) as unknown as Record<string, unknown> }] };
+  }
+
+  /**
+   * Create a thread room or replace a thread room's client fields (Appendix C).
+   * Demo policy: only threads under a top-level room may be created, and only
+   * thread rooms may be edited; the permanent `general` room is fixed.
+   */
+  private commitRoom(input: StoreMutationInput, context: CommitContext, floor: number): StoreMutationResult {
+    const params = input.params;
+    const roomIdParam = params.room_id;
+    if (roomIdParam !== undefined && (typeof roomIdParam !== "string" || roomIdParam.length === 0)) throw new StoreError("invalid_params", "room_id must be a non-empty string");
+    const titleParam = params.title;
+    if (titleParam !== undefined && typeof titleParam !== "string") throw new StoreError("invalid_params", "title must be a string");
+    const ext = this.optionalExt(params.ext);
+    // Threads always carry a title so clients that ignore parent_room_id
+    // still render them (section 3.4).
+    const title = typeof titleParam === "string" && titleParam.trim() !== "" ? titleParam : DEFAULT_THREAD_TITLE;
+    const fields: Record<string, unknown> = { title, ...(ext ? { ext } : {}) };
+
+    let row: RawRoomRow;
+    let logId: number;
+    if (roomIdParam === undefined) {
+      const parentId = params.parent_room_id;
+      if (parentId === undefined) throw new StoreError("denied", "Only threads may be created on this demo");
+      if (typeof parentId !== "string" || parentId.length === 0) throw new StoreError("invalid_params", "parent_room_id must be a non-empty string");
+      const parent = this.roomRow(parentId);
+      if (!parent) throw new StoreError("invalid_params", "unknown parent_room_id");
+      if (parent.parent_room_id !== null) throw new StoreError("denied", "Threads cannot be nested on this demo");
+      if (this.metaNumber("thread_count") >= this.config.maxThreads) throw new StoreError("denied", "thread_limit");
+      const introId = this.messageReference(params.intro_message, "intro_message", floor);
+      this.checkRoomFields(fields, introId);
+      logId = this.allocateLogId(context);
+      const roomId = idString(logId);
+      const fieldsJson = JSON.stringify(fields);
+      this.rawExec(
+        `INSERT INTO rooms (${ROOM_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        roomId, parentId, logId, logId, logId, introId ?? null, fieldsJson, context.commitMs, context.commitMs,
+      );
+      this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('thread_count', ?)", String(this.metaNumber("thread_count") + 1));
+      row = {
+        room_id: roomId, parent_room_id: parentId, created_log_id: logId, record_log_id: logId, latest_log_id: logId,
+        intro_message_id: introId ?? null, fields_json: fieldsJson, created_ms: context.commitMs, updated_ms: context.commitMs,
+      };
+    } else {
+      const existing = this.roomRow(roomIdParam);
+      if (!existing) throw new StoreError("invalid_params", "unknown room");
+      if (existing.parent_room_id === null) throw new StoreError("denied", "Top-level rooms cannot be edited on this demo");
+      // parent_room_id is fixed at creation; a submitted value is ignored.
+      const introId = this.messageReference(params.intro_message, "intro_message", floor, existing.intro_message_id === null ? {} : { unchanged: existing.intro_message_id });
+      this.checkRoomFields(fields, introId);
+      logId = this.allocateLogId(context);
+      const fieldsJson = JSON.stringify(fields);
+      this.rawExec(
+        "UPDATE rooms SET record_log_id = ?, latest_log_id = ?, intro_message_id = ?, fields_json = ?, updated_ms = ? WHERE room_id = ?",
+        logId, logId, introId ?? null, fieldsJson, context.commitMs, existing.room_id,
+      );
+      row = { ...existing, record_log_id: logId, latest_log_id: logId, intro_message_id: introId ?? null, fields_json: fieldsJson, updated_ms: context.commitMs };
+    }
+    const record = this.roomRecord(row, floor, this.introFor(row));
+    // Delivery fields describe a client's view and are not logged.
+    const { latest_log_id: _latest, history_log_id: _history, ...logged } = record;
+    void _latest; void _history;
+    this.rawExec(
+      "INSERT INTO records (room_id, log_id, commit_ms, kind, record_json) VALUES (?, ?, ?, 'room', ?)",
+      row.room_id, logId, context.commitMs, JSON.stringify(logged),
+    );
+    return { result: { room_id: row.room_id }, broadcasts: [{ method: "room", params: clone(record) as unknown as Record<string, unknown> }], room: record };
+  }
+
+  private checkRoomFields(fields: Record<string, unknown>, introId: string | undefined): void {
+    const serialized = JSON.stringify({ ...fields, ...(introId !== undefined ? { intro_message: { message_id: introId } } : {}) });
+    if (utf8Bytes(serialized) > this.config.maxThreadMetadataBytes) throw new StoreError("too_large", "room metadata is too large");
+  }
+
+  private commitNameMutation(input: StoreMutationInput, now: number): StoreMutationResult {
+    const name = input.params.name;
+    if (typeof name !== "string") throw new StoreError("invalid_params", "name must be a string");
+    ensureText(name, "name", this.config.maxNameBytes);
+    if ([...name].length > this.config.maxNameCodePoints) throw new StoreError("too_large", "name is too long");
+    const existing = this.identityRow(input.userId);
+    if (!existing) throw new StoreError("denied", "Only registered users may change their name");
+    this.rawExec("UPDATE identities SET name = ?, updated_ms = ? WHERE user_id = ?", name, now, input.userId);
+    return { result: { name }, broadcasts: [] };
   }
 
   private commitStoredResult(
@@ -2164,7 +2492,6 @@ export class Store {
     digest: string,
     method: string,
     result: Record<string, unknown>,
-    transition: Transition | undefined,
     expiresAt: number,
   ): void {
     if (requestId === undefined) return;
@@ -2183,56 +2510,47 @@ export class Store {
       requestId,
       digest,
       JSON.stringify(storedResult),
-      // The original result is sufficient for a retry response.  Keeping a
-      // full transition snapshot in every dedup row duplicates up to the
-      // message payload and needlessly grows retained control data.
+      // The original result is sufficient for a retry response: retries are
+      // never rebroadcast, so no record copy is retained here.
       null,
       expiresAt,
       expiresAt,
     );
   }
 
-  private deduplicatedCommit(row: RawDedupRow, method: string, digest: string): MutationCommit {
+  private deduplicatedCommit(row: RawDedupRow, method: string, digest: string): StoreMutationResult {
     if (row.digest !== digest) throw new StoreError("invalid_params", "request ID was already used for a different operation");
     const stored = parseJson<Record<string, unknown>>(row.result_json, {});
     if (stored.__method !== undefined && stored.__method !== method) throw new StoreError("invalid_params", "request ID was already used for a different method");
     delete stored.__method;
-    const transition = row.transition_json ? parseJson<Transition>(row.transition_json) : undefined;
-    return {
-      ...(typeof stored.message_id === "string" ? { messageId: stored.message_id } : {}),
-      ...(transition ? { logId: transition.log_id, message: transition.message } : {}),
-      result: stored,
-      deduplicated: true,
-      ...(transition ? { transition: clone(transition) } : {}),
-    };
+    return { result: stored, broadcasts: [], deduplicated: true };
   }
 
-  commitMutation(input: DomainMutationInput): MutationCommit;
-  commitMutation(input: StoreMutationInput): StoreMutationResult;
-  commitMutation(input: DomainMutationInput | StoreMutationInput): MutationCommit | StoreMutationResult {
-    // The runtime's typed adapter includes params/identity; preserve those
-    // fields and use the domain implementation directly. Older callers use
-    // the normalized StoreMutationInput and are routed through mutate().
-    if (!("params" in input) || input.params === undefined) return this.mutate(input as StoreMutationInput);
-    return this.commitMutationDomain(input as DomainMutationInput);
+  private mutationMethod(method: string | undefined): MutationMethod {
+    if (method === undefined || method === "message") return "message";
+    if (method === "room" || method === "reactions" || method === "name") return method;
+    throw new StoreError("unsupported", "Unsupported mutation");
   }
 
-  private commitMutationDomain(input: DomainMutationInput): MutationCommit & { transition?: Transition } {
+  /**
+   * One accepted operation: dedup lookup, reservation, then one atomic
+   * decision that rechecks quotas, allocates log IDs, writes every record and
+   * current state, and records the result. Callers broadcast `broadcasts` in
+   * order only after this returns.
+   */
+  commitMutation(input: StoreMutationInput): StoreMutationResult {
     this.ensureReady();
-    if (input.params.room_id !== undefined && input.params.room_id !== ROOM_ID) throw new StoreError("invalid_params", "unknown room");
     if (!input.userId || !input.ipKey) throw new StoreError("denied", "authentication required");
     if (input.requestId !== undefined) {
       if (typeof input.requestId !== "string" || utf8Bytes(input.requestId) > 128) throw new StoreError("invalid_params", "invalid request ID");
     }
-    const method = input.method ?? "message";
-    const extra = input as DomainMutationInput & { digest?: string };
-    const digest = extra.digest ?? digestOperation(method, input.params);
+    const method = this.mutationMethod(input.method);
+    const digest = input.digest ?? digestOperation(method, input.params);
     const operationNow = input.now ?? this.clock.now();
     // A retry lookup is deliberately cheaper than a full mutation reserve.
     // Accepted retries must remain available even when posting/storage
     // capacity is exhausted, while still paying their bounded SQL lookup.
     let effective = operationNow;
-    let preDuplicate: RawDedupRow | null = null;
     if (input.requestId !== undefined) {
       const lookup = this.reserved({ reads: 8, writes: 8 }, false, operationNow, () => {
         const lookupNow = this.effectiveNow(operationNow);
@@ -2242,13 +2560,13 @@ export class Store {
         };
       });
       effective = lookup.now;
-      preDuplicate = lookup.row;
-      if (preDuplicate) return this.deduplicatedCommit(preDuplicate, method, digest);
+      if (lookup.row) return this.deduplicatedCommit(lookup.row, method, digest);
     }
     const mutationCost = {
       ...this.config.mutationCost,
       // The default is a conservative floor for the three posting limiter
-      // rows, dedup row, transition, current snapshot, and room bookkeeping.
+      // rows, dedup row, records, current state, and room/log bookkeeping.
+      // A move also re-logs the message's capped reaction sets.
       reads: Math.max(256, this.config.mutationCost.reads ?? 0),
       writes: Math.max(256, this.config.mutationCost.writes ?? 0),
     };
@@ -2257,266 +2575,47 @@ export class Store {
     const reserved = this.reserveCost(mutationCost, false, operationNow);
     try {
       effective = this.effectiveNow(operationNow);
-      const row = this.roomRow();
       this.ensureGrowthCapacity(this.config.maxSnapshotBytes);
       return this.transaction(() => {
-      const beforeCommit = <T>(value: T): T => {
-        // Assert while transactionSync's closure is still open.  If an
-        // observed cursor exceeds the reservation, throwing here rolls back
-        // the accepted mutation before any result can be broadcast.
-        this.assertStorageTarget();
-        this.assertReservation(reserved, beforeReads, beforeWrites);
-        return value;
-      };
-      const duplicate = preDuplicate;
-      if (duplicate) return beforeCommit(this.deduplicatedCommit(duplicate, method, digest));
-      const tier: Tier = this.identityRow(input.userId) ? "registered" : "anonymous";
-      this.chargePosting({ userId: input.userId, tier, ipKey: input.ipKey, now: effective });
-      if (method === "thread") return beforeCommit(this.commitThreadMutation(input, digest, effective, row.history_floor));
-      if (method === "nick") return beforeCommit(this.commitNickMutation(input, digest, effective));
-      if (method !== "message") throw new StoreError("unsupported", "Unsupported mutation");
-      const messageIdParam = input.params.message_id;
-      const messageId = messageIdParam === undefined ? undefined : ensureText(messageIdParam, "message_id", 256);
-      const current = messageId ? this.currentMessage(messageId, row.history_floor) : null;
-      if (messageId && !current) throw new StoreError("invalid_params", "unknown or expired message");
-      const allocated: string = messageId ?? idString(this.allocateLogId(row, effective));
-      const snapshot = this.messageFromParams(input, current, allocated, row.history_floor);
-      const previousThread = current ? optionalString(parseJson<MessageSnapshot>(current.snapshot_json).thread_id) : undefined;
-      const nextThread = optionalString(snapshot.thread_id);
-      const commitMs = Math.max(effective, row.last_commit_ms);
-      const logIdNumber = messageId ? this.allocateLogId(row, commitMs) : numericId(allocated);
-      const logId = idString(logIdNumber);
-      const transition: Transition = {
-        room_id: ROOM_ID,
-        log_id: logId,
-        commit_ms: commitMs,
-        message_id: allocated,
-        message: clone(snapshot),
-        ...(previousThread ? { previous_thread_id: previousThread } : {}),
-        ...(nextThread ? { thread_id: nextThread } : {}),
-      };
-      const snapshotJson = JSON.stringify(snapshot);
-      this.rawExec(
-        `INSERT INTO transitions
-         (room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ROOM_ID,
-        logIdNumber,
-        commitMs,
-        allocated,
-        snapshotJson,
-        previousThread ?? null,
-        nextThread ?? null,
-      );
-      this.rawExec(
-        `INSERT INTO messages
-         (room_id, message_id, latest_log_id, latest_commit_ms, snapshot_json, author_id, thread_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (room_id, message_id) DO UPDATE SET
-           latest_log_id = excluded.latest_log_id,
-           latest_commit_ms = excluded.latest_commit_ms,
-           snapshot_json = excluded.snapshot_json,
-           author_id = excluded.author_id,
-           thread_id = excluded.thread_id`,
-        ROOM_ID,
-        allocated,
-        logIdNumber,
-        commitMs,
-        snapshotJson,
-        snapshot.from.user_id,
-        nextThread ?? null,
-      );
-      this.rawExec(
-        "UPDATE room_state SET last_log_id = ?, last_commit_ms = ? WHERE room_id = ?",
-        Math.max(row.last_log_id, logIdNumber),
-        commitMs,
-        ROOM_ID,
-      );
-      const result = { message_id: allocated };
-      this.commitStoredResult(input.userId, input.requestId, digest, method, result, transition, effective + this.config.dedupTtlMs);
-      return beforeCommit({
-        messageId: allocated,
-        logId,
-        message: clone(snapshot),
-        result,
-        transition: clone(transition),
-      });
+        const beforeCommit = <T>(value: T): T => {
+          // Assert while transactionSync's closure is still open.  If an
+          // observed cursor exceeds the reservation, throwing here rolls back
+          // the accepted mutation before any result can be broadcast.
+          this.assertStorageTarget();
+          this.assertReservation(reserved, beforeReads, beforeWrites);
+          return value;
+        };
+        const tier: Tier = this.identityRow(input.userId) ? "registered" : "anonymous";
+        this.chargePosting({ userId: input.userId, tier, ipKey: input.ipKey, now: effective });
+        let committed: StoreMutationResult;
+        if (method === "name") {
+          committed = this.commitNameMutation(input, effective);
+        } else {
+          const state = this.logState();
+          const startLogId = state.last_log_id;
+          const context: CommitContext = { state, commitMs: Math.max(effective, state.last_commit_ms), touched: new Map() };
+          const floor = state.history_floor;
+          committed = method === "message" ? this.commitMessage(input, context, floor)
+            : method === "room" ? this.commitRoom(input, context, floor)
+            : this.commitReactions(input, context, floor);
+          this.finishCommit(context, startLogId);
+        }
+        this.commitStoredResult(input.userId, input.requestId, digest, method, committed.result, effective + this.config.dedupTtlMs);
+        return beforeCommit(committed);
       });
     } finally {
       this.assertReservation(reserved, beforeReads, beforeWrites);
     }
   }
 
-  private allocateLogId(room: RawRoomRow, now: number): number {
-    const candidate = Math.max(Math.trunc(now), room.last_log_id + 1, room.history_floor);
-    if (!Number.isSafeInteger(candidate) || candidate <= 0 || candidate > MAX_SAFE_ID) throw new StoreError("internal_error", "log identifier range exhausted");
-    return candidate;
+  /** Runtime adapter: commits a private copy of the request parameters. */
+  mutate(input: StoreMutationInput): StoreMutationResult {
+    return this.commitMutation({ ...input, params: clone(input.params) });
   }
 
-  private nextThreadId(): string {
-    const next = this.metaNumber(META_NEXT_THREAD) + 1;
-    this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)", META_NEXT_THREAD, String(next));
-    return `t_${next.toString(36)}`;
-  }
-
-  private threadMetadata(input: DomainMutationInput, threadId: string, now: number, current?: RawThreadRow | null): StoreThreadRecord {
-    const params = input.params;
-    const titleValue = params.title;
-    const summaryValue = params.summary;
-    if (titleValue !== undefined && typeof titleValue !== "string") throw new StoreError("invalid_params", "thread title must be a string");
-    if (summaryValue !== undefined && typeof summaryValue !== "string") throw new StoreError("invalid_params", "thread summary must be a string");
-    const title = titleValue === undefined ? current?.title ?? undefined : titleValue === "" ? undefined : titleValue;
-    const summary = summaryValue === undefined ? current?.summary ?? undefined : summaryValue === "" ? undefined : summaryValue;
-    if (title && utf8Bytes(title) > this.config.maxThreadMetadataBytes) throw new StoreError("too_large", "thread title is too large");
-    if (summary && utf8Bytes(summary) > this.config.maxThreadMetadataBytes) throw new StoreError("too_large", "thread summary is too large");
-    const record: StoreThreadRecord = {
-      room_id: ROOM_ID,
-      thread_id: threadId,
-      ...(title ? { title } : {}),
-      ...(summary ? { summary } : {}),
-      ...(current?.root_message_id ? { root_message_id: current.root_message_id } : {}),
-      created_at: current?.created_ms ?? now,
-      updated_at: now,
-    };
-    if (utf8Bytes(JSON.stringify(record)) > this.config.maxThreadMetadataBytes) throw new StoreError("too_large", "thread metadata is too large");
-    return record;
-  }
-
-  private commitThreadMutation(input: DomainMutationInput, digest: string, now: number, historyFloor?: number): MutationCommit {
-    const params = input.params;
-    if (params.root_message_id !== undefined && typeof params.thread_id === "string") {
-      throw new StoreError("invalid_params", "root_message_id cannot be supplied when editing a thread");
-    }
-    const requested = params.thread_id;
-    if (requested !== undefined && typeof requested !== "string") throw new StoreError("invalid_params", "thread_id must be a string");
-    if (requested === undefined) {
-      const count = this.metaNumber("thread_count");
-      if (count >= this.config.maxThreads) throw new StoreError("denied", "thread_limit");
-      const threadId = this.nextThreadId();
-      let rootMessageId: string | undefined;
-      if (params.root_message_id !== undefined) {
-        if (typeof params.root_message_id !== "string") throw new StoreError("invalid_params", "root_message_id must be a string");
-        if (!this.currentMessage(params.root_message_id, historyFloor)) throw new StoreError("invalid_params", "unknown or expired root message");
-        rootMessageId = params.root_message_id;
-      }
-      const record = this.threadMetadata(input, threadId, now);
-      this.rawExec(
-        "INSERT INTO threads (room_id, thread_id, title, summary, root_message_id, created_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ROOM_ID,
-        threadId,
-        record.title ?? null,
-        record.summary ?? null,
-        rootMessageId ?? null,
-        now,
-        now,
-      );
-      this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('thread_count', ?)", String(this.metaNumber("thread_count") + 1));
-      const result = { thread_id: threadId };
-      this.commitStoredResult(input.userId, input.requestId, digest, input.method ?? "thread", result, undefined, now + this.config.dedupTtlMs);
-      return { result, thread: { ...record, ...(rootMessageId ? { root_message_id: rootMessageId } : {}) } } as MutationCommit & { thread: StoreThreadRecord };
-    }
-    if (params.root_message_id !== undefined) throw new StoreError("invalid_params", "root_message_id cannot be changed");
-    const current = this.threadRow(requested);
-    if (!current) throw new StoreError("invalid_params", "unknown thread");
-    if (params.title === undefined && params.summary === undefined) throw new StoreError("invalid_params", "thread edit needs title or summary");
-    const record = this.threadMetadata(input, requested, now, current);
-    this.rawExec(
-      "UPDATE threads SET title = ?, summary = ?, updated_ms = ? WHERE room_id = ? AND thread_id = ?",
-      record.title ?? null,
-      record.summary ?? null,
-      now,
-      ROOM_ID,
-      requested,
-    );
-    const result = { thread_id: requested };
-    this.commitStoredResult(input.userId, input.requestId, digest, input.method ?? "thread", result, undefined, now + this.config.dedupTtlMs);
-    return { result, thread: record } as MutationCommit & { thread: StoreThreadRecord };
-  }
-
-  private commitNickMutation(input: DomainMutationInput, digest: string, now: number): MutationCommit {
-    const name = input.params.name;
-    if (typeof name !== "string") throw new StoreError("invalid_params", "name must be a string");
-    ensureText(name, "name", this.config.maxNameBytes);
-    if ([...name].length > this.config.maxNameCodePoints) throw new StoreError("too_large", "name is too long");
-    const existing = this.identityRow(input.userId);
-    if (!existing) throw new StoreError("denied", "Only registered users may change their name");
-    this.rawExec("UPDATE identities SET name = ?, updated_ms = ? WHERE user_id = ?", name, now, input.userId);
-    const result = { name };
-    this.commitStoredResult(input.userId, input.requestId, digest, input.method ?? "nick", result, undefined, now + this.config.dedupTtlMs);
-    return { result };
-  }
-
-  /** Runtime adapter: accepts the richer pre-normalized input shape. */
-  mutate(input: StoreMutationInput, digest?: string): StoreMutationResult {
-    const params: Record<string, unknown> = clone(input.params);
-    const domain: DomainMutationInput = {
-      userId: input.userId,
-      requestId: input.requestId,
-      digest: digest ?? input.digest,
-      method: input.method === "message" || input.method === "thread" || input.method === "nick" ? input.method : "message",
-      params,
-      identity: input.identity,
-      now: input.now ?? this.clock.now(),
-      ipKey: input.ipKey,
-    };
-    const commit = this.commitMutation(domain);
-    const internal = commit as MutationCommit & { transition?: Transition };
-    return {
-      result: commit.result as Record<string, string>,
-      ...(internal.transition ? { transition: clone(internal.transition) } : commit.logId && commit.message ? {
-        transition: {
-          room_id: ROOM_ID,
-          log_id: commit.logId,
-          commit_ms: input.now ?? this.clock.now(),
-          message_id: commit.messageId ?? String(commit.result.message_id),
-          message: commit.message as MessageSnapshot,
-        },
-      } : {}),
-      ...(commit.deduplicated ? { deduplicated: true } : {}),
-      ...("thread" in commit ? { thread: (commit as MutationCommit & { thread: StoreThreadRecord }).thread } : {}),
-    };
-  }
-
-  mutateThread(input: StoreMutationInput, digest?: string): StoreMutationResult {
-    const params: Record<string, unknown> = {
-      ...clone(input.params),
-      room_id: input.roomId ?? (typeof input.params.room_id === "string" ? input.params.room_id : ROOM_ID),
-      ...(input.thread?.threadId !== undefined ? { thread_id: input.thread.threadId } : {}),
-      ...(input.thread?.title !== undefined ? { title: input.thread.title } : {}),
-      ...(input.thread?.summary !== undefined ? { summary: input.thread.summary } : {}),
-      ...(input.thread?.rootMessageId !== undefined ? { root_message_id: input.thread.rootMessageId } : {}),
-    };
-    const domain: DomainMutationInput = {
-      userId: input.userId,
-      requestId: input.requestId,
-      digest: digest ?? input.digest ?? digestOperation("thread", params),
-      method: "thread",
-      params,
-      identity: { user_id: input.userId, ...(input.tier === "registered" ? { tier: "registered" as const } : {}) },
-      now: input.now ?? this.clock.now(),
-      ipKey: input.ipKey,
-    };
-    const commit = this.commitMutation(domain) as MutationCommit & { thread?: StoreThreadRecord };
-    return {
-      result: commit.result as Record<string, string>,
-      ...(commit.deduplicated ? { deduplicated: true } : {}),
-      ...(commit.thread ? { thread: commit.thread } : {}),
-    };
-  }
-
-  listThreads(): StoreThreadRecord[] {
-    return this.getThreads();
-  }
-
-  /** Compatibility helper used by the runtime's thread request path. */
-  createThread(input: DomainMutationInput): MutationCommit {
-    if (input.method !== "thread") throw new StoreError("invalid_params", "thread mutation required");
-    return this.commitMutation(input);
-  }
-
-  history(query: DomainHistoryQuery): HistoryPage {
+  /** History with the per-user/IP history quota charged (Appendix A). */
+  history(query: StoreHistoryQuery): StoreHistoryResult {
     this.ensureReady();
-    if (query.roomId !== ROOM_ID) throw new StoreError("invalid_params", "unknown room");
     const operationNow = query.now ?? this.clock.now();
     return this.reserved({
       ...this.config.historyCost,
@@ -2529,19 +2628,12 @@ export class Store {
           this.chargeEvent("history", `user:${query.userId}`, "history", now, this.config.historyRequestsPerUserMinute, "History request limit reached");
           this.chargeEvent("history", `ip:${query.ipKey}`, "history", now, this.config.historyRequestsPerIpMinute, "History request limit reached");
         }
-        return this.historyPageInternal({
-          roomId: ROOM_ID,
-          after: query.after === undefined ? undefined : numericBigInt(query.after, "after"),
-          before: query.before === undefined ? undefined : numericBigInt(query.before, "before"),
-          limit: query.limit,
-          threadId: query.threadId,
-          maxBytes: Math.min((query as DomainHistoryQuery & { maxBytes?: number }).maxBytes || this.config.maxHistoryResponseBytes, this.config.maxHistoryResponseBytes),
-          now,
-        });
+        return this.historyPageInternal({ ...query, now });
       });
     });
   }
 
+  /** History without quota bookkeeping, for internal and calibration use. */
   historyPage(query: StoreHistoryQuery): StoreHistoryResult {
     this.ensureReady();
     const operationNow = query.now ?? this.clock.now();
@@ -2555,81 +2647,37 @@ export class Store {
     });
   }
 
+  private historyBound(value: string | bigint | undefined, field: string): number | undefined {
+    if (value === undefined) return undefined;
+    return numericId(typeof value === "bigint" ? numericBigInt(value, field) : value, field);
+  }
+
   private historyPageInternal(query: StoreHistoryQuery): StoreHistoryResult {
-    if (query.roomId && query.roomId !== ROOM_ID) throw new StoreError("invalid_params", "unknown room");
-    if (query.threadId !== undefined && !this.threadRow(query.threadId)) throw new StoreError("invalid_params", "unknown thread");
-    const room = this.roomRow();
-    const floor = room.history_floor;
-    const head = room.last_log_id;
-    const after = query.after === undefined ? undefined : numericId(query.after, "after");
-    const before = query.before === undefined ? undefined : numericId(query.before, "before");
-    const lower = Math.max(floor, after ?? floor);
+    if (typeof query.roomId !== "string" || query.roomId.length === 0) throw new StoreError("invalid_params", "room_id must be a non-empty string");
+    const room = this.roomRow(query.roomId);
+    if (!room) throw new StoreError("invalid_params", "unknown room");
+    const floor = this.logState().history_floor;
+    const lowerBound = roomHistoryFloor(room, floor);
+    const head = room.latest_log_id;
+    const after = this.historyBound(query.after, "after");
+    const before = this.historyBound(query.before, "before");
+    const lower = Math.max(lowerBound, after ?? lowerBound);
     const upper = Math.min(head, before ?? head);
     const limit = positiveLimit(query.limit, this.config.historyDefaultLimit, this.config.maxHistoryLimit);
     const maxBytes = Math.min(query.maxBytes ?? this.config.maxHistoryResponseBytes, this.config.maxHistoryResponseBytes);
     const latestLogId = idString(head);
-    const retainedHistoryLogId = historyLogId(head, floor);
-    if (lower > upper || head === 0 || floor > head) {
-      return { entries: [], more: false, latest_log_id: latestLogId, history_log_id: retainedHistoryLogId };
-    }
+    const historyLogId = roomHistoryLogId(room, floor);
+    const empty = (): StoreHistoryResult => ({ entries: [], more: false, latest_log_id: latestLogId, history_log_id: historyLogId });
+    if (lower > upper || historyLogId === null) return empty();
     const forward = after !== undefined;
-    const sourceLimit = limit + 1;
-    const params: unknown[] = [ROOM_ID, lower, upper];
-    let sql: string;
-    if (query.threadId === undefined) {
-      sql = `SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-        FROM transitions WHERE room_id = ? AND log_id >= ? AND log_id <= ?
-        ORDER BY log_id ${forward ? "ASC" : "DESC"} LIMIT ?`;
-      params.push(sourceLimit);
-    } else {
-      // UNION keeps the two membership predicates on their respective indexes
-      // and removes duplicate rows when before and after membership are equal.
-      sql = `SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-        FROM (
-          SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-          FROM transitions WHERE room_id = ? AND log_id >= ? AND log_id <= ? AND previous_thread_id = ?
-          UNION
-          SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-          FROM transitions WHERE room_id = ? AND log_id >= ? AND log_id <= ? AND thread_id = ?
-        ) ORDER BY log_id ${forward ? "ASC" : "DESC"} LIMIT ?`;
-      params.splice(0, params.length,
-        ROOM_ID, lower, upper, query.threadId,
-        ROOM_ID, lower, upper, query.threadId,
-        sourceLimit,
-      );
-    }
-    let rows: RawTransitionRow[];
-    if (query.threadId === undefined) {
-      rows = this.rawRows<RawTransitionRow>(sql, ...params);
-    } else {
-      // Keep each directional membership lookup bounded independently.  A
-      // LIMIT on the outer UNION does not bound either branch's index scan;
-      // two indexed slices do, and merging the at-most-(limit+1) rows here
-      // preserves the same inclusive ordering and duplicate suppression.
-      const branchSql = `SELECT room_id, log_id, commit_ms, message_id, snapshot_json, previous_thread_id, thread_id
-        FROM transitions WHERE room_id = ? AND log_id >= ? AND log_id <= ? AND %s = ?
-        ORDER BY log_id ${forward ? "ASC" : "DESC"} LIMIT ?`;
-      const beforeRows = this.rawRows<RawTransitionRow>(
-        branchSql.replace("%s", "previous_thread_id"),
-        ROOM_ID,
-        lower,
-        upper,
-        query.threadId,
-        sourceLimit,
-      );
-      const afterRows = this.rawRows<RawTransitionRow>(
-        branchSql.replace("%s", "thread_id"),
-        ROOM_ID,
-        lower,
-        upper,
-        query.threadId,
-        sourceLimit,
-      );
-      const byLogId = new Map<number, RawTransitionRow>();
-      for (const row of [...beforeRows, ...afterRows]) byLogId.set(row.log_id, row);
-      rows = [...byLogId.values()].sort((left, right) => forward ? left.log_id - right.log_id : right.log_id - left.log_id).slice(0, sourceLimit);
-    }
-    const selected: StoreHistoryEntry[] = [];
+    // One contiguous slice of the room's log across every record kind; the
+    // limit counts records of any kind (Appendix A).
+    const rows = this.rawRows<RawRecordRow>(
+      `SELECT room_id, log_id, kind, record_json FROM records
+       WHERE room_id = ? AND log_id >= ? AND log_id <= ?
+       ORDER BY log_id ${forward ? "ASC" : "DESC"} LIMIT ?`,
+      room.room_id, lower, upper, limit + 1,
+    );
     // The runtime wraps this result in a JSON-RPC response.  Reserve a fixed
     // envelope allowance for jsonrpc/id/result keys, decimal IDs, commas and
     // first/last/more fields.  An empty page is always valid even when a
@@ -2637,32 +2685,43 @@ export class Store {
     // while considering a non-empty entry.
     // A 128-byte request ID can require 768 JSON bytes when escaped.
     const responseOverhead = 1024;
-    let bytes = utf8Bytes(JSON.stringify({ entries: [], more: false, latest_log_id: latestLogId, history_log_id: retainedHistoryLogId }));
+    let bytes = utf8Bytes(JSON.stringify({ rooms: [], entries: [], reactions: [], more: false, latest_log_id: latestLogId, history_log_id: historyLogId }));
     let stoppedForBytes = false;
-    for (const row of rows.slice(0, sourceLimit)) {
-      const entry: StoreHistoryEntry = { log_id: idString(row.log_id), message: parseJson<MessageSnapshot>(row.snapshot_json) };
-      const entryBytes = utf8Bytes(JSON.stringify(entry));
+    const selected: Array<{ logId: number; kind: string; value: Record<string, unknown> }> = [];
+    for (const row of rows.slice(0, limit + 1)) {
+      const value = parseJson<Record<string, unknown>>(row.record_json);
+      // Room records carry this client's delivery fields, as announcements do.
+      if (row.kind === "room") Object.assign(value, { latest_log_id: latestLogId, history_log_id: historyLogId });
+      const entryBytes = utf8Bytes(JSON.stringify(value));
       if (entryBytes + bytes + responseOverhead + 1 > maxBytes) {
-        if (selected.length === 0) throw new StoreError("too_large", "history entry exceeds response budget");
+        if (selected.length === 0) throw new StoreError("too_large", "history record exceeds response budget");
         stoppedForBytes = true;
         break;
       }
-      selected.push(entry);
+      selected.push({ logId: row.log_id, kind: row.kind, value });
       bytes += entryBytes + 1;
       if (selected.length >= limit) break;
     }
     const more = stoppedForBytes || rows.length > selected.length;
     if (!forward) selected.reverse();
-    if (!selected.length) {
-      return { entries: [], more: false, latest_log_id: latestLogId, history_log_id: retainedHistoryLogId };
+    if (!selected.length) return empty();
+    const rooms: RoomRecord[] = [];
+    const entries: MessageSnapshot[] = [];
+    const reactions: ReactionsRecord[] = [];
+    for (const record of selected) {
+      if (record.kind === "room") rooms.push(record.value as unknown as RoomRecord);
+      else if (record.kind === "reactions") reactions.push(record.value as unknown as ReactionsRecord);
+      else entries.push(record.value as unknown as MessageSnapshot);
     }
     return {
-      entries: selected,
-      first_id: selected[0].log_id,
-      last_id: selected[selected.length - 1].log_id,
+      ...(rooms.length ? { rooms } : {}),
+      entries,
+      ...(reactions.length ? { reactions } : {}),
+      first_id: idString(selected[0].logId),
+      last_id: idString(selected[selected.length - 1].logId),
       more,
       latest_log_id: latestLogId,
-      history_log_id: retainedHistoryLogId,
+      history_log_id: historyLogId,
     };
   }
 
@@ -2678,47 +2737,63 @@ export class Store {
     this.assertReservation(reserved, beforeReads, beforeWrites);
   }
 
+  /**
+   * Indexed existence checks, each reading at most one row. Thread-room expiry
+   * is not probed here: it can only become due when a job advances the floor,
+   * and that job keeps running until its own continuation check is clear.
+   */
+  private cleanupHasWork(floor: number, cutoff: number, effective: number, limiterCutoff: number): boolean {
+    return this.rawRows("SELECT log_id FROM records INDEXED BY records_log_idx WHERE log_id < ? ORDER BY log_id LIMIT 1", floor).length > 0 ||
+      this.rawRows("SELECT log_id FROM records INDEXED BY records_retention_idx WHERE commit_ms < ? ORDER BY commit_ms, log_id LIMIT 1", cutoff).length > 0 ||
+      this.rawRows("SELECT message_id FROM message_state WHERE latest_log_id < ? ORDER BY latest_log_id LIMIT 1", floor).length > 0 ||
+      this.rawRows("SELECT message_id FROM reaction_state WHERE log_id < ? ORDER BY log_id LIMIT 1", floor).length > 0 ||
+      this.rawRows("SELECT user_id FROM accepted_requests WHERE expires_ms <= ? ORDER BY expires_ms LIMIT 1", effective).length > 0 ||
+      this.rawRows("SELECT scope FROM principal_limits WHERE updated_ms < ? ORDER BY updated_ms LIMIT 1", limiterCutoff).length > 0;
+  }
+
+  private limiterCutoff(effective: number): number {
+    // Principal authority is independent of chat retention: keep the current
+    // UTC day's counters and every still-live rolling-minute event.
+    return Math.min(Math.floor(effective / 86_400_000) * 86_400_000, effective - POST_WINDOW_MS);
+  }
+
   runCleanup(now = this.clock.now()): StoreCleanupResult {
     this.ensureReady();
     // An alarm may have fired, and cleanup may establish an earlier continuation.
     this.scheduledAlarmAt = undefined;
     // A challenge deadline is not an hourly cleanup. Its cheap due check must
     // not consume the reservation for a complete deletion batch.
-    let gate: { maintenance: RawMaintenanceRow; room: RawRoomRow; effective: number };
+    let gate: { maintenance: RawMaintenanceRow; state: RawLogState; effective: number };
     try {
-      gate = this.reserved({ reads: 8, writes: 2 }, true, now, () => {
+      gate = this.reserved({ reads: 12, writes: 2 }, true, now, () => {
         const maintenance = this.maintenanceRow();
-        const room = this.roomRow();
+        const state = this.logState();
         const effective = this.effectiveNow(now);
-        if (effective >= Math.max(maintenance.next_cleanup_ms, this.deferredCleanupUntil)) {
-          const cutoff = maintenance.cleanup_cursor !== null && maintenance.cleanup_cutoff_ms !== null
-            ? maintenance.cleanup_cutoff_ms : effective - this.config.retentionMs;
-          const limiterCutoff = Math.min(Math.floor(effective / 86_400_000) * 86_400_000, effective - POST_WINDOW_MS);
-          // Each existence check uses its cleanup index and reads at most one
-          // matching row. Idle hours must not burn a full deletion reservation.
-          const hasWork =
-            this.rawRows("SELECT log_id FROM transitions WHERE room_id = ? AND log_id < ? ORDER BY log_id LIMIT 1", ROOM_ID, room.history_floor).length > 0 ||
-            this.rawRows("SELECT log_id FROM transitions INDEXED BY transitions_retention_idx WHERE room_id = ? AND commit_ms < ? ORDER BY commit_ms, log_id LIMIT 1", ROOM_ID, cutoff).length > 0 ||
-            this.rawRows("SELECT message_id FROM messages WHERE room_id = ? AND latest_log_id < ? ORDER BY latest_log_id LIMIT 1", ROOM_ID, room.history_floor).length > 0 ||
-            this.rawRows("SELECT user_id FROM accepted_requests WHERE expires_ms <= ? ORDER BY expires_ms LIMIT 1", effective).length > 0 ||
-            this.rawRows("SELECT scope FROM principal_limits WHERE updated_ms < ? ORDER BY updated_ms LIMIT 1", limiterCutoff).length > 0;
-          if (!hasWork) {
+        // A non-null cursor marks a job whose last batch reported more work
+        // (including expired thread rooms, which the cheap probes below do not
+        // cover). Continue it rather than letting the idle check end it.
+        const jobInProgress = maintenance.cleanup_cursor !== null && maintenance.cleanup_cutoff_ms !== null;
+        if (!jobInProgress && effective >= Math.max(maintenance.next_cleanup_ms, this.deferredCleanupUntil)) {
+          const cutoff = effective - this.config.retentionMs;
+          // Idle hours must not burn a full deletion reservation.
+          if (!this.cleanupHasWork(state.history_floor, cutoff, effective, this.limiterCutoff(effective))) {
             maintenance.next_cleanup_ms = effective + this.config.cleanupIntervalMs;
             this.rawExec("UPDATE maintenance SET next_cleanup_ms = ?, cleanup_cutoff_ms = NULL, cleanup_cursor = NULL WHERE id = 1", maintenance.next_cleanup_ms);
           }
         }
-        return { maintenance, room, effective };
+        return { maintenance, state, effective };
       });
     } catch (error) {
       if (error instanceof StoreError && error.code === "retry_after") this.deferCleanup(Math.max(now, this.lastEffectiveMs));
       throw error;
     }
-    const { maintenance, room, effective } = gate;
+    const { maintenance, state, effective } = gate;
+    const previousFloor = state.history_floor;
     const due = Math.max(maintenance.next_cleanup_ms, this.deferredCleanupUntil);
     const empty = (nextDue: number): StoreCleanupResult => ({
-      history_floor: idString(room.history_floor), latest_id: idString(room.last_log_id),
-      deleted_transitions: 0, deleted_messages: 0, deleted_requests: 0, deleted_limiters: 0,
-      next_due_ms: nextDue, did_work: false,
+      history_floor: idString(previousFloor), previous_floor: idString(previousFloor), latest_id: idString(state.last_log_id),
+      deleted_records: 0, deleted_messages: 0, deleted_reactions: 0, deleted_requests: 0, deleted_limiters: 0,
+      removed_rooms: [], next_due_ms: nextDue, did_work: false,
     });
     if (effective < due) return empty(due);
     const beforeReads = this.observed.reads;
@@ -2736,65 +2811,79 @@ export class Store {
     const cutoff = maintenance.cleanup_cursor !== null && maintenance.cleanup_cutoff_ms !== null
       ? maintenance.cleanup_cutoff_ms : effective - this.config.retentionMs;
     const batch = Math.min(100, this.config.cleanupBatch);
-    let floor = room.history_floor;
-    // Commit the coverage boundary/job before physical deletion. A failed
-    // deletion leaves logically expired rows hidden and an idempotent job.
+    let floor = previousFloor;
+    // Commit the server-wide coverage boundary/job before physical deletion.
+    // A failed deletion leaves logically expired rows hidden and an
+    // idempotent job. Commit times are nondecreasing in log order, so the
+    // expired set is always a prefix of the one server-wide log.
     this.transaction(() => {
       const pending = this.rawRows<{ log_id: number }>(
-        "SELECT log_id FROM transitions WHERE room_id = ? AND log_id < ? ORDER BY log_id LIMIT 1", ROOM_ID, floor,
+        "SELECT log_id FROM records INDEXED BY records_log_idx WHERE log_id < ? ORDER BY log_id LIMIT 1", floor,
       );
       const expired = pending.length ? [] : this.rawRows<{ log_id: number }>(
-        `SELECT log_id FROM transitions INDEXED BY transitions_retention_idx
-         WHERE room_id = ? AND commit_ms < ? AND log_id >= ?
-         ORDER BY commit_ms, log_id LIMIT ?`, ROOM_ID, cutoff, floor, batch,
+        `SELECT log_id FROM records INDEXED BY records_retention_idx
+         WHERE commit_ms < ? AND log_id >= ?
+         ORDER BY commit_ms, log_id LIMIT ?`, cutoff, floor, batch,
       );
       if (expired.length) floor = Math.max(floor, expired[expired.length - 1].log_id + 1);
-      this.rawExec("UPDATE room_state SET history_floor = ? WHERE room_id = ?", floor, ROOM_ID);
+      this.rawExec("UPDATE log_state SET history_floor = ? WHERE id = 1", floor);
       this.rawExec("UPDATE maintenance SET cleanup_cutoff_ms = ?, cleanup_cursor = ?, next_cleanup_ms = ? WHERE id = 1", cutoff, floor, effective + 1000);
       this.assertReservation(reserved, beforeReads, beforeWrites);
     });
-    const result = this.transaction(() => {
+    return this.transaction(() => {
       let remaining = batch;
-      const expired = this.rawRows<{ log_id: number }>(
-        "SELECT log_id FROM transitions WHERE room_id = ? AND log_id < ? ORDER BY log_id LIMIT ?", ROOM_ID, floor, remaining,
+      const records = this.rawRows<{ room_id: string; log_id: number }>(
+        "SELECT room_id, log_id FROM records INDEXED BY records_log_idx WHERE log_id < ? ORDER BY log_id LIMIT ?", floor, remaining,
       );
-      for (const row of expired) this.rawExec("DELETE FROM transitions WHERE room_id = ? AND log_id = ?", ROOM_ID, row.log_id);
-      remaining -= expired.length;
+      for (const row of records) this.rawExec("DELETE FROM records WHERE room_id = ? AND log_id = ?", row.room_id, row.log_id);
+      remaining -= records.length;
+      // Current state survives while its latest record is retained.
       const messages = remaining > 0 ? this.rawRows<{ message_id: string }>(
-        "SELECT message_id FROM messages WHERE room_id = ? AND latest_log_id < ? ORDER BY latest_log_id LIMIT ?", ROOM_ID, floor, remaining,
+        "SELECT message_id FROM message_state WHERE latest_log_id < ? ORDER BY latest_log_id LIMIT ?", floor, remaining,
       ) : [];
-      for (const row of messages) this.rawExec("DELETE FROM messages WHERE room_id = ? AND message_id = ? AND latest_log_id < ?", ROOM_ID, row.message_id, floor);
+      for (const row of messages) this.rawExec("DELETE FROM message_state WHERE message_id = ? AND latest_log_id < ?", row.message_id, floor);
       remaining -= messages.length;
+      const reactions = remaining > 0 ? this.rawRows<{ message_id: string; user_id: string }>(
+        "SELECT message_id, user_id FROM reaction_state WHERE log_id < ? ORDER BY log_id LIMIT ?", floor, remaining,
+      ) : [];
+      for (const row of reactions) this.rawExec("DELETE FROM reaction_state WHERE message_id = ? AND user_id = ? AND log_id < ?", row.message_id, row.user_id, floor);
+      remaining -= reactions.length;
+      // A thread room whose entire log (creation record included) has been
+      // discarded leaves the visible set. No message or reaction can still be
+      // current in it: each touches the room's head when committed. The rooms
+      // table is capped at the calibrated thread ceiling, bounding this scan.
+      const rooms = remaining > 0 ? this.rawRows<{ room_id: string }>(
+        "SELECT room_id FROM rooms WHERE parent_room_id IS NOT NULL AND latest_log_id < ? ORDER BY created_log_id LIMIT ?", floor, remaining,
+      ) : [];
+      for (const row of rooms) this.rawExec("DELETE FROM rooms WHERE room_id = ? AND parent_room_id IS NOT NULL AND latest_log_id < ?", row.room_id, floor);
+      if (rooms.length) this.rawExec("UPDATE _meta SET value = ? WHERE key = 'thread_count'", String(Math.max(0, this.metaNumber("thread_count") - rooms.length)));
+      remaining -= rooms.length;
       const requests = remaining > 0 ? this.rawRows<{ user_id: string; request_id: string }>(
         "SELECT user_id, request_id FROM accepted_requests WHERE expires_ms <= ? ORDER BY expires_ms LIMIT ?", effective, remaining,
       ) : [];
       for (const row of requests) this.rawExec("DELETE FROM accepted_requests WHERE user_id = ? AND request_id = ?", row.user_id, row.request_id);
       remaining -= requests.length;
-      // Principal authority is independent of chat retention: keep the current
-      // UTC day's counters and every still-live rolling-minute event.
-      const limiterCutoff = Math.min(Math.floor(effective / 86_400_000) * 86_400_000, effective - POST_WINDOW_MS);
+      const limiterCutoff = this.limiterCutoff(effective);
       const limiters = remaining > 0 ? this.rawRows<{ scope: string; principal_key: string }>(
         "SELECT scope, principal_key FROM principal_limits WHERE updated_ms < ? ORDER BY updated_ms LIMIT ?", limiterCutoff, remaining,
       ) : [];
       for (const row of limiters) this.rawExec("DELETE FROM principal_limits WHERE scope = ? AND principal_key = ?", row.scope, row.principal_key);
       if (limiters.length) this.rawExec("UPDATE _meta SET value = ? WHERE key = 'principal_limit_count'", String(Math.max(0, this.metaNumber("principal_limit_count") - limiters.length)));
-      const hasMore =
-        this.rawRows("SELECT log_id FROM transitions INDEXED BY transitions_retention_idx WHERE room_id = ? AND commit_ms < ? ORDER BY commit_ms, log_id LIMIT 1", ROOM_ID, cutoff).length > 0 ||
-        this.rawRows("SELECT message_id FROM messages WHERE room_id = ? AND latest_log_id < ? ORDER BY latest_log_id LIMIT 1", ROOM_ID, floor).length > 0 ||
-        this.rawRows("SELECT user_id FROM accepted_requests WHERE expires_ms <= ? ORDER BY expires_ms LIMIT 1", effective).length > 0 ||
-        this.rawRows("SELECT scope FROM principal_limits WHERE updated_ms < ? ORDER BY updated_ms LIMIT 1", limiterCutoff).length > 0;
+      const hasMore = this.cleanupHasWork(floor, cutoff, effective, limiterCutoff) ||
+        this.rawRows("SELECT room_id FROM rooms WHERE parent_room_id IS NOT NULL AND latest_log_id < ? LIMIT 1", floor).length > 0;
       const nextDue = effective + (hasMore ? 1000 : this.config.cleanupIntervalMs);
       this.rawExec("UPDATE maintenance SET next_cleanup_ms = ?, cleanup_cutoff_ms = ?, cleanup_cursor = ? WHERE id = 1", nextDue, hasMore ? cutoff : null, hasMore ? floor : null);
       this.assertReservation(reserved, beforeReads, beforeWrites);
+      const deleted = records.length + messages.length + reactions.length + rooms.length + requests.length + limiters.length;
       return {
-        history_floor: idString(floor), latest_id: idString(room.last_log_id),
-        deleted_transitions: expired.length, deleted_messages: messages.length,
+        history_floor: idString(floor), previous_floor: idString(previousFloor), latest_id: idString(state.last_log_id),
+        deleted_records: records.length, deleted_messages: messages.length, deleted_reactions: reactions.length,
         deleted_requests: requests.length, deleted_limiters: limiters.length,
+        removed_rooms: rooms.map((row) => row.room_id),
         next_due_ms: nextDue,
-        did_work: floor !== room.history_floor || expired.length + messages.length + requests.length + limiters.length > 0,
+        did_work: floor !== previousFloor || deleted > 0,
       };
     });
-    return result;
   }
 
   cleanup(now: number): DomainCleanupResult {
@@ -2853,11 +2942,5 @@ export class Store {
     } finally {
       this.assertReservation(reserved, this.observed.reads - actualReads, this.observed.writes - actualWrites);
     }
-  }
-
-  /** Compatibility adapter for older runtime callers during migration. */
-  setAlarmTask(task: { kind: "auth" | "cleanup"; dueAt: number; connectionId?: string }): void {
-    const socketDeadline = task.kind === "auth" ? task.dueAt : undefined;
-    void this.scheduleAlarm(socketDeadline, this.clock.now()).catch(() => undefined);
   }
 }

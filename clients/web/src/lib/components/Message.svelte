@@ -1,10 +1,11 @@
 <script lang="ts">
-	import type { RoomSnapshot } from '$lib/protocol/client';
 	import { formatBytes, renderMarkdown, safeUrl, type MentionPerson } from '$lib/protocol/markdown';
 	import type { MessageRecord } from '$lib/protocol/types';
 	import { aspectRatio, embedsOf, replySnippet, senderName, textOf } from '$lib/ui/messages';
+	import type { ReactionChip } from '$lib/ui/reactions';
 	import { eventTime } from '$lib/ui/time';
 	import Avatar from './Avatar.svelte';
+	import ReactionBar from './ReactionBar.svelte';
 
 	const LONG_PRESS_MS = 500;
 
@@ -15,14 +16,18 @@
 		startThread: boolean;
 		select: boolean;
 		removeReply: boolean;
+		/** Cap `reactions`: the React action and clickable chips. */
+		react: boolean;
 	}
 
 	interface Props {
 		event: MessageRecord;
 		/** A follower in a sender's group: no avatar or header, time on hover. */
 		grouped: boolean;
-		/** For looking up the quoted message of a reply. */
-		room: RoomSnapshot;
+		/** Looks up the quoted message of a reply, in any room (`reply_to` may cross rooms). */
+		resolve: (messageId: string) => MessageRecord | undefined;
+		/** Reaction chips under the message; empty for tombstones. */
+		reactions: ReactionChip[];
 		people: MentionPerson[];
 		mention: boolean;
 		pinged: boolean;
@@ -41,17 +46,20 @@
 		ondelete: () => void;
 		onremovereply: () => void;
 		onstartthread: () => void;
+		/** Toggle your reaction with this emoji. */
+		onreact: (emoji: string) => void;
 		/** Enter select mode with this message picked. */
 		onbeginselect: () => void;
 		/** In select mode: toggle this message, or fill the range to it. */
 		onselect: (range: boolean) => void;
 	}
 	let {
-		event, grouped, room, people, mention, pinged, highlighted, selecting, selected, editing, startingThread, caps,
-		onreply, onjump, onedit, onsave, oncanceledit, ondelete, onremovereply, onstartthread, onbeginselect, onselect
+		event, grouped, resolve, reactions, people, mention, pinged, highlighted, selecting, selected, editing, startingThread, caps,
+		onreply, onjump, onedit, onsave, oncanceledit, ondelete, onremovereply, onstartthread, onreact, onbeginselect, onselect
 	}: Props = $props();
 
 	let moreOpen = $state(false);
+	let paletteOpen = $state(false);
 	let draft = $state('');
 	let longPress: ReturnType<typeof setTimeout> | undefined;
 
@@ -61,8 +69,15 @@
 	let embeds = $derived(embedsOf(event));
 	let selectable = $derived(selecting && caps.select);
 	let picked = $derived(selectable && selected);
-	let replyTarget = $derived(event.reply_message_id && !event.deleted ? room.timeline.events[event.reply_message_id] : undefined);
-	let hasActions = $derived(!selecting && (caps.reply || caps.edit || caps.removeReply));
+	let replyId = $derived(event.reply_to?.message_id);
+	let replyTarget = $derived(replyId && !event.deleted ? resolve(replyId) : undefined);
+	let chips = $derived(event.deleted ? [] : reactions);
+	let hasActions = $derived(!selecting && (caps.reply || caps.edit || caps.removeReply || caps.react || caps.startThread));
+
+	// Tombstones hide their reactions, and select mode stands the palette down.
+	$effect(() => {
+		if (event.deleted || selecting || !caps.react) paletteOpen = false;
+	});
 
 	$effect(() => {
 		if (editing) draft = text;
@@ -163,7 +178,7 @@
 				<span class="ap-msg-meta">{#if time}<time>{time}</time>{/if}</span>
 			</header>
 		{/if}
-		{#if event.reply_message_id && !event.deleted}
+		{#if replyId && !event.deleted}
 			{#if replyTarget}
 				{@const targetName = senderName(replyTarget)}
 				<button class="ap-reply" data-testid="reply-reference" type="button" aria-label={`Replying to ${targetName}. Jump to their message`} onclick={() => onjump(replyTarget.message_id)}>
@@ -191,10 +206,11 @@
 			</div>
 		{:else}
 			{#if text}
-				{#if event.body?.format === 'plain'}
-					<div class="ap-msg-text plain">{text}</div>
-				{:else}
+				<!-- An absent format is plain (§3.5); only an explicit `markdown` body is rendered as Markdown. -->
+				{#if event.body?.format === 'markdown'}
 					<div class="ap-msg-text markdown">{@html renderMarkdown(text, people)}</div>
+				{:else}
+					<div class="ap-msg-text plain">{text}</div>
 				{/if}
 			{/if}
 			{#if embeds.length > 0}
@@ -223,6 +239,9 @@
 				</div>
 			{/if}
 		{/if}
+		{#if !event.deleted}
+			<ReactionBar {chips} enabled={caps.react} {paletteOpen} ontoggle={onreact} onclosepalette={() => (paletteOpen = false)} />
+		{/if}
 	</div>
 	{#if hasActions}
 		<div class="ap-msg-actions">
@@ -233,13 +252,16 @@
 				{#if caps.reply}
 					<button class="ap-actions-btn" type="button" aria-label="Reply to message" onclick={() => act(onreply)}>Reply</button>
 				{/if}
+				{#if caps.react && !event.deleted}
+					<button class="ap-actions-btn" type="button" data-testid="react" aria-label="React" title="React" aria-expanded={paletteOpen} onclick={() => act(() => (paletteOpen = !paletteOpen))}>React</button>
+				{/if}
+				{#if caps.startThread}
+					<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={startingThread} onclick={() => act(onstartthread)}>{startingThread ? 'Starting…' : 'Start thread'}</button>
+				{/if}
 				{#if caps.edit}
-					{#if caps.startThread}
-						<button class="ap-actions-btn" type="button" data-testid="start-thread" aria-label="Start thread" title="Start thread" disabled={startingThread} onclick={() => act(onstartthread)}>{startingThread ? 'Starting…' : 'Start thread'}</button>
-					{/if}
 					<button class="ap-actions-btn" type="button" aria-label="Edit message" title="Edit" onclick={() => act(onedit)}>Edit</button>
 					{#if moreOpen}
-						{#if event.reply_message_id}
+						{#if replyId}
 							<button class="ap-actions-btn" type="button" aria-label="Remove reply reference" onclick={() => act(onremovereply)}>Remove reply</button>
 						{/if}
 						{#if caps.select}

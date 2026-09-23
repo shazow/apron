@@ -1,0 +1,132 @@
+{
+  "format": 2,
+  "kind": "session",
+  "name": "History availability boundaries",
+  "description": "The effective lower bound (history_log_id, or latest_log_id + 1 when null, using the frame's or page's own head) is inclusive and only grows. When it grows the client evicts the room's messages whose latest snapshot is below it; if it overtakes the next position a recovery needs (reported by a room frame or a page) the client rebuilds from the new bound with the same H, keeping buffered live records at or above the bound. Continuation arithmetic is numeric on sparse millisecond IDs. A null bound needs no request until a later room frame reports a head above the checkpoint. The fixture server clamps pages to 2 records. Each variant ends with its own expectation.",
+  "references": [
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#appendix-a--history"
+  ],
+  "variants": [
+    {
+      "name": "exact-lower-bound-and-live-buffer",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},
+        {"request":{"as":"history-1","match":{"method":"history","params":{"room_id":"general","after":"105","before":"108"}}}},
+        {"receive":{"method":"message","params":{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"109","history_log_id":"105"}}},
+        {"reply":{"to":"history-1","result":{"entries":[{"message_id":"105","log_id":"105","room_id":"general","from":{"user_id":"alice"},"body":{"text":"five"}},{"message_id":"106","log_id":"106","room_id":"general","from":{"user_id":"alice"},"body":{"text":"six"}}],"first_id":"105","last_id":"106","more":true,"latest_log_id":"109","history_log_id":"105"}}},
+        {"request":{"as":"history-2","match":{"method":"history","params":{"room_id":"general","after":"107","before":"108"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"109","history_log_id":"107"}}},
+        {"reply":{"to":"history-2","result":{"entries":[{"message_id":"107","log_id":"107","room_id":"general","from":{"user_id":"alice"},"body":{"text":"seven"}},{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"eight"}}],"first_id":"107","last_id":"108","more":false,"latest_log_id":"109","history_log_id":"107"}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"107","log_id":"107","room_id":"general","from":{"user_id":"alice"},"body":{"text":"seven"}},{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"eight"}},{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live"}}]}]}}
+      ]
+    },
+    {
+      "name": "overtaken-by-room-frame",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},
+        {"request":{"as":"history-1","match":{"method":"history","params":{"room_id":"general","after":"105","before":"108"}}}},
+        {"reply":{"to":"history-1","result":{"entries":[{"message_id":"105","log_id":"105","room_id":"general","from":{"user_id":"alice"},"body":{"text":"five"}},{"message_id":"106","log_id":"106","room_id":"general","from":{"user_id":"alice"},"body":{"text":"six"}}],"first_id":"105","last_id":"106","more":true,"latest_log_id":"108","history_log_id":"105"}}},
+        {"request":{"as":"history-2","match":{"method":"history","params":{"room_id":"general","after":"107","before":"108"}}}},
+        {"receive":{"method":"message","params":{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live after bound"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"109","history_log_id":"108"}}},
+        {"request":{"as":"history-rebuild","match":{"method":"history","params":{"room_id":"general","after":"108","before":"108"}}}},
+        {"reply":{"to":"history-rebuild","result":{"entries":[{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"eight"}}],"first_id":"108","last_id":"108","more":false,"latest_log_id":"109","history_log_id":"108"}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"eight"}},{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live after bound"}}]}]}}
+      ]
+    },
+    {
+      "name": "overtaken-by-response",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},
+        {"request":{"as":"history-1","match":{"method":"history","params":{"room_id":"general","after":"105","before":"108"}}}},
+        {"reply":{"to":"history-1","result":{"entries":[{"message_id":"105","log_id":"105","room_id":"general","from":{"user_id":"alice"},"body":{"text":"five"}},{"message_id":"106","log_id":"106","room_id":"general","from":{"user_id":"alice"},"body":{"text":"six"}}],"first_id":"105","last_id":"106","more":true,"latest_log_id":"108","history_log_id":"105"}}},
+        {"request":{"as":"history-2","match":{"method":"history","params":{"room_id":"general","after":"107","before":"108"}}}},
+        {"receive":{"method":"message","params":{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live after bound"}}}},
+        {"reply":{"to":"history-2","result":{"entries":[{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"eight"}}],"first_id":"108","last_id":"108","more":false,"latest_log_id":"109","history_log_id":"108"}}},
+        {"request":{"as":"history-rebuild","match":{"method":"history","params":{"room_id":"general","after":"108","before":"108"}}}},
+        {"reply":{"to":"history-rebuild","result":{"entries":[{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"eight"}}],"first_id":"108","last_id":"108","more":false,"latest_log_id":"109","history_log_id":"108"}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"eight"}},{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live after bound"}}]}]}}
+      ]
+    },
+    {
+      "name": "sparse-timestamp-logs",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"1724803200000","title":"General","latest_log_id":"1724803200104","history_log_id":"1724803200000"}}},
+        {"request":{"as":"history-1","match":{"method":"history","params":{"room_id":"general","after":"1724803200000","before":"1724803200104"}}}},
+        {"reply":{"to":"history-1","result":{"rooms":[{"room_id":"general","log_id":"1724803200000","title":"General"}],"entries":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}}],"first_id":"1724803200000","last_id":"1724803200001","more":true,"latest_log_id":"1724803200104","history_log_id":"1724803200000"}}},
+        {"request":{"as":"history-2","match":{"method":"history","params":{"room_id":"general","after":"1724803200002","before":"1724803200104"}}}},
+        {"reply":{"to":"history-2","result":{"entries":[{"message_id":"1724803200104","log_id":"1724803200104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"last"}}],"first_id":"1724803200104","last_id":"1724803200104","more":false,"latest_log_id":"1724803200104","history_log_id":"1724803200000"}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"1724803200000","title":"General","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}},{"message_id":"1724803200104","log_id":"1724803200104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"last"}}]}]}}
+      ]
+    },
+    {
+      "name": "null-boundary-empty-log",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":null}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[]}]}}
+      ]
+    },
+    {
+      "name": "null-boundary-clears-expired-cache",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"101","history_log_id":"100"}}},
+        {"request":{"as":"history","match":{"method":"history","params":{"room_id":"general","after":"100","before":"101"}}}},
+        {"reply":{"to":"history","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"entries":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"expired"}}],"first_id":"100","last_id":"101","more":false,"latest_log_id":"101","history_log_id":"100"}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"expired"}}]}]}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"101","history_log_id":null}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[]}]}}
+      ]
+    },
+    {
+      "name": "null-boundary-becomes-retained",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":null}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"101","history_log_id":"101"}}},
+        {"request":{"as":"history","match":{"method":"history","params":{"room_id":"general","after":"101","before":"101"}}}},
+        {"reply":{"to":"history","result":{"entries":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}}],"first_id":"101","last_id":"101","more":false,"latest_log_id":"101","history_log_id":"101"}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first"}}]}]}}
+      ]
+    },
+    {
+      "name": "null-page-uses-page-head",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},
+        {"request":{"as":"history","match":{"method":"history","params":{"room_id":"general","after":"105","before":"108"}}}},
+        {"receive":{"method":"message","params":{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live"}}}},
+        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"109","history_log_id":"105"}}},
+        {"reply":{"to":"history","result":{"entries":[],"more":false,"latest_log_id":"108","history_log_id":null}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"109","log_id":"109","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live"}}]}]}}
+      ]
+    }
+  ],
+  "expected": {
+
+  }
+}

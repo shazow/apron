@@ -65,3 +65,11 @@ describe('mentionsHandle', () => {
 		expect(mentionsHandle('@sam', [undefined, ''])).toBe(false);
 	});
 });
+
+describe('line breaks', () => {
+	it('keeps a typed line break inside a paragraph, and paragraphs apart', () => {
+		expect(renderMarkdown('Deploy plan\nWe cut at 14:00')).toBe('<p>Deploy plan<br />We cut at 14:00</p>\n');
+		expect(renderMarkdown('one\n\ntwo')).toBe('<p>one</p>\n<p>two</p>\n');
+		expect(renderMarkdown('```\na\nb\n```')).toBe('<pre><code>a\nb\n</code></pre>\n');
+	});
+});

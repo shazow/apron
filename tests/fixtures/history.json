@@ -1,20 +1,22 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "history",
-  "description": "Base-protocol room and history availability boundaries, including nullable empty history.",
+  "description": "Protocol v3 room and history availability boundaries, including a room whose history was discarded (null history_log_id). Records are flat v3 snapshots; history results carry rooms, entries, and reactions arrays.",
   "references": [
-    "PROTOCOL.md#51-history",
+    "PROTOCOL.md#34-rooms",
+    "PROTOCOL.md#appendix-a--history",
     "servers/cloudflare-worker/SPEC.md#9-rolling-history-and-base-protocol-availability"
   ],
   "cases": [
     {
-      "name": "empty-room",
+      "name": "discarded-history",
       "room": {
         "method": "room",
         "params": {
           "room_id": "general",
-          "name": "General",
-          "latest_log_id": "0",
+          "log_id": "1790000000000",
+          "title": "General",
+          "latest_log_id": "1790000000500",
           "history_log_id": null
         }
       },
@@ -23,23 +25,25 @@
         "result": {
           "entries": [],
           "more": false,
-          "latest_log_id": "0",
+          "latest_log_id": "1790000000500",
           "history_log_id": null
         }
       },
       "assertions": {
-        "latest_log_id": "0",
+        "latest_log_id": "1790000000500",
         "history_log_id": null,
+        "effective_lower_bound": "1790000000501",
         "empty": true
       }
     },
     {
-      "name": "empty-filter-retains-room-boundary",
+      "name": "empty-page-retains-room-boundary",
       "room": {
         "method": "room",
         "params": {
           "room_id": "general",
-          "name": "General",
+          "log_id": "1789913600001",
+          "title": "General",
           "latest_log_id": "1790000001000",
           "history_log_id": "1789913600001"
         }
@@ -47,7 +51,9 @@
       "history": {
         "id": "h1",
         "result": {
+          "rooms": [],
           "entries": [],
+          "reactions": [],
           "more": false,
           "latest_log_id": "1790000001000",
           "history_log_id": "1789913600001"
@@ -56,6 +62,7 @@
       "assertions": {
         "history_log_id": "1789913600001",
         "latest_log_id": "1790000001000",
+        "effective_lower_bound": "1789913600001",
         "empty": true
       }
     },
@@ -65,43 +72,57 @@
         "method": "room",
         "params": {
           "room_id": "general",
+          "log_id": "600",
           "latest_log_id": "900",
           "history_log_id": "850"
         }
       },
       "entries": [
         {
+          "message_id": "700",
           "log_id": "800",
-          "message": {
-            "message_id": "700",
-            "from": { "user_id": "alice" },
-            "body": { "text": "old creation" }
-          }
+          "room_id": "general",
+          "from": { "user_id": "alice" },
+          "body": { "text": "old edit" }
         },
         {
+          "message_id": "700",
           "log_id": "875",
-          "message": {
-            "message_id": "700",
-            "from": { "user_id": "alice" },
-            "body": { "text": "recent edit" }
-          }
+          "room_id": "general",
+          "from": { "user_id": "alice" },
+          "body": { "text": "recent edit" }
+        },
+        {
+          "message_id": "710",
+          "log_id": "810",
+          "room_id": "general",
+          "from": { "user_id": "bob" },
+          "body": { "text": "expired" }
         }
       ],
       "history": {
         "id": "h2",
         "result": {
+          "rooms": [],
           "entries": [
             {
+              "message_id": "700",
               "log_id": "875",
-              "message": {
-                "message_id": "700",
-                "from": { "user_id": "alice" },
-                "body": { "text": "recent edit" }
-              }
+              "room_id": "general",
+              "from": { "user_id": "alice" },
+              "body": { "text": "recent edit" }
+            }
+          ],
+          "reactions": [
+            {
+              "log_id": "880",
+              "message_id": "700",
+              "room_id": "general",
+              "reactions": [{ "from": { "user_id": "bob" }, "emojis": ["👍"] }]
             }
           ],
           "first_id": "875",
-          "last_id": "875",
+          "last_id": "880",
           "more": false,
           "latest_log_id": "900",
           "history_log_id": "850"
@@ -109,7 +130,7 @@
       },
       "assertions": {
         "retained_message_ids": ["700"],
-        "discarded_log_ids": ["800"],
+        "discarded_log_ids": ["800", "810"],
         "floor_is_monotonic": true
       }
     },

@@ -10,7 +10,7 @@
 		value: string;
 		placeholder: string;
 		disabled: boolean;
-		/** True only when the `server` frame carried an `upload` URL (§6.1). */
+		/** True only when the `server` frame carried an `upload` URL (Appendix E). */
 		canUpload: boolean;
 		/** The senders this room has seen: who an `@` can name. */
 		people: MentionPerson[];

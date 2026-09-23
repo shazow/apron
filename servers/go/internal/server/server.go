@@ -1,13 +1,16 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,56 +102,63 @@ func (i identity) object() map[string]any {
 	return value
 }
 
-type transition struct {
-	id             int64
-	message        map[string]any
-	previousThread string
+// recordKind partitions the server's single append-only log (PROTOCOL.md §2).
+type recordKind int
+
+const (
+	kindRoom recordKind = iota
+	kindMessage
+	kindReactions
+)
+
+// logRecord is one committed change. value is the complete, immutable wire
+// object (including log_id) as it was at commit time; it is cloned on output.
+// A record is referenced from the log of every room it belongs to, so a move
+// snapshot appears in both the source and destination room logs.
+type logRecord struct {
+	id    int64
+	kind  recordKind
+	value map[string]any
 }
 
-type threadMetadata struct {
+// roomState is a room's current record and its log. All rooms, including
+// threads (rooms with parent_room_id), are visible to every authenticated user.
+type roomState struct {
 	id     string
-	fields map[string]any
+	parent string
+	// record holds the latest logged room record with a bare intro_message.
+	record    map[string]any
+	createdID int64
+	latestID  int64
+	log       []*logRecord
 }
 
-func (t threadMetadata) announcement(roomID string) map[string]any {
-	params := cloneObject(t.fields)
-	params["room_id"] = roomID
-	params["thread_id"] = t.id
-	return map[string]any{"method": "thread", "params": params}
-}
-
-func (t transition) historyEntry() map[string]any {
-	return map[string]any{"log_id": t.idString(), "message": cloneObject(t.message)}
-}
-
-func (t transition) idString() string {
-	return strconv.FormatInt(t.id, 10)
-}
-
-type room struct {
-	id      string
-	entries []transition
-	lastID  int64
-	// states contains the latest message snapshots and is the server's current state.
-	states  map[string]map[string]any
-	owners  map[string]string
-	threads map[string]threadMetadata
-}
-
-// historyFields returns the room's committed log head and the inclusive lower
-// bound covered by retained history. Callers must hold s.mu while using these
-// fields so that the bounds describe the same state as any page being built.
-func (r room) historyFields() map[string]any {
-	fields := map[string]any{
-		"latest_log_id":  strconv.FormatInt(r.lastID, 10),
-		"history_log_id": nil,
+// deliveryFields returns the room's log head and the inclusive lower bound of
+// retained history. The Go server retains every record, so history always
+// starts at the room's creation record. Callers hold s.mu.
+func (r *roomState) deliveryFields() map[string]any {
+	return map[string]any{
+		"latest_log_id":  formatID(r.latestID),
+		"history_log_id": formatID(r.createdID),
 	}
-	if len(r.entries) > 0 {
-		// The Go server retains every transition, and all generated log IDs are
-		// positive, so every positive log ID is covered once history exists.
-		fields["history_log_id"] = "1"
-	}
-	return fields
+}
+
+type reactionSet struct {
+	from   map[string]any
+	emojis []string
+}
+
+// messageState is the current state of one message. Only non-empty reaction
+// sets are kept; clearing removes the user's entry.
+type messageState struct {
+	snapshot  map[string]any
+	owner     string
+	roomID    string
+	reactions map[string]reactionSet
+}
+
+func formatID(id int64) string {
+	return strconv.FormatInt(id, 10)
 }
 
 type dedupResult struct {
@@ -175,16 +185,21 @@ type client struct {
 
 // outboundBatch keeps a sequence of protocol frames together in the writer's
 // queue while each frame is still written as its own WebSocket message. This
-// lets authentication announce an arbitrary number of retained threads without
+// lets authentication announce an arbitrary number of rooms and threads without
 // consuming one queue slot per announcement or interleaving another broadcast
-// between the room and thread announcements.
+// between the announcements.
 type outboundBatch [][]byte
 
 type Server struct {
 	config Config
 
-	mu          sync.RWMutex
-	room        room
+	mu sync.RWMutex
+	// lastID is the single log_id sequence shared by every record kind and room.
+	lastID int64
+	rooms  map[string]*roomState
+	// roomOrder lists room IDs in creation order, so parents precede threads.
+	roomOrder   []string
+	messages    map[string]*messageState
 	clients     map[*client]struct{}
 	guestNumber uint64
 	closed      bool
@@ -197,21 +212,22 @@ type Server struct {
 
 func New(config Config) *Server {
 	config = config.withDefaults()
-	return &Server{
+	s := &Server{
 		config:      config,
+		rooms:       make(map[string]*roomState),
+		messages:    make(map[string]*messageState),
 		clients:     make(map[*client]struct{}),
 		users:       make(map[string]*passkeyUser),
 		credentials: make(map[string]*passkeyUser),
 		sessions:    make(map[[32]byte]passkeySession),
-		room: room{
-			id:      "general",
-			states:  make(map[string]map[string]any),
-			owners:  make(map[string]string),
-			threads: make(map[string]threadMetadata),
-			entries: make([]transition, 0),
-		},
 	}
+	// The seeded default room has a logged creation record like any other room,
+	// so its history_log_id is never null.
+	s.commitRoomLocked(defaultRoomID, "", map[string]any{"title": "General"})
+	return s
 }
+
+const defaultRoomID = "general"
 
 // Handler returns the HTTP handler serving /ws, /healthz, and StaticDir.
 func (s *Server) Handler() http.Handler {
@@ -318,16 +334,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go c.writeLoop()
 	go c.pingLoop()
 	// The server announcement is queued before the reader starts accepting auth.
-	authSchemes := []string{"anonymous"}
+	authSchemes := []string{"guest"}
 	if s.config.WebAuthn != nil {
-		authSchemes = []string{"webauthn", "token", "anonymous"}
+		authSchemes = []string{"webauthn", "token", "guest"}
 	}
 	c.enqueue(map[string]any{
 		"method": "server",
 		"params": map[string]any{
-			"protocol": 2,
-			"name":     "apron-go/0.1",
-			"caps":     []string{"history", "edit"},
+			"protocol": 3,
+			"name":     "apron-go/0.3",
+			"caps":     []string{"history", "edit", "rooms", "reactions"},
 			"auth":     authSchemes,
 		},
 	})
@@ -473,7 +489,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	case "auth":
 		result, operationErr = s.authenticate(c, req)
 		responseSent = operationErr == nil
-	case "nick":
+	case "name":
 		result, operationErr = s.rename(c, req)
 		cacheResult = operationErr == nil
 	case "message":
@@ -483,8 +499,19 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	case "history":
 		result, operationErr = s.history(req)
 		cacheResult = operationErr == nil
-	case "thread":
-		result, operationErr = s.saveThread(c, req)
+	case "room":
+		result, operationErr = s.saveRoom(c, req)
+		cacheResult = operationErr == nil
+		responseSent = operationErr == nil
+	case "room_join":
+		result, operationErr = s.joinRoom(c, req)
+		cacheResult = operationErr == nil
+		responseSent = operationErr == nil
+	case "room_leave":
+		result, operationErr = s.leaveRoom(req)
+		cacheResult = operationErr == nil
+	case "reactions":
+		result, operationErr = s.react(c, req)
 		cacheResult = operationErr == nil
 		responseSent = operationErr == nil
 	case "typing":
@@ -540,8 +567,12 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 		}
 		return s.authenticateToken(c, req, time.Now())
 	}
-	if scheme != "anonymous" {
+	if scheme != "guest" {
 		return nil, &rpcError{Code: codeUnsupported, Message: "Unsupported authentication scheme"}
+	}
+	name, err := parseString(req.params, "name", false)
+	if err != nil {
+		return nil, err
 	}
 	if c.authed {
 		result := map[string]any{"you": c.identity.object()}
@@ -551,7 +582,7 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 		return result, nil
 	}
 	s.guestNumber++
-	c.identity = identity{ID: fmt.Sprintf("guest_%d", s.guestNumber)}
+	c.identity = identity{ID: fmt.Sprintf("guest_%d", s.guestNumber), Name: name}
 	c.authed = true
 
 	result := map[string]any{"you": c.identity.object()}
@@ -559,32 +590,46 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	return result, nil
 }
 
-// announceAuthenticated runs under s.mu, ordering identity before room replay.
+// announceAuthenticated runs under s.mu, ordering identity before the room
+// announcements and both before any later broadcast. Rooms are announced in
+// creation order, so every parent precedes its threads.
 func (s *Server) announceAuthenticated(c *client, req request, result map[string]any) {
-	frames := make([]any, 0, 2+len(s.room.threads))
+	frames := make([]any, 0, 1+len(s.roomOrder))
 	if req.hasID {
 		frames = append(frames, response(req.id, req.full, result))
 	}
-	roomParams := map[string]any{
-		"room_id": s.room.id,
-		"name":    "General",
-	}
-	for key, value := range s.room.historyFields() {
-		roomParams[key] = value
-	}
-	frames = append(frames, map[string]any{
-		"method": "room",
-		"params": roomParams,
-	})
-	threadIDs := make([]string, 0, len(s.room.threads))
-	for threadID := range s.room.threads {
-		threadIDs = append(threadIDs, threadID)
-	}
-	sort.Strings(threadIDs)
-	for _, threadID := range threadIDs {
-		frames = append(frames, s.room.threads[threadID].announcement(s.room.id))
+	for _, roomID := range s.roomOrder {
+		frames = append(frames, s.roomAnnouncementLocked(s.rooms[roomID]))
 	}
 	c.enqueueBatch(frames...)
+}
+
+// roomAnnouncementLocked renders a room's current record with the current
+// intro_message snapshot embedded and this client's delivery fields.
+func (s *Server) roomAnnouncementLocked(r *roomState) map[string]any {
+	return roomFrame(s.embedIntroLocked(r.record), r)
+}
+
+func roomFrame(record map[string]any, r *roomState) map[string]any {
+	params := cloneObject(record)
+	for key, value := range r.deliveryFields() {
+		params[key] = value
+	}
+	return map[string]any{"method": "room", "params": params}
+}
+
+// embedIntroLocked returns a copy of a room record whose bare intro_message
+// reference is replaced by the referenced message's current snapshot.
+func (s *Server) embedIntroLocked(record map[string]any) map[string]any {
+	value := cloneObject(record)
+	if intro, ok := value["intro_message"].(map[string]any); ok {
+		if id, ok := intro["message_id"].(string); ok {
+			if m := s.messages[id]; m != nil {
+				value["intro_message"] = cloneObject(m.snapshot)
+			}
+		}
+	}
+	return value
 }
 
 func (s *Server) rename(c *client, req request) (any, *rpcError) {
@@ -602,16 +647,15 @@ func (s *Server) rename(c *client, req request) (any, *rpcError) {
 	return result, nil
 }
 
+// saveMessage creates a message (no message_id) or saves an existing one
+// (Appendix B): every client field is replaced by the submitted state. A save
+// naming a different room_id moves the message; the snapshot is logged in and
+// broadcast to both rooms, followed by a reactions record in the destination
+// when the message has reactions.
 func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
 		return nil, err
-	}
-	if roomID != s.room.id {
-		return nil, invalidParams("Unknown room %q", roomID)
-	}
-	if _, present := req.params["log_id"]; present {
-		return nil, invalidParams("log_id is server-controlled")
 	}
 	messageID, err := parseString(req.params, "message_id", false)
 	if err != nil {
@@ -621,13 +665,9 @@ func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
 	if replacing && !validMessageID(messageID) {
 		return nil, invalidParams("message_id must be a positive decimal string")
 	}
-	replyID, err := parseString(req.params, "reply_message_id", false)
+	replyID, hasReply, err := parseMessageRef(req.params, "reply_to")
 	if err != nil {
 		return nil, err
-	}
-	_, hasReply := req.params["reply_message_id"]
-	if hasReply && !validMessageID(replyID) {
-		return nil, invalidParams("reply_message_id must be a positive decimal string")
 	}
 	deleted, err := parseBool(req.params, "deleted", false)
 	if err != nil {
@@ -636,19 +676,9 @@ func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
 	if deleted && !replacing {
 		return nil, invalidParams("Cannot create a deleted message")
 	}
-	next := make(map[string]any)
-	for key, raw := range req.params {
-		if key == "room_id" || key == "message_id" || key == "from" || (deleted && key == "body") {
-			continue
-		}
-		var value any
-		if json.Unmarshal(raw, &value) != nil {
-			return nil, invalidParams("Invalid %s", key)
-		}
-		next[key] = value
-	}
+	var body map[string]any
 	if !deleted {
-		body, err := parseObject(req.params, "body", true)
+		body, err = parseObject(req.params, "body", true)
 		if err != nil {
 			return nil, err
 		}
@@ -656,53 +686,94 @@ func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
 			return nil, err
 		}
 	}
-	threadID, hasThread, err := parseThread(req.params)
+	ext, err := parseObject(req.params, "ext", false)
 	if err != nil {
 		return nil, err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var previousThread string
+	destination := s.rooms[roomID]
+	if destination == nil {
+		return nil, invalidParams("Unknown room %q", roomID)
+	}
 	from := c.identity.object()
+	var current *messageState
 	if replacing {
-		previous, exists := s.room.states[messageID]
-		if !exists {
+		current = s.messages[messageID]
+		if current == nil {
 			return nil, invalidParams("Unknown message %q", messageID)
 		}
-		if s.room.owners[messageID] != c.identity.ID {
+		if current.owner != c.identity.ID {
 			return nil, &rpcError{Code: codeDenied, Message: "Only the author may update this message"}
 		}
-		from = cloneObject(previous["from"].(map[string]any))
-		previousThread, _ = previous["thread_id"].(string)
-	}
-	if hasThread {
-		if _, exists := s.room.threads[threadID]; !exists {
-			return nil, invalidParams("Unknown thread %q", threadID)
-		}
+		from = cloneObject(current.snapshot["from"].(map[string]any))
 	}
 	if hasReply {
-		_, exists := s.room.states[replyID]
-		if !exists || (replacing && replyID == messageID) {
-			return nil, invalidParams("Reply target must be another message in this room")
+		if _, exists := s.messages[replyID]; !exists || (replacing && replyID == messageID) {
+			return nil, invalidParams("reply_to must name another existing message")
 		}
 	}
+
 	logID := s.nextIDLocked()
 	if !replacing {
-		messageID = logID
+		messageID = formatID(logID)
 	}
-	next["message_id"] = messageID
-	next["from"] = from
-	s.room.states[messageID] = next
-	s.room.owners[messageID] = c.identity.ID
-	s.room.entries = append(s.room.entries, transition{id: s.room.lastID, message: next, previousThread: previousThread})
+	snapshot := map[string]any{
+		"message_id": messageID,
+		"log_id":     formatID(logID),
+		"room_id":    roomID,
+		"from":       from,
+	}
+	if deleted {
+		snapshot["deleted"] = true
+	} else {
+		snapshot["body"] = body
+	}
+	if hasReply {
+		snapshot["reply_to"] = map[string]any{"message_id": replyID}
+	}
+	if ext != nil {
+		snapshot["ext"] = ext
+	}
+
+	members := []*roomState{destination}
+	moved := false
+	if current == nil {
+		current = &messageState{owner: c.identity.ID, reactions: make(map[string]reactionSet)}
+		s.messages[messageID] = current
+	} else if current.roomID != roomID {
+		moved = true
+		members = []*roomState{s.rooms[current.roomID], destination}
+	}
+	current.snapshot = snapshot
+	current.roomID = roomID
+	s.appendLocked(&logRecord{id: logID, kind: kindMessage, value: snapshot}, members...)
+
 	result := map[string]any{"message_id": messageID}
-	params := map[string]any{"room_id": roomID, "log_id": logID, "message": cloneObject(next)}
 	if req.hasID {
-		params["echo"] = req.id
 		c.enqueue(response(req.id, req.full, result))
 	}
-	s.broadcastLocked(map[string]any{"method": "message", "params": params})
+	s.broadcastLocked(map[string]any{"method": "message", "params": snapshot})
+	if moved && len(current.reactions) > 0 {
+		s.commitReactionsLocked(current, current.reactionElements())
+	}
 	return result, nil
+}
+
+// reactionElements returns every non-empty reaction set, ordered by user ID.
+func (m *messageState) reactionElements() []any {
+	users := make([]string, 0, len(m.reactions))
+	for userID := range m.reactions {
+		users = append(users, userID)
+	}
+	sort.Strings(users)
+	elements := make([]any, 0, len(users))
+	for _, userID := range users {
+		set := m.reactions[userID]
+		elements = append(elements, map[string]any{"from": cloneObject(set.from), "emojis": slices.Clone(set.emojis)})
+	}
+	return elements
 }
 
 func validMessageID(id string) bool {
@@ -717,82 +788,22 @@ func validMessageID(id string) bool {
 	return true
 }
 
-func (s *Server) saveThread(c *client, req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room_id", true)
-	if err != nil {
-		return nil, err
+// parseMessageRef reads a message reference (reply_to, intro_message). Clients
+// send bare references; any other keys, such as an echoed snapshot, are ignored.
+func parseMessageRef(params map[string]json.RawMessage, name string) (string, bool, *rpcError) {
+	raw, present := params[name]
+	if !present {
+		return "", false, nil
 	}
-	if roomID != s.room.id {
-		return nil, invalidParams("Unknown room %q", roomID)
+	var ref map[string]json.RawMessage
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &ref) != nil || ref == nil {
+		return "", false, invalidParams("%s must be a message object", name)
 	}
-	if _, exists := req.params["thread_id"]; exists {
-		id, err := parseString(req.params, "thread_id", true)
-		if err != nil {
-			return nil, err
-		}
-		if _, present := req.params["root_message_id"]; present {
-			return nil, invalidParams("The thread root cannot be edited")
-		}
-		updates := make(map[string]string)
-		for _, key := range []string{"title", "summary"} {
-			if _, present := req.params[key]; !present {
-				continue
-			}
-			value, err := parseString(req.params, key, false)
-			if err != nil {
-				return nil, err
-			}
-			updates[key] = value
-		}
-		if len(updates) == 0 {
-			return nil, invalidParams("Supply a title or summary to edit")
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		metadata, exists := s.room.threads[id]
-		if !exists {
-			return nil, invalidParams("Unknown thread %q", id)
-		}
-		// Thread metadata is shared; any authenticated participant may edit it.
-		for key, value := range updates {
-			if value == "" {
-				delete(metadata.fields, key)
-			} else {
-				metadata.fields[key] = value
-			}
-		}
-		result := map[string]any{"thread_id": id}
-		if req.hasID {
-			c.enqueue(response(req.id, req.full, result))
-		}
-		s.broadcastLocked(metadata.announcement(roomID))
-		return result, nil
+	id, err := parseString(ref, "message_id", true)
+	if err != nil || !validMessageID(id) {
+		return "", false, invalidParams("%s.message_id must be a positive decimal string", name)
 	}
-	fields := make(map[string]any)
-	for _, key := range []string{"title", "summary", "root_message_id"} {
-		if _, exists := req.params[key]; !exists {
-			continue
-		}
-		value, err := parseString(req.params, key, false)
-		if err != nil {
-			return nil, err
-		}
-		if key == "root_message_id" && !validMessageID(value) {
-			return nil, invalidParams("root_message_id must be a positive decimal string")
-		}
-		fields[key] = value
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id := fmt.Sprintf("t_%d", len(s.room.threads)+1)
-	metadata := threadMetadata{id: id, fields: fields}
-	s.room.threads[id] = metadata
-	result := map[string]any{"thread_id": id}
-	if req.hasID {
-		c.enqueue(response(req.id, req.full, result))
-	}
-	s.broadcastLocked(metadata.announcement(roomID))
-	return result, nil
+	return id, true, nil
 }
 
 func validateBody(body map[string]any) *rpcError {
@@ -815,25 +826,261 @@ func validateBody(body map[string]any) *rpcError {
 	return nil
 }
 
-func parseThread(params map[string]json.RawMessage) (string, bool, *rpcError) {
-	raw, present := params["thread_id"]
-	if !present {
-		return "", false, nil
+// saveRoom creates a room (no room_id) or replaces an existing room's client
+// fields (Appendix C). parent_room_id is fixed at creation and ignored on
+// updates. Any authenticated user may create rooms and threads and update any
+// room's client fields.
+func (s *Server) saveRoom(c *client, req request) (any, *rpcError) {
+	_, updating := req.params["room_id"]
+	var roomID, parent string
+	var err *rpcError
+	if updating {
+		roomID, err = parseString(req.params, "room_id", true)
+		if err != nil {
+			return nil, err
+		}
+	} else if _, present := req.params["parent_room_id"]; present {
+		parent, err = parseString(req.params, "parent_room_id", true)
+		if err != nil {
+			return nil, err
+		}
+		if parent == "" {
+			return nil, invalidParams("parent_room_id must be a non-empty string")
+		}
 	}
-	var threadID string
-	if json.Unmarshal(raw, &threadID) != nil || threadID == "" {
-		return "", false, invalidParams("thread_id must be a non-empty string")
+	title, err := parseString(req.params, "title", false)
+	if err != nil {
+		return nil, err
 	}
-	return threadID, true, nil
+	introID, hasIntro, err := parseMessageRef(req.params, "intro_message")
+	if err != nil {
+		return nil, err
+	}
+	ext, err := parseObject(req.params, "ext", false)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if updating {
+		existing := s.rooms[roomID]
+		if existing == nil {
+			return nil, invalidParams("Unknown room %q", roomID)
+		}
+		parent = existing.parent
+	} else if parent != "" && s.rooms[parent] == nil {
+		return nil, invalidParams("Unknown parent room %q", parent)
+	}
+	if hasIntro && s.messages[introID] == nil {
+		return nil, invalidParams("Unknown intro_message %q", introID)
+	}
+	fields := make(map[string]any)
+	if title == "" && parent != "" {
+		// Servers title threads so clients unaware of parent_room_id render them.
+		title = s.threadTitleLocked(introID)
+	}
+	if title != "" {
+		fields["title"] = title
+	}
+	if hasIntro {
+		fields["intro_message"] = map[string]any{"message_id": introID}
+	}
+	if ext != nil {
+		fields["ext"] = ext
+	}
+	r, record := s.commitRoomLocked(roomID, parent, fields)
+	result := map[string]any{"room_id": r.id}
+	if req.hasID {
+		c.enqueue(response(req.id, req.full, result))
+	}
+	s.broadcastLocked(roomFrame(record, r))
+	return result, nil
 }
 
-func (s *Server) history(req request) (any, *rpcError) {
+const maxThreadTitleRunes = 60
+
+// threadTitleLocked derives a default thread title from the intro message's
+// first line of text.
+func (s *Server) threadTitleLocked(introID string) string {
+	if m := s.messages[introID]; m != nil {
+		if body, ok := m.snapshot["body"].(map[string]any); ok {
+			text, _ := body["text"].(string)
+			line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+			line = strings.TrimSpace(line)
+			if runes := []rune(line); len(runes) > maxThreadTitleRunes {
+				line = strings.TrimSpace(string(runes[:maxThreadTitleRunes])) + "…"
+			}
+			if line != "" {
+				return line
+			}
+		}
+	}
+	return "Thread"
+}
+
+// commitRoomLocked logs a room record holding fields, the client fields other
+// than parent_room_id. An unknown roomID creates the room; an empty one names
+// it by its creation log_id. It returns the logged record, whose
+// intro_message embeds the snapshot current at commit time.
+func (s *Server) commitRoomLocked(roomID, parent string, fields map[string]any) (*roomState, map[string]any) {
+	logID := s.nextIDLocked()
+	r := s.rooms[roomID]
+	if r == nil {
+		if roomID == "" {
+			roomID = formatID(logID)
+		}
+		r = &roomState{id: roomID, parent: parent, createdID: logID}
+		s.rooms[roomID] = r
+		s.roomOrder = append(s.roomOrder, roomID)
+	}
+	record := map[string]any{"room_id": r.id, "log_id": formatID(logID)}
+	if r.parent != "" {
+		record["parent_room_id"] = r.parent
+	}
+	for key, value := range fields {
+		record[key] = value
+	}
+	r.record = record
+	logged := s.embedIntroLocked(record)
+	s.appendLocked(&logRecord{id: logID, kind: kindRoom, value: logged}, r)
+	return r, logged
+}
+
+// joinRoom re-announces a known room. Every room is visible to everyone, so
+// joining changes no membership.
+func (s *Server) joinRoom(c *client, req request) (any, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
 		return nil, err
 	}
-	if roomID != s.room.id {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.rooms[roomID]
+	if r == nil {
 		return nil, invalidParams("Unknown room %q", roomID)
+	}
+	result := map[string]any{}
+	frames := make([]any, 0, 2)
+	if req.hasID {
+		frames = append(frames, response(req.id, req.full, result))
+	}
+	frames = append(frames, s.roomAnnouncementLocked(r))
+	c.enqueueBatch(frames...)
+	return result, nil
+}
+
+// leaveRoom is denied by policy: every room stays visible to every user.
+func (s *Server) leaveRoom(req request) (any, *rpcError) {
+	roomID, err := parseString(req.params, "room_id", true)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.rooms[roomID] == nil {
+		return nil, invalidParams("Unknown room %q", roomID)
+	}
+	return nil, &rpcError{Code: codeDenied, Message: "Rooms on this server cannot be left"}
+}
+
+const (
+	maxEmojiBytes    = 64
+	maxDistinctEmoji = 20
+)
+
+// react replaces the caller's complete reaction set on one message
+// (Appendix D.2). Duplicates collapse; an unchanged set logs nothing.
+func (s *Server) react(c *client, req request) (any, *rpcError) {
+	messageID, err := parseString(req.params, "message_id", true)
+	if err != nil {
+		return nil, err
+	}
+	emojis, err := parseEmojis(req.params)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.messages[messageID]
+	if m == nil {
+		return nil, invalidParams("Unknown message %q", messageID)
+	}
+	result := map[string]any{}
+	if req.hasID {
+		c.enqueue(response(req.id, req.full, result))
+	}
+	if sameEmojiSet(m.reactions[c.identity.ID].emojis, emojis) {
+		return result, nil
+	}
+	from := c.identity.object()
+	if len(emojis) == 0 {
+		delete(m.reactions, c.identity.ID)
+	} else {
+		m.reactions[c.identity.ID] = reactionSet{from: from, emojis: emojis}
+	}
+	s.commitReactionsLocked(m, []any{map[string]any{"from": cloneObject(from), "emojis": slices.Clone(emojis)}})
+	return result, nil
+}
+
+// commitReactionsLocked logs and broadcasts one reactions record in the
+// message's current room.
+func (s *Server) commitReactionsLocked(m *messageState, elements []any) {
+	logID := s.nextIDLocked()
+	value := map[string]any{
+		"log_id":     formatID(logID),
+		"message_id": m.snapshot["message_id"],
+		"room_id":    m.roomID,
+		"reactions":  elements,
+	}
+	s.appendLocked(&logRecord{id: logID, kind: kindReactions, value: value}, s.rooms[m.roomID])
+	s.broadcastLocked(map[string]any{"method": "reactions", "params": value})
+}
+
+func parseEmojis(params map[string]json.RawMessage) ([]string, *rpcError) {
+	raw, ok := params["emojis"]
+	if !ok {
+		return nil, invalidParams("Missing emojis")
+	}
+	var values []json.RawMessage
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &values) != nil {
+		return nil, invalidParams("emojis must be an array of strings")
+	}
+	emojis := make([]string, 0, len(values))
+	for _, value := range values {
+		var emoji string
+		if json.Unmarshal(value, &emoji) != nil || emoji == "" || len(emoji) > maxEmojiBytes {
+			return nil, invalidParams("emojis must be non-empty strings of at most %d bytes", maxEmojiBytes)
+		}
+		if !slices.Contains(emojis, emoji) {
+			emojis = append(emojis, emoji)
+		}
+	}
+	if len(emojis) > maxDistinctEmoji {
+		return nil, invalidParams("At most %d distinct emoji per message", maxDistinctEmoji)
+	}
+	return emojis, nil
+}
+
+func sameEmojiSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, emoji := range a {
+		if !slices.Contains(b, emoji) {
+			return false
+		}
+	}
+	return true
+}
+
+// history returns a window of one room's log (Appendix A). limit counts records
+// of every kind; the slice is partitioned into rooms, entries, and reactions.
+// The server retains all records and does not compact.
+func (s *Server) history(req request) (any, *rpcError) {
+	roomID, err := parseString(req.params, "room_id", true)
+	if err != nil {
+		return nil, err
 	}
 	after, hasAfter, err := parseBound(req.params, "after")
 	if err != nil {
@@ -850,25 +1097,16 @@ func (s *Server) history(req request) (any, *rpcError) {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	threadID, hasThread, err := parseThread(req.params)
-	if err != nil {
-		return nil, err
+	r := s.rooms[roomID]
+	if r == nil {
+		return nil, invalidParams("Unknown room %q", roomID)
 	}
-	if hasThread {
-		if _, exists := s.room.threads[threadID]; !exists {
-			return nil, invalidParams("Unknown thread %q", threadID)
-		}
-	}
-	// Membership before the transition is stored independently of the requested bounds.
-	matching := make([]transition, 0)
-	for _, entry := range s.room.entries {
-		if (hasAfter && entry.id < after) || (hasBefore && entry.id > before) {
+	matching := make([]*logRecord, 0)
+	for _, record := range r.log {
+		if (hasAfter && record.id < after) || (hasBefore && record.id > before) {
 			continue
 		}
-		if hasThread && entry.previousThread != threadID && entry.message["thread_id"] != threadID {
-			continue
-		}
-		matching = append(matching, entry)
+		matching = append(matching, record)
 	}
 	more := len(matching) > limit
 	if more {
@@ -878,17 +1116,27 @@ func (s *Server) history(req request) (any, *rpcError) {
 			matching = matching[len(matching)-limit:]
 		}
 	}
-	entries := make([]map[string]any, 0, len(matching))
-	for _, entry := range matching {
-		entries = append(entries, entry.historyEntry())
+	rooms := make([]any, 0)
+	entries := make([]any, 0, len(matching))
+	reactions := make([]any, 0)
+	for _, record := range matching {
+		value := cloneObject(record.value)
+		switch record.kind {
+		case kindRoom:
+			rooms = append(rooms, value)
+		case kindMessage:
+			entries = append(entries, value)
+		case kindReactions:
+			reactions = append(reactions, value)
+		}
 	}
-	result := map[string]any{"entries": entries, "more": more}
-	for key, value := range s.room.historyFields() {
+	result := map[string]any{"rooms": rooms, "entries": entries, "reactions": reactions, "more": more}
+	for key, value := range r.deliveryFields() {
 		result[key] = value
 	}
 	if len(matching) > 0 {
-		result["first_id"] = matching[0].idString()
-		result["last_id"] = matching[len(matching)-1].idString()
+		result["first_id"] = formatID(matching[0].id)
+		result["last_id"] = formatID(matching[len(matching)-1].id)
 	}
 	return result, nil
 }
@@ -929,9 +1177,6 @@ func (s *Server) typing(c *client, req request) (any, *rpcError) {
 	if err != nil {
 		return nil, err
 	}
-	if roomID != s.room.id {
-		return nil, invalidParams("Unknown room %q", roomID)
-	}
 	active, err := parseBool(req.params, "active", true)
 	if err != nil {
 		return nil, err
@@ -945,6 +1190,10 @@ func (s *Server) typing(c *client, req request) (any, *rpcError) {
 		timeout = value
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.rooms[roomID] == nil {
+		return nil, invalidParams("Unknown room %q", roomID)
+	}
 	params := map[string]any{
 		"room_id": roomID,
 		"from":    c.identity.object(),
@@ -958,17 +1207,22 @@ func (s *Server) typing(c *client, req request) (any, *rpcError) {
 		c.enqueue(response(req.id, req.full, result))
 	}
 	s.broadcastLocked(map[string]any{"method": "typing", "params": params})
-	s.mu.Unlock()
 	return result, nil
 }
 
-func (s *Server) nextIDLocked() string {
-	now := time.Now().UnixMilli()
-	if now <= s.room.lastID {
-		now = s.room.lastID + 1
+// nextIDLocked returns the next log_id in the server-wide sequence: the commit
+// time in milliseconds, or the previous log_id + 1.
+func (s *Server) nextIDLocked() int64 {
+	s.lastID = max(time.Now().UnixMilli(), s.lastID+1)
+	return s.lastID
+}
+
+// appendLocked adds a committed record to the log of each room it belongs to.
+func (s *Server) appendLocked(record *logRecord, rooms ...*roomState) {
+	for _, r := range rooms {
+		r.log = append(r.log, record)
+		r.latestID = record.id
 	}
-	s.room.lastID = now
-	return strconv.FormatInt(now, 10)
 }
 
 func (s *Server) broadcastLocked(frame any) {

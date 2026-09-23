@@ -176,7 +176,7 @@ func (a *testAuthenticator) assertion(t *testing.T, options map[string]any, orig
 
 func registerTestPasskey(t *testing.T, c *testClient, a *testAuthenticator) map[string]any {
 	t.Helper()
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "anonymous"}})
+	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	guest := passkeyResult(t, c.read(t))["you"].(map[string]any)["user_id"]
 	c.read(t)
 	options := passkeyResult(t, passkeyCall(t, c, "register-start", "register", "begin", nil))
@@ -277,7 +277,7 @@ func TestAddingPasskeyPreservesStoredNickname(t *testing.T) {
 			passkeyResult(t, passkeyCall(t, other, "resume", "token", "", map[string]any{"token": registered["token"]}))
 			other.read(t)
 			rename := func() {
-				owner.write(t, map[string]any{"method": "nick", "id": "rename", "params": map[string]any{"name": "Updated nickname"}})
+				owner.write(t, map[string]any{"method": "name", "id": "rename", "params": map[string]any{"name": "Updated nickname"}})
 				result := passkeyResult(t, owner.read(t))
 				if result["you"].(map[string]any)["name"] != "Updated nickname" {
 					t.Fatalf("rename was not accepted: %#v", result)
@@ -372,7 +372,7 @@ func TestPasskeyRejectsInvalidProofs(t *testing.T) {
 func TestPasskeyRejectsInvalidRegistration(t *testing.T) {
 	app, httpServer := passkeyTestServer(t)
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "anonymous"}})
+	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	passkeyResult(t, c.read(t))
 	c.read(t)
 	a := newTestAuthenticator(t)
@@ -398,7 +398,7 @@ func TestPasskeyRejectsInvalidRegistration(t *testing.T) {
 func TestPasskeyNotificationsDoNotRunCeremonies(t *testing.T) {
 	_, httpServer := passkeyTestServer(t)
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "anonymous"}})
+	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	passkeyResult(t, c.read(t))
 	c.read(t)
 	a := newTestAuthenticator(t)
@@ -422,7 +422,7 @@ func TestPasskeyNotificationsDoNotRunCeremonies(t *testing.T) {
 func TestPasskeyCanonicalMalformedFields(t *testing.T) {
 	_, httpServer := passkeyTestServer(t)
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "anonymous"}})
+	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	passkeyResult(t, c.read(t))
 	c.read(t)
 

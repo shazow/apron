@@ -65,10 +65,10 @@ async function issueSession(userId: string, origin: string): Promise<string> {
 
 it('advertises token resume only where passkeys are offered', async () => {
 	const trusted = await connect();
-	expect((await trusted.next()).params.auth).toEqual(['webauthn', 'token', 'anonymous']);
+	expect((await trusted.next()).params.auth).toEqual(['webauthn', 'token', 'guest']);
 	trusted.close();
 	const untrusted = await connect(null);
-	expect((await untrusted.next()).params.auth).toEqual(['anonymous']);
+	expect((await untrusted.next()).params.auth).toEqual(['guest']);
 	untrusted.send({ id: 't', method: 'auth', params: { scheme: 'token', token: 'anything' } });
 	expect((await untrusted.next()).error.code).toBe(-32001);
 	untrusted.close();
@@ -159,78 +159,36 @@ it('binds sessions to their origin and drops expired ones on the alarm', async (
 	});
 });
 
-it('migrates legacy sessions in bounded batches and preserves live records', async () => {
-	const now = Date.now();
-	const target = isolatedStub();
-	await runInDurableObject(target, async (_instance, state) => {
-		for (let i = 0; i < 40; i++) {
-			await state.storage.put<StoredSessionTest>(`session:legacy-${i.toString().padStart(3, '0')}`, {
-				v: 1, userId: `legacy-${i}`, origin: 'http://localhost:5173', expiresMs: now - 1,
-			});
-		}
-		await state.storage.put<StoredSessionTest>('session:legacy-live', {
-			v: 1, userId: 'legacy-live', origin: 'http://localhost:5173', expiresMs: now + 60_000,
-		});
-	});
-
-	await sweepOn(target, now);
-	const afterFirst = await runInDurableObject(target, async (_instance, state) => ({
-		remaining: (await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).size,
-		cursor: await state.storage.get<string>('session-legacy-cursor'),
-		indexed: (await state.storage.list({ prefix: 'session-expiry:' })).size,
+it('denies a session token whose identity no longer exists without recreating it', async () => {
+	// A storage reset wipes identities; a token that outlives its identity must
+	// fall back to sign-in rather than crash or resurrect the account.
+	const token = await issueSession('user_session_gone', 'http://localhost:5173');
+	const peer = await connect();
+	await peer.next();
+	peer.send({ id: 'orphan', method: 'auth', params: { scheme: 'token', token } });
+	const denied = await peer.next();
+	expect(denied.id).toBe('orphan');
+	expect(denied.error.code).toBe(-32001);
+	// The connection stays usable as a guest.
+	peer.send({ id: 'guest', method: 'auth', params: { scheme: 'guest' } });
+	expect((await peer.next()).result.you.user_id).toMatch(/^guest_/);
+	peer.close();
+	const after = await runInDurableObject(stub(), async (instance, state) => ({
+		identity: (instance as unknown as { store: { getIdentity(id: string): unknown } }).store.getIdentity('user_session_gone'),
+		session: [...(await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].some((session) => session.userId === 'user_session_gone'),
 	}));
-	// The migration walk is bounded independently of the number of old rows.
-	expect(afterFirst.remaining).toBeGreaterThan(24);
-	expect(afterFirst.cursor).toBeTruthy();
-	expect(afterFirst.indexed).toBeGreaterThanOrEqual(0);
-
-	for (let attempt = 0; attempt < 6; attempt++) await sweepOn(target, now);
-	const finished = await runInDurableObject(target, async (_instance, state) => ({
-		remaining: [...(await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].filter((session) => session.userId.startsWith('legacy-')).length,
-		live: [...(await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].some((session) => session.userId === 'legacy-live'),
-	}));
-	expect(finished.remaining).toBe(1);
-	expect(finished.live).toBe(true);
-	const beforeIdle = await runInDurableObject(target, async (_instance, state) => ({
-		keys: [...(await state.storage.list({ prefix: 'session-expiry:' })).keys()],
-		cursor: await state.storage.get('session-legacy-cursor'),
-		done: await state.storage.get('session-legacy-done'),
-	}));
-	expect(beforeIdle.done).toBe(true);
-	await sweepOn(target, now);
-	const afterIdle = await runInDurableObject(target, async (_instance, state) => ({
-		keys: [...(await state.storage.list({ prefix: 'session-expiry:' })).keys()],
-		cursor: await state.storage.get('session-legacy-cursor'),
-	}));
-	expect(afterIdle).toEqual({ keys: beforeIdle.keys, cursor: beforeIdle.cursor });
-});
-
-it('continues legacy cleanup across bounded batches', async () => {
-	const now = Date.now();
-	const target = isolatedStub();
-	await runInDurableObject(target, async (_instance, state) => {
-		for (let i = 0; i < 32; i++) {
-			await state.storage.put<StoredSessionTest>(`session:restart-${i.toString().padStart(3, '0')}`, {
-				v: 1, userId: `restart-${i}`, origin: 'http://localhost:5173', expiresMs: now - 1,
-			});
-		}
-	});
-	await sweepOn(target, now);
-	const cursorAfterFirst = await runInDurableObject(target, async (_instance, state) => state.storage.get<string>('session-legacy-cursor'));
-	expect(cursorAfterFirst).toBeTruthy();
-	// The next bounded batches resume at the durable cursor.
-	for (let attempt = 0; attempt < 4; attempt++) await sweepOn(target, now);
-	const remaining = await runInDurableObject(target, async (_instance, state) => [...(await state.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].filter((session) => session.userId.startsWith('restart-')).length);
-	expect(remaining).toBe(0);
+	expect(after).toEqual({ identity: null, session: false });
 });
 
 it('stops session cleanup safely when the maintenance budget is exhausted', async () => {
 	const now = Date.now();
 	const target = isolatedStub();
-	const cursorBefore = await runInDurableObject(target, async (_instance, state) => state.storage.get('session-legacy-cursor'));
 	await runInDurableObject(target, async (instance, state) => {
 		await state.storage.put<StoredSessionTest>('session:budget-expired', {
 			v: 1, userId: 'budget-expired', origin: 'http://localhost:5173', expiresMs: now - 1,
+		});
+		await state.storage.put(`session-expiry:${(now - 1).toString().padStart(16, '0')}:budget-expired`, {
+			v: 1, sessionKey: 'session:budget-expired', expiresMs: now - 1,
 		});
 		const day = new Date(now).toISOString().slice(0, 10);
 		state.storage.sql.exec(
@@ -246,11 +204,10 @@ it('stops session cleanup safely when the maintenance budget is exhausted', asyn
 	await expect(sweepOn(target, now)).rejects.toMatchObject({ code: 'retry_after' });
 	const state = await runInDurableObject(target, async (_instance, durableState) => ({
 		remaining: [...(await durableState.storage.list<StoredSessionTest>({ prefix: 'session:' })).values()].filter((session) => session.userId === 'budget-expired').length,
-		cursor: await durableState.storage.get('session-legacy-cursor'),
+		indexed: (await durableState.storage.list({ prefix: 'session-expiry:' })).size,
 	}));
-	expect(state.remaining).toBe(1);
-	// Exhaustion must leave the durable migration cursor untouched for retry.
-	expect(state.cursor).toBe(cursorBefore);
+	// Exhaustion leaves the expired session and its index row for a later alarm.
+	expect(state).toEqual({ remaining: 1, indexed: 1 });
 });
 
 it('keeps concurrent async reservations isolated from unrelated SQL work', async () => {

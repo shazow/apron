@@ -4,15 +4,16 @@ This report records local native SQLite measurements used for the storage
 accounting review. It describes the schema and the Workers test runtime; it
 does not claim a deployed account billing rate or a free-plan capacity.
 
-The focused run was made on 2026-09-20 with the repository's Nix workerd
-launcher:
+The focused run was first made on 2026-09-20 and repeated on 2026-09-22 for
+the protocol v3 schema (schema 2: one server-wide record log, room records,
+reaction sets) with the repository's workerd launcher:
 
 ```sh
 devenv shell -- npm --prefix servers/cloudflare-worker test -- \
   --run test/accounting.integration.test.ts --reporter=verbose
 ```
 
-The test uses nine separate Durable Objects through `runInDurableObject` and
+The test uses ten separate Durable Objects through `runInDurableObject` and
 constructs a `Store` over each object's native SQLite state with a fake clock.
 The traffic tests start at `2026-09-22T12:00:00Z`, cross three UTC posting
 days, advance cleanup to `2026-09-25T01:00:00Z`, and evict/reinitialize one
@@ -28,7 +29,13 @@ Request-ID mutations also do an 8/8 pre-duplicate lookup, which reserves
 16/16 after control overhead; the steady-state full request-ID mutation is
 280/280. A mutation without a request ID reserves 264/264. A cleanup run has
 a bounded due-check reservation plus a 1,032/1,032 batch reservation; the
-latest first-maintenance handover measured 1,064/1,058 in total.
+latest first-maintenance handover measured 1,068/1,058 in total (the due check now reserves twelve reads for its six indexed existence probes).
+
+The protocol v3 operations (reaction sets, thread room creation and saves,
+moves that re-log reactions) run through the same mutation path and fit the
+existing 256/256 floor, so the mutation reservation was not changed. Room
+listing now embeds each room's intro message and was re-derived from the
+thread ceiling (see below).
 
 The table below includes the reservation SQL in the observed cursor counts.
 Every operation in the runtime reservation matrix is listed so the claimed
@@ -46,42 +53,56 @@ upper bounds can be compared with the measured worst case.
 | Identity count | 3 | 1 | 16 | 8 | accepted |
 | Credential IDs lookup | 3 | 1 | 40 | 8 | accepted |
 | Credential counter update | 4 | 2 | 16 | 16 | accepted |
-| Message create with request ID | 29 | 36 | 280 | 280 | accepted |
+| Message create with request ID | 31 | 35 | 280 | 280 | accepted |
 | Deduplicated mutation retry | 4 | 1 | 16 | 16 | accepted |
-| Thread create | 25 | 22 | 280 | 280 | accepted |
-| Registered nick mutation | 22 | 17 | 280 | 280 | accepted |
-| History page | 5 | 1 | 264 | 40 | accepted |
-| Room state announcement | 3 | 1 | 16 | 8 | accepted |
-| Thread listing (representative matrix) | 3 | 1 | 264 | 8 | accepted |
-| Domain room listing (representative matrix) | 4 | 1 | 264 | 8 | accepted |
+| Reaction set | 25 | 25 | 280 | 280 | accepted |
+| Thread room create (with intro message) | 27 | 25 | 280 | 280 | accepted |
+| Thread room save | 19 | 17 | 280 | 280 | accepted |
+| Message move with one reaction set | 25 | 30 | 280 | 280 | accepted |
+| Registered name mutation | 21 | 17 | 280 | 280 | accepted |
+| History page | 10 | 1 | 264 | 40 | accepted |
+| Room state announcement | 4 | 1 | 24 | 8 | accepted |
+| Room join lookup | 4 | 1 | 24 | 8 | accepted |
+| Room listing (representative matrix) | 7 | 1 | 444 | 8 | accepted |
 | Admission snapshot | 5 | 1 | 40 | 24 | accepted |
-| Cleanup | 62 | 26 | 1,064 | 1,058 | accepted |
+| Cleanup | 104 | 40 | 1,068 | 1,058 | accepted |
 | Alarm scheduling | 7 | 3 | 24 | 12 | accepted |
 
 The matrix uses a fresh object and one representative operation for each
-boundary. The 100-thread listing test separately populated all 100 policy
-rows and measured 104/1 for `room()` and 102/1 for `getThreads()`; the current
-256-row listing reservation covers both. A 180-row thread fixture put 60
-records in each indexed membership branch; a forward history request returned
-exactly 50 entries, `more: true`, and stayed within its 272/48 reservation.
-The maximum snapshot test used a 4,096-byte text body plus a preserved
-extension field and produced an 8,161-byte serialized snapshot. Its maximum
-observed accepted mutation was 30/36, and each maximum-size edit was 19/20,
-below the 280/280 request-ID bound.
+boundary. The room-listing test separately populated the 100-thread policy
+ceiling, each thread with an intro message embedded from current message
+state; listing all 101 rooms measured 306/1 against its 452/16 reservation.
+That reservation is now derived from the calibrated thread ceiling
+(`32 + 4 * 101` rows plus reservation control), up from the fixed 256-row
+listing reservation, because each room adds an indexed intro-message lookup.
+A 180-record fixture mixing room, message, and reaction records returned a
+50-record forward page (`more: true`, first/last spanning all kinds) at 60/5
+against its 272/48 reservation. The maximum snapshot test used a 4,096-byte
+text body plus an `ext` field and produced an 8,154-byte serialized snapshot.
+Its maximum observed accepted mutation was 32/35, below the 280/280 request-ID
+bound.
+
+The worst move was measured at the calibrated reaction ceilings rather than
+the defaults: 64 reacting users, each with 16 distinct 64-byte emoji and a
+320-byte name. Each reaction set measured at most 91/30. Moving the message
+re-logged all 64 sets in one 92,693-byte reaction record and measured 214/156
+against its 280/280 reservation; the record still fit one history response.
+The per-message cap is what bounds this move: without it, the re-logged set
+count would be limited only by posting quotas.
 
 For the three-day traffic sample, the operation rows were:
 
 | Operation | Observed reads/writes | Reserved reads/writes |
 | --- | ---: | ---: |
-| Day 0 create | 30 / 36 | 288 / 288 |
-| Day 1 create | 23 / 22 | 296 / 296 |
-| Day 2 edit of older message | 25 / 21 | 296 / 296 |
-| Day 2 create | 17 / 21 | 280 / 280 |
-| Cleanup | 45 / 15 | 1,064 / 1,058 |
-| History after cleanup | 6 / 1 | 264 / 40 |
+| Day 0 create | 32 / 35 | 288 / 288 |
+| Day 1 create | 25 / 21 | 296 / 296 |
+| Day 2 edit of older message | 27 / 20 | 296 / 296 |
+| Day 2 create | 19 / 20 | 280 / 280 |
+| Cleanup | 56 / 16 | 1,068 / 1,058 |
+| History after cleanup | 7 / 1 | 264 / 40 |
 
-The final counters for that sample were 181 observed reads and 133 observed
-writes, against 2,504 reserved reads and 2,266 reserved writes. The native
+The final counters for that sample were 202 observed reads and 130 observed
+writes, against 2,516 reserved reads and 2,266 reserved writes. The native
 SQLite file reported `databaseSize = 135,168` bytes. These values are a
 small schema/data sample and are not a per-message capacity estimate.
 
@@ -111,17 +132,18 @@ independent.
 
 ## Retention, maintenance, and persistent state
 
-The three-day cleanup advanced the internal retention floor (`history_floor` in SQLite) to `1790172000001`, removed two
-old transition rows, removed the unreferenced old current message, and kept
-the edited message whose latest transition was still inside the retention
-window. It also removed two expired accepted-request rows without changing
+The three-day cleanup advanced the internal server-wide retention floor
+(`history_floor` in SQLite) past three old records (the seeded `general` room
+record and two creates), removed the unreferenced old current message, and kept
+the edited message whose latest record was still inside the retention window. It also removed two expired accepted-request rows without changing
 the room head.
 
 The maintenance-reserve test accepted three mutations under an explicit
 1,000/1,000 foreground ceiling, rejected the next mutation, then ran cleanup
 on `2026-09-23`. The previous day's foreground counter was 880 while the new
-day's cleanup consumed 1,058 maintenance writes and removed three
-transitions, three messages, three request rows, and three limiter rows. The
+day's cleanup consumed 1,058 maintenance writes and removed four records
+(three creates and the seeded room record), three messages, three request
+rows, and three limiter rows. The
 current budget row must be read by day; calling `budget()` after midnight
 correctly returns the new day's foreground counters rather than the exhausted
 previous day.
@@ -153,33 +175,45 @@ filesystem-file shrink or require VACUUM.
 `EXPLAIN QUERY PLAN` returned these details in the native test runtime:
 
 ```text
-history:
-  SEARCH transitions USING INDEX sqlite_autoindex_transitions_1
+history (one room's log, every record kind):
+  SEARCH records USING INDEX sqlite_autoindex_records_1
     (room_id=? AND log_id>? AND log_id<?)
-cleanup:
-  SEARCH transitions USING INDEX transitions_retention_idx
-    (room_id=? AND commit_ms<?)
+cleanup (server-wide prefix by commit time):
+  SEARCH records USING COVERING INDEX records_retention_idx (commit_ms<?)
 cleanup physical delete:
-  SEARCH transitions USING INDEX sqlite_autoindex_transitions_1
-    (room_id=? AND log_id<?)
-thread before-membership branch:
-  SEARCH transitions USING INDEX transitions_thread_before_idx
-    (room_id=? AND previous_thread_id=? AND log_id>? AND log_id<?)
-thread after-membership branch:
-  SEARCH transitions USING INDEX transitions_thread_after_idx
-    (room_id=? AND thread_id=? AND log_id>? AND log_id<?)
+  SEARCH records USING INDEX records_log_idx (log_id<?)
+message state expiry:
+  SEARCH message_state USING INDEX message_state_latest_idx (latest_log_id<?)
+reaction state expiry:
+  SEARCH reaction_state USING INDEX reaction_state_log_idx (log_id<?)
+move re-logging reactions:
+  SEARCH reaction_state USING INDEX sqlite_autoindex_reaction_state_1 (message_id=?)
+  USE TEMP B-TREE FOR ORDER BY
+room listing:
+  SCAN r
+  SEARCH m USING INDEX sqlite_autoindex_message_state_1 (message_id=?) LEFT-JOIN
+  USE TEMP B-TREE FOR ORDER BY
 dedup expiry:
   SEARCH accepted_requests USING INDEX accepted_requests_expiry_idx (expires_ms<?)
 limiter expiry:
   SEARCH principal_limits USING INDEX principal_limits_updated_idx (updated_ms<?)
 ```
 
-History and thread paths use range-capable indexes. Thread history performs
-two independently limited indexed scans and merges/deduplicates them in
-JavaScript, so the outer `UNION` temporary B-tree is not part of the runtime
-path. The cleanup source selection explicitly uses `transitions_retention_idx`
-for the strict commit-time cutoff, then uses the primary-key index for the
-bounded physical delete.
+History reads one contiguous primary-key range of one room's log; a move is
+stored once in each room it touches, so no membership filter or `UNION` is
+needed. The cleanup source selection explicitly uses `records_retention_idx`
+for the strict commit-time cutoff, then `records_log_idx` for the bounded
+physical delete. The move's reaction read and the room listing sort at most
+the capped per-message reaction sets and the capped room table respectively;
+the thread-room expiry check in cleanup scans that same capped table.
+
+## Schema reset
+
+A stored schema version other than the current one resets the object with
+`deleteAll()` and recreates the schema (`test/schema-reset.integration.test.ts`).
+The reset is charged the same one-time 512/512 bootstrap reservation as a new
+object, added to the carried-over current-day reservation row without a
+capacity check.
 
 ## Measurement limits
 

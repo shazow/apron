@@ -41,7 +41,7 @@ describe('trusted IP boundaries', () => {
 describe('frame policy boundaries', () => {
 	it('counts depth by containers and nodes by values', () => {
 		const options = { ...DEFAULT_PARSE_OPTIONS, maxJsonDepth: 2 };
-		expect(parseFrame(JSON.stringify({ id: 'a', method: 'auth', params: { scheme: 'anonymous' } }), options).request.id).toBe('a');
+		expect(parseFrame(JSON.stringify({ id: 'a', method: 'auth', params: { scheme: 'guest' } }), options).request.id).toBe('a');
 		expect(() => parseFrame(JSON.stringify({ id: 'a', method: 'auth', params: { nested: {} } }), options)).toThrow(FrameError);
 	});
 	it('preserves identifiable IDs on structural policy errors', () => {
@@ -96,6 +96,13 @@ describe('configuration policy boundaries', () => {
 		expect(() => config({}, { maintenanceReadsPerDay: 519 })).toThrow(ConfigError);
 		expect(() => config({}, { maintenanceWritesPerDay: 519 })).toThrow(ConfigError);
 		expect(config({}, { maintenanceReadsPerDay: 520, maintenanceWritesPerDay: 520 }).limits.maintenanceReadsPerDay).toBe(520);
+	});
+
+	it('bounds reaction sets so a moved message fits one history response', () => {
+		expect(config({ REACTION_USERS_PER_MESSAGE: '64', REACTION_EMOJIS_PER_USER: '16' }).limits.reactionUsersPerMessage).toBe(64);
+		expect(() => config({}, { reactionUsersPerMessage: 65 })).toThrow(ConfigError);
+		expect(() => config({}, { reactionEmojisPerUser: 17 })).toThrow(ConfigError);
+		expect(() => config({}, { reactionUsersPerMessage: 64, historyMaxResponseBytes: 64 * 1024 })).toThrow(ConfigError);
 	});
 
 	it('rejects resource ceilings and per-scope counter inversions', () => {

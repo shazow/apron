@@ -1,4 +1,5 @@
 import type { RoomSnapshot } from '$lib/protocol/client';
+import { compareLogIds } from '$lib/protocol/reducer';
 import type { Identity } from '$lib/protocol/types';
 import { mentionsMe } from './messages';
 
@@ -7,9 +8,11 @@ const PING_MS = 1200;
 
 /**
  * Mentions of you as they arrive: the row pulses once, a room you aren't
- * reading gets an `@` badge, and one that lands above the fold joins the jump
- * bar's list. Each room seeds silently the first time its timeline is seen, so
- * replayed history never pings; anything new after that is an arrival.
+ * reading gets an `@` badge (a thread's mentions badge its parent room), and
+ * one that lands above the fold joins the jump bar's list. The first time a
+ * room is seen its newest known log position becomes its watermark: messages
+ * created at or below it are history (a thread's history loads only when it
+ * is opened) and never ping; anything created after it is an arrival.
  */
 export class MentionTracker {
 	/** Message IDs pulsing because a mention of you just arrived. */
@@ -19,27 +22,37 @@ export class MentionTracker {
 	/** Mentions that arrived in the open pane while you were scrolled up, oldest first. */
 	unseen = $state<string[]>([]);
 	private readonly shown = new Map<string, Set<string>>();
+	private readonly watermarks = new Map<string, string>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-	/** Runs over every room after each snapshot; `pane` is what the viewer is reading, `latestVisible` whether its end is on screen. */
-	observe(rooms: RoomSnapshot[], me: Identity | undefined, pane: { room?: string; thread?: string }, latestVisible: boolean): void {
+	/**
+	 * Runs over every room after each snapshot; `pane` is the room (or thread)
+	 * the viewer is reading, `latestVisible` whether its end is on screen.
+	 */
+	observe(rooms: RoomSnapshot[], me: Identity | undefined, pane: string | undefined, latestVisible: boolean): void {
 		if (!me) return;
+		const visible = new Set(rooms.map((room) => room.id));
 		for (const room of rooms) {
 			let shown = this.shown.get(room.id);
-			const seeding = !shown;
 			if (!shown) {
 				shown = new Set<string>();
 				this.shown.set(room.id, shown);
+				const newest = [room.latestLogId, room.timeline.order[room.timeline.order.length - 1]]
+					.filter((id): id is string => id !== undefined)
+					.sort(compareLogIds)
+					.pop();
+				if (newest !== undefined) this.watermarks.set(room.id, newest);
 			}
+			const watermark = this.watermarks.get(room.id);
+			const badge = room.parentRoomId !== undefined && visible.has(room.parentRoomId) ? room.parentRoomId : room.id;
 			for (const id of room.timeline.order) {
 				if (shown.has(id)) continue;
 				shown.add(id);
-				if (seeding) continue;
+				if (watermark !== undefined && compareLogIds(id, watermark) <= 0) continue;
 				const event = room.timeline.events[id];
 				if (!event || !mentionsMe(event, me)) continue;
 				this.ping(id);
-				const here = room.id === pane.room && event.thread_id === pane.thread;
-				if (!here) this.byRoom = { ...this.byRoom, [room.id]: (this.byRoom[room.id] ?? 0) + 1 };
+				if (room.id !== pane) this.byRoom = { ...this.byRoom, [badge]: (this.byRoom[badge] ?? 0) + 1 };
 				else if (!latestVisible) this.unseen = [...this.unseen, id];
 			}
 		}

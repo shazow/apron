@@ -1,73 +1,24 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "replay",
-  "name": "New snapshot replaces loaded message",
-  "description": "New snapshot replaces loaded message.",
+  "name": "A history snapshot replaces a loaded message",
+  "description": "A newer snapshot from history replaces the message already loaded from live delivery.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#51-history"
+    "PROTOCOL.md#appendix-a--history"
   ],
-  "room": "general",
   "variants": [
     {
       "name": "history",
       "steps": [
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "room_id": "general",
-              "log_id": "100",
-              "message": {
-                "message_id": "100",
-                "from": {
-                  "user_id": "alice"
-                },
-                "body": {
-                  "text": "original"
-                }
-              }
-            }
-          }
-        },
-        {
-          "receive": {
-            "id": "history",
-            "result": {
-              "entries": [
-                {
-                  "log_id": "110",
-                  "message": {
-                    "message_id": "100",
-                    "from": {
-                      "user_id": "alice"
-                    },
-                    "body": {
-                      "text": "edited"
-                    }
-                  }
-                }
-              ],
-              "first_id": "110",
-              "last_id": "110",
-              "more": false
-            }
-          }
-        }
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"id":"history","result":{"entries":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"first_id":"110","last_id":"110","more":false,"latest_log_id":"110","history_log_id":"100"}}}
       ]
     }
   ],
   "expected": {
-    "events": [
-      {
-        "message_id": "100",
-        "from": {
-          "user_id": "alice"
-        },
-        "body": {
-          "text": "edited"
-        }
-      }
+    "rooms": [
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}]}
     ]
   }
 }

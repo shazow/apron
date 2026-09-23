@@ -12,11 +12,13 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 
 ## Features
 
-- One shared room: `general`.
-- Anonymous authentication and changeable display names.
-- Ordered message broadcasts, including to the sender.
-- Replies to retained messages; message bodies, embeds, and extension fields pass through.
-- In-memory history of the latest 1,000 messages, with inclusive `after`/`before` pagination. Pages default to 50 entries, capped at 200.
+- Apron protocol v3, advertising cap `history`.
+- One shared room: `general`, titled "General", announced as a room record after authentication.
+- Guest authentication (any scheme is accepted) with `guest_` user IDs and changeable display names (`auth` or `name`).
+- Ordered, flat message snapshot broadcasts, including to the sender. `message_id` equals the message's creation `log_id`.
+- Replies via `reply_to` (a bare `{"message_id": ...}` reference); `body` (with `format` defaulting to `plain`), embeds, and `ext` pass through.
+- One server-wide `log_id` sequence covering the room record and every message.
+- In-memory history of the latest 1,000 log records, with inclusive `after`/`before` pagination, `first_id`/`last_id`, and `more`. The room's creation record appears in `rooms` while retained. Pages default to 50 records, capped at 200.
 
 ## Assumptions
 
@@ -26,11 +28,12 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 
 ## Limits
 
-- History is held in memory; restarting clears it.
-- Reconnecting assigns a new anonymous identity.
+- History is held in memory; restarting clears it. Once more than 1,000 records exist, the oldest are discarded and `history_log_id` advances.
+- Reconnecting assigns a new guest identity.
 - Replies must target a message still retained in history.
-- Edits, deletions, threads, and uploads are unsupported.
+- Edits, deletions, moves, room creation, reactions, and uploads are unsupported; `message` with a `message_id` returns `error/unsupported`.
 - Requests are not deduplicated; retrying a message may create a duplicate.
+- Unknown top-level message fields are dropped; use `ext` for extension data.
 - Malformed requests may close the connection instead of returning protocol errors.
 - No credentials or rate limits are enforced.
 - Incoming frames are limited to 256 KiB.

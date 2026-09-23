@@ -1,14 +1,14 @@
 <script lang="ts">
 	import type { ChatClient, RoomSnapshot } from '$lib/protocol/client';
 	import type { SessionView } from '$lib/ui/session.svelte';
-	import type { ThreadEntry } from '$lib/ui/timeline';
+	import { sidebarRooms, type ThreadEntry } from '$lib/ui/timeline';
 	import ProfileBar from './ProfileBar.svelte';
 
 	interface Props {
 		client: ChatClient;
 		session: SessionView;
 		backendLabel: string;
-		/** The active room's threads, listed under it. */
+		/** The active room's threads (rooms whose parent it is), listed under it. */
 		threads: ThreadEntry[];
 		activeThread?: string;
 		/** Mentions of you that landed in rooms you weren't reading. */
@@ -21,6 +21,8 @@
 		onsignout: () => void;
 	}
 	let { client, session, backendLabel, threads, activeThread, mentions, displayName = $bindable(), passkeyUnavailable, onconnect, onroom, onthread, onsignout }: Props = $props();
+	/** Threads are listed under their parent, not as rooms of their own. */
+	let rooms = $derived(sidebarRooms(session.rooms));
 </script>
 
 <aside class="ap-shell-side" aria-label="Rooms">
@@ -34,16 +36,15 @@
 				<span class="ap-sect-toggle" role="heading" aria-level="2">Rooms</span>
 			</div>
 			<div class="ap-sect-body" data-testid="room-list">
-				{#if session.rooms.length === 0}
+				{#if rooms.length === 0}
 					<p class="muted">{session.snapshot.status === 'connected' ? 'No rooms yet.' : 'Waiting for rooms…'}</p>
 				{:else}
-					{#each session.rooms as room (room.id)}
+					{#each rooms as room (room.id)}
 						{@const active = room.id === session.activeRoomId}
 						{@const current = active && !activeThread}
 						<button class="ap-room" class:ap-room-active={current} type="button" data-room={room.id} aria-current={current ? 'page' : undefined} onclick={() => onroom(room)}>
 							<span class="ap-room-text">
-								<span class="ap-room-name">{room.name}</span>
-								{#if room.topic}<span class="ap-room-topic">{room.topic}</span>{/if}
+								<span class="ap-room-name">{room.title}</span>
 							</span>
 							{#if mentions[room.id]}
 								{@const count = mentions[room.id]}
@@ -52,12 +53,14 @@
 							{#if room.recovering}<span class="room-meta" aria-label="Loading history">…</span>{/if}
 						</button>
 						{#if active}
-							<div class="threads" data-testid="thread-list" role="group" aria-label={`Threads in ${room.name}`}>
-								{#each threads as entry (entry.thread_id)}
-									{@const open = activeThread === entry.thread_id}
-									<button class="ap-room ap-room-nested" class:ap-room-active={open} type="button" data-thread={entry.thread_id} aria-current={open ? 'page' : undefined} onclick={() => onthread(entry.thread_id)}>
-										<span class="ap-room-text"><span class="ap-room-name">{entry.title || entry.thread_id}</span></span>
-										<small class="room-meta" aria-label={`${entry.count} ${entry.count === 1 ? 'message' : 'messages'}`}>{entry.count}</small>
+							<div class="threads" data-testid="thread-list" role="group" aria-label={`Threads in ${room.title}`}>
+								{#each threads as entry (entry.id)}
+									{@const open = activeThread === entry.id}
+									<button class="ap-room ap-room-nested" class:ap-room-active={open} type="button" data-thread={entry.id} aria-current={open ? 'page' : undefined} onclick={() => onthread(entry.id)}>
+										<span class="ap-room-text"><span class="ap-room-name">{entry.title}</span></span>
+										{#if entry.count !== undefined}
+											<small class="room-meta" aria-label={`${entry.count} ${entry.count === 1 ? 'message' : 'messages'}`}>{entry.count}</small>
+										{/if}
 									</button>
 								{/each}
 							</div>

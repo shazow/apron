@@ -66,7 +66,7 @@
 		}
 	}
 
-	/** Sends the handle with `nick`; the editor then shows what the server actually kept. */
+	/** Sends the handle with `name`; the editor then shows what the server actually kept. */
 	function save(event: SubmitEvent): void {
 		event.preventDefault();
 		const requested = draft.trim();
