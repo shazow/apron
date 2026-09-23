@@ -23,7 +23,7 @@ the sender.
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
 
 // <- assigned identity
-{"id": "c1", "result": {"you": {"user_id": "guest_1", "name": "Ada"}}}
+{"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
 
 // <- visible rooms
 {"method": "room", "params": {"room_id": "general", "title": "General"}}
@@ -38,7 +38,7 @@ the sender.
 {
   "method": "message", "params": {
     "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
-    "from": {"user_id": "guest_1", "name": "Ada"},
+    "from": {"user_id": "guest_1234", "name": "Ada"},
     "body": {"text": "Hello"}
   }
 }
@@ -247,7 +247,8 @@ content.
 `params.scheme` selects the scheme:
 
 - `guest`: no credentials; the server assigns identity. Suggested
-  convention: prefix assigned `user_id`s with `guest_`.
+  convention: `guest_` plus a global counter, such as `guest_1234`, so
+  retired IDs are never reissued (§3.3).
 - `token`: bearer string. The reference default.
 - `webauthn`: optional passkey scheme (Appendix I).
 
@@ -266,15 +267,21 @@ other requests get `denied` and other notifications are ignored.
 ### 3.3 Identity
 
 Identity is server-authoritative: every message carries its author in `from`.
-There is no user directory or profile state.
+There is no user directory; a user object travels wherever the user appears.
 
 ```json
-"from": {"user_id": "alice", "name": "Alice", "avatar": "https://..."}
+"from": {"user_id": "alice", "name": "Alice"}
 ```
 
-`user_id` is required and stable. `name` and `avatar` are optional advisory
-strings, current as of that frame; absent `name` falls back to `user_id`.
-Every identity on the wire (`you`, `from`, RTC members) uses this shape.
+`user_id` is required and stable. `name` is an optional display string;
+absent `name` falls back to `user_id`. `avatar` (Appendix E) and `ext` (§3.5)
+are optional. Every identity on the wire (`you`, `from`, `members`, RTC
+members) uses this shape, and servers MAY send only `user_id`. Clients keep
+the latest user object they receive for each `user_id`, whichever frame
+carried it, and render every message with it.
+
+- Suggested convention: servers include `name` in `from`, so clients can
+  render messages from users who are no longer members.
 
 A `name` request changes the display name after authentication; the server
 MAY comply, decline, or alter it:
@@ -286,18 +293,34 @@ MAY comply, decline, or alter it:
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
 ```
 
-After authentication, the server MAY send a `you` notification at any time,
-such as after a forced rename or an authentication change. Its `params`
-mirror the `auth` result, and each replaces the previous identity:
+After authentication, the server MAY send a `user` notification at any time,
+such as after a rename, a profile change, or an authentication change. It
+carries exactly one of `you`, sent to the user's own connections, or `new`,
+sent to others who share a room with the user. When `user_id` changes, `old`
+optionally carries the previous user object:
 
-```json
-{"method": "you", "params": {"you": {"user_id": "alice", "name": "Alice (away)"}}}
+```jsonc
+// <- to the user's own connections
+{"method": "user", "params": {"you": {"user_id": "guest_1234", "name": "Ada L"}}}
+// <- to others who share a room with the user
+{"method": "user", "params": {"new": {"user_id": "guest_1234", "name": "Ada L"}}}
+// <- user_id change
+{
+  "method": "user", "params": {
+    "new": {"user_id": "ada", "name": "Ada"},
+    "old": {"user_id": "guest_1234", "name": "Ada L"}
+  }
+}
 ```
 
-If `user_id` changes, the connection now acts as the new identity. The
-server re-announces the rooms visible to it, removing those no longer
-visible (§3.4), and clients re-derive per-user state such as their own
-reactions (Appendix D).
+- `you` replaces the connection's identity. If its `user_id` changes, the
+  connection now acts as the new identity: the server re-announces the rooms
+  visible to it, removing those no longer visible (§3.4), and clients
+  re-derive per-user state such as their own reactions (Appendix D).
+- Logged records keep the old `user_id`. Clients MAY treat `old` as a user
+  leaving and `new` as a user joining, or MAY alias `old.user_id` to the new
+  identity for past and later records.
+- Servers SHOULD NOT reissue a retired `user_id` to another user.
 
 Bots and agents are ordinary senders; nothing distinguishes them.
 
@@ -306,11 +329,13 @@ Bots and agents are ordinary senders; nothing distinguishes them.
 
 ### 3.4 Rooms
 
-A room is a log with a server-chosen `room_id`. After authentication,
-servers SHOULD announce the currently visible rooms, and MUST announce a room
-before delivering anything in it. A server with many rooms MAY announce a
-subset, such as joined rooms and recently active threads. A minimal server
-may announce just one room.
+A room is a log with a server-chosen `room_id`. Announced rooms are the ones
+this connection receives deliveries for. After authentication, servers
+SHOULD announce the rooms the user has joined (every visible room, for
+servers without membership), and MUST announce a room before delivering
+anything in it. Servers MAY announce only recently active threads; the rest
+are found with `room_list` (Appendix C). A minimal server may announce just
+one room.
 
 ```json
 {
@@ -339,7 +364,7 @@ client, replaced whole by a save. `delivery`: this client's view, not logged.
 | `ext`            | client   | optional opaque extension data (§3.5)                            |
 | `latest_log_id`  | delivery | greatest `log_id` in the room's log                              |
 | `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none  |
-| `removed`        | delivery | `true` when the room leaves the client's visible set             |
+| `removed`        | delivery | `true` when the room leaves the announced set                    |
 
 A `room` frame is a complete room record (§2); omitted fields are cleared.
 Delivery fields describe this client's view and are not logged. A removal
@@ -358,8 +383,8 @@ Appendix A defines their use.
 Threads are rooms with a `parent_room_id`. Clients that ignore the field
 render them as ordinary rooms; clients that understand it group them under
 the parent and MAY collapse or hide them. Servers set `title` on threads so
-both render. Creating, joining, and leaving rooms requires cap `rooms`
-(Appendix C).
+both render. Creating, listing, joining, and leaving rooms requires cap
+`rooms` (Appendix C).
 
 ### 3.5 Messages
 
@@ -458,13 +483,13 @@ The opening example is a complete session with a minimal server.
 not authorization; servers still apply local policy per request. Absence of a
 cap obligates the client to the fallback:
 
-| cap         | adds                                            | fallback                    | spec       |
-|-------------|-------------------------------------------------|-----------------------------|------------|
-| `history`   | page and recover a room's log                   | session-only scrollback     | Appendix A |
-| `edit`      | `message` saves: edit, move, delete             | no edit/move/delete UI      | Appendix B |
-| `rooms`     | `room` create/update, `room_join`, `room_leave` | fixed room list, no threads | Appendix C |
-| `reactions` | emoji reactions on messages                     | reaction controls hidden    | Appendix D |
-| `push`      | `push_register`, `push_unregister`              | no mobile wake-ups          | Appendix F |
+| cap         | adds                                                         | fallback                    | spec       |
+|-------------|--------------------------------------------------------------|-----------------------------|------------|
+| `history`   | page and recover a room's log                                | session-only scrollback     | Appendix A |
+| `edit`      | `message` saves: edit, move, delete                          | no edit/move/delete UI      | Appendix B |
+| `rooms`     | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads | Appendix C |
+| `reactions` | emoji reactions on messages                                  | reaction controls hidden    | Appendix D |
+| `push`      | `push_register`, `push_unregister`                           | no mobile wake-ups          | Appendix F |
 
 Features without a cap: `typing` (Appendix D) is ephemeral and clients MAY
 send it blind; uploads follow `server.upload` (Appendix E); embeds are body
@@ -476,7 +501,7 @@ Three frame idioms cover everything logged or announced:
 - **Per-user state** (`reactions`, `typing`): `from` plus the user's complete
   state for a scope; newest wins per user. `reactions` is logged (§2),
   `typing` is not.
-- **Announcements** (`server`, `you`, `rtc`): unlogged, re-sent in full;
+- **Announcements** (`server`, `user`, `rtc`): unlogged, re-sent in full;
   each replaces the last.
 
 ---
@@ -702,19 +727,43 @@ cleared. Both return
   unknown `parent_room_id`, or invalid types are `invalid_params`;
   unauthorized requests are `denied`.
 
-Membership:
+Discovery and membership:
 
 ```jsonc
+// -> list a room's threads; omit parent_room_id for top-level rooms
+{"method": "room_list", "id": "c21", "params": {"parent_room_id": "general"}}
+// <-
+{
+  "id": "c21", "result": {
+    "rooms": [
+      {
+        "room_id": "1724803312001", "log_id": "1724803312001",
+        "parent_room_id": "general", "title": "Deploy",
+        "intro_message": {...},
+        "latest_log_id": "1724803400000",
+        "members": [{"user_id": "alice", "name": "Alice", "avatar": "https://..."}]
+      }
+    ]
+  }
+}
 // ->
-{"method": "room_join", "id": "c21", "params": {"room_id": "ops"}}
+{"method": "room_join", "id": "c22", "params": {"room_id": "1724803312001"}}
 // ->
-{"method": "room_leave", "id": "c22", "params": {"room_id": "ops"}}
+{"method": "room_leave", "id": "c23", "params": {"room_id": "1724803312001"}}
 ```
 
-Both return `{}`; the server emits the corresponding `room` announcement, with
-`removed: true` after a successful leave. Visibility and membership are
-server policy, including which rooms are announced after authentication.
-Servers need not announce every thread.
+- `room_list` returns room records (§3.4) for the visible rooms, each with
+  `members`, a list of user objects (§3.3). With `parent_room_id` it lists
+  that room's threads, including ones never announced. Listing a room does
+  not start deliveries. Servers MAY omit or truncate `members` by policy.
+- A room is joined when it is in the announced set; listings carry no
+  separate flag.
+- `room_join` and `room_leave` return `{}`. A join announces the room; a
+  leave, or losing visibility, sends `removed: true`. A room left but still
+  visible stays in `room_list`.
+- Members of a room receive announcements of its new threads. Joining an
+  unannounced thread announces it.
+- Visibility and membership are server policy.
 
 ---
 
@@ -779,7 +828,7 @@ broadcast carries the state.
 
 ---
 
-## Appendix E — Uploads and embeds
+## Appendix E — Uploads, embeds, and avatars
 
 **Upload.** Media travels over HTTP, not the socket. The client POSTs
 `multipart/form-data` to the `upload` URL from the `server` frame, receives
@@ -807,6 +856,18 @@ same token is the bearer. With other schemes the server SHOULD re-send the
   insertion, regardless of source. Servers make no safety promises about
   content flowing through them.
 - Future typed embeds (`diff`, `poll`, …) use the fallback rule.
+
+**Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
+the user's name.
+
+- Servers send `avatar` in `you`, `user`, and `members`, not in every `from`.
+- Servers SHOULD return only `https:` URLs or small
+  `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through
+  upload.
+- Clients own their security boundary and choose which sources to load; they
+  MAY ignore any avatar. Load values only as images, never as documents, and
+  bind or escape them rather than interpolating them into HTML.
+- Without a usable avatar, clients draw a placeholder such as initials.
 
 ---
 
