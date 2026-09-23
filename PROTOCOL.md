@@ -459,6 +459,8 @@ local policy.
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
   (Appendix E). Clients MUST render embeds of unknown `kind` as a labeled
   fallback card (kind name plus `url`, if present).
+- Suggested convention: mention users as `@user_id` in `body.text`
+  (Appendix J.3).
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
   confirmation; the broadcast MAY arrive before or after it, and a
   deduplicated retry (§1.2) produces no broadcast.
@@ -1121,3 +1123,26 @@ Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
 `parent_room_id`, `session_id`). Embedded objects use descriptive names
 (`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id` keeps
 its name. Extensions and future methods should follow the same pattern.
+
+### J.3 Mentions
+
+A mention is `@` followed by a `user_id` in `body.text`:
+
+```json
+"body": {"text": "@guest_1234 can you check the deploy?"}
+```
+
+- The `user_id` is an optional `@` then a run of `[A-Za-z0-9_.-]`, not
+  preceded by a letter or digit, so `foo@bar.com` is not a mention. Trailing
+  `.` and `-` are not part of it. In Markdown, code spans and code blocks
+  contain no mentions.
+- Servers that want users to be mentionable mint `user_id`s from that set,
+  such as `guest_1234`. System identities (J.1) take a second `@`, as in
+  `@@server`.
+- Clients render a mention with the user's latest display name (§3.3), such
+  as a chip, and MAY highlight mentions of `you`. Unknown IDs render as
+  written.
+- Composers insert `@user_id` when the user picks a person, for example from
+  `members` (Appendix C).
+- Servers MAY apply the same rule to wake mentioned users (Appendix F).
+- Room-wide mentions are not defined.
