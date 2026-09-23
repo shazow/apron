@@ -94,7 +94,7 @@ notifications.
 A notification omits `id` and receives no reply:
 
 ```json
-{"method": "activity", "params": {"room_id": "general", "timeout": 8}}
+{"method": "activity", "params": {"room_id": "general", "typing": 8}}
 ```
 
 Success returns a `result` object (`{}` if empty). Errors contain integer
@@ -528,12 +528,14 @@ are body content (Appendix E); push follows `server.push` (Appendix F).
 - Suggested convention: third-party extension caps use an `ext:` prefix,
   such as `ext:irc`.
 
-Three frame idioms cover everything logged or announced:
+Four frame idioms cover everything logged or announced:
 
 - **Records** (`room`, `message`): complete state at a `log_id` (§2).
-- **Per-user state** (`reactions`, `activity`): `from` plus the user's
-  complete state for a scope; newest wins per user. `reactions` is logged
-  (§2), `activity` is not.
+- **Per-user state** (`reactions`): `from` plus the user's complete state for
+  a scope; newest wins per user. Logged (§2).
+- **Activity** (`activity`): `from` plus changes to the user's transient
+  state; present fields update it and absent fields leave it unchanged. Not
+  part of the append-only log.
 - **Announcements** (`server`, `user`, `rtc`): unlogged, re-sent in full;
   each replaces the last.
 
@@ -800,38 +802,40 @@ Discovery and membership:
 
 ---
 
-## Appendix D — Per-user state: `activity`, `reactions`
+## Appendix D — Activity and reactions
 
 ### D.1 `activity`
 
-Cap `activity`. A client reports its activity in one room, as a
-notification: whether it is typing, and how far it has read. Servers MAY
-drop it.
+Cap `activity`. A client reports changes to its activity in one room, as a
+notification: typing, and how far it has read. Each present field updates
+that user's state; absent fields leave it unchanged. Activity is not part of
+the append-only log, and servers MAY drop it.
 
 ```jsonc
-// -> typing, having read up to a point
-{"method": "activity", "params": {"room_id": "general", "read_log_id": "1724803200042", "timeout": 8}}
-// -> not typing; moves the read marker only
-{"method": "activity", "params": {"room_id": "general", "read_log_id": "1724803312050"}}
+// -> start typing
+{"method": "activity", "params": {"room_id": "general", "typing": 8}}
+// -> stop typing
+{"method": "activity", "params": {"room_id": "general", "typing": 0}}
+// -> advance the read cursor
+{"method": "activity", "params": {"room_id": "general", "read_message_id": "1724803312050"}}
 // <- (broadcast)
 {
   "method": "activity", "params": {
     "room_id": "general", "from": {"user_id": "alice"},
-    "read_log_id": "1724803312050"
+    "typing": 8, "read_message_id": "1724803312050"
   }
 }
 ```
 
-- `timeout` (optional, seconds) means the user is typing, for that long
-  without refresh. Without it, the user's typing indicator ends.
-- `read_log_id` (optional) is the greatest `log_id` in the room the user has
-  read; omitted, the marker is unchanged. Clients only advance it, and
-  servers MAY ignore a value below the one they hold.
-- Activity is not logged. Delivery is server policy: to the room, which
-  shows read receipts, or only to the user's own connections, which syncs
-  read markers across devices.
-- Servers MAY keep each user's latest `read_log_id` per room and re-send it
-  after announcing the room, as `activity` without `timeout`.
+- `typing` (seconds): show the user as typing for up to that long, or until
+  a new message from them arrives. `0` stops.
+- `read_message_id`: the user has read the room up to and including that
+  message. Clients only advance it, and servers MAY ignore a cursor that
+  moves back.
+- Delivery is server policy: to the room, which shows read receipts, or only
+  to the user's own connections, which syncs read cursors across devices.
+- Servers MAY keep each user's latest `read_message_id` per room and re-send
+  it after announcing the room.
 - There is no presence system.
 
 ### D.2 `reactions`
