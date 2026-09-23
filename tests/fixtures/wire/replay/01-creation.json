@@ -12,73 +12,19 @@
     {
       "name": "live",
       "steps": [
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "message_id": "100",
-              "log_id": "100",
-              "room_id": "general",
-              "from": {
-                "user_id": "alice"
-              },
-              "body": {
-                "text": "original"
-              }
-            }
-          }
-        }
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}}
       ]
     },
     {
       "name": "history",
       "steps": [
-        {
-          "receive": {
-            "id": "history",
-            "result": {
-              "entries": [
-                {
-                  "message_id": "100",
-                  "log_id": "100",
-                  "room_id": "general",
-                  "from": {
-                    "user_id": "alice"
-                  },
-                  "body": {
-                    "text": "original"
-                  }
-                }
-              ],
-              "first_id": "100",
-              "last_id": "100",
-              "more": false,
-              "latest_log_id": "100",
-              "history_log_id": "100"
-            }
-          }
-        }
+        {"receive":{"id":"history","result":{"entries":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}],"first_id":"100","last_id":"100","more":false,"latest_log_id":"100","history_log_id":"100"}}}
       ]
     }
   ],
   "expected": {
     "rooms": [
-      {
-        "room_id": "general",
-        "messages": [
-          {
-            "message_id": "100",
-            "log_id": "100",
-            "room_id": "general",
-            "from": {
-              "user_id": "alice"
-            },
-            "body": {
-              "text": "original"
-            }
-          }
-        ]
-      }
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}]}
     ]
   }
 }

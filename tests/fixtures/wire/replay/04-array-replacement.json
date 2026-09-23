@@ -11,77 +11,14 @@
     {
       "name": "live",
       "steps": [
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "message_id": "100",
-              "log_id": "100",
-              "room_id": "general",
-              "from": {
-                "user_id": "alice"
-              },
-              "body": {
-                "embeds": [
-                  {
-                    "kind": "file",
-                    "url": "https://example.org/a"
-                  },
-                  {
-                    "kind": "image"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "message_id": "100",
-              "log_id": "110",
-              "room_id": "general",
-              "from": {
-                "user_id": "alice"
-              },
-              "body": {
-                "embeds": [
-                  {
-                    "kind": "file",
-                    "url": "https://example.org/b"
-                  }
-                ]
-              }
-            }
-          }
-        }
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"embeds":[{"kind":"file","url":"https://example.org/a"},{"kind":"image"}]}}}},
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"embeds":[{"kind":"file","url":"https://example.org/b"}]}}}}
       ]
     }
   ],
   "expected": {
     "rooms": [
-      {
-        "room_id": "general",
-        "messages": [
-          {
-            "message_id": "100",
-            "log_id": "110",
-            "room_id": "general",
-            "from": {
-              "user_id": "alice"
-            },
-            "body": {
-              "embeds": [
-                {
-                  "kind": "file",
-                  "url": "https://example.org/b"
-                }
-              ]
-            }
-          }
-        ]
-      }
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"embeds":[{"kind":"file","url":"https://example.org/b"}]}}]}
     ]
   }
 }

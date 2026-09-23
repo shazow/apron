@@ -11,68 +11,14 @@
     {
       "name": "history",
       "steps": [
-        {
-          "receive": {
-            "method": "message",
-            "params": {
-              "message_id": "100",
-              "log_id": "100",
-              "room_id": "general",
-              "from": {
-                "user_id": "alice"
-              },
-              "body": {
-                "text": "original"
-              }
-            }
-          }
-        },
-        {
-          "receive": {
-            "id": "history",
-            "result": {
-              "entries": [
-                {
-                  "message_id": "100",
-                  "log_id": "110",
-                  "room_id": "general",
-                  "from": {
-                    "user_id": "alice"
-                  },
-                  "body": {
-                    "text": "edited"
-                  }
-                }
-              ],
-              "first_id": "110",
-              "last_id": "110",
-              "more": false,
-              "latest_log_id": "110",
-              "history_log_id": "100"
-            }
-          }
-        }
+        {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
+        {"receive":{"id":"history","result":{"entries":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"first_id":"110","last_id":"110","more":false,"latest_log_id":"110","history_log_id":"100"}}}
       ]
     }
   ],
   "expected": {
     "rooms": [
-      {
-        "room_id": "general",
-        "messages": [
-          {
-            "message_id": "100",
-            "log_id": "110",
-            "room_id": "general",
-            "from": {
-              "user_id": "alice"
-            },
-            "body": {
-              "text": "edited"
-            }
-          }
-        ]
-      }
+      {"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}]}
     ]
   }
 }
