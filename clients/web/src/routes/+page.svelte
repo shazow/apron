@@ -743,7 +743,6 @@
 					bind:value={composerText}
 					placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.title}`}
 					disabled={!canCompose}
-					canUpload={session.canUpload}
 					{people}
 					replyPreview={replyId ? replyPreview(replyId) : undefined}
 					oninput={composerInput} onsend={sendMessage} oncancelreply={cancelReply}

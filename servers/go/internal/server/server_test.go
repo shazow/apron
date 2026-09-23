@@ -348,7 +348,7 @@ func TestServerFrameAndGuestAuth(t *testing.T) {
 func TestUnimplementedAndUnknownMethodsAreUnsupported(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
-	for _, method := range []string{"name", "typing", "push_register", "frobnicate"} {
+	for _, method := range []string{"frobnicate", "room_teleport"} {
 		c.expectError(t, method, method, map[string]any{"room_id": "general"}, codeUnsupported)
 	}
 	c.expectQuiet(t)

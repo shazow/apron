@@ -31,19 +31,13 @@ export interface MessageBody extends JsonObject {
 }
 
 /**
- * One entry of `body.embeds` (Appendix E). `image`, `video`, `audio`, and
- * `file` (`mime`, `name`, `size`, `w`, `h`) are v3 kinds this client still
- * renders natively; other kinds get the fallback card (`url` or `text`).
+ * One entry of `body.embeds` (Appendix E). This client renders every kind as
+ * the fallback card: the kind name, plus `url` or plain `text`.
  */
 export interface Embed extends JsonObject {
 	kind: string;
 	url?: string;
 	text?: string;
-	mime?: string;
-	name?: string;
-	size?: number;
-	w?: number;
-	h?: number;
 }
 
 /** A bare message reference (`reply_to`, `intro_message`) as clients send and store it. */

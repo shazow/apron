@@ -137,16 +137,3 @@ export function safeUrl(value: unknown): string | undefined {
 		return undefined;
 	}
 }
-
-export function formatBytes(value: unknown): string {
-	if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '';
-	if (value < 1024) return `${value} B`;
-	const units = ['KB', 'MB', 'GB'];
-	let amount = value / 1024;
-	let index = 0;
-	while (amount >= 1024 && index < units.length - 1) {
-		amount /= 1024;
-		index += 1;
-	}
-	return `${amount.toFixed(amount >= 10 ? 0 : 1)} ${units[index]}`;
-}

@@ -67,8 +67,3 @@ export function retryAfterLabel(milliseconds: number): string {
 	if (minutes < 60) return `${minutes}m`;
 	return `${Math.ceil(minutes / 60)}h`;
 }
-
-/** `0:12`: the running time of a voice recording. */
-export function clockLabel(seconds: number): string {
-	return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-}

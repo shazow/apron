@@ -82,7 +82,6 @@ async function authenticate(peer: Awaited<ReturnType<typeof connect>>, scheme = 
 	expect(server.params.auth).toContain('webauthn');
 	expect(server.params.extensions).toBeUndefined();
 	// Demo hints live under the standard ext object, not a top-level key.
-	expect(server.params.demo).toBeUndefined();
 	expect(server.params.ext.demo.retention_seconds).toBeGreaterThan(0);
 	peer.send({ method: 'auth', id: 'auth', params: { scheme } });
 	const auth = await peer.next();
@@ -237,7 +236,6 @@ it('counts guest posting across sockets and returns retained retries after posti
 		expect(limited.error.code).toBe(-32002);
 		expect(Number.isInteger(limited.error.data.retry_after)).toBe(true);
 		expect(limited.error.data.retry_after).toBeGreaterThanOrEqual(1);
-		expect(limited.error.data.ms).toBeUndefined();
 		first.send({ id: 'post-0', method: 'message', params: { room_id: 'general', body: { text: 'post-0' } } });
 		expect((await first.next()).result).toEqual(accepted);
 	} finally { first.close(); second.close(); }

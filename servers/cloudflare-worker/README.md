@@ -222,8 +222,8 @@ For direct Wrangler production commands, always pass
    no paid-service bindings. Apply the initial migration once using the normal
    Wrangler deployment workflow. Do not rename or recreate the production
    object to work around a quota or schema issue. Stored data is not migrated
-   between schema versions: a deploy that changes the storage schema (the
-   protocol v3 release did; v4 does not) resets the demo on the object's first wake (see
+   between schema versions: a deploy that changes the storage schema resets the
+   demo on the object's first wake (see
    [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
    identities, sessions, and limiter windows are deleted; users must register
    their passkeys again, and saved session tokens fall back to sign-in. Only the

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { formatBytes, renderMarkdown, safeUrl, type MentionPerson } from '$lib/protocol/markdown';
+	import { renderMarkdown, safeUrl, type MentionPerson } from '$lib/protocol/markdown';
 	import type { MessageRecord } from '$lib/protocol/types';
-	import { aspectRatio, embedsOf, replySnippet, senderName, textOf } from '$lib/ui/messages';
+	import { embedsOf, replySnippet, senderName, textOf } from '$lib/ui/messages';
 	import type { ReactionChip } from '$lib/ui/reactions';
 	import { eventTime } from '$lib/ui/time';
 	import Avatar from './Avatar.svelte';
@@ -217,26 +217,12 @@
 				<div class="ap-msg-embeds">
 					{#each embeds as embed}
 						{@const url = safeUrl(embed.url)}
-						{#if embed.kind === 'image' && url}
-							<img class="ap-embed ap-embed-media" src={url} alt={embed.name || ''} loading="lazy" style={aspectRatio(embed)} />
-						{:else if embed.kind === 'video' && url}
-							<!-- svelte-ignore a11y_media_has_caption -->
-							<video class="ap-embed ap-embed-media" src={url} controls preload="metadata" style={aspectRatio(embed)}></video>
-						{:else if embed.kind === 'audio' && url}
-							<audio class="ap-embed ap-embed-audio" src={url} controls preload="none"></audio>
-						{:else if embed.kind === 'file' && url}
-							<a class="ap-embed ap-embed-card" href={url} download={embed.name || true}>
-								<span class="ap-embed-title">{embed.name || 'File'}</span>
-								<span class="ap-embed-detail">{[embed.mime, formatBytes(embed.size)].filter(Boolean).join(' · ')}</span>
-							</a>
-						{:else}
-							<div class="ap-embed ap-embed-card ap-embed-fallback">
-								<span class="ap-embed-kind">{embed.kind || 'unknown'}</span>
-								{#if url}<a class="ap-embed-url" href={url} rel="noreferrer noopener" target="_blank">{url}</a>
-								{:else if typeof embed.text === 'string' && embed.text}<span class="ap-embed-text">{embed.text}</span>
-								{:else}<span class="ap-embed-detail">This client can’t display this embed.</span>{/if}
-							</div>
-						{/if}
+						<div class="ap-embed ap-embed-card ap-embed-fallback">
+							<span class="ap-embed-kind">{embed.kind || 'unknown'}</span>
+							{#if url}<a class="ap-embed-url" href={url} rel="noreferrer noopener" target="_blank">{url}</a>
+							{:else if typeof embed.text === 'string' && embed.text}<span class="ap-embed-text">{embed.text}</span>
+							{:else}<span class="ap-embed-detail">This client can’t display this embed.</span>{/if}
+						</div>
 					{/each}
 				</div>
 			{/if}

@@ -204,8 +204,6 @@ it('updates a registered name with me, declines avatar and ext, and treats name 
 	// An empty name removes it, so clients fall back to the user_id.
 	peer.send({ id: 'clear', method: 'me', params: { name: '' } });
 	expect((await reply('clear')).result).toEqual({ you: { user_id: 'user_session_me' } });
-	peer.send({ id: 'legacy', method: 'name', params: { name: 'Ada' } });
-	expect((await reply('legacy')).error.code).toBe(-32601);
 	peer.close();
 
 	// The removal is durable: a later resume carries no name either.

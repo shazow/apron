@@ -30,13 +30,6 @@ export function replySnippet(target: MessageRecord): string {
 	return short || (embedsOf(target).length ? 'Attachment' : 'Empty message');
 }
 
-/** `aspect-ratio` from an embed's `w`/`h`, so the timeline reserves the space before the media loads. */
-export function aspectRatio(embed: Embed): string | undefined {
-	return typeof embed.w === 'number' && typeof embed.h === 'number' && embed.w > 0 && embed.h > 0
-		? `aspect-ratio: ${embed.w} / ${embed.h}`
-		: undefined;
-}
-
 export function isOwn(event: MessageRecord, me: Identity | undefined): boolean {
 	return Boolean(me && event.from?.user_id === me.user_id);
 }

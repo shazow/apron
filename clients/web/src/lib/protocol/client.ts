@@ -1031,8 +1031,8 @@ export class ChatClient {
 		if (frame.method !== undefined) return;
 		if (typeof frame.id === 'string' && (frame.result !== undefined || frame.error !== undefined)) {
 			this.handleResponse(frame.id, isJsonObject(frame.result) ? frame.result : {}, frame.error);
-		} else if (frame.id === undefined || frame.id === null) {
-			// An error without `id` is not tied to a request (§1.1); v3 servers sent `id: null`.
+		} else if (frame.id === undefined) {
+			// An error without `id` is not tied to a request (§1.1).
 			if (isJsonObject(frame.error)) this.handleConnectionError(frame.error);
 		}
 	}

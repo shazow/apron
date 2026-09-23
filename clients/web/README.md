@@ -76,11 +76,9 @@ palette, and reactions show as chips under the message: emoji and count,
 highlighted when one is yours, with a tooltip naming who reacted. Clicking a
 chip toggles your reaction. Tombstones show no reactions.
 
-The composer's attach and microphone buttons stay hidden: attachments need the
-`embed:upload` cap (Appendix E), which this client does not implement yet.
-Embeds render natively for the older `image`, `video`, `audio`, and `file`
-kinds; any other kind shows a fallback card with its kind name and its `url`,
-or else its plain `text`.
+The client has no attachments yet (cap `embed:upload`, Appendix E). Every
+embed shows as a fallback card with its kind name and its `url`, or else its
+plain `text`.
 
 **Connect** in the
 sidebar header opens the connect screen: a WebSocket URL or an HTTP(S) server
