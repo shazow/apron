@@ -117,6 +117,10 @@ Success returns a `result` object (`{}` if empty). Errors contain integer
 | -32002 | `retry_after`     | rate limited; `data.ms` is an integer delay |
 | -32003 | `too_large`       | message too large                           |
 
+Clients distinguish errors by `code` alone. `message` is free text for
+people: servers SHOULD make it specific enough to show as is, such as
+"Session expired; sign in again" rather than "Denied".
+
 Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
 and invalid envelopes whose `id` cannot be determined use `id: null`,
 as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
