@@ -309,12 +309,14 @@ protocol guarantees neither.
 - Suggested convention: servers include `name` in `from`, so clients can
   render messages from users who are no longer members.
 
-A `name` request changes the display name after authentication; the server
-MAY comply, decline, or alter it:
+A `me` request updates the user's own profile after authentication. Fields
+given replace their current values, fields omitted stay unchanged, and an
+empty value (`""`, `{}`) removes the field. `name`, `avatar`, and `ext` are
+settable; the server MAY comply, decline, or alter any of them:
 
 ```jsonc
-// ->
-{"method": "name", "id": "c2", "params": {"name": "Alice ⚙"}}
+// -> rename and remove the avatar; ext is untouched
+{"method": "me", "id": "c2", "params": {"name": "Alice ⚙", "avatar": ""}}
 // <-
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
 ```
