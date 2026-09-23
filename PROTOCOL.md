@@ -101,21 +101,21 @@ Success returns a `result` object (`{}` if empty). Errors contain integer
 
 ```json
 {"id": "c42", "error": {"code": -32601, "message": "Unsupported method"}}
-{"id": "c43", "error": {"code": -32002, "message": "Try later", "data": {"ms": 1000}}}
+{"id": "c43", "error": {"code": -32002, "message": "Too Many Requests", "data": {"retry_after": 30}}}
 ```
 
 `error/<name>` denotes the following numeric codes:
 
-| code   | name              | meaning                                     |
-|--------|-------------------|---------------------------------------------|
-| -32700 | `parse_error`     | invalid JSON                                |
-| -32600 | `invalid_request` | invalid envelope                            |
-| -32601 | `unsupported`     | method/capability not implemented           |
-| -32602 | `invalid_params`  | invalid method parameters                   |
-| -32603 | `internal_error`  | internal server error                       |
-| -32001 | `denied`          | authentication/authorization failure        |
-| -32002 | `retry_after`     | rate limited; `data.ms` is an integer delay |
-| -32003 | `too_large`       | message too large                           |
+| code   | name              | meaning                                                |
+|--------|-------------------|--------------------------------------------------------|
+| -32700 | `parse_error`     | invalid JSON                                           |
+| -32600 | `invalid_request` | invalid envelope                                       |
+| -32601 | `unsupported`     | method/capability not implemented                      |
+| -32602 | `invalid_params`  | invalid method parameters                              |
+| -32603 | `internal_error`  | internal server error                                  |
+| -32001 | `denied`          | authentication/authorization failure                   |
+| -32002 | `retry_after`     | rate limited; `data.retry_after` is a delay in seconds |
+| -32003 | `too_large`       | message too large                                      |
 
 Clients distinguish errors by `code` alone. `message` is free text for
 people: servers SHOULD make it specific enough to show as is, such as
@@ -125,6 +125,16 @@ Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
 and invalid envelopes whose `id` cannot be determined use `id: null`,
 as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
 never receive error replies.
+
+Servers also use `id: null` for an error about the connection rather than
+one request, and MAY close the connection after sending it:
+
+```json
+{"id": null, "error": {"code": -32002, "message": "Server at capacity", "data": {"retry_after": 30}}}
+```
+
+Clients act on the code: after `retry_after`, wait before reconnecting;
+after `denied`, do not reconnect automatically until the user acts.
 
 ### 1.2 Retries and deduplication
 
@@ -147,8 +157,8 @@ authentication MUST execute on each connection.
 
 ## 2. Identifiers
 
-All IDs are strings. The only exception is `id: null` on replies to
-unidentifiable invalid requests (§1.1).
+All IDs are strings. The only exception is `id: null` on errors not tied to
+a request (§1.1).
 
 **`log_id`** — position of one change in the server's append-only log.
 
