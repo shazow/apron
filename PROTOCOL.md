@@ -961,28 +961,15 @@ The `message` result lists them, in request order:
     "embeds": [{"embed_id": "embed_1235", "kind": "upload", "write_url": "https://chat.example/w/4c7a…"}]
   }
 }
-// <- broadcast: the upload is pending
-{
-  "method": "message", "params": {
-    "message_id": "1724803500000", "log_id": "1724803500000", "room_id": "general",
-    "from": {"user_id": "ada", "name": "Ada"},
-    "body": {"text": "Before the fix:", "embeds": [{"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}]}
-  }
-}
 // sender: curl -T before.png https://chat.example/w/4c7a…
-// <- the upload completes: the server sets url and here adds og
+// <- the embed as broadcast: pending, then completed in a later snapshot
+{"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}
 {
-  "method": "message", "params": {
-    "message_id": "1724803500000", "log_id": "1724803502210", "prev_log_id": "1724803500000",
-    "room_id": "general", "from": {"user_id": "ada", "name": "Ada"},
-    "body": {"text": "Before the fix:", "embeds": [{
-      "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
-      "url": "https://chat.example/f/embed_1235",
-      "og": {
-        "title": "before.png",
-        "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180}
-      }
-    }]}
+  "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
+  "url": "https://chat.example/f/embed_1235",
+  "og": {
+    "title": "before.png",
+    "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180}
   }
 }
 ```
@@ -1292,41 +1279,12 @@ HTTP while readers watch it grow. Stream embeds follow Appendix E's embed
 identity and write rules.
 
 ```jsonc
-// -> the sender includes a stream embed
-{
-  "method": "message", "id": "c9", "params": {
-    "room_id": "ops",
-    "body": {"text": "Deploy log:", "embeds": [{"kind": "stream", "format": "terminal"}]}
-  }
-}
-// <-
-{
-  "id": "c9", "result": {
-    "message_id": "1724803600000",
-    "embeds": [{"embed_id": "embed_1234", "kind": "stream", "write_url": "https://chat.example/w/9b1e…"}]
-  }
-}
-// <- broadcast: the stream is live at its url
-{
-  "method": "message", "params": {
-    "message_id": "1724803600000", "log_id": "1724803600000", "room_id": "ops",
-    "from": {"user_id": "ada", "name": "Ada"},
-    "body": {"text": "Deploy log:", "embeds": [
-      {"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/embed_1234"}
-    ]}
-  }
-}
-// sender: foo 2>&1 | curl -T - https://chat.example/w/9b1e…
-// <- the stream ends: the kept text replaces url
-{
-  "method": "message", "params": {
-    "message_id": "1724803600000", "log_id": "1724803661200", "prev_log_id": "1724803600000",
-    "room_id": "ops", "from": {"user_id": "ada", "name": "Ada"},
-    "body": {"text": "Deploy log:", "embeds": [
-      {"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
-    ]}
-  }
-}
+// -> the embed in a message request; the result and write follow Appendix E
+{"kind": "stream", "format": "terminal"}
+// sender: foo 2>&1 | curl -T - <write_url>
+// <- the embed as broadcast: live at its url, then finished with the kept text
+{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/embed_1234"}
+{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
 ```
 
 - `format` names how to render the text; default `"plain"`, shown as is with
