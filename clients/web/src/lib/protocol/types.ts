@@ -15,12 +15,14 @@ export interface JsonObject {
  * Optional features of `server.params.caps` (§4) that this client uses;
  * it ignores the rest.
  */
-export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'activity';
+export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'activity' | 'embed:upload' | 'embed:stream';
 
+/** A user object (§3.3): `you`, `from`, `members`, and `user` notifications. */
 export interface Identity extends JsonObject {
 	user_id: string;
 	name?: string;
 	avatar?: string;
+	ext?: JsonObject;
 }
 
 export interface MessageBody extends JsonObject {
@@ -30,14 +32,40 @@ export interface MessageBody extends JsonObject {
 	embeds?: Embed[];
 }
 
+/** OpenGraph description of an embed (Appendix E): `og:` prefix dropped, structured properties nested. */
+export interface OpenGraph extends JsonObject {
+	title?: string;
+	description?: string;
+	site_name?: string;
+	image?: OpenGraphMedia;
+	video?: OpenGraphMedia;
+	audio?: OpenGraphMedia;
+}
+
+export interface OpenGraphMedia extends JsonObject {
+	url: string;
+	type?: string;
+	width?: number;
+	height?: number;
+	alt?: string;
+}
+
 /**
- * One entry of `body.embeds` (Appendix E). This client renders every kind as
- * the fallback card: the kind name, plus `url` or plain `text`.
+ * One entry of `body.embeds` (Appendix E). `kind` picks the renderer:
+ * `upload` (a file the server hosts; pending while `url` is absent), `stream`
+ * (live text at `url`, finished with `text`), `iframe`, `html`, and any other
+ * kind from `og` or as a fallback card.
  */
 export interface Embed extends JsonObject {
 	kind: string;
+	embed_id?: string;
 	url?: string;
+	title?: string;
 	text?: string;
+	format?: string;
+	html?: string;
+	height?: number;
+	og?: OpenGraph;
 }
 
 /** A bare message reference (`reply_to`, `intro_message`) as clients send and store it. */

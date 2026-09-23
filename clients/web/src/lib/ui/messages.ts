@@ -1,8 +1,15 @@
-import { mentionsHandle, type MentionPerson } from '$lib/protocol/markdown';
+import { mentionedIds, type MentionPerson } from '$lib/protocol/markdown';
 import { isJsonObject, type Embed, type Identity, type MessageRecord } from '$lib/protocol/types';
+import { directory } from './directory.svelte';
 
+/** The sender's latest display name (§3.3), not necessarily the one the message was posted under. */
 export function senderName(event: MessageRecord): string {
-	return event.from?.name || event.from?.user_id || 'Unknown sender';
+	return directory.name(event.from);
+}
+
+/** Senders whose `user_id` starts with `@` are system identities (Appendix J.1), shown as quiet centered lines. */
+export function isSystem(event: MessageRecord): boolean {
+	return event.from?.user_id?.startsWith('@') === true;
 }
 
 export function textOf(event: MessageRecord): string {
@@ -34,29 +41,35 @@ export function isOwn(event: MessageRecord, me: Identity | undefined): boolean {
 	return Boolean(me && event.from?.user_id === me.user_id);
 }
 
-/** A mention is decided here, from the text: `@` + the viewer's name or ID, whole word. Your own messages never ping you. */
+/** A message mentions you when its text names your `user_id` (Appendix J.3), outside code. Your own messages never ping you. */
 export function mentionsMe(event: MessageRecord, me: Identity | undefined): boolean {
 	if (!me || isOwn(event, me) || event.deleted) return false;
-	return mentionsHandle(textOf(event), [me.name, me.user_id]);
+	return mentionedIds(textOf(event), event.body?.format === 'markdown').some((id) => directory.isMe(id) || id === me.user_id);
 }
 
-/** The senders a list of messages has seen, most recently active first, the viewer marked `me` and always present. */
-export function peopleIn(messages: MessageRecord[], me: Identity | undefined): MentionPerson[] {
+/**
+ * Who a composer can mention: the room's recent senders, most recently active
+ * first, then its members from `room_list`; the viewer is marked `me` and is
+ * always present. Names and avatars are the latest known.
+ */
+export function peopleIn(messages: MessageRecord[], me: Identity | undefined, members: Identity[] = []): MentionPerson[] {
 	const people: MentionPerson[] = [];
 	const seen = new Set<string>();
-	const person = (from: Identity): MentionPerson => ({
-		id: from.user_id,
-		...(from.name ? { name: from.name } : {}),
-		...(from.avatar ? { avatar: from.avatar } : {}),
-		...(from.user_id === me?.user_id ? { me: true } : {})
-	});
-	for (let index = messages.length - 1; index >= 0; index -= 1) {
-		const from = messages[index].from;
-		if (!from?.user_id || seen.has(from.user_id)) continue;
+	const add = (from: Identity): void => {
+		if (!from?.user_id || seen.has(from.user_id) || from.user_id.startsWith('@')) return;
 		seen.add(from.user_id);
-		people.push(person(from));
-	}
-	if (me?.user_id && !seen.has(me.user_id)) people.push(person(me));
+		const latest = directory.person(from) ?? from;
+		const avatar = directory.avatar(from);
+		people.push({
+			id: from.user_id,
+			...(latest.name ? { name: latest.name } : {}),
+			...(avatar ? { avatar } : {}),
+			...(from.user_id === me?.user_id ? { me: true } : {})
+		});
+	};
+	for (let index = messages.length - 1; index >= 0; index -= 1) add(messages[index].from);
+	for (const member of members) add(member);
+	if (me) add(me);
 	return people;
 }
 

@@ -1,11 +1,14 @@
 <script lang="ts">
-	import { renderMarkdown, safeUrl, type MentionPerson } from '$lib/protocol/markdown';
+	import type { UploadState } from '$lib/protocol/client';
+	import { renderMarkdown, renderPlain } from '$lib/protocol/markdown';
 	import type { MessageRecord } from '$lib/protocol/types';
-	import { embedsOf, replySnippet, senderName, textOf } from '$lib/ui/messages';
+	import { directory } from '$lib/ui/directory.svelte';
+	import { embedsOf, isSystem, replySnippet, senderName, textOf } from '$lib/ui/messages';
 	import type { ReactionChip } from '$lib/ui/reactions';
 	import { eventTime } from '$lib/ui/time';
 	import Avatar from './Avatar.svelte';
 	import ReactionBar from './ReactionBar.svelte';
+	import Embed from './embeds/Embed.svelte';
 
 	const LONG_PRESS_MS = 500;
 
@@ -28,7 +31,8 @@
 		resolve: (messageId: string) => MessageRecord | undefined;
 		/** Reaction chips under the message; empty for tombstones. */
 		reactions: ReactionChip[];
-		people: MentionPerson[];
+		/** Files this client is writing to the message's upload embeds, by `embed_id`. */
+		uploads: Record<string, UploadState>;
 		mention: boolean;
 		pinged: boolean;
 		highlighted: boolean;
@@ -40,6 +44,8 @@
 		caps: MessageCaps;
 		onreply: () => void;
 		onjump: (id: string) => void;
+		/** A room mention was clicked (Appendix J.3). */
+		onopenroom: (roomId: string) => void;
 		onedit: () => void;
 		onsave: (text: string) => void;
 		oncanceledit: () => void;
@@ -54,8 +60,8 @@
 		onselect: (range: boolean) => void;
 	}
 	let {
-		event, grouped, resolve, reactions, people, mention, pinged, highlighted, selecting, selected, editing, startingThread, caps,
-		onreply, onjump, onedit, onsave, oncanceledit, ondelete, onremovereply, onstartthread, onreact, onbeginselect, onselect
+		event, grouped, resolve, reactions, uploads, mention, pinged, highlighted, selecting, selected, editing, startingThread, caps,
+		onreply, onjump, onopenroom, onedit, onsave, oncanceledit, ondelete, onremovereply, onstartthread, onreact, onbeginselect, onselect
 	}: Props = $props();
 
 	let moreOpen = $state(false);
@@ -67,6 +73,8 @@
 	let time = $derived(eventTime(event));
 	let text = $derived(textOf(event));
 	let embeds = $derived(embedsOf(event));
+	let system = $derived(isSystem(event));
+	let body = $derived(event.body?.format === 'markdown' ? renderMarkdown(text, directory.resolve) : renderPlain(text, directory.resolve));
 	let selectable = $derived(selecting && caps.select);
 	let picked = $derived(selectable && selected);
 	let replyId = $derived(event.reply_to?.message_id);
@@ -106,6 +114,11 @@
 
 	/** Shift-click enters select mode with this message picked; inside it, plain clicks toggle. */
 	function click(mouse: MouseEvent): void {
+		const roomLink = (mouse.target as HTMLElement | null)?.closest<HTMLElement>('[data-room-id]');
+		if (roomLink?.dataset.roomId) {
+			onopenroom(roomLink.dataset.roomId);
+			return;
+		}
 		if ((mouse.target as HTMLElement | null)?.closest('a, button, input, textarea, select')) return;
 		if (selecting) {
 			if (caps.select) onselect(mouse.shiftKey);
@@ -142,6 +155,17 @@
 	$effect(() => cancelLongPress);
 </script>
 
+{#if system && !selecting}
+	<!-- A system identity (Appendix J.1): a quiet centered line, no avatar, actions or grouping. -->
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
+	<article data-timeline-item class="ap-msg ap-msg-system" data-message-id={event.message_id} tabindex="-1" onclick={click}>
+		<span class="ap-msg-system-who">{name}</span>
+		<div class="ap-msg-system-body">
+			{#if event.deleted}<span class="ap-msg-tomb">Message deleted</span>{:else}<div class="ap-msg-text" class:plain={event.body?.format !== 'markdown'}>{@html body}</div>{/if}
+		</div>
+		{#if time}<time class="ap-msg-system-time">{time}</time>{/if}
+	</article>
+{:else}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article
 	data-timeline-item
@@ -168,7 +192,7 @@
 		{#if grouped}
 			<span class="ap-msg-hovertime">{time}</span>
 		{:else}
-			<Avatar {name} src={event.from?.avatar} />
+			<Avatar {name} src={directory.avatar(event.from)} />
 		{/if}
 	</div>
 	<div class="ap-msg-main">
@@ -183,7 +207,7 @@
 				{@const targetName = senderName(replyTarget)}
 				<button class="ap-reply" data-testid="reply-reference" type="button" aria-label={`Replying to ${targetName}. Jump to their message`} onclick={() => onjump(replyTarget.message_id)}>
 					<span class="ap-reply-who">
-						<Avatar name={targetName} src={replyTarget.from?.avatar} size="sm" />
+						<Avatar name={targetName} src={directory.avatar(replyTarget.from)} size="sm" />
 						{targetName}
 					</span>
 					<span class="ap-reply-text">{#if replyTarget.deleted}<em>Message deleted</em>{:else}{replySnippet(replyTarget)}{/if}</span>
@@ -208,21 +232,15 @@
 			{#if text}
 				<!-- An absent format is plain (§3.5); only an explicit `markdown` body is rendered as Markdown. -->
 				{#if event.body?.format === 'markdown'}
-					<div class="ap-msg-text markdown">{@html renderMarkdown(text, people)}</div>
+					<div class="ap-msg-text markdown">{@html body}</div>
 				{:else}
-					<div class="ap-msg-text plain">{text}</div>
+					<div class="ap-msg-text plain">{@html body}</div>
 				{/if}
 			{/if}
 			{#if embeds.length > 0}
 				<div class="ap-msg-embeds">
-					{#each embeds as embed}
-						{@const url = safeUrl(embed.url)}
-						<div class="ap-embed ap-embed-card ap-embed-fallback">
-							<span class="ap-embed-kind">{embed.kind || 'unknown'}</span>
-							{#if url}<a class="ap-embed-url" href={url} rel="noreferrer noopener" target="_blank">{url}</a>
-							{:else if typeof embed.text === 'string' && embed.text}<span class="ap-embed-text">{embed.text}</span>
-							{:else}<span class="ap-embed-detail">This client can’t display this embed.</span>{/if}
-						</div>
+					{#each embeds as embed, index (embed.embed_id ?? index)}
+						<Embed {embed} upload={embed.embed_id ? uploads[embed.embed_id] : undefined} />
 					{/each}
 				</div>
 			{/if}
@@ -264,6 +282,7 @@
 		</div>
 	{/if}
 </article>
+{/if}
 
 <style>
 	.ap-actions { max-width: calc(100vw - 32px); flex-wrap: wrap; }

@@ -28,6 +28,7 @@ export function statusLabel(snapshot: ClientSnapshot, stalled: boolean): string 
 	if (state === 'offline') return 'Offline';
 	if (state === 'reconnecting') {
 		const error = reconnectErrorOf(snapshot);
+		if (snapshot.held) return error ? `Signed out: ${error}` : 'Signed out';
 		if (snapshot.retryAfterMs && snapshot.retryAfterMs > 0) return `${error || 'Connection limited'}. Retrying in ${retryAfterLabel(snapshot.retryAfterMs)}…`;
 		if (error) return stalled ? `Still disconnected: ${error}` : error;
 		return stalled ? 'Still trying to reconnect…' : 'Reconnecting…';

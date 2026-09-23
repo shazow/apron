@@ -16,11 +16,14 @@
 		canEditThread: boolean;
 		editorOpen: boolean;
 		editDisabled: boolean;
+		/** Offer Leave for the pane's room or thread (cap `rooms`). */
+		canLeave: boolean;
 		onback: () => void;
 		onroom: () => void;
 		onedit: () => void;
+		onleave: () => void;
 	}
-	let { room, pane, threadTitle, typing, replyCount, canEditThread, editorOpen, editDisabled, onback, onroom, onedit }: Props = $props();
+	let { room, pane, threadTitle, typing, replyCount, canEditThread, editorOpen, editDisabled, canLeave, onback, onroom, onedit, onleave }: Props = $props();
 </script>
 
 <header class="ap-roomhead">
@@ -46,9 +49,14 @@
 	{:else if pane.recoveryError}
 		<span class="ap-roomhead-sub" role="status">History unavailable</span>
 	{/if}
-	{#if canEditThread}
+	{#if canEditThread || canLeave}
 		<div class="ap-roomhead-actions">
-			<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Edit thread" aria-expanded={editorOpen} disabled={editDisabled} onclick={onedit}>Edit</button>
+			{#if canEditThread}
+				<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Edit thread" aria-expanded={editorOpen} disabled={editDisabled} onclick={onedit}>Edit</button>
+			{/if}
+			{#if canLeave}
+				<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" data-testid="leave-room" aria-label={threadTitle !== undefined ? 'Leave thread' : 'Leave room'} disabled={editDisabled} onclick={onleave}>Leave</button>
+			{/if}
 		</div>
 	{/if}
 </header>

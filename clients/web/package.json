@@ -28,6 +28,7 @@
 		"vitest": "^5.0.1"
 	},
 	"dependencies": {
-		"commonmark": "^0.31.2"
+		"commonmark": "^0.31.2",
+		"dompurify": "^3.4.16"
 	}
 }

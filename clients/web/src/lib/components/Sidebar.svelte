@@ -18,11 +18,36 @@
 		onconnect: () => void;
 		onroom: (room: RoomSnapshot) => void;
 		onthread: (thread: string) => void;
+		/** Join a visible room or thread from `room_list` (cap `rooms`); it opens once announced. */
+		onjoin: (roomId: string) => void;
 		onsignout: () => void;
 	}
-	let { client, session, backendLabel, threads, activeThread, mentions, displayName = $bindable(), passkeyUnavailable, onconnect, onroom, onthread, onsignout }: Props = $props();
+	let { client, session, backendLabel, threads, activeThread, mentions, displayName = $bindable(), passkeyUnavailable, onconnect, onroom, onthread, onjoin, onsignout }: Props = $props();
 	/** Threads are listed under their parent, not as rooms of their own. */
 	let rooms = $derived(sidebarRooms(session.rooms));
+	let canBrowse = $derived(session.canManageRooms && session.ready);
+	let browseOpen = $state(false);
+	let moreThreadsFor = $state<string | undefined>();
+	let listError = $state('');
+	/** Visible rooms this user hasn't joined (or has left), from the latest `room_list`. */
+	let unjoined = $derived((session.snapshot.directory ?? []).filter((listing) => !listing.joined));
+	let moreThreads = $derived(moreThreadsFor ? (session.snapshot.threadDirectory[moreThreadsFor] ?? []).filter((listing) => !listing.joined) : []);
+
+	function list(parentRoomId?: string): void {
+		listError = '';
+		client.listRooms(parentRoomId).catch((cause: unknown) => (listError = cause instanceof Error ? cause.message : 'Unable to list rooms'));
+	}
+
+	function toggleBrowse(): void {
+		browseOpen = !browseOpen;
+		if (browseOpen) list();
+	}
+
+	/** Servers may announce only some threads; the rest come from `room_list` with the parent (Appendix C). */
+	function showMoreThreads(parentRoomId: string): void {
+		moreThreadsFor = moreThreadsFor === parentRoomId ? undefined : parentRoomId;
+		if (moreThreadsFor) list(parentRoomId);
+	}
 </script>
 
 <aside class="ap-shell-side" aria-label="Rooms">
@@ -63,12 +88,48 @@
 										{/if}
 									</button>
 								{/each}
+								{#if canBrowse}
+									<button class="ap-room ap-room-nested more" type="button" data-testid="more-threads" aria-expanded={moreThreadsFor === room.id} onclick={() => showMoreThreads(room.id)}>
+										<span class="ap-room-text"><span class="ap-room-topic">More threads…</span></span>
+									</button>
+									{#if moreThreadsFor === room.id}
+										{#each moreThreads as listing (listing.id)}
+											<button class="ap-room ap-room-nested" type="button" data-join={listing.id} onclick={() => onjoin(listing.id)}>
+												<span class="ap-room-text"><span class="ap-room-name">{listing.title}</span><span class="ap-room-topic">Join</span></span>
+											</button>
+										{:else}
+											<p class="muted">No other threads.</p>
+										{/each}
+									{/if}
+								{/if}
 							</div>
 						{/if}
 					{/each}
 				{/if}
 			</div>
 		</section>
+		{#if canBrowse}
+			<section class="ap-sect" class:ap-sect-closed={!browseOpen}>
+				<div class="ap-sect-head">
+					<button class="ap-sect-toggle" type="button" aria-expanded={browseOpen} data-testid="browse-rooms" onclick={toggleBrowse}><span class="ap-sect-caret" aria-hidden="true">▾</span>Browse rooms</button>
+				</div>
+				{#if browseOpen}
+					<div class="ap-sect-body" data-testid="room-directory">
+						{#each unjoined as listing (listing.id)}
+							<button class="ap-room" type="button" data-join={listing.id} onclick={() => onjoin(listing.id)}>
+								<span class="ap-room-text">
+									<span class="ap-room-name">{listing.title}</span>
+									<span class="ap-room-topic">{listing.members.length} {listing.members.length === 1 ? 'member' : 'members'} · Join</span>
+								</span>
+							</button>
+						{:else}
+							<p class="muted">{session.snapshot.directory ? 'You’ve joined every room.' : 'Loading rooms…'}</p>
+						{/each}
+						{#if listError}<p class="muted" role="alert">{listError}</p>{/if}
+					</div>
+				{/if}
+			</section>
+		{/if}
 	</div>
 	<ProfileBar {client} {session} {backendLabel} bind:displayName {passkeyUnavailable} {onsignout} />
 </aside>
@@ -81,6 +142,7 @@
 	.threads { display: flex; flex-direction: column; gap: 2px; }
 	.room-meta { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 	.ap-room-active .room-meta { color: var(--ink); }
+	.more .ap-room-topic { color: var(--denim); }
 	@media (max-width: 719px) {
 		.ap-shell-side { border-right: 0; }
 	}

@@ -61,8 +61,8 @@ describe('capability gating', () => {
 	it('derives feature flags from the latest server frame', () => {
 		// Unknown caps are ignored.
 		const server = { protocol: 4, auth: ['guest'], caps: ['history', 'reactions', 'activity', 'frobnicate', 'ext:irc'] };
-		expect(capabilitiesOf(server)).toEqual({ history: true, edit: false, rooms: false, reactions: true, activity: true });
-		expect(capabilitiesOf(undefined)).toEqual({ history: false, edit: false, rooms: false, reactions: false, activity: false });
+		expect(capabilitiesOf(server)).toEqual({ history: true, edit: false, rooms: false, reactions: true, activity: true, 'embed:upload': false, 'embed:stream': false });
+		expect(capabilitiesOf(undefined)).toEqual({ history: false, edit: false, rooms: false, reactions: false, activity: false, 'embed:upload': false, 'embed:stream': false });
 		expect([canEdit(server), canManageRooms(server), canReact(server), hasHistory(server)]).toEqual([false, false, true, true]);
 	});
 });

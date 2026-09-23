@@ -99,14 +99,14 @@ is. Messages the server denies stay selected and the bar reports how many didn't
 move. Escape leaves select mode. Moved messages keep their reply references and
 reactions.
 
-Mentions are a frontend reading of the text — the protocol carries none. An
-`@handle` matching a sender's name or ID (whole word, case-insensitive, outside
-code) renders as a chip; a message that names you tints its row and pulses once
-when it arrives, and shows an `@` badge on a room you aren't reading (a thread's
-mentions badge its parent room) or a rust jump bar when it landed above the
-fold. Messages from history, including a thread's history loaded when it is
-opened, never ping. Typing `@` in the composer lists the senders the room (and,
-in a thread, its parent room) has seen so one can be inserted as plain text.
+Mentions follow the `@user_id` convention (PROTOCOL.md Appendix J.3): a
+known user renders as a chip with their current name, a room as a link, and
+unknown IDs as written, never inside code. A message that names you tints its
+row and pulses once when it arrives, and shows an `@` badge on a room you
+aren't reading (a thread's mentions badge its parent room) or a rust jump bar
+when it landed above the fold. Messages from history, including a thread's
+history loaded when it is opened, never ping. Typing `@` in the composer lists
+the room's recent senders and members and inserts the picked `@user_id`.
 
 Use a message's Reply action to reference it in a new message. `reply_to` may
 name a message in any room, so a reply in a thread can quote a message in the
@@ -128,9 +128,11 @@ reactions.
 The Go server keeps rooms, threads, reactions, and uploads in memory. A new
 user joins every room and thread, so the client sees them all on connection.
 Empty threads remain available; deleting or moving their intro message does
-not remove them. The server also offers uploads and streams (`embed:upload`,
-`embed:stream`), which this client does not use yet and shows as fallback
-cards.
+not remove them. With the Go server the client also sends attachments and
+voice clips, shows live streams, sets avatars, marks where you stopped reading,
+and browses, joins, and leaves rooms; see
+[`clients/web/README.md`](clients/web/README.md). The interop suite's
+`reference.spec.ts` exercises these against the Go server.
 
 ## Build and serve
 

@@ -2,6 +2,7 @@
 	import { isJsonObject } from '$lib/protocol/types';
 	import type { ChatClient } from '$lib/protocol/client';
 	import { passkeyMessage } from '$lib/ui/connection';
+	import { directory } from '$lib/ui/directory.svelte';
 	import type { SessionView } from '$lib/ui/session.svelte';
 	import { saveDisplayName } from '$lib/ui/storage';
 	import Avatar from './Avatar.svelte';
@@ -26,7 +27,13 @@
 	let serverName = $state('');
 	let passkeyError = $state('');
 	let passkeyNotice = $state('');
+	let avatarStatus = $state<'idle' | 'uploading' | 'removing'>('idle');
+	let avatarError = $state('');
+	let avatarInput = $state<HTMLInputElement | undefined>();
 	let you = $derived(session.you);
+	let avatar = $derived(directory.avatar(you));
+	/** Avatars are uploaded to room `@avatar` (Appendix J.4), which needs cap `embed:upload`. */
+	let canUploadAvatar = $derived(session.snapshot.capabilities['embed:upload']);
 	let snapshot = $derived(session.snapshot);
 	let connected = $derived(snapshot.status === 'connected');
 
@@ -40,7 +47,37 @@
 		serverName = '';
 		passkeyError = '';
 		passkeyNotice = '';
+		avatarError = '';
 		open = true;
+	}
+
+	/** The server sets `avatar` and sends `user` once the image is written; `you` then carries it. */
+	async function uploadAvatar(input: HTMLInputElement): Promise<void> {
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file) return;
+		avatarStatus = 'uploading';
+		avatarError = '';
+		try {
+			await client.uploadAvatar(file);
+		} catch (cause) {
+			avatarError = cause instanceof Error ? cause.message : 'The avatar could not be uploaded';
+		} finally {
+			avatarStatus = 'idle';
+		}
+	}
+
+	async function removeAvatar(): Promise<void> {
+		avatarStatus = 'removing';
+		avatarError = '';
+		try {
+			const kept = await client.updateProfile({ avatar: '' });
+			if (kept.avatar) avatarError = 'The server kept your previous avatar.';
+		} catch (cause) {
+			avatarError = cause instanceof Error ? cause.message : 'The avatar could not be removed';
+		} finally {
+			avatarStatus = 'idle';
+		}
 	}
 
 	function close(): void {
@@ -98,9 +135,24 @@
 		<div class="ap-profile-pop" role="dialog" aria-label="Edit profile">
 			<form class="ap-profedit" onsubmit={save}>
 				<div class="ap-profedit-top">
-					<Avatar name={draft || you?.user_id || '?'} src={you?.avatar} size="lg" />
+					<Avatar name={draft || you?.user_id || '?'} src={avatar} size="lg" />
 					<div class="ap-profedit-av">
-						<span class="ap-profedit-hint">Avatars can’t be set from this client yet.</span>
+						{#if canUploadAvatar}
+							<span class="ap-profedit-avbtns">
+								<button class="ap-btn ap-btn-sm" type="button" data-testid="change-avatar" disabled={status === 'saving' || avatarStatus !== 'idle' || !connected} onclick={() => avatarInput?.click()}>
+									{avatarStatus === 'uploading' ? 'Uploading…' : you?.avatar ? 'Change avatar' : 'Add avatar'}
+								</button>
+								{#if you?.avatar}
+									<button class="ap-link ap-profedit-remove" type="button" data-testid="remove-avatar" disabled={avatarStatus !== 'idle' || !connected} onclick={removeAvatar}>Remove</button>
+								{/if}
+							</span>
+							<input class="sr" type="file" accept="image/png,image/jpeg,image/gif,image/webp" tabindex="-1" aria-hidden="true" data-testid="avatar-input" bind:this={avatarInput} onchange={(event) => uploadAvatar(event.currentTarget)} />
+						{:else if you?.avatar}
+							<button class="ap-link ap-profedit-remove" type="button" disabled={avatarStatus !== 'idle' || !connected} onclick={removeAvatar}>Remove avatar</button>
+						{:else}
+							<span class="ap-profedit-hint">This backend doesn’t take uploads, so your avatar can’t be set here.</span>
+						{/if}
+						{#if avatarError}<span class="ap-profedit-hint ap-profedit-err" role="alert">{avatarError}</span>{/if}
 					</div>
 				</div>
 				<label class="ap-fieldlabel">Handle
@@ -148,7 +200,7 @@
 		</div>
 	{/if}
 	<button class="ap-profile-me" class:ap-profile-open={open} type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={`Your profile on ${backendLabel}: ${you?.name || you?.user_id || 'not signed in'}. Edit`} onclick={toggle}>
-		<Avatar name={you?.name || you?.user_id || '?'} src={you?.avatar} />
+		<Avatar name={you?.name || you?.user_id || '?'} src={avatar} />
 		<span class="ap-profile-text">
 			<span class="ap-profile-name">{you?.name || you?.user_id || 'Not signed in'}</span>
 			<span class="ap-profile-sub">on {backendLabel}</span>
@@ -161,4 +213,5 @@
 	.ap-profile-pop { max-height: calc(100dvh - 96px); overflow-y: auto; }
 	.ap-profile-pop .ap-profedit-actions { flex-wrap: wrap; }
 	.signin-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+	.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>

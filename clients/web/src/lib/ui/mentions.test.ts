@@ -7,7 +7,7 @@ import { MentionTracker } from './mentions.svelte';
 const me = { user_id: 'guest_me', name: 'sam' };
 
 const mention = (id: number, roomId: string): MessageRecord => ({
-	message_id: String(id), log_id: String(id), room_id: roomId, from: { user_id: 'ada' }, body: { text: `@sam look ${id}` }
+	message_id: String(id), log_id: String(id), room_id: roomId, from: { user_id: 'ada' }, body: { text: `@guest_me look ${id}` }
 });
 
 function room(id: string, messages: MessageRecord[], fields: Partial<RoomSnapshot> = {}): RoomSnapshot {

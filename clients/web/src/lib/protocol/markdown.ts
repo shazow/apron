@@ -4,80 +4,82 @@ const parser = new Parser();
 // A line break typed in a chat message is meant: soft breaks render as `<br />`, not as a space.
 const renderer = new HtmlRenderer({ safe: true, softbreak: '<br />' });
 
-/** Someone the room has seen speak, so an `@handle` in a body can become a chip. */
+/**
+ * What an `@id` mention names (Appendix J.3): a known user, rendered with
+ * their latest name, or a room, rendered as a link to it. Unknown IDs render
+ * as written.
+ */
+export type MentionTarget =
+	| { kind: 'user'; id: string; name: string; me?: boolean }
+	| { kind: 'room'; id: string; title: string };
+
+/** Looks an ID up; when it names both a user and a room, answer with the user. */
+export type MentionResolver = (id: string) => MentionTarget | undefined;
+
+/** Someone a composer can mention: a room member or a recent sender. */
 export interface MentionPerson {
 	id: string;
 	name?: string;
 	avatar?: string;
-	/** The viewer: their chip is the rust one, and the message pings them. */
+	/** The viewer. */
 	me?: boolean;
 }
 
-/** Matches a rendered handle: the `@`, then the letters, kept out of code and tags. */
-interface MentionHandle {
-	/** The handle as it appears in rendered HTML, escaped the way commonmark escapes text. */
-	text: string;
-	person: MentionPerson;
-}
+/**
+ * `@` then an optional second `@` (system identities, J.1) and a run of
+ * `[A-Za-z0-9_.-]`, not preceded by a letter or digit. Trailing `.` and `-`
+ * are not part of the ID.
+ */
+const MENTION = /@(@?[A-Za-z0-9_.-]+)/g;
 
 /** CommonMark rendering with raw HTML and unsafe URL schemes disabled, keeping typed line breaks. */
-export function renderMarkdown(source: string, people: MentionPerson[] = []): string {
-	return linkMentions(renderer.render(parser.parse(source)), people);
+export function renderMarkdown(source: string, resolve?: MentionResolver): string {
+	return linkMentions(renderer.render(parser.parse(source)), resolve);
+}
+
+/** A plain body as HTML: escaped, with mentions linked. Line breaks are kept by CSS (`pre-wrap`). */
+export function renderPlain(source: string, resolve?: MentionResolver): string {
+	return chipText(escapeHtml(source), resolve);
+}
+
+/** Every ID a body mentions (J.3), outside Markdown code spans and blocks. */
+export function mentionedIds(source: string, markdown: boolean): string[] {
+	const ids: string[] = [];
+	const collect: MentionResolver = (id) => {
+		ids.push(id);
+		return undefined;
+	};
+	if (markdown) renderMarkdown(source, collect);
+	else renderPlain(source, collect);
+	return ids;
 }
 
 function escapeHtml(value: string): string {
 	return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/**
- * The handles a body may mention: every sender's name and ID, longest first so
- * `@Alice Chen` wins over `@Alice`. Rendered text is already escaped, so the
- * handles are escaped the same way before they are matched against it.
- */
-function mentionHandles(people: MentionPerson[]): MentionHandle[] {
-	const handles: MentionHandle[] = [];
-	const seen = new Set<string>();
-	for (const person of people) {
-		for (const handle of [person.name, person.id]) {
-			const trimmed = handle?.trim();
-			if (!trimmed) continue;
-			const key = trimmed.toLowerCase();
-			if (seen.has(key)) continue;
-			seen.add(key);
-			handles.push({ text: escapeHtml(trimmed), person });
-		}
+/** The markup of the design system's Mention component. */
+function mentionChip(target: MentionTarget): string {
+	if (target.kind === 'room') {
+		return `<button type="button" class="ap-mention ap-mention-room" data-room-id="${escapeHtml(target.id)}" title="Open ${escapeHtml(target.title)}">${escapeHtml(target.title)}</button>`;
 	}
-	return handles.sort((a, b) => b.text.length - a.text.length);
-}
-
-/** A mention ends where a word ends: another letter or digit right after it isn't one. */
-function boundedMatch(text: string, at: number, handle: string): boolean {
-	if (text.slice(at, at + handle.length).toLowerCase() !== handle.toLowerCase()) return false;
-	const after = text[at + handle.length];
-	return after === undefined || !/[\p{L}\p{N}_]/u.test(after);
-}
-
-/** The chip the design system's Mention component renders. */
-function mentionChip(person: MentionPerson, label: string): string {
-	const name = person.name?.trim() || person.id;
-	const title = person.id && person.id !== name ? ` title="${escapeHtml(person.id)}"` : '';
-	return `<span class="ap-mention${person.me ? ' ap-mention-me' : ''}" data-id="${escapeHtml(person.id)}"${title}>@${label}</span>`;
+	const title = target.name !== target.id ? ` title="@${escapeHtml(target.id)}"` : '';
+	return `<span class="ap-mention${target.me ? ' ap-mention-me' : ''}" data-user-id="${escapeHtml(target.id)}"${title}>@${escapeHtml(target.name)}</span>`;
 }
 
 /**
- * Turns `@handle` into a Mention chip in the rendered HTML's text, leaving tags,
- * attributes and code spans alone — a handle inside `<code>` is code, not a ping.
+ * Links `@id` in the rendered HTML's text, leaving tags, attributes and code
+ * alone: an ID inside `<code>` is code, not a mention.
  */
-function linkMentions(html: string, people: MentionPerson[]): string {
-	const handles = mentionHandles(people);
-	if (handles.length === 0) return html;
+function linkMentions(html: string, resolve?: MentionResolver): string {
+	if (!resolve) return html;
 	let out = '';
 	let index = 0;
 	let codeDepth = 0;
 	while (index < html.length) {
 		const tagStart = html.indexOf('<', index);
 		const text = html.slice(index, tagStart === -1 ? undefined : tagStart);
-		out += codeDepth > 0 ? text : chipText(text, handles);
+		out += codeDepth > 0 ? text : chipText(text, resolve);
 		if (tagStart === -1) break;
 		const tagEnd = html.indexOf('>', tagStart);
 		if (tagEnd === -1) {
@@ -85,55 +87,24 @@ function linkMentions(html: string, people: MentionPerson[]): string {
 			break;
 		}
 		const tag = html.slice(tagStart, tagEnd + 1);
-		if (/^<(code|pre)[\s>]/i.test(tag)) codeDepth += 1;
-		else if (/^<\/(code|pre)\s*>$/i.test(tag) && codeDepth > 0) codeDepth -= 1;
+		if (/^<(code|pre|a)[\s>]/i.test(tag)) codeDepth += 1;
+		else if (/^<\/(code|pre|a)\s*>$/i.test(tag) && codeDepth > 0) codeDepth -= 1;
 		out += tag;
 		index = tagEnd + 1;
 	}
 	return out;
 }
 
-function chipText(text: string, handles: MentionHandle[]): string {
-	let out = '';
-	let index = 0;
-	while (index < text.length) {
-		const at = text.indexOf('@', index);
-		if (at === -1) {
-			out += text.slice(index);
-			break;
-		}
-		out += text.slice(index, at);
-		const before = text[at - 1];
-		const opens = before === undefined || !/[\p{L}\p{N}_@]/u.test(before);
-		const handle = opens ? handles.find((candidate) => boundedMatch(text, at + 1, candidate.text)) : undefined;
-		if (!handle) {
-			out += '@';
-			index = at + 1;
-			continue;
-		}
-		out += mentionChip(handle.person, text.slice(at + 1, at + 1 + handle.text.length));
-		index = at + 1 + handle.text.length;
-	}
-	return out;
-}
-
-/** Whether a body mentions one of these handles, by the same rule the chips follow. */
-export function mentionsHandle(source: string, handles: (string | undefined)[]): boolean {
-	const people: MentionPerson[] = handles
-		.filter((handle): handle is string => Boolean(handle?.trim()))
-		.map((handle) => ({ id: handle }));
-	if (people.length === 0) return false;
-	const escaped = escapeHtml(source);
-	return chipText(escaped, mentionHandles(people)) !== escaped;
-}
-
-export function safeUrl(value: unknown): string | undefined {
-	if (typeof value !== 'string' || !value.trim()) return undefined;
-	try {
-		const parsed = new URL(value, 'https://invalid.local');
-		if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return value;
-		return undefined;
-	} catch {
-		return undefined;
-	}
+/** Replaces mentions in escaped text. Escaped entities never contain ID characters after an `@`. */
+function chipText(text: string, resolve?: MentionResolver): string {
+	if (!resolve) return text;
+	return text.replace(MENTION, (match, raw: string, offset: number) => {
+		const before = text[offset - 1];
+		if (before !== undefined && /[A-Za-z0-9]/.test(before)) return match;
+		const id = raw.replace(/[.-]+$/, '');
+		if (!id || id === '@') return match;
+		const target = resolve(id);
+		const rest = raw.slice(id.length);
+		return target ? mentionChip(target) + rest : match;
+	});
 }

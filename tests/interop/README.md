@@ -6,6 +6,13 @@ recovery, edit/delete snapshot replay including a deleted-message tombstone,
 thread creation and moves, safe rendering of untrusted markup, and phone viewport layout.
 The desktop suite also reloads a browser while offline, restores connectivity,
 verifies history replay without duplicates, and sends another message.
+`reference.spec.ts` covers what the Go reference server adds: uploads hosted
+with `og` previews, live streams written over HTTP, `iframe`/`html`/unknown
+embeds, avatar uploads and renames shown on earlier messages, leaving and
+rejoining rooms and threads through `room_list`, the New divider from read
+cursors, and `@user_id` and room mentions. It creates streams and raw embeds
+with a small protocol client connected through the Vite proxy, so the URLs the
+server mints load same-origin.
 The WebAuthn suite uses Chromium's virtual authenticator against the real Go
 verifier. It covers passkey registration, login, sign-out, session resumption,
 message ownership, and recovery from an invalid signature. These tests use

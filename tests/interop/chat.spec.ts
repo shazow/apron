@@ -13,6 +13,7 @@ import {
 	sendMessage,
 	setDisplayName,
 	startThread,
+	userIdOf,
 	waitForDeletedMessage,
 	waitForMessage
 } from './test-helpers';
@@ -561,7 +562,7 @@ test.describe('chat protocol interoperability', () => {
 		}
 	});
 
-	test('names someone from the picker, chips the mention, and pings only the person named', async ({ browser }) => {
+	test('names someone from the picker by user_id, chips the mention with their name, and pings only them', async ({ browser }) => {
 		const writer = await browser.newContext();
 		const named = await browser.newContext();
 		try {
@@ -570,19 +571,20 @@ test.describe('chat protocol interoperability', () => {
 			await Promise.all([openChat(pageA), openChat(pageB)]);
 			const handle = `dana-${Date.now().toString(36)}`;
 			await setDisplayName(pageB, handle);
+			const id = await userIdOf(pageB);
 			await sendMessage(pageB, `${handle} is here`);
 			await waitForMessage(pageA, `${handle} is here`);
 
-			// Typing `@` opens the picker on the senders this room has seen.
+			// Typing `@` opens the picker on the room's people; picking inserts `@user_id` (Appendix J.3).
 			await composer(pageA).fill('Handing this to @dana');
 			const picker = pageA.getByTestId('mention-picker');
 			await expect(picker.getByRole('option', { name: new RegExp(handle) })).toBeVisible();
 			await expect(picker.locator('.ap-mpick-hit').first()).toHaveText('dana');
 			await composer(pageA).press('Tab');
-			await expect(composer(pageA)).toHaveValue(`Handing this to @${handle} `);
+			await expect(composer(pageA)).toHaveValue(`Handing this to @${id} `);
 			await expect(picker).toHaveCount(0);
 
-			await composer(pageA).fill(`Handing this to @${handle} and @nobody-here`);
+			await composer(pageA).fill(`Handing this to @${id} and @nobody-here`);
 			await pageA.getByRole('button', { name: 'Send message', exact: true }).click();
 			const sent = await waitForMessage(pageA, 'Handing this to');
 			// The writer isn't the one named: a chip, no tint, and unknown handles stay plain text.
@@ -594,7 +596,7 @@ test.describe('chat protocol interoperability', () => {
 			await expect(received).toHaveClass(/ap-msg-mention/);
 
 			// A handle inside code is code, and a message you send yourself never pings you.
-			await sendMessage(pageB, `\`@${handle}\` stays code`);
+			await sendMessage(pageB, `\`@${id}\` stays code`);
 			const quoted = await waitForMessage(pageB, 'stays code');
 			await expect(quoted.locator('.ap-mention')).toHaveCount(0);
 			await expect(quoted).not.toHaveClass(/ap-msg-mention/);
@@ -613,6 +615,7 @@ test.describe('chat protocol interoperability', () => {
 			await pageB.setViewportSize({ width: 900, height: 700 });
 			const handle = `sam-${Date.now().toString(36)}`;
 			await setDisplayName(pageB, handle);
+			const id = await userIdOf(pageB);
 
 			await sendMessage(pageA, [`${handle}-root`, ...Array.from({ length: 40 }, (_, line) => `Intro line ${line}`)].join('\n\n'));
 			const threadId = await startThread(pageA, await waitForMessage(pageA, `${handle}-root`));
@@ -625,7 +628,7 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageB.getByTestId('jump-button')).toHaveText('Jump to latest');
 
 			// The mention arrives out of sight: the bar turns rust and offers the mention itself.
-			await sendMessage(pageA, `@${handle} can you check the migration logs?`);
+			await sendMessage(pageA, `@${id} can you check the migration logs?`);
 			const jump = pageB.getByTestId('jump-button');
 			await expect(jump).toHaveText('Jump to mention');
 			await expect(pageB.locator('.ap-jumpbar-at')).toBeVisible();
