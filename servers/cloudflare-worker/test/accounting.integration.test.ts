@@ -661,7 +661,7 @@ describe('measured storage accounting', () => {
 				params: { message_id: messageId, room_id: thread.result.room_id, body: { text: 'matrix moved', format: 'plain' } }, identity,
 			}));
 			measure('registered name mutation', () => store.commitMutation({
-				userId: 'matrix-user', ipKey: 'matrix-nick-ip', requestId: 'matrix-nick', method: 'name', now: clock.now(),
+				userId: 'matrix-user', ipKey: 'matrix-nick-ip', requestId: 'matrix-nick', method: 'me', now: clock.now(),
 				params: { name: 'Matrix renamed' }, identity,
 			}));
 			measure('history page', () => store.historyPage({ roomId: 'general', limit: 50, now: clock.now() }));

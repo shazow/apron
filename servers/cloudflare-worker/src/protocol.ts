@@ -138,16 +138,22 @@ export function parseFrame(data: string | ArrayBuffer | ArrayBufferView, options
 	return { request: { method: value.method, params, ...(id === undefined ? {} : { id }), full }, bytes };
 }
 
-export function protocolReply(id: string | null | undefined, result: unknown, full = false): Record<string, unknown> {
-	return { ...(full ? { jsonrpc: "2.0" } : {}), id: id ?? null, result };
+export function protocolReply(id: string, result: unknown, full = false): Record<string, unknown> {
+	return { ...(full ? { jsonrpc: "2.0" } : {}), id, result };
 }
 
+/** Errors not tied to a request (no known `id`) omit `id` entirely. */
 export function protocolError(id: string | null | undefined, error: ProtocolError, full = false): Record<string, unknown> {
 	return {
 		...(full ? { jsonrpc: "2.0" } : {}),
-		id: id ?? null,
+		...(id == null ? {} : { id }),
 		error: { code: ERROR_CODES[error.name], message: error.message, ...(error.data ? { data: error.data } : {}) },
 	};
+}
+
+/** `data.retry_after` is whole seconds, rounded up, at least one. */
+export function retryAfterSeconds(ms: number): number {
+	return Math.max(1, Math.ceil(ms / 1_000));
 }
 
 export function errorFromUnknown(error: unknown): ProtocolError {

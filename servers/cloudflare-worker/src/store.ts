@@ -33,7 +33,7 @@ import { createHash } from "node:crypto";
 export const ROOM_ID = "general";
 export const ROOM_TITLE = "General";
 /**
- * Schema 2 stores the protocol v3 server-wide log: room records, flat message
+ * Schema 2 stores the protocol v4 server-wide log: room records, flat message
  * snapshots, and reaction sets. Stored data from any other schema version is
  * not migrated: the object is wiped and started fresh (see resetStorage()).
  */
@@ -75,7 +75,9 @@ export type ErrorCode =
 
 export class StoreError extends Error {
   readonly code: ErrorCode;
+  /** Delay the socket layer reports as `data.retry_after`, in whole seconds. */
   readonly retryAfterMs?: number;
+  /** Extra error `data` keys, such as `reason`. */
   readonly data?: Record<string, unknown>;
 
   constructor(
@@ -295,7 +297,7 @@ export interface Identity {
   tier?: Tier;
 }
 
-/** A flat, self-describing message snapshot (protocol v3 section 3.5). */
+/** A flat, self-describing message snapshot (protocol v4 section 3.5). */
 export interface MessageSnapshot {
   message_id: string;
   log_id: string;
@@ -307,7 +309,7 @@ export interface MessageSnapshot {
   ext?: Record<string, unknown>;
 }
 
-/** A room record plus this server's delivery fields (protocol v3 section 3.4). */
+/** A room record plus this server's delivery fields (protocol v4 section 3.4). */
 export interface RoomRecord {
   room_id: string;
   log_id: string;
@@ -319,7 +321,7 @@ export interface RoomRecord {
   history_log_id: string | null;
 }
 
-/** One logged reaction change (protocol v3 Appendix D.2). */
+/** One logged reaction change (protocol v4 Appendix D.2). */
 export interface ReactionsRecord {
   log_id: string;
   message_id: string;
@@ -335,7 +337,7 @@ export interface Broadcast {
   params: Record<string, unknown>;
 }
 
-export type MutationMethod = "message" | "room" | "reactions" | "name";
+export type MutationMethod = "message" | "room" | "reactions" | "me";
 
 export interface StoreMutationInput {
   userId: string;
@@ -1271,7 +1273,7 @@ export class Store {
       }
       throw new StoreError("retry_after", maintenance ? "Maintenance budget exhausted" : "Demo capacity reached", {
         retryAfterMs: next,
-        data: { ms: next, reason: "daily_budget" },
+        data: { reason: "daily_budget" },
       });
     }
   }
@@ -1560,10 +1562,10 @@ export class Store {
     const growthAllowance = Math.max(1024 * 1024, Math.max(0, additionalBytes) * 16);
     if (size >= this.config.storageHighWaterBytes || size + growthAllowance > this.config.storageHardTargetBytes) {
       if (!paused) this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('storage_pressure', '1')");
-      throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: this.config.cleanupIntervalMs, data: { ms: this.config.cleanupIntervalMs } });
+      throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: this.config.cleanupIntervalMs });
     }
     if (paused) {
-      if (size > this.config.storageLowWaterBytes) throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: this.config.cleanupIntervalMs, data: { ms: this.config.cleanupIntervalMs } });
+      if (size > this.config.storageLowWaterBytes) throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: this.config.cleanupIntervalMs });
       this.rawExec("UPDATE _meta SET value = '0' WHERE key = 'storage_pressure'");
     }
   }
@@ -1571,7 +1573,7 @@ export class Store {
   private assertStorageTarget(): void {
     const size = this.databaseSize();
     if (size === null || size > this.config.storageHardTargetBytes) {
-      throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: this.config.cleanupIntervalMs, data: { ms: this.config.cleanupIntervalMs } });
+      throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: this.config.cleanupIntervalMs });
     }
   }
 
@@ -1779,7 +1781,7 @@ export class Store {
     );
     if (rows.length) return rows[0];
     if (this.metaNumber("principal_limit_count") >= this.config.principalLimitCap) {
-      throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: 60_000, data: { ms: 60_000 } });
+      throw new StoreError("retry_after", "Demo capacity reached", { retryAfterMs: 60_000 });
     }
     this.ensureGrowthCapacity(4096);
     const day = dayFor(now);
@@ -1839,7 +1841,7 @@ export class Store {
     if (events.length >= allowance) {
       const oldest = Math.min(...events);
       const retry = Math.max(1000, oldest + POST_WINDOW_MS - now);
-      throw new StoreError("retry_after", message, { retryAfterMs: retry, data: { ms: retry } });
+      throw new StoreError("retry_after", message, { retryAfterMs: retry });
     }
   }
 
@@ -1880,7 +1882,7 @@ export class Store {
         }
       }
     }
-    if (retryAfterMs > 0) throw new StoreError("retry_after", reason, { retryAfterMs, data: { ms: retryAfterMs } });
+    if (retryAfterMs > 0) throw new StoreError("retry_after", reason, { retryAfterMs });
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const nextEvents = [...events[index], now];
@@ -1946,7 +1948,7 @@ export class Store {
         if (events.length + count > this.config.framesPerIpMinute) {
           const oldest = Math.min(...events);
           const retry = Math.max(1000, oldest + POST_WINDOW_MS - effective);
-          throw new StoreError("retry_after", "Frame rate limit reached", { retryAfterMs: retry, data: { ms: retry } });
+          throw new StoreError("retry_after", "Frame rate limit reached", { retryAfterMs: retry });
         }
         // Reuse auth_events_json as a bounded generic frame-event lane; the
         // scope separates it from authentication rows.
@@ -1955,7 +1957,7 @@ export class Store {
         const day = dayFor(effective);
         const globalCount = global.day === day ? global.posts_day : 0;
         if (globalCount + count > this.config.processedFramesPerDay) {
-          throw new StoreError("retry_after", "Daily frame budget exhausted", { retryAfterMs: 86_400_000, data: { ms: 86_400_000 } });
+          throw new StoreError("retry_after", "Daily frame budget exhausted", { retryAfterMs: 86_400_000 });
         }
         this.updateLimitRow(global, { day, posts_day: globalCount + count }, effective);
       });
@@ -1970,10 +1972,10 @@ export class Store {
     const globalCount = global.day === day ? global.registrations_day : 0;
     const retryAfterMs = Math.max(1, 86_400_000 - now % 86_400_000);
     if (ipCount >= this.config.registrationsPerIpDay) {
-      throw new StoreError("retry_after", "Registration limit reached for this network", { retryAfterMs, data: { ms: retryAfterMs } });
+      throw new StoreError("retry_after", "Registration limit reached for this network", { retryAfterMs });
     }
     if (globalCount >= this.config.registrationsPerDay) {
-      throw new StoreError("retry_after", "Registration limit reached", { retryAfterMs, data: { ms: retryAfterMs } });
+      throw new StoreError("retry_after", "Registration limit reached", { retryAfterMs });
     }
     this.updateLimitRow(ip, { day, registrations_day: ipCount + 1 }, now);
     this.updateLimitRow(global, { day, registrations_day: globalCount + 1 }, now);
@@ -2104,7 +2106,7 @@ export class Store {
         // IP permanently consume global capacity independently.
         const global = this.limitRow("admission", "global", now);
         const admissions = global.day === day ? global.posts_day : 0;
-        if (admissions >= this.config.connectionAdmissionsPerDay) throw new StoreError("retry_after", "Connection admission limit reached", { retryAfterMs: 86_400_000, data: { ms: 86_400_000 } });
+        if (admissions >= this.config.connectionAdmissionsPerDay) throw new StoreError("retry_after", "Connection admission limit reached", { retryAfterMs: 86_400_000 });
         this.updateLimitRow(global, { day, posts_day: admissions + 1 }, now);
         // Live connection caps are authoritative in ctx.getWebSockets(), which
         // includes closing sockets and survives object hibernation.  Durable
@@ -2114,7 +2116,7 @@ export class Store {
         const frames = this.limitRow("frames", "global", now);
         const frameCount = frames.day === day ? frames.posts_day : 0;
         if (frameCount >= this.config.processedFramesPerDay) {
-          throw new StoreError("retry_after", "Daily frame budget exhausted", { retryAfterMs: 86_400_000, data: { ms: 86_400_000 } });
+          throw new StoreError("retry_after", "Daily frame budget exhausted", { retryAfterMs: 86_400_000 });
         }
       });
     });
@@ -2190,7 +2192,7 @@ export class Store {
   private normalizedBody(value: unknown): Record<string, unknown> {
     const body = jsonObject(value, "body");
     const text = body.text === undefined ? "" : ensureText(body.text, "body.text", this.config.maxTextBytes);
-    // Protocol v3 defaults an omitted format to plain text.
+    // The protocol defaults an omitted format to plain text.
     const format = body.format === undefined ? "plain" : body.format;
     if (format !== "plain" && format !== "markdown") throw new StoreError("invalid_params", "body.format is invalid");
     const embeds = body.embeds === undefined ? [] : body.embeds;
@@ -2475,7 +2477,8 @@ export class Store {
     if (utf8Bytes(serialized) > this.config.maxThreadMetadataBytes) throw new StoreError("too_large", "room metadata is too large");
   }
 
-  private commitNameMutation(input: StoreMutationInput, now: number): StoreMutationResult {
+  /** A `me` name change; `""` removes the name. Avatars and ext are not stored. */
+  private commitMeMutation(input: StoreMutationInput, now: number): StoreMutationResult {
     const name = input.params.name;
     if (typeof name !== "string") throw new StoreError("invalid_params", "name must be a string");
     ensureText(name, "name", this.config.maxNameBytes);
@@ -2528,7 +2531,7 @@ export class Store {
 
   private mutationMethod(method: string | undefined): MutationMethod {
     if (method === undefined || method === "message") return "message";
-    if (method === "room" || method === "reactions" || method === "name") return method;
+    if (method === "room" || method === "reactions" || method === "me") return method;
     throw new StoreError("unsupported", "Unsupported mutation");
   }
 
@@ -2588,8 +2591,8 @@ export class Store {
         const tier: Tier = this.identityRow(input.userId) ? "registered" : "anonymous";
         this.chargePosting({ userId: input.userId, tier, ipKey: input.ipKey, now: effective });
         let committed: StoreMutationResult;
-        if (method === "name") {
-          committed = this.commitNameMutation(input, effective);
+        if (method === "me") {
+          committed = this.commitMeMutation(input, effective);
         } else {
           const state = this.logState();
           const startLogId = state.last_log_id;

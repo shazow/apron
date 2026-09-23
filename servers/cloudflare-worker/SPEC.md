@@ -18,7 +18,7 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 
 ### Required capabilities
 
-- Protocol v3 core: server announcement, authentication, room announcements, creation and broadcast of flat message snapshots, framing, errors, one server-wide log ID sequence.
+- Protocol v4 core: server announcement, authentication, room announcements, creation and broadcast of flat message snapshots, framing, errors, one server-wide log ID sequence.
 - `history`: complete record snapshots of every kind (room records, message snapshots, reaction sets), correct pagination and live/recovery ordering per room.
 - `edit`: owner-authorized replacement, deletion, restoration, and moves between rooms of retained messages.
 - `rooms`: thread rooms (rooms with `parent_room_id`) created and edited by participants; `room_join`/`room_leave`. The permanent `general` room is the only top-level room.
@@ -85,10 +85,10 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":3,"name":"apron-cloudflare-demo/2","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20}}}
+{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20}}}}
 ```
 
-`demo` is additive server-announcement policy metadata. Authentication uses the canonical `webauthn` scheme in protocol Appendix I, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
+`ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol Appendix I, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
 
 History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room announcements and history results, following protocol section 3.4 and Appendix A. Both are per room.
 
@@ -97,9 +97,9 @@ After final authentication, reply with `result.you` (`user_id` and `name` only; 
 ### Framing, ordering, and errors
 
 - Accept the minimal and JSON-RPC 2.0 envelopes. One text message contains exactly one object, not a batch array. Reject binary application messages.
-- IDs on the wire are strings; only unidentifiable invalid requests use response `id: null`.
+- IDs on the wire are strings. Errors not tied to a request (parse errors, invalid envelopes whose `id` cannot be determined) omit `id`.
 - Unknown request methods receive `unsupported`; unknown notifications are ignored. Valid notifications never receive result or error replies, but successful mutation notifications still cause broadcasts.
-- Ignore unknown envelope fields. Unknown top-level message and room fields are dropped (protocol v3 section 1); extension data travels in `ext`, which is stored and returned unchanged. Never trust client-supplied `from`; reject client `log_id` on a save.
+- Ignore unknown envelope fields. Unknown top-level message and room fields are dropped (protocol section 1); extension data travels in `ext`, which is stored and returned unchanged. Never trust client-supplied `from`; reject client `log_id` on a save.
 - Process frames in arrival order per socket, including auth and later pipelined writes. External awaits and WebAuthn verification must not allow overtaking. Bound pending work instead of accumulating unlimited promises.
 - Coordinate mutation commit and broadcast scheduling globally within this DO. No live room log ID may be sent after a newer ID on the same connection.
 - Commit durable state before a success becomes externally observable. Use documented storage/output-gate behavior; do not disable it. A failed send to one socket must not roll back an accepted mutation or skip all remaining recipients.
@@ -113,7 +113,7 @@ After final authentication, reply with `result.you` (`user_id` and `name` only; 
 | invalid_params | -32602 | Invalid fields, conflicting duplicate, nonexistent/expired message, unknown room or parent room, reaction caps |
 | internal_error | -32603 | Unexpected failure, with sanitized text |
 | denied | -32001 | Authentication or ownership failure |
-| retry_after | -32002 | Temporary resource/rate limit; integer `data.ms` |
+| retry_after | -32002 | Temporary resource/rate limit; integer `data.retry_after` in seconds (rounded up, at least 1) |
 | too_large | -32003 | Valid identifiable request exceeds a payload policy |
 
 For oversized frames, reject before parsing. If an ID cannot be safely obtained, close with 1009 rather than parsing an arbitrarily large payload just to return an error. Close binary input with 1003 and persistent policy violations with 1008. Use HTTP 429/503 before upgrade where applicable, with an appropriate Retry-After. Do not turn capacity limits into fabricated malformed-request errors.
@@ -131,11 +131,11 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 - Allow at most 100 thread rooms, each with at most 2 KiB of serialized client fields. All room creation and saves consume posting and resource budgets. No implicit room creation. A thread room whose entire log (creation record included) has expired is removed at cleanup and announced as `{"room_id": ..., "removed": true}`, releasing its slot; deny further creation while the ceiling is full.
 - Reactions (cap `reactions`): a request sets the caller's complete emoji set on one retained message; `[]` clears it and duplicates collapse. Emoji are non-empty strings of at most 64 UTF-8 bytes without control characters, at most 8 distinct per user per message, and at most 32 reacting users per message (calibrated ceilings 16 and 64). A set that equals the current one is accepted without a new record. Non-empty sets on a tombstone are `invalid_params`; clearing is allowed. Each change is a logged record in the message's current room. Reactions are mutations: they share the posting quotas and request deduplication below.
 - Reject empty text with no embeds as local policy. Accept plain and Markdown formats. Limit embeds to four within all byte budgets; store accepted URLs/content without backend fetching or rendering. Unknown embed kinds remain opaque. Client sanitization/sandboxing remains mandatory under the base protocol.
-- `name` is implemented as a bounded, rate-limited identity operation for registered users; guests keep their assigned name (`denied`). No avatar downloads or automatic link previews.
+- `me` changes the display name as a bounded, rate-limited identity operation for registered users; `name: ""` removes it (clients fall back to `user_id`), omitted fields are unchanged, and guests keep their assigned name (`denied`). The demo keeps no avatars or profile `ext`: `me` type-checks `avatar` and `ext` and then ignores them. The v3 `name` method is `unsupported`. No avatar downloads or automatic link previews.
 
 ### 4.1 Internal names
 
-Internal names such as the `anonymous` quota tier and its `anonymousPosts*` configuration keys refer to guests; wire-visible names use `guest` (`guest_posts_per_minute` in `server.params.demo`).
+Internal names such as the `anonymous` quota tier and its `anonymousPosts*` configuration keys refer to guests; wire-visible names use `guest` (`guest_posts_per_minute` in `server.params.ext.demo`).
 
 ## 5. Authentication and IP attribution
 

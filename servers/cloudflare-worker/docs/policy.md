@@ -33,7 +33,8 @@ within it:
   characters) per user per message and 32 reacting users per message. New
   reactions on a deleted message are rejected; clearing is allowed. An
   unchanged set is accepted without a new record.
-- `name` renames registered users only.
+- `me` renames registered users only; `name: ""` removes the name. `avatar`
+  and `ext` are ignored.
 
 ## Authentication policy
 
@@ -65,11 +66,11 @@ but do consume frame and lookup resources.
 
 ## Demo policy metadata
 
-`server.params.demo` describes retention and selected payload/posting policies.
+`server.params.ext.demo` describes retention and selected payload/posting policies.
 The demo's 16 KiB frame policy is an explicit exception to the base protocol's
 advisory 256 KiB recommendation. Payload lengths count UTF-8 bytes. Errors use
-the base protocol codes; `retry_after` includes an integer `data.ms`. Permanent
-identity/thread-room ceilings return `denied`, not a fabricated replenishment time.
+the base protocol codes; `retry_after` includes `data.retry_after`, whole
+seconds rounded up. Permanent identity/thread-room ceilings return `denied`, not a fabricated replenishment time.
 
 Guest posting allowances are shared across a normalized IP; native IPv6
 addresses share a /64 bucket. Registered users also share the aggregate IP
