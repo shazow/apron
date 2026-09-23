@@ -233,6 +233,8 @@ frame, unprompted. There is no client hello.
 - `auth`: required nonempty array of supported authentication schemes (§3.2),
   in server preference order.
 - `upload`: optional upload URL; its presence enables uploads (Appendix E).
+- `push`: optional object of supported push kinds; its presence enables push
+  (Appendix F).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
@@ -504,11 +506,10 @@ the fallback:
 | `edit`      | `message` saves: edit, move, delete                          | no edit/move/delete UI      | Appendix B |
 | `rooms`     | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads | Appendix C |
 | `reactions` | emoji reactions on messages                                  | reaction controls hidden    | Appendix D |
-| `push`      | `push_register`, `push_unregister`                           | no mobile wake-ups          | Appendix F |
 
 Features without a cap: `typing` (Appendix D) is ephemeral and clients MAY
 send it blind; uploads follow `server.upload` (Appendix E); embeds are body
-content (Appendix E).
+content (Appendix E); push follows `server.push` (Appendix F).
 
 - Suggested convention: third-party extension caps use an `ext:` prefix,
   such as `ext:irc`.
@@ -889,22 +890,46 @@ the user's name.
 
 ---
 
-## Appendix F — `push`
+## Appendix F — Push
 
-UnifiedPush-shaped registration; the client supplies an HTTPS endpoint owned
-by its push relay:
+`server.push` (§3.1) maps each supported push kind to its public
+configuration. Its presence enables `push_register` and `push_unregister`.
 
 ```jsonc
+// <- in the server frame; the second kind is illustrative
+"push": {"relay": {}, "webpush": {"key": "BNcR..."}}
 // ->
-{"method": "push_register", "id": "c30", "params": {"url": "https://relay.example/p/xyz", "token": "..."}}
+{
+  "method": "push_register", "id": "c30", "params": {
+    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "..."
+  }
+}
 // ->
 {"method": "push_unregister", "id": "c31", "params": {"url": "https://relay.example/p/xyz"}}
 ```
 
-When the user should be woken while disconnected, the server POSTs JSON
-`{room_id, message_id, from, preview}` to `url` with the token as bearer.
-Delivery beyond that POST (APNs/FCM, coalescing) is the relay's concern. Wake
-policy is server-defined.
+- `kind` names a key of `server.push`; the other fields are specific to that
+  kind. Unknown kinds are `invalid_params`. Third-party kinds use the `ext:`
+  prefix (§4).
+- `url` is required and identifies the registration. Registering the same
+  `url` again replaces it; `push_unregister` removes it. Clients SHOULD
+  register on each connection.
+- `relay`: the server POSTs the payload as JSON to `url` with `token` as
+  bearer. Delivery beyond that POST (APNs/FCM, coalescing) is the relay's
+  concern; native apps use a relay run by their vendor. Other kinds define
+  their own delivery outside this spec.
+- Every kind delivers the same payload: a message object (§3.5) without
+  `log_id`, so clients render it but never install it as a snapshot. `body`
+  MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
+- Wake policy is server-defined.
+
+```json
+{
+  "message_id": "1724803200042", "room_id": "general",
+  "from": {"user_id": "alice", "name": "Alice"},
+  "body": {"text": "Deploy is done, can someone check the dashboards?"}
+}
+```
 
 Registered endpoints are client-supplied URLs the server will POST to, an
 SSRF vector into the server's network. Servers SHOULD accept only `https`
@@ -1019,7 +1044,7 @@ clients negotiate a single PeerConnection.
 **Exclusions.** Mute and camera state are derivable from media streams.
 Invite/ring/reject state machines are covered by an `rtc` frame plus a push
 notification; when `rtc` lands, push payloads (Appendix F) gain an optional
-`kind` hint. Recording and transcoding are server-side.
+call hint. Recording and transcoding are server-side.
 
 ---
 
