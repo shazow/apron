@@ -402,3 +402,48 @@ it("does not exceed the native cleanup reservation for a full bounded batch", as
 		expect(store.getRoomState()).toMatchObject({ room_id: "general", latest_log_id: "100", history_log_id: null });
 	});
 });
+
+it("finishes removing an expired thread room after a saturated batch", async () => {
+	// Regression: the room was left over when the deletion pass filled the
+	// batch, and the next run's idle check ended the job before removing it.
+	await withStore("thread-expiry-saturated", { ...ROOMY, retentionMs: 60_000, cleanupBatch: 2, maxThreads: 1 }, (store, clock) => {
+		const threadId = String(store.mutate(op(clock, "thread", "room", { parent_room_id: "general", title: "T" })).result.room_id);
+		// Past the first hourly deadline; everything is older than retention.
+		clock.value += 2 * 60 * 60_000;
+		const removed: string[] = [];
+		for (let run = 0; run < 8; run += 1) {
+			const result = store.runCleanup(clock.value);
+			removed.push(...result.removed_rooms);
+			if (!result.did_work && result.next_due_ms > clock.value) {
+				// The job must not end (hourly deadline) while the room remains.
+				expect(result.next_due_ms - clock.value).toBeGreaterThan(1_000);
+				break;
+			}
+			clock.value = result.next_due_ms + 1;
+		}
+		expect(removed).toEqual([threadId]);
+		expect(store.listRooms().map((room) => room.room_id)).toEqual(["general"]);
+		expect(store.mutate(op(clock, "thread-2", "room", { parent_room_id: "general", title: "T2" })).result.room_id).toBeTruthy();
+	});
+});
+
+it("lists only rooms whose history_log_id moved, charged to maintenance", async () => {
+	await withStore("changed-rooms", ROOMY, (store, clock) => {
+		const stale = String(store.mutate(op(clock, "stale", "room", { parent_room_id: "general", title: "Stale" })).result.room_id);
+		clock.value += RETENTION_MS - 60_000;
+		store.mutate(op(clock, "stale-post", "message", { room_id: stale, body: { text: "keeps the room" } }));
+		const fresh = String(store.mutate(op(clock, "fresh", "room", { parent_room_id: "general", title: "Fresh" })).result.room_id);
+		clock.value += 120_000;
+		const before = store.budget(clock.value);
+		const result = store.runCleanup(clock.value);
+		expect(result.history_floor).not.toBe(result.previous_floor);
+		const changed = store.listRooms(clock.value, { maintenance: true, changedSinceFloor: Number(result.previous_floor) });
+		const after = store.budget(clock.value);
+		// General and the stale thread lost history; the fresh thread's bound
+		// is its own creation record, which did not move.
+		expect(changed.map((room) => room.room_id).sort()).toEqual(["general", stale].sort());
+		expect(changed.map((room) => room.room_id)).not.toContain(fresh);
+		expect(after.foreground_reads).toBe(before.foreground_reads);
+		expect(after.maintenance_reads).toBeGreaterThan(before.maintenance_reads);
+	});
+});

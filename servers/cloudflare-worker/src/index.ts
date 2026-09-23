@@ -19,7 +19,7 @@ import {
 	type ProtocolError,
 	type RequestFrame,
 } from "./protocol";
-import { Store, StoreError, type Broadcast, type RoomRecord, type StoreConfig, type StoreMutationInput } from "./store";
+import { Store, StoreError, type Broadcast, type StoreConfig, type StoreMutationInput } from "./store";
 
 const OBJECT_NAME = "public-demo-v1";
 const INTERNAL_IP_HEADER = "X-Apron-Trusted-IP-Key";
@@ -528,21 +528,28 @@ export class ApronDemoServer extends DurableObject<Env> {
 			}
 		}
 		try { await this.sweepSessions(now); } catch { /* retried on the next alarm */ }
+		let result: ReturnType<Store["runCleanup"]> | undefined;
 		try {
-			const result = this.store.runCleanup(now);
-			if (result.did_work) {
-				// A moved floor changes rooms' history_log_id; unchanged announcements
-				// are skipped only when the floor did not move.
-				const floorMoved = result.history_floor !== result.previous_floor;
-				this.announceRetention(result.removed_rooms, floorMoved ? this.store.listRooms(nowMs()) : []);
-			}
-			await this.rescheduleAlarm();
+			result = this.store.runCleanup(now);
 		} catch {
 			// A metered maintenance failure is deferred. Do not spin an alarm loop.
-			// The floor may already be durable even if a physical deletion failed.
-			try { this.announceRetention([], this.store.listRooms(nowMs())); } catch { /* announcement also requires capacity */ }
-			await this.rescheduleAlarm();
+			// The floor may already be durable even if a physical deletion failed,
+			// so re-announce every room below.
 		}
+		// Committed removals need no store access; announce them before any
+		// listing that could fail on an exhausted budget.
+		for (const roomId of result?.removed_rooms ?? []) this.broadcast({ method: "room", params: { room_id: roomId, removed: true } });
+		if (!result || result.history_floor !== result.previous_floor) {
+			try {
+				// Only rooms whose history_log_id moved need a new announcement.
+				const rooms = this.store.listRooms(nowMs(), {
+					maintenance: true,
+					...(result ? { changedSinceFloor: Number(result.previous_floor) } : {}),
+				});
+				for (const room of rooms) this.broadcast({ method: "room", params: room });
+			} catch { /* announcement also requires capacity; clients see the floor on their next history page */ }
+		}
+		await this.rescheduleAlarm();
 	}
 
 	private storeResponseError(error: unknown): Response {
@@ -1125,12 +1132,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 				try { socket.close(1011, "Delivery failed; reconnect to recover"); } catch { /* closed */ }
 			}
 		}
-	}
-
-	/** Re-announce rooms after retention moved their boundaries, and removals. */
-	private announceRetention(removed: readonly string[], rooms: readonly RoomRecord[]): void {
-		for (const roomId of removed) this.broadcast({ method: "room", params: { room_id: roomId, removed: true } });
-		for (const room of rooms) this.broadcast({ method: "room", params: room });
 	}
 
 	private recordViolation(socket: WebSocketConnection, error: ProtocolError): void {

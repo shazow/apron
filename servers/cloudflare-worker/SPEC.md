@@ -376,7 +376,7 @@ result, without an extension advertisement:
 This empty page can represent an out-of-range or expired query; only a room
 whose retained log is empty uses `history_log_id: null`.
 
-After advancing F, re-announce every room record to all authenticated clients, and announce removed thread rooms. Attach both wire boundaries atomically with each history page's query snapshot; do not return entries evaluated under an older floor with a newer response floor. Capture response state synchronously without external awaits. Keep F monotonic on clients even if paginated responses arrive out of order.
+After advancing F, announce removed thread rooms first (no storage access), then re-announce every room whose `history_log_id` changed, with the listing charged to the maintenance budget; a failed listing never suppresses committed removals. A cleanup job whose last batch reported more work (including thread rooms still awaiting removal) continues on its next run without the idle probe ending it. Attach both wire boundaries atomically with each history page's query snapshot; do not return entries evaluated under an older floor with a newer response floor. Capture response state synchronously without external awaits. Keep F monotonic on clients even if paginated responses arrive out of order.
 
 ### History queries
 

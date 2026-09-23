@@ -1632,10 +1632,15 @@ export class Store {
     return 32 + 4 * (MAX_THREAD_LIMIT + 1);
   }
 
-  /** Every visible room record, oldest first, for authentication announcements. */
-  listRooms(now = this.clock.now()): RoomRecord[] {
+  /**
+   * Every visible room record, oldest first, for authentication announcements.
+   * Maintenance callers (retention re-announcements) charge the maintenance
+   * budget, and may keep only rooms whose history_log_id differs from what it
+   * was under an earlier retention floor.
+   */
+  listRooms(now = this.clock.now(), options: { maintenance?: boolean; changedSinceFloor?: number } = {}): RoomRecord[] {
     this.ensureReady();
-    return this.reserved({ reads: this.roomListingReads() }, false, now, () => {
+    return this.reserved({ reads: this.roomListingReads() }, options.maintenance === true, now, () => {
       const floor = this.logState().history_floor;
       // The rooms table is capped at one top-level room plus the calibrated
       // thread ceiling, so this ordered scan is bounded by that cap.
@@ -1647,7 +1652,10 @@ export class Store {
          ORDER BY r.created_log_id ASC LIMIT ?`,
         MAX_THREAD_LIMIT + 1,
       );
-      return rows.map((row) => this.roomRecord(row, floor, { snapshot_json: row.intro_snapshot_json, latest_log_id: row.intro_log_id }));
+      const since = options.changedSinceFloor;
+      return rows
+        .filter((row) => since === undefined || roomHistoryLogId(row, since) !== roomHistoryLogId(row, floor))
+        .map((row) => this.roomRecord(row, floor, { snapshot_json: row.intro_snapshot_json, latest_log_id: row.intro_log_id }));
     });
   }
 
@@ -2776,9 +2784,12 @@ export class Store {
         const maintenance = this.maintenanceRow();
         const state = this.logState();
         const effective = this.effectiveNow(now);
-        if (effective >= Math.max(maintenance.next_cleanup_ms, this.deferredCleanupUntil)) {
-          const cutoff = maintenance.cleanup_cursor !== null && maintenance.cleanup_cutoff_ms !== null
-            ? maintenance.cleanup_cutoff_ms : effective - this.config.retentionMs;
+        // A non-null cursor marks a job whose last batch reported more work
+        // (including expired thread rooms, which the cheap probes below do not
+        // cover). Continue it rather than letting the idle check end it.
+        const jobInProgress = maintenance.cleanup_cursor !== null && maintenance.cleanup_cutoff_ms !== null;
+        if (!jobInProgress && effective >= Math.max(maintenance.next_cleanup_ms, this.deferredCleanupUntil)) {
+          const cutoff = effective - this.config.retentionMs;
           // Idle hours must not burn a full deletion reservation.
           if (!this.cleanupHasWork(state.history_floor, cutoff, effective, this.limiterCutoff(effective))) {
             maintenance.next_cleanup_ms = effective + this.config.cleanupIntervalMs;
