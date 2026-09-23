@@ -76,7 +76,8 @@ the sender.
 
 ### 1.1 Envelope and replies
 
-Requests carry a string `id` (§2); frames without one are notifications.
+Requests carry a string `id` (§2); frames with a `method` and no `id` are
+notifications.
 
 ```jsonc
 // ->
@@ -121,16 +122,15 @@ Clients distinguish errors by `code` alone. `message` is free text for
 people: servers SHOULD make it specific enough to show as is, such as
 "Session expired; sign in again" rather than "Denied".
 
-Other application errors MAY use non-reserved JSON-RPC codes. Parse errors
-and invalid envelopes whose `id` cannot be determined use `id: null`,
-as in JSON-RPC; this is the sole exception to string IDs. Valid notifications
-never receive error replies.
+Other application errors MAY use non-reserved JSON-RPC codes. Valid
+notifications never receive error replies.
 
-Servers also use `id: null` for an error about the connection rather than
-one request, and MAY close the connection after sending it:
+An error not tied to a request omits `id`: parse errors, invalid envelopes
+whose `id` cannot be determined, and errors about the connection as a whole.
+The server MAY close the connection after sending one:
 
 ```json
-{"id": null, "error": {"code": -32002, "message": "Server at capacity", "data": {"retry_after": 30}}}
+{"error": {"code": -32002, "message": "Server at capacity", "data": {"retry_after": 30}}}
 ```
 
 Clients act on the code: after `retry_after`, wait before reconnecting;
@@ -157,8 +157,7 @@ authentication MUST execute on each connection.
 
 ## 2. Identifiers
 
-All IDs are strings. The only exception is `id: null` on errors not tied to
-a request (§1.1).
+All IDs are strings.
 
 **`log_id`** — position of one change in the server's append-only log.
 
@@ -245,6 +244,7 @@ frame, unprompted. There is no client hello.
 - `auth`: required nonempty array of supported authentication schemes (§3.2),
   in server preference order.
 - `upload`: optional upload URL; its presence enables uploads (Appendix E).
+- `ext`: optional extension metadata (§3.5), such as implementation limits.
 - `push`: optional object of supported push kinds; its presence enables push
   (Appendix F).
 
