@@ -469,8 +469,9 @@ local policy.
   Both formats are mandatory to render. Markdown is CommonMark with fenced
   code blocks as the baseline rich-content path. Clients MUST disable raw
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
-  (Appendix E). Clients MUST render embeds of unknown `kind` as a labeled
-  fallback card (kind name, plus `url` or plain `text` if present).
+  (Appendix E). Clients MUST render embeds of unknown `kind` from `og` if present,
+  otherwise as a labeled fallback card (kind name, plus `url` or plain
+  `text` if present).
 - Suggested convention: mention users as `@user_id` in `body.text`
   (Appendix J.3).
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
@@ -883,7 +884,8 @@ broadcast carries the state.
 ## Appendix E — Embeds, uploads, and avatars
 
 **Embeds.** `body.embeds` holds rich content in display order; `kind` selects
-the renderer. Unknown kinds use the fallback card (§3.5).
+the renderer. Unknown kinds render from `og`, or else the fallback card
+(§3.5).
 
 ```json
 {"embed_id": "embed_1235", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/embed_1235"}
@@ -902,14 +904,37 @@ the renderer. Unknown kinds use the fallback card (§3.5).
 - `upload` is below; `stream` is Appendix K.
 - Future typed embeds (`diff`, `poll`, …) use the fallback rule.
 
+**`og`.** Any embed MAY carry `og`, an [OpenGraph](https://ogp.me/)
+description of its content as JSON: property names without the `og:`
+prefix, with structured properties nested (`og:image:width` becomes
+`image.width`).
+
+```json
+"og": {
+  "title": "before.png",
+  "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180, "alt": "Dashboard before the fix"}
+}
+```
+
+- Clients render kinds they support natively and MAY draw the rest from
+  `og`: `title`, `description`, `site_name`, and `image`, `video`, and
+  `audio` (each with `url`, `type`, `width`, `height`, `alt`). They ignore
+  other properties.
+- `og.image` is a preview to show, `og.video` and `og.audio` are what a
+  player loads, and the embed's own `url` is where a click goes.
+- Servers SHOULD be the source of truth for `og`: they set it in the
+  broadcast and MAY keep, replace, or drop one a client sent. They SHOULD
+  host or proxy the media it references and set its dimensions. Clients
+  SHOULD NOT load `og` media from other origins.
+
 **Embed identity.** Servers that advertise any `embed:*` cap assign each
 embed an opaque `embed_id`; other servers MAY store embeds as given.
 
 - A save keeps an embed by sending it back with its `embed_id`. An embed
   without one is new, an `embed_id` left out removes that embed, and an
   unknown `embed_id` is `invalid_params`.
-- The server owns `embed_id`, an upload's `url` and `oembed`, and a stream's
-  `url` and `text`. It ignores them on input and restores them on a save from
+- The server owns `embed_id`, an upload's `url`, and a stream's `url` and
+  `text`. It ignores them on input and restores them on a save from
   its records.
 - Content the server hosts for an embed belongs to that message. When the
   embed is removed or the message is deleted or redacted, servers SHOULD
@@ -944,7 +969,7 @@ The `message` result lists them, in request order:
   }
 }
 // sender: curl -T before.png https://chat.example/w/4c7a…
-// <- the upload completes: the server sets url and here adds oembed
+// <- the upload completes: the server sets url and here adds og
 {
   "method": "message", "params": {
     "message_id": "1724803500000", "log_id": "1724803502210", "prev_log_id": "1724803500000",
@@ -952,11 +977,9 @@ The `message` result lists them, in request order:
     "body": {"text": "Before the fix:", "embeds": [{
       "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
       "url": "https://chat.example/f/embed_1235",
-      "oembed": {
-        "type": "photo", "version": "1.0", "title": "before.png",
-        "url": "https://chat.example/f/embed_1235", "width": 1280, "height": 720,
-        "thumbnail_url": "https://chat.example/f/embed_1235/thumb",
-        "thumbnail_width": 320, "thumbnail_height": 180
+      "og": {
+        "title": "before.png",
+        "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180}
       }
     }]}
   }
@@ -973,14 +996,10 @@ The `message` result lists them, in request order:
 as the file name. While `url` is absent the upload is pending, and clients
 show a placeholder. On success the server sets `url` to the file it hosts.
 
-- The server MAY add `oembed`, an [oEmbed 1.0](https://oembed.com/) response
-  describing the file, such as a `photo` with its dimensions and a
-  thumbnail. Clients MAY render it with any oEmbed library.
-- The server hosts every image `oembed` references and sets their
-  dimensions.
-- Clients never insert `oembed.html` into the page: they render it in a
-  sandboxed iframe under the `iframe` rules, or ignore it.
-- Without `oembed`, clients show a file card: `title` linking to `url`.
+- The server SHOULD add `og` describing the file: `image` for a preview,
+  and `video` or `audio` for playable media. It MAY keep what the sender
+  gave, such as `og.image.alt`.
+- Without `og`, clients show a file card: `title` linking to `url`.
 
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
 the user's name.
