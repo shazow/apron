@@ -470,7 +470,7 @@ local policy.
   code blocks as the baseline rich-content path. Clients MUST disable raw
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
   (Appendix E). Clients MUST render embeds of unknown `kind` as a labeled
-  fallback card (kind name plus `url`, if present).
+  fallback card (kind name, plus `url` or plain `text` if present).
 - Suggested convention: mention users as `@user_id` in `body.text`
   (Appendix J.3).
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
@@ -514,13 +514,14 @@ not authorization; servers still apply local policy per request. Clients
 ignore caps they do not recognize. Absence of a cap obligates the client to
 the fallback:
 
-| cap         | adds                                                         | fallback                     | spec       |
-|-------------|--------------------------------------------------------------|------------------------------|------------|
-| `history`   | page and recover a room's log                                | session-only scrollback      | Appendix A |
-| `edit`      | `message` saves: edit, move, delete                          | no edit/move/delete UI       | Appendix B |
-| `rooms`     | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads  | Appendix C |
-| `reactions` | emoji reactions on messages                                  | reaction controls hidden     | Appendix D |
-| `activity`  | typing indicators and read markers                           | no typing or read indicators | Appendix D |
+| cap            | adds                                                         | fallback                     | spec       |
+|----------------|--------------------------------------------------------------|------------------------------|------------|
+| `history`      | page and recover a room's log                                | session-only scrollback      | Appendix A |
+| `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | Appendix B |
+| `rooms`        | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads  | Appendix C |
+| `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | Appendix D |
+| `activity`     | typing indicators and read markers                           | no typing or read indicators | Appendix D |
+| `embed:stream` | live-streamed text in a message                              | post the finished text       | Appendix K |
 
 Features without a cap: uploads follow `server.upload` (Appendix E); embeds
 are body content (Appendix E); push follows `server.push` (Appendix F).
@@ -905,6 +906,7 @@ same token is the bearer. With other schemes the server SHOULD re-send the
 - `html`: sanitize with an allowlist sanitizer (e.g. DOMPurify) before
   insertion, regardless of source. Servers make no safety promises about
   content flowing through them.
+- `stream`: live text written over HTTP (Appendix K).
 - Future typed embeds (`diff`, `poll`, …) use the fallback rule.
 
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
@@ -1176,3 +1178,47 @@ A mention is `@` followed by a `user_id` or `room_id` in `body.text`:
   `members` (Appendix C).
 - Servers MAY apply the same rule to wake mentioned users (Appendix F).
 - Mentions that notify a whole room are not defined.
+
+---
+
+## Appendix K — `embed:stream`
+
+Cap `embed:stream`. A message can carry live text that the sender writes over
+HTTP while readers watch it grow. A message carries at most one stream embed.
+
+```jsonc
+// -> the sender includes a stream embed
+{
+  "method": "message", "id": "c9", "params": {
+    "room_id": "ops",
+    "body": {"text": "Deploy log:", "embeds": [{"kind": "stream", "format": "terminal"}]}
+  }
+}
+// <- the result adds a secret write_url
+{"id": "c9", "result": {"message_id": "1724803500000", "write_url": "https://chat.example/s/w/9b1e…"}}
+// <- the broadcast embed carries the read url
+{"kind": "stream", "format": "terminal", "url": "https://chat.example/s/r/1724803500000"}
+// <- after the stream ends, the final snapshot carries the text instead
+{"kind": "stream", "format": "terminal", "text": "…"}
+```
+
+- `format` names how to render the text; default `"plain"`, shown as is with
+  line breaks kept. Clients MAY support other formats natively, such as
+  `"markdown"` (rendered under §3.5's rules) or `"terminal"`, and render
+  unknown formats as plain.
+- Write: the sender sends UTF-8 text as a streaming HTTP request body to
+  `write_url`, for example `foo | curl -T - <write_url>`. The end of the body
+  ends the stream.
+- Read: `GET url` returns the text the server has kept, continues as more
+  arrives, and ends when the stream does. A reader that reconnects replaces
+  what it has shown with the new response.
+- Finish: when the stream ends, the server publishes a snapshot whose embed
+  carries the kept text as `text` in place of `url`, and both URLs stop
+  working. A sender with cap `edit` MAY save the message first, which ends
+  the stream.
+- How much text the server keeps, size and time limits, and the grace period
+  after a writer disconnects are server policy. At a limit, the server ends
+  the stream and keeps the trailing text.
+- `write_url` is a credential. `url` is served by the chat server; clients
+  SHOULD NOT connect to stream URLs on other origins.
+
