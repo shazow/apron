@@ -18,17 +18,17 @@ const sessionLifetime = 12 * time.Hour
 
 type passkeyUser struct {
 	// TODO: Persist complete credentials and stable user handles before using this outside the in-memory example.
-	identity    identity
+	user        *userState
 	handle      []byte
 	credentials []webauthn.Credential
 }
 
 func (u *passkeyUser) WebAuthnID() []byte { return u.handle }
 func (u *passkeyUser) WebAuthnName() string {
-	if u.identity.Name != "" {
-		return u.identity.Name
+	if u.user.name != "" {
+		return u.user.name
 	}
-	return u.identity.ID
+	return u.user.id
 }
 func (u *passkeyUser) WebAuthnDisplayName() string                { return u.WebAuthnName() }
 func (u *passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
@@ -117,13 +117,13 @@ func (s *Server) beginPasskey(c *client, req request, action string, w *webauthn
 	)
 	identityID := ""
 	if action == "register" {
-		if !c.authed {
-			return nil, &rpcError{Code: codeDenied, Message: "Authenticate before adding a passkey"}
+		if c.user == nil {
+			return nil, &rpcError{Code: codeDenied, Message: "Sign in as a guest before adding a passkey"}
 		}
-		identityID = c.identity.ID
-		user = s.users[c.identity.ID]
+		identityID = c.user.id
+		user = c.user.passkey
 		if user == nil {
-			user = &passkeyUser{identity: c.identity, handle: []byte(rand.Text())}
+			user = &passkeyUser{user: c.user, handle: []byte(rand.Text())}
 		}
 		if len(user.credentials) >= 10 {
 			return nil, &rpcError{Code: codeDenied, Message: "This identity already has ten passkeys"}
@@ -195,7 +195,7 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 	if ceremony.action != action || ceremony.rpID != w.Config.RPID || ceremony.origin != c.origin || !now.Before(ceremony.expires) {
 		return nil, &rpcError{Code: codeDenied, Message: "Passkey challenge is missing or expired; try again"}
 	}
-	if ceremony.action == "register" && (!c.authed || c.identity.ID != ceremony.identityID || ceremony.user == nil) {
+	if ceremony.action == "register" && (c.user == nil || c.user.id != ceremony.identityID || ceremony.user == nil) {
 		return nil, &rpcError{Code: codeDenied, Message: "Identity changed; try again"}
 	}
 	raw, rpcErr := parsePasskeyCredential(req.params, ceremony.action)
@@ -219,16 +219,17 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 		if s.credentials[string(credential.ID)] != nil {
 			return nil, &rpcError{Code: codeDenied, Message: "Passkey is already registered"}
 		}
-		user = s.users[c.identity.ID]
+		user = c.user.passkey
 		if user == nil {
 			user = ceremony.user
-			user.identity = c.identity
+			user.user = c.user
 		}
 		if !bytes.Equal(user.handle, ceremony.user.handle) || len(user.credentials) >= 10 {
 			return nil, &rpcError{Code: codeDenied, Message: "Registration changed; try again"}
 		}
 		user.credentials = append(user.credentials, *credential)
-		s.users[user.identity.ID] = user
+		c.user.passkey = user
+		s.passkeys[c.user.id] = user
 		s.credentials[string(credential.ID)] = user
 	} else {
 		parsed, err := protocol.ParseCredentialRequestResponseBytes(raw)
@@ -272,7 +273,8 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 // scheme. Keeping this outside the WebAuthn action space preserves Appendix I's
 // register/login action grammar while retaining the example server's bearer
 // token policy.
-func (s *Server) authenticateToken(c *client, req request, now time.Time) (any, *rpcError) {
+func (s *Server) authenticateToken(c *client, req request) (any, *rpcError) {
+	now := time.Now()
 	if !req.hasID {
 		return nil, nil
 	}
@@ -382,14 +384,8 @@ func parsePasskeyCredential(params map[string]json.RawMessage, action string) ([
 	return encoded, nil
 }
 
+// finishPasskey makes the passkey's user the connection's identity. Passkey
+// users are never retired, so their profile and joined rooms persist.
 func (s *Server) finishPasskey(c *client, req request, user *passkeyUser, token string) (any, *rpcError) {
-	if c.identity.ID != user.identity.ID {
-		c.mu.Lock()
-		clear(c.dedup)
-		c.mu.Unlock()
-	}
-	c.identity, c.authed = user.identity, true
-	result := map[string]any{"you": c.identity.object(), "token": token}
-	s.announceAuthenticated(c, req, result)
-	return result, nil
+	return s.switchUserLocked(c, req, user.user, map[string]any{"token": token}), nil
 }

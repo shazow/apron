@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -282,6 +283,10 @@ func TestAddingPasskeyPreservesStoredNickname(t *testing.T) {
 				if result["you"].(map[string]any)["name"] != "Updated nickname" {
 					t.Fatalf("rename was not accepted: %#v", result)
 				}
+				// The same user's other connection learns of the change.
+				if you := other.notification(t, "user")["you"].(map[string]any); you["name"] != "Updated nickname" {
+					t.Fatalf("other connection's user notification: %#v", you)
+				}
 			}
 			if !renameDuringRegistration {
 				rename()
@@ -390,7 +395,7 @@ func TestPasskeyRejectsInvalidRegistration(t *testing.T) {
 	}
 	app.mu.RLock()
 	defer app.mu.RUnlock()
-	if len(app.users) != 0 || len(app.credentials) != 0 || len(app.sessions) != 0 {
+	if len(app.passkeys) != 0 || len(app.credentials) != 0 || len(app.sessions) != 0 {
 		t.Fatal("failed registration retained an account, credential, or session")
 	}
 }
@@ -468,4 +473,39 @@ func TestPasskeyCanonicalMalformedFields(t *testing.T) {
 		t.Fatalf("malformed credential: %#v", failure)
 	}
 	passkeyDenied(t, passkeyCall(t, c, "retry", "register", "finish", map[string]any{"credential": proof}))
+}
+
+func TestSignInReplacesGuestAndDeduplicatesPerUser(t *testing.T) {
+	_, httpServer := passkeyTestServer(t)
+	owner := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+	registered := registerTestPasskey(t, owner, newTestAuthenticator(t))
+	observer := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+	observer.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
+	observer.drain(t)
+	switcher := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+	switcher.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
+	guest := passkeyResult(t, switcher.read(t))["you"]
+	switcher.drain(t)
+
+	// Signing in replaces the guest identity, which is retired; others who
+	// shared a room with it learn the new identity and the old one.
+	switcher.write(t, map[string]any{"method": "auth", "id": "resume", "params": map[string]any{"scheme": "token", "token": registered["token"]}})
+	passkeyResult(t, switcher.read(t))
+	switcher.drain(t)
+	notice := observer.notification(t, "user")
+	if !reflect.DeepEqual(notice, map[string]any{"new": registered["you"], "old": guest}) {
+		t.Fatalf("user notification = %#v", notice)
+	}
+	owner.expectQuiet(t)
+
+	// Request IDs deduplicate per user, across that user's connections.
+	params := map[string]any{"room_id": "general", "body": map[string]any{"text": "once"}}
+	id, _ := save(t, owner, "same", params)
+	switcher.notification(t, "message")
+	observer.notification(t, "message")
+	if again := switcher.result(t, "message", "same", params); again["message_id"] != id {
+		t.Fatalf("duplicate result: %#v", again)
+	}
+	switcher.expectError(t, "message", "same", map[string]any{"room_id": "general", "body": map[string]any{"text": "different"}}, codeInvalidParams)
+	observer.expectQuiet(t)
 }

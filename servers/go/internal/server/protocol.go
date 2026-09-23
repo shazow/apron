@@ -13,6 +13,7 @@ const (
 	codeInvalidParams  = -32602
 	codeInternalError  = -32603
 	codeDenied         = -32001
+	codeRetryAfter     = -32002
 	codeTooLarge       = -32003
 )
 

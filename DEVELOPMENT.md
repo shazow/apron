@@ -7,8 +7,9 @@ server keeps rooms and history in memory; restarting it clears messages.
 
 - `clients/web`: SvelteKit and TypeScript client; connection and replay logic
   lives separately from UI components under `src/lib/protocol`.
-- `servers/go`: Go module; `cmd/aprond` is the executable and `internal`
-  contains implementation packages.
+- `servers/go`: Go module and the reference server, implementing every
+  capability in PROTOCOL.md; `cmd/aprond` is the executable and `internal`
+  contains implementation packages. See its [README](servers/go/README.md).
 - `servers/cloudflare-worker`: TypeScript Worker and SQLite Durable Object for
   the bounded public demo; see its [setup and operating guide](servers/cloudflare-worker/README.md).
 - `tests/interop`: Playwright tests against real clients and the Go or Workers backend.
@@ -124,9 +125,12 @@ reacted, and clicking it adds or removes your reaction. Each change sends your
 complete emoji set for that message with `reactions`. Tombstones hide their
 reactions.
 
-The Go server keeps rooms, threads and reactions in memory and re-announces
-every room on connection. Empty threads remain available; deleting or moving
-their intro message does not remove them.
+The Go server keeps rooms, threads, reactions, and uploads in memory. A new
+user joins every room and thread, so the client sees them all on connection.
+Empty threads remain available; deleting or moving their intro message does
+not remove them. The server also offers uploads and streams (`embed:upload`,
+`embed:stream`), which this client does not use yet and shows as fallback
+cards.
 
 ## Build and serve
 
