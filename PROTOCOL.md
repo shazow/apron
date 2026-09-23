@@ -183,6 +183,13 @@ unidentifiable invalid requests (§1.1).
 - Clients keep the record with the greatest `log_id` per key, regardless of
   source (live, history, embedded) or arrival order.
 - `log_id` and other server fields are ignored on input.
+- A record MAY carry `prev_log_id`, the `log_id` of the previous record for
+  the same key. It links changes backward even when that record is no longer
+  retained (Appendix A); there is no lookup by `log_id`.
+- Suggested convention: holding the record at `prev_log_id`, a client diffs
+  the two to see exactly what changed; holding an older one, it knows changes
+  were missed; and a message whose `prev_log_id` equals its `message_id` has
+  changed once since creation.
 
 **Opaque IDs** — `room_id`, `user_id`, `session_id`, and request `id`.
 
@@ -363,6 +370,7 @@ client, replaced whole by a save. `delivery`: this client's view, not logged.
 |------------------|----------|------------------------------------------------------------------|
 | `room_id`        | server   | required                                                         |
 | `log_id`         | server   | position of this room record (§2)                                |
+| `prev_log_id`    | server   | optional; this room's previous record (§2)                       |
 | `parent_room_id` | client   | optional; fixed at creation; marks a thread (Appendix C)         |
 | `title`          | client   | optional plain string; absent falls back to `room_id`            |
 | `intro_message`  | client   | optional message object (§3.5): the room's description or summary |
@@ -417,16 +425,17 @@ object as an authoritative **snapshot** at one log position.
 }
 ```
 
-| field        | set by   | meaning                                                          |
-|--------------|----------|------------------------------------------------------------------|
-| `message_id` | server   | permanent ID (§2)                                                |
-| `log_id`     | server   | position of this snapshot in the log (§2)                        |
-| `from`       | server   | author identity (§3.3), preserved across changes                 |
-| `room_id`    | client   | the room the message is in; required on requests                 |
-| `body`       | client   | `text`, `format`, `embeds`                                       |
-| `reply_to`   | client   | optional message object naming the message replied to           |
-| `deleted`    | client   | tombstone marker, default false (Appendix B)                     |
-| `ext`        | client   | optional object of namespaced, opaque extension data             |
+| field         | set by | meaning                                               |
+|---------------|--------|-------------------------------------------------------|
+| `message_id`  | server | permanent ID (§2)                                     |
+| `log_id`      | server | position of this snapshot in the log (§2)             |
+| `prev_log_id` | server | optional; this message's previous snapshot (§2)       |
+| `from`        | server | author identity (§3.3), preserved across changes      |
+| `room_id`     | client | the room the message is in; required on requests      |
+| `body`        | client | `text`, `format`, `embeds`                            |
+| `reply_to`    | client | optional message object naming the message replied to |
+| `deleted`     | client | tombstone marker, default false (Appendix B)          |
+| `ext`         | client | optional object of namespaced, opaque extension data  |
 
 **Extensions.** `ext` carries data the spec does not define, keyed by
 namespace:
