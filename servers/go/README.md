@@ -13,8 +13,8 @@ Defaults:
 - WebSocket endpoint: `/ws`
 - health endpoint: `/healthz`
 - WebSocket origins: `localhost`, `127.0.0.1`, and `::1` during development
-- protocol: Apron v3 (`PROTOCOL.md` at the repository root)
-- capabilities: `history`, `edit`, `rooms`, `reactions`
+- protocol: Apron v4 (`PROTOCOL.md` at the repository root)
+- capabilities: `history`, `edit`, `rooms`, `reactions`, `activity`
 - seeded room: `general` (title `General`)
 - authentication: WebAuthn passkeys, bearer-token resume, and `guest`; guest
   user IDs are `guest_<n>` and honor an optional requested `name`
@@ -82,7 +82,8 @@ of its intro message, or `Thread`.
 message's snapshot embedded. After authentication the server announces every
 room in creation order, so parents precede their threads. Every room is
 visible to every user: `room_join` on a known room returns `{}` and re-sends
-its announcement, and `room_leave` is `denied`.
+its announcement, and `room_leave` is `denied`. `room_list` is not implemented
+yet and returns `unsupported`.
 
 ## Reactions
 
@@ -99,8 +100,11 @@ user are `invalid_params`.
 Request IDs deduplicate accepted operations for the connection's current user:
 a retry returns the original result without re-executing or rebroadcasting,
 and reuse with a different method or params is `invalid_params`. Switching
-identities clears that cache. `name` renames the current identity. `typing` is
-relayed to all clients. Unknown requests return `unsupported`.
+identities clears that cache. `me` sets or (with `""`) clears the current
+identity's display name; profile `avatar` and `ext` are declined. `activity`
+relays `typing` to all clients; `read_message_id` is dropped, so an
+`activity` frame without `typing` relays nothing. Unknown requests return
+`unsupported`, and errors not tied to a request omit `id`.
 
 ## Passkeys
 

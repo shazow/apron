@@ -12,9 +12,9 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 
 ## Features
 
-- Apron protocol v3, advertising cap `history`.
+- Apron protocol v4, advertising cap `history`.
 - One shared room: `general`, titled "General", announced as a room record after authentication.
-- Guest authentication (any scheme is accepted) with `guest_` user IDs and changeable display names (`auth` or `name`).
+- Guest authentication (any scheme is accepted) with `guest_` user IDs and changeable display names (`auth` or `me`; `""` removes the name).
 - Ordered, flat message snapshot broadcasts, including to the sender. `message_id` equals the message's creation `log_id`.
 - Replies via `reply_to` (a bare `{"message_id": ...}` reference); `body` (with `format` defaulting to `plain`), embeds, and `ext` pass through.
 - One server-wide `log_id` sequence covering the room record and every message.
@@ -31,7 +31,7 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 - History is held in memory; restarting clears it. Once more than 1,000 records exist, the oldest are discarded and `history_log_id` advances.
 - Reconnecting assigns a new guest identity.
 - Replies must target a message still retained in history.
-- Edits, deletions, moves, room creation, reactions, and uploads are unsupported; `message` with a `message_id` returns `error/unsupported`.
+- Edits, deletions, moves, room creation, reactions, activity, and uploads are unsupported; `message` with a `message_id` returns `error/unsupported`.
 - Requests are not deduplicated; retrying a message may create a duplicate.
 - Unknown top-level message fields are dropped; use `ext` for extension data.
 - Malformed requests may close the connection instead of returning protocol errors.

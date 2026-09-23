@@ -86,18 +86,14 @@ func (c Config) withDefaults() Config {
 }
 
 type identity struct {
-	ID     string `json:"user_id"`
-	Name   string `json:"name,omitempty"`
-	Avatar string `json:"avatar,omitempty"`
+	ID   string `json:"user_id"`
+	Name string `json:"name,omitempty"`
 }
 
 func (i identity) object() map[string]any {
 	value := map[string]any{"user_id": i.ID}
 	if i.Name != "" {
 		value["name"] = i.Name
-	}
-	if i.Avatar != "" {
-		value["avatar"] = i.Avatar
 	}
 	return value
 }
@@ -341,9 +337,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	c.enqueue(map[string]any{
 		"method": "server",
 		"params": map[string]any{
-			"protocol": 3,
-			"name":     "apron-go/0.3",
-			"caps":     []string{"history", "edit", "rooms", "reactions"},
+			"protocol": 4,
+			"name":     "apron-go/0.4",
+			"caps":     []string{"history", "edit", "rooms", "reactions", "activity"},
 			"auth":     authSchemes,
 		},
 	})
@@ -489,8 +485,8 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	case "auth":
 		result, operationErr = s.authenticate(c, req)
 		responseSent = operationErr == nil
-	case "name":
-		result, operationErr = s.rename(c, req)
+	case "me":
+		result, operationErr = s.updateProfile(c, req)
 		cacheResult = operationErr == nil
 	case "message":
 		result, operationErr = s.saveMessage(c, req)
@@ -514,8 +510,8 @@ func (s *Server) processFrame(c *client, payload []byte) {
 		result, operationErr = s.react(c, req)
 		cacheResult = operationErr == nil
 		responseSent = operationErr == nil
-	case "typing":
-		result, operationErr = s.typing(c, req)
+	case "activity":
+		result, operationErr = s.activity(c, req)
 		cacheResult = operationErr == nil
 		responseSent = operationErr == nil
 	default:
@@ -632,19 +628,24 @@ func (s *Server) embedIntroLocked(record map[string]any) map[string]any {
 	return value
 }
 
-func (s *Server) rename(c *client, req request) (any, *rpcError) {
-	name, err := parseString(req.params, "name", true)
+// updateProfile applies a `me` request (PROTOCOL.md §3.3). A given name
+// replaces the current one and "" removes it; an omitted name is unchanged.
+// Profile avatars and ext are not supported, so those fields are declined.
+func (s *Server) updateProfile(c *client, req request) (any, *rpcError) {
+	name, err := parseString(req.params, "name", false)
 	if err != nil {
 		return nil, err
 	}
+	_, hasName := req.params["name"]
 	s.mu.Lock()
-	c.identity.Name = name
-	if user := s.users[c.identity.ID]; user != nil {
-		user.identity.Name = name
+	defer s.mu.Unlock()
+	if hasName {
+		c.identity.Name = name
+		if user := s.users[c.identity.ID]; user != nil {
+			user.identity.Name = name
+		}
 	}
-	result := map[string]any{"you": c.identity.object()}
-	s.mu.Unlock()
-	return result, nil
+	return map[string]any{"you": c.identity.object()}, nil
 }
 
 // saveMessage creates a message (no message_id) or saves an existing one
@@ -1172,41 +1173,38 @@ func parseLimit(params map[string]json.RawMessage, defaultLimit int) (int, *rpcE
 	return value, nil
 }
 
-func (s *Server) typing(c *client, req request) (any, *rpcError) {
+// activity relays a user's typing state in a room (Appendix D.1). Only typing
+// is supported: read_message_id is dropped, and a frame without typing
+// broadcasts nothing.
+func (s *Server) activity(c *client, req request) (any, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
 		return nil, err
 	}
-	active, err := parseBool(req.params, "active", true)
-	if err != nil {
-		return nil, err
-	}
-	var timeout any
-	if raw, ok := req.params["timeout"]; ok {
+	var typing any
+	if raw, ok := req.params["typing"]; ok {
 		var value int
 		if json.Unmarshal(raw, &value) != nil || value < 0 {
-			return nil, invalidParams("timeout must be a non-negative integer")
+			return nil, invalidParams("typing must be a non-negative integer")
 		}
-		timeout = value
+		typing = value
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.rooms[roomID] == nil {
 		return nil, invalidParams("Unknown room %q", roomID)
 	}
-	params := map[string]any{
-		"room_id": roomID,
-		"from":    c.identity.object(),
-		"active":  active,
-	}
-	if timeout != nil {
-		params["timeout"] = timeout
-	}
 	result := map[string]any{}
 	if req.hasID {
 		c.enqueue(response(req.id, req.full, result))
 	}
-	s.broadcastLocked(map[string]any{"method": "typing", "params": params})
+	if typing != nil {
+		s.broadcastLocked(map[string]any{"method": "activity", "params": map[string]any{
+			"room_id": roomID,
+			"from":    c.identity.object(),
+			"typing":  typing,
+		}})
+	}
 	return result, nil
 }
 
