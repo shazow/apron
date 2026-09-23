@@ -79,12 +79,16 @@ describe('ChatClient v3 operations', () => {
 			reply_to: { message_id: '50' }, ext
 		})));
 		expect(JSON.stringify(params)).toContain('"__proto__":{"opaque":true}');
+		// Later saves build on the unconfirmed ones: the edited body is kept.
 		quiet(client.setMessageReply('100', null));
-		expect(socket.request('message').params).not.toHaveProperty('reply_to');
+		const unreplied = socket.request('message').params;
+		expect(unreplied).not.toHaveProperty('reply_to');
+		expect(unreplied.body).toEqual({ text: 'new', format: 'markdown', embeds: [{ kind: 'future' }] });
 		quiet(client.deleteMessage('100'));
 		const deleted = socket.request('message').params;
 		expect(deleted).not.toHaveProperty('body');
-		expect(deleted).toMatchObject({ message_id: '100', room_id: 'general', deleted: true, reply_to: { message_id: '50' } });
+		expect(deleted).not.toHaveProperty('reply_to');
+		expect(deleted).toMatchObject({ message_id: '100', room_id: 'general', deleted: true });
 	});
 
 	it('rejects saves of messages that are not loaded without sending anything', async () => {
@@ -134,8 +138,74 @@ describe('ChatClient v3 operations', () => {
 		socket.receive({ method: 'room', params: { room_id: 'thread', log_id: '21', parent_room_id: 'general', title: 'Side', intro_message: { message_id: '100' }, ext: { x: { y: 1 } } } });
 		quiet(client.updateRoom('thread', { title: 'Renamed' }));
 		expect(socket.request('room').params).toEqual({ room_id: 'thread', title: 'Renamed', intro_message: { message_id: '100' }, ext: { x: { y: 1 } } });
+		// A second update before the first is confirmed builds on it.
 		quiet(client.updateRoom('thread', { introMessageId: null, ext: null }));
-		expect(socket.request('room').params).toEqual({ room_id: 'thread', title: 'Side' });
+		expect(socket.request('room').params).toEqual({ room_id: 'thread', title: 'Renamed' });
+		// The matching record confirms it; later updates build on the store again.
+		socket.receive({ method: 'room', params: { room_id: 'thread', log_id: '22', parent_room_id: 'general', title: 'Renamed' } });
+		socket.receive({ method: 'room', params: { room_id: 'thread', log_id: '23', parent_room_id: 'general', title: 'Elsewhere' } });
+		quiet(client.updateRoom('thread', { ext: { z: 1 } }));
+		expect(socket.request('room').params).toEqual({ room_id: 'thread', title: 'Elsewhere', ext: { z: 1 } });
+	});
+
+	it('builds an edit then a move on the submitted state until a matching snapshot arrives', async () => {
+		await connect();
+		socket.receive({ method: 'message', params: message('100') });
+		const edit = client.editMessage('100', 'edited');
+		quiet(client.moveMessage('100', 'thread'));
+		expect(socket.request('message').params).toEqual({ message_id: '100', room_id: 'thread', body: { text: 'edited' } });
+		// The edit's result arrives before its snapshot: still pending.
+		socket.receive({ id: socket.sent.filter((frame) => frame.method === 'message')[0].id, result: { message_id: '100' } });
+		await edit.promise;
+		// A failed save is dropped: the next save builds on the store.
+		const move = socket.request('message');
+		socket.receive({ id: move.id, error: { code: -32001, message: 'denied' } });
+		await settle();
+		const reply = client.setMessageReply('100', '99');
+		expect(socket.request('message').params).toEqual({ message_id: '100', room_id: 'general', body: { text: 'm100' }, reply_to: { message_id: '99' } });
+		// After its result, the next newer snapshot settles the save even if the server normalized it.
+		await socket.reply('message', { message_id: '100' });
+		await reply.promise;
+		socket.receive({ method: 'message', params: message('100', { body: { text: 'normalized' } }, '101') });
+		quiet(client.editMessage('100', 'again'));
+		expect(socket.request('message').params).toEqual({ message_id: '100', room_id: 'general', body: { text: 'again' } });
+	});
+
+	it('keeps a tombstone deleted when it is moved or its reply changes', async () => {
+		await connect();
+		socket.receive({ method: 'message', params: { message_id: '100', log_id: '105', room_id: 'general', from: alice, deleted: true } });
+		quiet(client.moveMessage('100', 'thread'));
+		expect(socket.request('message').params).toEqual({ message_id: '100', room_id: 'thread', deleted: true });
+	});
+
+	it('keeps a later pending reaction intent when an earlier own set is broadcast', async () => {
+		await connect();
+		socket.receive({ method: 'message', params: message('100') });
+		quiet(client.toggleReaction('100', 'A'));
+		quiet(client.toggleReaction('100', 'B'));
+		socket.receive({ method: 'reactions', params: { log_id: '101', message_id: '100', room_id: 'general', reactions: [{ from: { user_id: 'guest_1' }, emojis: ['A'] }] } });
+		expect(client.ownReactions('100')).toEqual(['A', 'B']);
+		quiet(client.toggleReaction('100', 'C'));
+		expect(socket.request('reactions').params).toEqual({ message_id: '100', emojis: ['A', 'B', 'C'] });
+		socket.receive({ method: 'reactions', params: { log_id: '102', message_id: '100', room_id: 'general', reactions: [{ from: { user_id: 'guest_1' }, emojis: ['C', 'B', 'A'] }] } });
+		expect(client.ownReactions('100')).toEqual(['C', 'B', 'A']);
+	});
+
+	it('keeps a reaction intent when the result arrives before the broadcast', async () => {
+		await connect();
+		socket.receive({ method: 'message', params: message('100') });
+		quiet(client.toggleReaction('100', 'A'));
+		await socket.reply('reactions', {});
+		expect(client.ownReactions('100')).toEqual(['A']);
+		// A no-op request (the store already matches) settles on its result.
+		quiet(client.react('100', []));
+		await socket.reply('reactions', {});
+		expect(client.ownReactions('100')).toEqual([]);
+		// An error drops the intent.
+		quiet(client.toggleReaction('100', 'B'));
+		socket.receive({ id: socket.request('reactions').id, error: { code: -32602, message: 'bad' } });
+		await settle();
+		expect(client.ownReactions('100')).toEqual([]);
 	});
 
 	it('renames with the name method and adopts the answered identity', async () => {
@@ -203,6 +273,28 @@ describe('ChatClient history per room', () => {
 		expect(room('20')).toMatchObject({ loaded: true, loading: false });
 		expect(room('20').timeline.order).toEqual(['21', '22']);
 		expect(room('general').timeline.order).toEqual([]);
+	});
+
+	it('keeps an embedded intro snapshot below a null bound', async () => {
+		socket.receive({ method: 'room', params: {
+			room_id: 'ops', log_id: '30', title: 'Ops', latest_log_id: '500', history_log_id: null,
+			intro_message: { message_id: '400', log_id: '400', room_id: 'ops', from: alice, body: { text: 'intro' } }
+		} });
+		expect(client.message('400')?.body).toEqual({ text: 'intro' });
+		expect(room('ops').introMessage?.message_id).toBe('400');
+	});
+
+	it('installs an embedded reply_to snapshot below its room bound', async () => {
+		socket.receive({ method: 'message', params: message('20', { reply_to: { message_id: '5', log_id: '5', room_id: 'general', from: alice, body: { text: 'old' } } }) });
+		expect(client.message('5')?.body).toEqual({ text: 'old' });
+		await socket.reply('history', { entries: [message('11', { reply_to: { message_id: '6', log_id: '6', room_id: 'general', from: alice, body: { text: 'older' } } })], more: false, latest_log_id: '20', history_log_id: '10' });
+		expect(client.message('5')?.body).toEqual({ text: 'old' });
+		expect(client.message('6')?.body).toEqual({ text: 'older' });
+	});
+
+	it('starts at the lowest log_id when no bound is known', async () => {
+		socket.receive({ method: 'room', params: { room_id: 'nobound', log_id: '30', latest_log_id: '40' } });
+		expect(socket.request('history').params).toEqual({ room_id: 'nobound', after: '1', before: '40', limit: 200 });
 	});
 
 	it('retries a failed top-level recovery through loadRoom', async () => {

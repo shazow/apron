@@ -207,7 +207,18 @@ interface RoomState {
 	dirty: boolean;
 }
 
-type LiveRecord = { kind: 'message'; record: MessageRecord } | { kind: 'reaction'; record: ReactionSet };
+/** `embedded` marks a `reply_to`/`intro_message` snapshot, which installs regardless of its room's bound. */
+type LiveRecord = { kind: 'message'; record: MessageRecord; embedded?: boolean } | { kind: 'reaction'; record: ReactionSet };
+
+interface PendingSave {
+	requestId: string;
+	/** The submitted client fields (params without `message_id`/`room_id` key for rooms). */
+	state: JsonObject;
+	/** The stored record's `log_id` when the save was submitted. */
+	baseLog?: string;
+	/** The result arrived but no matching record yet: the next newer record settles it. */
+	confirmed: boolean;
+}
 
 interface RecoveryState {
 	/** Fixed H for the whole recovery. */
@@ -262,6 +273,8 @@ const TYPING_REFRESH_MS = 12_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
+/** The lowest possible log_id: the `after` bound when no lower bound is known. */
+const FIRST_LOG_ID = '1';
 const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'push'];
 
 /**
@@ -284,6 +297,10 @@ export class ChatClient {
 	private readonly sentTypingAt = new Map<string, number>();
 	/** Own reaction sets requested but not yet confirmed, per message. */
 	private readonly reactionIntents = new Map<string, { requestId: string; emojis: string[] }>();
+	/** Latest submitted client fields per message while a save is unconfirmed; later saves build on them. */
+	private readonly pendingMessageSaves = new Map<string, PendingSave>();
+	/** Latest submitted client fields per room while an update is unconfirmed. */
+	private readonly pendingRoomSaves = new Map<string, PendingSave>();
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private connectionId = 0;
@@ -642,10 +659,11 @@ export class ChatClient {
 	 * resubmitted unless the patch changes it. `deleted: true` omits `body`.
 	 */
 	saveMessage(messageId: string, patch: MessagePatch = {}): OperationHandle<MessageResult> {
-		const current = this.store.message(messageId);
+		const current = this.messageBase(messageId);
 		if (!current) return rejectedHandle('message', new Error('Message has not been loaded'));
 		const params: JsonObject = { message_id: messageId, room_id: patch.room_id ?? current.room_id };
-		if (patch.deleted) {
+		// A tombstone stays a tombstone: saving it (a move, a reply change) resubmits `deleted`.
+		if (patch.deleted || current.deleted === true) {
 			params.deleted = true;
 		} else if (patch.body !== undefined) {
 			params.body = patch.body;
@@ -653,7 +671,7 @@ export class ChatClient {
 			params.body = current.body;
 		}
 		if (patch.reply_to === undefined) {
-			if (current.reply_to) params.reply_to = { message_id: current.reply_to.message_id };
+			if (isJsonObject(current.reply_to) && typeof current.reply_to.message_id === 'string') params.reply_to = { message_id: current.reply_to.message_id };
 		} else if (patch.reply_to !== null) {
 			params.reply_to = { message_id: patch.reply_to };
 		}
@@ -662,12 +680,59 @@ export class ChatClient {
 		} else if (patch.ext !== null) {
 			params.ext = patch.ext;
 		}
-		return this.enqueueRequest<MessageResult>('message', params, { visible: true, allowBeforeAuth: false });
+		const handle = this.enqueueRequest<MessageResult>('message', params, { visible: true, allowBeforeAuth: false });
+		const { message_id: _id, ...state } = params;
+		this.trackSave(this.pendingMessageSaves, messageId, handle, state, () => this.store.message(messageId)?.log_id);
+		return handle;
+	}
+
+	/**
+	 * The client fields a save builds on: the latest submitted state while an
+	 * earlier save of the message is unconfirmed, otherwise the stored snapshot.
+	 */
+	private messageBase(messageId: string): JsonObject | undefined {
+		const pending = this.pendingMessageSaves.get(messageId);
+		if (pending) return pending.state;
+		const current = this.store.message(messageId);
+		return current ? messageClientFields(current) : undefined;
+	}
+
+	private trackSave(
+		pending: Map<string, PendingSave>, key: string, handle: OperationHandle, state: JsonObject, latestLog: () => string | undefined
+	): void {
+		const baseLog = latestLog();
+		pending.set(key, { requestId: handle.id, state, ...(baseLog !== undefined ? { baseLog } : {}), confirmed: false });
+		const current = () => pending.get(key)?.requestId === handle.id ? pending.get(key) : undefined;
+		handle.promise.then(() => {
+			const entry = current();
+			if (!entry) return;
+			const log = latestLog();
+			// A newer record already arrived (the server may normalize what it stored).
+			if (log !== undefined && (entry.baseLog === undefined || compareLogIds(log, entry.baseLog) > 0)) pending.delete(key);
+			else entry.confirmed = true;
+		}, () => {
+			if (current()) pending.delete(key);
+		});
+	}
+
+	/** Settle a pending save when a newer record arrives that matches it, or after its result. */
+	private settleSave(pending: Map<string, PendingSave>, key: string, fields: JsonObject): void {
+		const entry = pending.get(key);
+		if (!entry) return;
+		if (entry.confirmed || canonicalJson(fields) === canonicalJson(entry.state)) pending.delete(key);
+	}
+
+	private installMessage(record: MessageRecord): void {
+		if (this.store.putMessage(record)) this.settleSave(this.pendingMessageSaves, record.message_id, messageClientFields(record));
+	}
+
+	private installRoom(record: RoomRecord): void {
+		if (this.store.putRoom(record)) this.settleSave(this.pendingRoomSaves, record.room_id, roomClientFields(record));
 	}
 
 	/** Replaces the text (and optionally the format) and keeps every other body key. */
 	editMessage(messageId: string, text: string, format?: MessageFormat): OperationHandle<MessageResult> {
-		const current = this.store.message(messageId);
+		const current = this.messageBase(messageId);
 		const body: MessageBody = { ...(isJsonObject(current?.body) ? current.body : {}), text, ...(format ? { format } : {}) };
 		return this.saveMessage(messageId, { body });
 	}
@@ -695,11 +760,19 @@ export class ChatClient {
 		const request = this.enqueueRequest('reactions', { message_id: messageId, emojis: [...emojis] }, {
 			visible: true, allowBeforeAuth: false
 		});
-		this.reactionIntents.set(messageId, { requestId: request.id, emojis: [...new Set(emojis)] });
-		const settle = () => {
-			if (this.reactionIntents.get(messageId)?.requestId === request.id) this.reactionIntents.delete(messageId);
-		};
-		request.promise.then(settle, settle);
+		const intent = { requestId: request.id, emojis: [...new Set(emojis)] };
+		this.reactionIntents.set(messageId, intent);
+		// The intent stays until a broadcast of the same set, or until the result
+		// when the store already matches (a server that logged no change), or an
+		// error, or a disconnect.
+		request.promise.then(() => {
+			if (this.reactionIntents.get(messageId) !== intent) return;
+			const you = this.you?.user_id;
+			const stored = you === undefined ? [] : this.store.reactionSet(messageId, you)?.emojis ?? [];
+			if (sameEmojiSet(stored, intent.emojis)) this.reactionIntents.delete(messageId);
+		}, () => {
+			if (this.reactionIntents.get(messageId) === intent) this.reactionIntents.delete(messageId);
+		}).finally(() => this.emit());
 		return request;
 	}
 
@@ -730,15 +803,22 @@ export class ChatClient {
 	 * applied, resubmitting `title`, a bare `intro_message`, and `ext`.
 	 */
 	updateRoom(roomId: string, patch: RoomPatch): OperationHandle<RoomResult> {
-		const current = this.store.room(roomId);
+		// Build on the latest submitted update while one is unconfirmed.
+		const stored = this.store.room(roomId);
+		const current = this.pendingRoomSaves.get(roomId)?.state ?? (stored ? roomClientFields(stored) : {});
 		const params: JsonObject = { room_id: roomId };
-		const title = patch.title === undefined ? current?.title : patch.title;
+		const title = patch.title === undefined ? current.title : patch.title;
 		if (title !== undefined && title !== null) params.title = title;
-		const intro = patch.introMessageId === undefined ? current?.intro_message?.message_id : patch.introMessageId;
+		const currentIntro = isJsonObject(current.intro_message) && typeof current.intro_message.message_id === 'string'
+			? current.intro_message.message_id : undefined;
+		const intro = patch.introMessageId === undefined ? currentIntro : patch.introMessageId;
 		if (intro !== undefined && intro !== null) params.intro_message = { message_id: intro };
-		const ext = patch.ext === undefined ? current?.ext : patch.ext;
+		const ext = patch.ext === undefined ? current.ext : patch.ext;
 		if (ext !== undefined && ext !== null) params.ext = ext;
-		return this.enqueueRequest<RoomResult>('room', params, { visible: true, allowBeforeAuth: false });
+		const handle = this.enqueueRequest<RoomResult>('room', params, { visible: true, allowBeforeAuth: false });
+		const { room_id: _id, ...state } = params;
+		this.trackSave(this.pendingRoomSaves, roomId, handle, state, () => this.store.room(roomId)?.log_id);
+		return handle;
 	}
 
 	/** `room_join`: the server re-announces the room on success. */
@@ -803,7 +883,7 @@ export class ChatClient {
 		this.emit();
 		try {
 			let checkpoint = room.loadCheckpoint;
-			let after = maxDefined(checkpoint === undefined ? undefined : increment(checkpoint), room.floor);
+			let after: string | undefined = maxDefined(checkpoint === undefined ? undefined : increment(checkpoint), room.floor) ?? FIRST_LOG_ID;
 			while (after === undefined || compareLogIds(after, head) <= 0) {
 				const result = await this.enqueueRequest('history', historyParams(room.id, after, head), {
 					visible: false, allowBeforeAuth: false
@@ -1099,7 +1179,7 @@ export class ChatClient {
 		}
 		const decoded = decodeRoom(params);
 		if (!decoded) return;
-		this.store.putRoom(decoded.record);
+		this.installRoom(decoded.record);
 		const existing = this.rooms.get(roomId);
 		const room: RoomState = existing ?? {
 			id: roomId,
@@ -1111,7 +1191,6 @@ export class ChatClient {
 			dirty: true
 		};
 		this.rooms.set(roomId, room);
-		for (const message of decoded.embedded) this.acceptLiveMessage(message, false);
 		const announcedHead = decoded.delivery.latest_log_id;
 		this.observeHead(room, announcedHead);
 		// Record the head before the bound so a new recovery captures it. An
@@ -1125,6 +1204,8 @@ export class ChatClient {
 			const rebuild = !existing || Boolean(room.recoveryError) || room.checkpoint === undefined;
 			if (rebuild || compareLogIds(head, room.checkpoint!) > 0) this.startRecovery(room, head, rebuild);
 		}
+		// Embedded snapshots install after the bound and any rebuild, so neither drops them.
+		for (const message of decoded.embedded) this.acceptLiveMessage(message, false);
 		this.emit();
 	}
 
@@ -1147,7 +1228,10 @@ export class ChatClient {
 		for (const set of sets) {
 			if (room?.recovery && !this.bufferLive(room, { kind: 'reaction', record: set })) return;
 			this.store.putReaction(set);
-			if (set.from.user_id === this.you?.user_id) this.reactionIntents.delete(set.message_id);
+			if (set.from.user_id === this.you?.user_id) {
+				const intent = this.reactionIntents.get(set.message_id);
+				if (intent && sameEmojiSet(set.emojis, intent.emojis)) this.reactionIntents.delete(set.message_id);
+			}
 		}
 		this.emit();
 	}
@@ -1161,11 +1245,13 @@ export class ChatClient {
 	private acceptLiveMessage(record: MessageRecord, delivered: boolean): void {
 		const room = this.rooms.get(record.room_id);
 		if (room) {
-			if (room.floor !== undefined && compareLogIds(record.log_id, room.floor) < 0) return;
+			// Embedded reference snapshots are not live records of their room: they
+			// install regardless of its bound.
+			if (delivered && room.floor !== undefined && compareLogIds(record.log_id, room.floor) < 0) return;
 			if (delivered) this.observeHead(room, record.log_id);
-			if (room.recovery && !this.bufferLive(room, { kind: 'message', record })) return;
+			if (room.recovery && !this.bufferLive(room, { kind: 'message', record, embedded: !delivered })) return;
 		}
-		this.store.putMessage(record);
+		this.installMessage(record);
 	}
 
 	/** Returns false when the buffer overflowed and the recovery was restarted. */
@@ -1182,7 +1268,7 @@ export class ChatClient {
 
 	private startRecovery(room: RoomState, head: string, rebuild: boolean, preserveBuffer = false): void {
 		const retained = preserveBuffer
-			? (room.recovery?.buffer ?? []).filter(({ record }) => room.floor === undefined || compareLogIds(record.log_id, room.floor) >= 0)
+			? (room.recovery?.buffer ?? []).filter((live) => isEmbedded(live) || room.floor === undefined || compareLogIds(live.record.log_id, room.floor) >= 0)
 			: [];
 		this.retireRecoveryRequest(room);
 		const generation = ++room.recoveryGeneration;
@@ -1191,9 +1277,10 @@ export class ChatClient {
 			for (const live of retained) this.applyLive(live);
 			room.timeline = createTimeline(room.id);
 		}
-		const nextAfter = rebuild
+		// Without a known bound, start at the lowest possible log_id.
+		const nextAfter = (rebuild
 			? room.floor
-			: maxDefined(room.checkpoint === undefined ? undefined : increment(room.checkpoint), room.floor);
+			: maxDefined(room.checkpoint === undefined ? undefined : increment(room.checkpoint), room.floor)) ?? FIRST_LOG_ID;
 		room.recovery = {
 			head,
 			nextAfter,
@@ -1255,18 +1342,15 @@ export class ChatClient {
 	private applyPage(room: RoomState, result: JsonObject): void {
 		const records: DecodedRecords = decodeHistoryRecords(result);
 		const retained = (logId: string) => room.floor === undefined || compareLogIds(logId, room.floor) >= 0;
-		for (const record of records.rooms) this.store.putRoom(record);
-		for (const record of records.messages) if (retained(record.log_id)) this.store.putMessage(record);
+		for (const record of records.rooms) this.installRoom(record);
+		for (const record of records.messages) if (retained(record.log_id)) this.installMessage(record);
 		for (const record of records.reactions) if (retained(record.log_id)) this.store.putReaction(record);
-		// Embedded snapshots belong to their own room and its bound.
-		for (const record of records.embedded) {
-			const home = this.rooms.get(record.room_id);
-			if (home?.floor === undefined || compareLogIds(record.log_id, home.floor) >= 0) this.store.putMessage(record);
-		}
+		// Embedded reference snapshots install regardless of any room's bound.
+		for (const record of records.embedded) this.installMessage(record);
 	}
 
 	private applyLive(live: LiveRecord): void {
-		if (live.kind === 'message') this.store.putMessage(live.record);
+		if (live.kind === 'message') this.installMessage(live.record);
 		else this.store.putReaction(live.record);
 	}
 
@@ -1318,7 +1402,7 @@ export class ChatClient {
 			}
 			return;
 		}
-		recovery.buffer = recovery.buffer.filter(({ record }) => compareLogIds(record.log_id, effective) >= 0);
+		recovery.buffer = recovery.buffer.filter((live) => isEmbedded(live) || compareLogIds(live.record.log_id, effective) >= 0);
 		recovery.bufferBytes = recovery.buffer.reduce((bytes, live) => bytes + recordBytes(live.record), 0);
 		// `nextAfter` is the first unprocessed position. Equality is safe; a
 		// strictly larger bound means a retained gap was discarded underneath us.
@@ -1374,6 +1458,8 @@ export class ChatClient {
 		this.store.clear();
 		this.store.takeTouched();
 		this.reactionIntents.clear();
+		this.pendingMessageSaves.clear();
+		this.pendingRoomSaves.clear();
 		this.activeRoomId = undefined;
 		this.server = undefined;
 		this.you = undefined;
@@ -1685,8 +1771,46 @@ function maxDefined(a: string | undefined, b: string | undefined): string | unde
 	return compareLogIds(a, b) >= 0 ? a : b;
 }
 
+/** A message's client fields (Appendix B), as a save would submit them. */
+function messageClientFields(record: MessageRecord): JsonObject {
+	const fields: JsonObject = { room_id: record.room_id };
+	if (record.body !== undefined) fields.body = record.body;
+	if (record.reply_to) fields.reply_to = { message_id: record.reply_to.message_id };
+	if (record.deleted === true) fields.deleted = true;
+	if (record.ext !== undefined) fields.ext = record.ext;
+	return fields;
+}
+
+/** A room's client fields other than `parent_room_id`, as an update would submit them. */
+function roomClientFields(record: RoomRecord): JsonObject {
+	const fields: JsonObject = {};
+	if (record.title !== undefined) fields.title = record.title;
+	if (record.intro_message) fields.intro_message = { message_id: record.intro_message.message_id };
+	if (record.ext !== undefined) fields.ext = record.ext;
+	return fields;
+}
+
+/** JSON with object keys sorted, for order-insensitive comparison (prototype-like keys included). */
+function canonicalJson(value: JsonValue): string {
+	if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+	if (isJsonObject(value)) {
+		return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort()
+			.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+	}
+	return JSON.stringify(value ?? null);
+}
+
+function sameEmojiSet(left: readonly string[], right: readonly string[]): boolean {
+	const a = new Set(left), b = new Set(right);
+	return a.size === b.size && [...a].every((emoji) => b.has(emoji));
+}
+
+function isEmbedded(live: LiveRecord): boolean {
+	return live.kind === 'message' && live.embedded === true;
+}
+
 function historyParams(roomId: string, after: string | undefined, before: string): JsonObject {
-	return { room_id: roomId, ...(after !== undefined ? { after } : {}), before, limit: HISTORY_PAGE_SIZE };
+	return { room_id: roomId, after: after ?? FIRST_LOG_ID, before, limit: HISTORY_PAGE_SIZE };
 }
 
 function validHistoryMetadata(result: JsonObject): result is ValidHistoryResponse {
