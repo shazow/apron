@@ -93,7 +93,7 @@ Requests carry a string `id` (§2); frames without one are notifications.
 A notification omits `id` and receives no reply:
 
 ```json
-{"method": "typing", "params": {"room_id": "general", "active": true}}
+{"method": "activity", "params": {"room_id": "general", "timeout": 8}}
 ```
 
 Success returns a `result` object (`{}` if empty). Errors contain integer
@@ -198,6 +198,8 @@ unidentifiable invalid requests (§1.1).
 - Request `id`s SHOULD be random, to avoid collisions across devices of the
   same user. They identify operations, not log positions.
 - Suggested convention: use a room's creation `log_id` as its `room_id`.
+- Suggested convention: keep `room_id`s distinct from `user_id`s, so an `@`
+  mention names one or the other (Appendix J.3).
 - Field naming for extensions and future methods: Appendix J.
 
 ---
@@ -502,16 +504,16 @@ not authorization; servers still apply local policy per request. Clients
 ignore caps they do not recognize. Absence of a cap obligates the client to
 the fallback:
 
-| cap         | adds                                                         | fallback                    | spec       |
-|-------------|--------------------------------------------------------------|-----------------------------|------------|
-| `history`   | page and recover a room's log                                | session-only scrollback     | Appendix A |
-| `edit`      | `message` saves: edit, move, delete                          | no edit/move/delete UI      | Appendix B |
-| `rooms`     | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads | Appendix C |
-| `reactions` | emoji reactions on messages                                  | reaction controls hidden    | Appendix D |
+| cap         | adds                                                         | fallback                     | spec       |
+|-------------|--------------------------------------------------------------|------------------------------|------------|
+| `history`   | page and recover a room's log                                | session-only scrollback      | Appendix A |
+| `edit`      | `message` saves: edit, move, delete                          | no edit/move/delete UI       | Appendix B |
+| `rooms`     | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads  | Appendix C |
+| `reactions` | emoji reactions on messages                                  | reaction controls hidden     | Appendix D |
+| `activity`  | typing indicators and read markers                           | no typing or read indicators | Appendix D |
 
-Features without a cap: `typing` (Appendix D) is ephemeral and clients MAY
-send it blind; uploads follow `server.upload` (Appendix E); embeds are body
-content (Appendix E); push follows `server.push` (Appendix F).
+Features without a cap: uploads follow `server.upload` (Appendix E); embeds
+are body content (Appendix E); push follows `server.push` (Appendix F).
 
 - Suggested convention: third-party extension caps use an `ext:` prefix,
   such as `ext:irc`.
@@ -519,9 +521,9 @@ content (Appendix E); push follows `server.push` (Appendix F).
 Three frame idioms cover everything logged or announced:
 
 - **Records** (`room`, `message`): complete state at a `log_id` (§2).
-- **Per-user state** (`reactions`, `typing`): `from` plus the user's complete
-  state for a scope; newest wins per user. `reactions` is logged (§2),
-  `typing` is not.
+- **Per-user state** (`reactions`, `activity`): `from` plus the user's
+  complete state for a scope; newest wins per user. `reactions` is logged
+  (§2), `activity` is not.
 - **Announcements** (`server`, `user`, `rtc`): unlogged, re-sent in full;
   each replaces the last.
 
@@ -788,26 +790,39 @@ Discovery and membership:
 
 ---
 
-## Appendix D — Per-user state: `typing`, `reactions`
+## Appendix D — Per-user state: `activity`, `reactions`
 
-### D.1 `typing`
+### D.1 `activity`
 
-Clients MAY send `typing` without capability discovery; servers MAY drop it.
+Cap `activity`. A client reports its activity in one room, as a
+notification: whether it is typing, and how far it has read. Servers MAY
+drop it.
 
 ```jsonc
-// ->
-{"method": "typing", "params": {"room_id": "general", "active": true, "timeout": 8}}
+// -> typing, having read up to a point
+{"method": "activity", "params": {"room_id": "general", "read_log_id": "1724803200042", "timeout": 8}}
+// -> not typing; moves the read marker only
+{"method": "activity", "params": {"room_id": "general", "read_log_id": "1724803312050"}}
 // <- (broadcast)
 {
-  "method": "typing", "params": {
+  "method": "activity", "params": {
     "room_id": "general", "from": {"user_id": "alice"},
-    "active": true, "timeout": 8
+    "read_log_id": "1724803312050"
   }
 }
 ```
 
-`timeout` (optional, seconds) is how long the indicator persists without
-refresh; default 10. There is no presence system.
+- `timeout` (optional, seconds) means the user is typing, for that long
+  without refresh. Without it, the user's typing indicator ends.
+- `read_log_id` (optional) is the greatest `log_id` in the room the user has
+  read; omitted, the marker is unchanged. Clients only advance it, and
+  servers MAY ignore a value below the one they hold.
+- Activity is not logged. Delivery is server policy: to the room, which
+  shows read receipts, or only to the user's own connections, which syncs
+  read markers across devices.
+- Servers MAY keep each user's latest `read_log_id` per room and re-send it
+  after announcing the room, as `activity` without `timeout`.
+- There is no presence system.
 
 ### D.2 `reactions`
 
@@ -1126,23 +1141,24 @@ its name. Extensions and future methods should follow the same pattern.
 
 ### J.3 Mentions
 
-A mention is `@` followed by a `user_id` in `body.text`:
+A mention is `@` followed by a `user_id` or `room_id` in `body.text`:
 
 ```json
 "body": {"text": "@guest_1234 can you check the deploy?"}
 ```
 
-- The `user_id` is an optional `@` then a run of `[A-Za-z0-9_.-]`, not
+- The ID is an optional `@` then a run of `[A-Za-z0-9_.-]`, not
   preceded by a letter or digit, so `foo@bar.com` is not a mention. Trailing
   `.` and `-` are not part of it. In Markdown, code spans and code blocks
   contain no mentions.
-- Servers that want users to be mentionable mint `user_id`s from that set,
-  such as `guest_1234`. System identities (J.1) take a second `@`, as in
+- Servers that want users and rooms to be mentionable mint IDs from that
+  set, such as `guest_1234`. System identities (J.1) take a second `@`, as in
   `@@server`.
-- Clients render a mention with the user's latest display name (§3.3), such
-  as a chip, and MAY highlight mentions of `you`. Unknown IDs render as
-  written.
+- Clients render a user mention with the user's latest display name (§3.3),
+  such as a chip, and MAY highlight mentions of `you`. A room mention links
+  to the room. When an ID names both a user and a room, clients treat it as
+  a user. Unknown IDs render as written.
 - Composers insert `@user_id` when the user picks a person, for example from
   `members` (Appendix C).
 - Servers MAY apply the same rule to wake mentioned users (Appendix F).
-- Room-wide mentions are not defined.
+- Mentions that notify a whole room are not defined.
