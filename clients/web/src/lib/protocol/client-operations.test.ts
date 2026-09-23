@@ -13,7 +13,7 @@ function message(id: string, fields: Record<string, unknown> = {}, log = id): Re
 	return { message_id: id, log_id: log, room_id: 'general', from: alice, body: { text: `m${id}` }, ...fields };
 }
 
-describe('ChatClient v3 operations', () => {
+describe('ChatClient v4 operations', () => {
 	let client: ChatClient;
 	let snapshot: ClientSnapshot;
 	let socket: FakeSocket;
@@ -208,11 +208,11 @@ describe('ChatClient v3 operations', () => {
 		expect(client.ownReactions('100')).toEqual([]);
 	});
 
-	it('renames with the name method and adopts the answered identity', async () => {
+	it('renames with the me method and adopts the answered identity', async () => {
 		await connect();
 		quiet(client.setDisplayName('Ada'));
-		expect(socket.request('name').params).toEqual({ name: 'Ada' });
-		await socket.reply('name', { you: { user_id: 'guest_1', name: 'Ada!' } });
+		expect(socket.request('me').params).toEqual({ name: 'Ada' });
+		await socket.reply('me', { you: { user_id: 'guest_1', name: 'Ada!' } });
 		expect(snapshot.you).toEqual({ user_id: 'guest_1', name: 'Ada!' });
 	});
 });
@@ -291,9 +291,10 @@ describe('ChatClient history per room', () => {
 	});
 
 	it('retries a failed top-level recovery through loadRoom', async () => {
-		socket.receive({ id: socket.request('history').id, error: { code: -32002, message: 'Busy', data: { ms: 10 } } });
+		socket.receive({ id: socket.request('history').id, error: { code: -32002, message: 'Busy', data: { retry_after: 2 } } });
 		await settle();
-		expect(room('general').recoveryError).toMatch(/Busy/);
+		expect(room('general').recoveryError).toBe('Busy Try again in 2s.');
+		expect(snapshot.retryAfterMs).toBe(2000);
 		const retried = client.loadRoom('general');
 		expect(socket.request('history').params).toMatchObject({ after: '10', before: '12' });
 		await socket.reply('history', { entries: [message('11')], more: false, latest_log_id: '12', history_log_id: '10' });
@@ -307,7 +308,7 @@ describe('ChatClient history per room', () => {
 		vi.advanceTimersByTime(5_000);
 		const next = FakeSocket.latest();
 		next.open();
-		next.receive({ method: 'server', params: { protocol: 3, auth: ['guest'], caps: [] } });
+		next.receive({ method: 'server', params: { protocol: 4, auth: ['guest'], caps: [] } });
 		quiet(client.send('general', 'queued'));
 		expect(next.sent.some((frame) => frame.method === 'message')).toBe(false);
 		next.receive({ id: next.request('auth').id, result: { you: { user_id: 'guest_2' } } });

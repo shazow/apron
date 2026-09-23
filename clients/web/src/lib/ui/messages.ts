@@ -67,19 +67,6 @@ export function peopleIn(messages: MessageRecord[], me: Identity | undefined): M
 	return people;
 }
 
-/** Media kinds come from the file's type; anything else is a plain file (Appendix E). */
-export function embedFor(file: File, url: string): Embed {
-	const kind = file.type.startsWith('image/') ? 'image'
-		: file.type.startsWith('video/') ? 'video'
-		: file.type.startsWith('audio/') ? 'audio' : 'file';
-	return {
-		kind, url,
-		...(file.type ? { mime: file.type } : {}),
-		...(kind === 'file' && file.name ? { name: file.name } : {}),
-		...(kind === 'file' && file.size ? { size: file.size } : {})
-	};
-}
-
 /** Every ID between two in `order`, inclusive, whichever way round; an ID missing from the order yields just the pair. */
 export function rangeBetween(order: string[], from: string, to: string): string[] {
 	const start = order.indexOf(from);

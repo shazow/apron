@@ -13,7 +13,7 @@
     {
       "name": "denied-then-accepted",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_7"}}}},
         {"expect":{"you":{"user_id":"guest_7"}}},

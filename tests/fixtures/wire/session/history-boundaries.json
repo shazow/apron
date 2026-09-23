@@ -11,7 +11,7 @@
     {
       "name": "exact-lower-bound-and-live-buffer",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},
@@ -28,7 +28,7 @@
     {
       "name": "overtaken-by-room-frame",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},
@@ -45,7 +45,7 @@
     {
       "name": "overtaken-by-response",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},
@@ -62,7 +62,7 @@
     {
       "name": "sparse-timestamp-logs",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"1724803200000","title":"General","latest_log_id":"1724803200104","history_log_id":"1724803200000"}}},
@@ -76,7 +76,7 @@
     {
       "name": "null-boundary-empty-log",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":null}}},
@@ -86,7 +86,7 @@
     {
       "name": "null-boundary-clears-expired-cache",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"101","history_log_id":"100"}}},
@@ -100,7 +100,7 @@
     {
       "name": "null-boundary-becomes-retained",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":null}}},
@@ -114,7 +114,7 @@
     {
       "name": "null-page-uses-page-head",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"105"}}},

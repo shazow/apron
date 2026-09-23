@@ -100,7 +100,7 @@
 				<div class="ap-profedit-top">
 					<Avatar name={draft || you?.user_id || '?'} src={you?.avatar} size="lg" />
 					<div class="ap-profedit-av">
-						<span class="ap-profedit-hint">{session.canUpload ? 'Avatar uploads are not supported by this client yet.' : 'This backend has no upload URL, so your avatar can’t be set here.'}</span>
+						<span class="ap-profedit-hint">Avatars can’t be set from this client yet.</span>
 					</div>
 				</div>
 				<label class="ap-fieldlabel">Handle

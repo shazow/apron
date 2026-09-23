@@ -14,6 +14,7 @@ import {
 	decodeMessage,
 	decodeReactions,
 	decodeRoom,
+	isIdentity,
 	isJsonObject,
 	isLogId,
 	isString,
@@ -27,6 +28,7 @@ import {
 	type ReactionSet,
 	type RoomRecord,
 	type RpcError,
+	type ServerExt,
 	type ServerParams,
 	type WireFrame
 } from './types';
@@ -89,10 +91,10 @@ export interface PendingOperation {
 	createdAt: number;
 }
 
+/** A typing indicator shown for another user (Appendix D.1). */
 export interface TypingSnapshot {
 	room: string;
 	from: Identity;
-	active: boolean;
 }
 
 export type Capabilities = Record<Capability, boolean>;
@@ -251,8 +253,7 @@ interface PendingRequest<T extends JsonObject = JsonObject> {
 interface TypingState {
 	room: string;
 	from: Identity;
-	active: boolean;
-	timer?: ReturnType<typeof setTimeout>;
+	timer: ReturnType<typeof setTimeout>;
 }
 
 type ValidHistoryResponse = JsonObject & {
@@ -265,8 +266,10 @@ type ValidHistoryResponse = JsonObject & {
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
 const MAX_RECONNECT_DELAY_MS = 60_000;
-/** How long a typing indicator this client sends should persist without a refresh, in the frame's `timeout` seconds. */
+/** How long a typing indicator this client sends should persist without a refresh, in the `activity` frame's `typing` seconds. */
 const TYPING_TIMEOUT_S = 15;
+/** The longest a received typing indicator is shown without a refresh. */
+const MAX_TYPING_S = 300;
 /** How often the indicator is refreshed while typing continues: well inside the timeout, and far from one frame per keystroke. */
 const TYPING_REFRESH_MS = 12_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
@@ -274,10 +277,10 @@ const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
 /** The lowest possible log_id: the `after` bound when no lower bound is known. */
 const FIRST_LOG_ID = '1';
-const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'push'];
+const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'activity'];
 
 /**
- * A browser-only Apron protocol v3 session; instantiate one per mounted UI.
+ * A browser-only Apron protocol v4 session; instantiate one per mounted UI.
  *
  * State model: one store of room records, message snapshots, and reaction
  * sets shared by every room (PROTOCOL.md §2), projected per visible room in
@@ -320,6 +323,10 @@ export class ChatClient {
 	private error?: string;
 	private showReconnectDivider = false;
 	private retryAfterUntil = 0;
+	/** The server denied the connection as a whole (§1.1): no automatic reconnect until the user acts. */
+	private reconnectHeld = false;
+	/** The current socket carried an error about the connection; its message outlives the close. */
+	private connectionErrored = false;
 	private connectionProbe?: AbortController;
 	private disconnectedAt?: number;
 
@@ -346,13 +353,14 @@ export class ChatClient {
 		this.passkeyRequired = false;
 		this.registeredSession = false;
 		this.retryAfterUntil = 0;
+		this.reconnectHeld = false;
 		this.loadStoredSession();
 		this.resetSession('Server URL changed; pending requests were cancelled');
 		if (this.running) this.restart();
 	}
 
 	/**
-	 * Sets the display name, sent with `auth` and as a `name` request (§3.3).
+	 * Sets the display name, sent with `auth` and as a `me` request (§3.3).
 	 * When authenticated the request goes out at once and its handle is
 	 * returned so the caller can show what the server actually kept (`you`).
 	 */
@@ -365,7 +373,7 @@ export class ChatClient {
 	}
 
 	private sendName(): OperationHandle {
-		const request = this.enqueueRequest('name', { name: this.displayName }, {
+		const request = this.enqueueRequest('me', { name: this.displayName }, {
 			visible: false,
 			allowBeforeAuth: false
 		});
@@ -383,6 +391,7 @@ export class ChatClient {
 	start(): void {
 		if (this.running) return;
 		this.running = true;
+		this.reconnectHeld = false;
 		this.showReconnectDivider = this.reconnectAttempt > 0;
 		this.connectNow();
 	}
@@ -412,6 +421,7 @@ export class ChatClient {
 		if (!this.running) return;
 		this.connectionProbe?.abort();
 		this.connectionId += 1;
+		this.reconnectHeld = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
 		this.cancelPasskey();
@@ -431,7 +441,8 @@ export class ChatClient {
 	/**
 	 * Skips the remaining backoff and reconnects at once, keeping the current
 	 * session state. Meant for an explicit user action after a reconnect has
-	 * stalled; the exponential backoff restarts from its shortest delay.
+	 * stalled or the server denied the connection; the exponential backoff
+	 * restarts from its shortest delay.
 	 */
 	retryNow(): void {
 		if (!this.running) return;
@@ -439,6 +450,7 @@ export class ChatClient {
 			this.emit();
 			return;
 		}
+		this.reconnectHeld = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
 		this.reconnectAttempt = 0;
@@ -523,9 +535,7 @@ export class ChatClient {
 					...(typeof params.message_id === 'string' ? { messageId: params.message_id } : {}),
 					createdAt
 				})),
-			typing: [...this.typing.values()]
-				.filter((entry) => entry.active)
-				.map(({ room, from, active }) => ({ room, from, active })),
+			typing: [...this.typing.values()].map(({ room, from }) => ({ room, from })),
 			showReconnectDivider: this.showReconnectDivider,
 			retryAfterMs: this.retryAfterRemaining(),
 			...(this.disconnectedAt !== undefined ? { disconnectedAt: this.disconnectedAt } : {})
@@ -622,29 +632,6 @@ export class ChatClient {
 			...(options.replyTo !== undefined ? { reply_to: { message_id: options.replyTo } } : {}),
 			...(options.ext !== undefined ? { ext: options.ext } : {})
 		}, { visible: true, allowBeforeAuth: false });
-	}
-
-	/**
-	 * Media travels over HTTP, not the socket (Appendix E): POST the file as
-	 * `multipart/form-data` to the `upload` URL the `server` frame carried and
-	 * take the URL back. A token session sends the same token as bearer; other
-	 * schemes rely on the per-session URL the server re-sent after auth.
-	 */
-	async uploadMedia(file: File, signal?: AbortSignal): Promise<string> {
-		const endpoint = this.server?.upload;
-		if (!endpoint) throw new Error('This backend accepts no uploads');
-		const form = new FormData();
-		form.append('file', file, file.name);
-		const response = await fetch(endpoint, {
-			method: 'POST',
-			body: form,
-			...(signal ? { signal } : {}),
-			...(this.sessionToken ? { headers: { Authorization: `Bearer ${this.sessionToken}` } } : {})
-		});
-		if (!response.ok) throw new Error(`The server refused the upload (${response.status})`);
-		const payload: unknown = await response.json().catch(() => undefined);
-		if (!isJsonObject(payload) || typeof payload.url !== 'string') throw new Error('The server returned no upload URL');
-		return payload.url;
 	}
 
 	/**
@@ -825,8 +812,13 @@ export class ChatClient {
 		return this.enqueueRequest('room_leave', { room_id: roomId }, { visible: true, allowBeforeAuth: false });
 	}
 
+	/**
+	 * Reports typing in a room as an `activity` notification (cap `activity`,
+	 * Appendix D.1): `typing` seconds while active, `0` to stop. Sends nothing
+	 * to a server without the cap.
+	 */
 	sendTyping(room: string, active: boolean): void {
-		if (!this.authenticated || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+		if (!this.authenticated || !this.hasCap('activity') || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
 		const previous = this.sentTypingAt.get(room);
 		const now = Date.now();
 		// Refresh well inside the advertised lifetime, not on every keypress.
@@ -838,7 +830,7 @@ export class ChatClient {
 			if (previous === undefined) return;
 			this.sentTypingAt.delete(room);
 		}
-		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: TYPING_TIMEOUT_S } });
+		this.sendFrame({ method: 'activity', params: { room_id: room, typing: active ? TYPING_TIMEOUT_S : 0 } });
 	}
 
 	/**
@@ -922,6 +914,7 @@ export class ChatClient {
 		let opened = false;
 		this.status = this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting';
 		this.error = undefined;
+		this.connectionErrored = false;
 		this.emit();
 		let socket: WebSocket;
 		try {
@@ -944,7 +937,7 @@ export class ChatClient {
 			this.handleMessage(event.data);
 		};
 		socket.onerror = () => {
-			if (this.isCurrentSocket(id, socket)) this.error = 'WebSocket connection error';
+			if (this.isCurrentSocket(id, socket) && !this.connectionErrored) this.error = 'WebSocket connection error';
 			this.emit();
 		};
 		socket.onclose = () => {
@@ -1031,13 +1024,33 @@ export class ChatClient {
 			case 'reactions':
 				this.handleReactions(frame.params);
 				return;
-			case 'typing':
-				this.handleTyping(frame.params);
+			case 'activity':
+				this.handleActivity(frame.params);
 				return;
 		}
-		if (frame.method === undefined && typeof frame.id === 'string' && (frame.result !== undefined || frame.error !== undefined)) {
+		if (frame.method !== undefined) return;
+		if (typeof frame.id === 'string' && (frame.result !== undefined || frame.error !== undefined)) {
 			this.handleResponse(frame.id, isJsonObject(frame.result) ? frame.result : {}, frame.error);
+		} else if (frame.id === undefined || frame.id === null) {
+			// An error without `id` is not tied to a request (§1.1); v3 servers sent `id: null`.
+			if (isJsonObject(frame.error)) this.handleConnectionError(frame.error);
 		}
+	}
+
+	/**
+	 * An error about the connection as a whole, or a request the server could
+	 * not identify (§1.1). The server may close the connection after it; the
+	 * client acts on the code: `retry_after` delays the next reconnect, and
+	 * `denied` stops reconnecting until the user retries.
+	 */
+	private handleConnectionError(rpcError: RpcError): void {
+		const retryAfter = retryAfterMilliseconds(rpcError);
+		if (retryAfter !== undefined) this.retryAfterUntil = Math.max(this.retryAfterUntil, Date.now() + retryAfter);
+		if (rpcError.code === -32001) this.reconnectHeld = true;
+		this.connectionErrored = true;
+		this.error = (typeof rpcError.message === 'string' && rpcError.message.trim()
+			? rpcError.message : `Connection error (${rpcError.code})`).slice(0, 300);
+		this.emit();
 	}
 
 	private handleServer(params: JsonObject | undefined): void {
@@ -1049,8 +1062,7 @@ export class ChatClient {
 			...(typeof params.name === 'string' ? { name: params.name } : {}),
 			caps: Array.isArray(params.caps) ? params.caps.filter(isString) : [],
 			auth,
-			...(typeof params.upload === 'string' ? { upload: params.upload } : {}),
-			...(isJsonObject(params.demo) ? { demo: params.demo } : {})
+			...(isJsonObject(params.ext) ? { ext: params.ext as ServerExt } : {})
 		};
 		if (this.authenticated || this.authRequested) {
 			this.emit();
@@ -1206,6 +1218,8 @@ export class ChatClient {
 		if (!decoded) return;
 		this.acceptLiveMessage(decoded.record, true);
 		for (const embedded of decoded.embedded) this.acceptLiveMessage(embedded, false);
+		// A new message from a user ends their typing indicator in that room (Appendix D.1).
+		if (decoded.record.log_id === decoded.record.message_id) this.removeTyping(decoded.record.room_id, decoded.record.from.user_id);
 		this.emit();
 	}
 
@@ -1461,30 +1475,38 @@ export class ChatClient {
 		return this.rooms.keys().next().value;
 	}
 
-	private handleTyping(params: JsonObject | undefined): void {
-		if (!params || typeof params.room_id !== 'string' || !isJsonObject(params.from)) return;
-		if (typeof params.from.user_id !== 'string') return;
-		const key = JSON.stringify([params.room_id, params.from.user_id]);
-		const current = this.typing.get(key);
-		if (current?.timer) clearTimeout(current.timer);
-		const active = params.active !== false;
-		if (!active) {
-			this.typing.delete(key);
-			this.emit();
-			return;
+	/**
+	 * An `activity` broadcast (Appendix D.1): present fields change the user's
+	 * transient state, absent ones leave it. `typing` seconds show or refresh
+	 * the indicator, `0` removes it. `read_message_id` is not used by this client.
+	 */
+	private handleActivity(params: JsonObject | undefined): void {
+		if (!params || typeof params.room_id !== 'string' || !isIdentity(params.from)) return;
+		const seconds = params.typing;
+		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return;
+		const room = params.room_id;
+		const from = cloneJson(params.from);
+		this.removeTyping(room, from.user_id);
+		if (seconds > 0) {
+			const key = typingKey(room, from.user_id);
+			this.typing.set(key, {
+				room,
+				from,
+				timer: setTimeout(() => {
+					this.typing.delete(key);
+					this.emit();
+				}, Math.min(seconds, MAX_TYPING_S) * 1000)
+			});
 		}
-		const timeout = typeof params.timeout === 'number' && params.timeout > 0 ? params.timeout : 10;
-		const state: TypingState = {
-			room: params.room_id,
-			from: params.from as Identity,
-			active: true,
-			timer: setTimeout(() => {
-				this.typing.delete(key);
-				this.emit();
-			}, timeout * 1000)
-		};
-		this.typing.set(key, state);
 		this.emit();
+	}
+
+	private removeTyping(room: string, userId: string): void {
+		const key = typingKey(room, userId);
+		const current = this.typing.get(key);
+		if (!current) return;
+		clearTimeout(current.timer);
+		this.typing.delete(key);
 	}
 
 	private handleResponse(id: string, result: JsonObject, rpcError?: RpcError): void {
@@ -1594,9 +1616,7 @@ export class ChatClient {
 
 	private clearTyping(): void {
 		this.sentTypingAt.clear();
-		for (const typing of this.typing.values()) {
-			if (typing.timer) clearTimeout(typing.timer);
-		}
+		for (const typing of this.typing.values()) clearTimeout(typing.timer);
 		this.typing.clear();
 	}
 
@@ -1610,7 +1630,7 @@ export class ChatClient {
 	}
 
 	private scheduleReconnect(delayOverride?: number): void {
-		if (!this.running || this.reconnectTimer) return;
+		if (!this.running || this.reconnectTimer || this.reconnectHeld) return;
 		this.reconnectAttempt += 1;
 		const retryAfter = this.retryAfterRemaining();
 		const delay = delayOverride !== undefined
@@ -1752,6 +1772,10 @@ function rejectedHandle<T extends JsonObject>(method: string, error: Error, id =
 	return { id, promise };
 }
 
+function typingKey(room: string, userId: string): string {
+	return JSON.stringify([room, userId]);
+}
+
 function increment(id: string): string {
 	return (BigInt(id) + 1n).toString();
 }
@@ -1829,10 +1853,11 @@ export function recoveryBufferFits(
 	return entryCount < maxEntries && bufferBytes + recordBytes(record) <= maxBytes;
 }
 
+/** `retry_after` errors carry `data.retry_after`, a delay in seconds (§1.1). */
 function retryAfterMilliseconds(error: RpcError): number | undefined {
-	if (error.code !== -32002 || !isJsonObject(error.data) || typeof error.data.ms !== 'number') return undefined;
-	if (!Number.isFinite(error.data.ms) || error.data.ms < 0) return undefined;
-	return Math.min(RETRY_AFTER_MAX_MS, Math.ceil(error.data.ms));
+	if (error.code !== -32002 || !isJsonObject(error.data) || typeof error.data.retry_after !== 'number') return undefined;
+	if (!Number.isFinite(error.data.retry_after) || error.data.retry_after < 0) return undefined;
+	return Math.min(RETRY_AFTER_MAX_MS, Math.ceil(error.data.retry_after * 1000));
 }
 
 function userFacingRpcError(error: RpcError): string {

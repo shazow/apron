@@ -97,7 +97,7 @@
 		onconnected();
 	}
 
-	/** Waits out the `name` request that follows guest auth, then swaps in the passkey identity. */
+	/** Waits out the `me` request that follows guest auth, then swaps in the passkey identity. */
 	async function finishWithPasskey(): Promise<void> {
 		for (let attempt = 0; ; attempt += 1) {
 			try {

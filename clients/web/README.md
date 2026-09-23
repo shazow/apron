@@ -27,10 +27,15 @@ can expose a capacity error and `Retry-After` through CORS; the client displays
 the reason and waits before retrying, including manual retries. Servers without
 this optional endpoint retain ordinary reconnect behavior.
 Repeated connection failures back off from 500 ms to about one attempt per minute
-with jitter. An explicit server retry window takes precedence.
-Typing notifications ask for a 15-second indicator and refresh it at most once
-every 12 seconds per room, with one stop notification when typing ends, to avoid
-charging a frame per keystroke.
+with jitter. An explicit server retry window takes precedence, including a
+`retry_after` error about the connection as a whole (`data.retry_after`
+seconds); after such a `denied` error the client stops reconnecting until you
+press **Try Again**, and shows the server's message.
+With the `activity` cap, typing is reported as `activity` notifications that ask
+for a 15-second indicator (`typing: 15`) and refresh it at most once every 12
+seconds per room, with one `typing: 0` when typing ends, to avoid charging a
+frame per keystroke. Other people's indicators last as long as their `typing`
+asks, or until their next message arrives in that room.
 Explicit server URLs keep their path: a bare hostname connects at `/`, while
 servers that require `/ws` should be entered with that suffix.
 
@@ -71,11 +76,11 @@ palette, and reactions show as chips under the message: emoji and count,
 highlighted when one is yours, with a tooltip naming who reacted. Clicking a
 chip toggles your reaction. Tombstones show no reactions.
 
-When the server advertises an `upload` URL, the composer grows attach and
-microphone buttons: attach posts the file as `multipart/form-data` to that URL
-(Appendix E) and sends the returned URL as an embed, and the microphone records a clip
-and sends it as an `audio` embed. Neither example server in this repository
-offers uploads, so both buttons stay hidden there.
+The composer's attach and microphone buttons stay hidden: attachments need the
+`embed:upload` cap (Appendix E), which this client does not implement yet.
+Embeds render natively for the older `image`, `video`, `audio`, and `file`
+kinds; any other kind shows a fallback card with its kind name and its `url`,
+or else its plain `text`.
 
 **Connect** in the
 sidebar header opens the connect screen: a WebSocket URL or an HTTP(S) server
@@ -83,7 +88,7 @@ base URL, a display name, and a sign-in choice (Guest by default; Passkey signs
 in with an existing passkey once the guest session is up). The server and name
 are stored in local storage, and the last few backends are listed under the
 form. The profile bar at the foot of the sidebar edits your handle, which is
-sent with the protocol `name` request after authentication; the editor shows
+sent with the protocol `me` request after authentication; the editor shows
 what the server actually kept.
 
 The profile editor's Sign-in row offers **Add passkey**, **Sign in with passkey**,
@@ -139,7 +144,7 @@ and `time.ts` read messages, `connection.ts` words the connection state, and
 `storage.ts` keeps everything remembered between visits under `apron.*` keys.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol` and speak Apron protocol v3. `reducer.ts` keeps one store
+`src/lib/protocol` and speak Apron protocol v4. `reducer.ts` keeps one store
 of room records, message snapshots, and per-user reaction sets for every room;
 each record replaces the stored one only when its `log_id` is greater, so
 overlapping history and live delivery cannot revert newer state, and a move
@@ -158,7 +163,7 @@ from the new bound and ignores obsolete replies. `history_log_id: null` means
 the effective bound is `latest_log_id + 1`. Sparse timestamp log IDs are
 expected. Threads are rooms with a `parent_room_id`; they load their own
 history with `loadRoom` when opened. The UI displays a notice that the demo
-retains roughly the last day and honors server retry delays with jittered
+retains roughly the last day (from the worker's `server.ext.demo` hints) and honors server retry delays with jittered
 reconnect backoff.
 
 Edits, moves, and deletion use the same `message` request as creation, with an

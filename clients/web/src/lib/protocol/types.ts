@@ -1,5 +1,5 @@
 /**
- * Wire types and decoders for Apron protocol v3 (PROTOCOL.md at the repository
+ * Wire types and decoders for Apron protocol v4 (PROTOCOL.md at the repository
  * root). Decoders normalize server records to the fields the protocol defines
  * and drop unknown top-level keys (§1: unknown keys MAY be dropped), while
  * copying known values exactly, including `ext`, literal `null`s, unknown embed
@@ -11,8 +11,11 @@ export interface JsonObject {
 	[key: string]: JsonValue;
 }
 
-/** Optional features a server advertises in `server.params.caps` (§4). */
-export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'push';
+/**
+ * Optional features of `server.params.caps` (§4) that this client uses;
+ * it ignores the rest.
+ */
+export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'activity';
 
 export interface Identity extends JsonObject {
 	user_id: string;
@@ -27,9 +30,15 @@ export interface MessageBody extends JsonObject {
 	embeds?: Embed[];
 }
 
+/**
+ * One entry of `body.embeds` (Appendix E). `image`, `video`, `audio`, and
+ * `file` (`mime`, `name`, `size`, `w`, `h`) are v3 kinds this client still
+ * renders natively; other kinds get the fallback card (`url` or `text`).
+ */
 export interface Embed extends JsonObject {
 	kind: string;
 	url?: string;
+	text?: string;
 	mime?: string;
 	name?: string;
 	size?: number;
@@ -88,11 +97,15 @@ export interface ServerParams {
 	name?: string;
 	caps?: string[];
 	auth: string[];
-	upload?: string;
+	/** Extension metadata (§3.1). */
+	ext?: ServerExt;
+}
+
+export interface ServerExt extends JsonObject {
 	demo?: DemoParams;
 }
 
-/** Non-standard hints from the public demo worker. */
+/** Non-standard hints from the public demo worker, in `server.ext.demo`. */
 export interface DemoParams extends JsonObject {
 	retention_seconds?: number;
 	cleanup_seconds?: number;

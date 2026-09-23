@@ -10,7 +10,7 @@
 		value: string;
 		placeholder: string;
 		disabled: boolean;
-		/** True only when the `server` frame carried an `upload` URL (Appendix E). */
+		/** Attachments and voice clips: only with cap `embed:upload` (Appendix E), which the page does not enable yet. */
 		canUpload: boolean;
 		/** The senders this room has seen: who an `@` can name. */
 		people: MentionPerson[];
@@ -19,7 +19,7 @@
 		oninput: () => void;
 		onsend: () => void;
 		/** A picked file or a finished voice clip, to upload and send. */
-		onupload: (file: File) => void;
+		onupload?: (file: File) => void;
 		oncancelreply: () => void;
 	}
 	let { value = $bindable(), placeholder, disabled, canUpload, people, replyPreview, oninput, onsend, onupload, oncancelreply }: Props = $props();
@@ -35,7 +35,7 @@
 	let recordTimer: ReturnType<typeof setInterval> | undefined;
 
 	let recording = $derived(recordSeconds !== undefined);
-	/** Voice messages need both an upload URL and a browser that can record. */
+	/** Voice messages need both uploads and a browser that can record. */
 	let canRecord = $derived(canUpload && typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia));
 	let matches = $derived.by((): MentionPerson[] => {
 		if (query === undefined) return [];
@@ -126,7 +126,7 @@
 	function attach(input: HTMLInputElement): void {
 		const files = [...(input.files ?? [])];
 		input.value = '';
-		for (const file of files) onupload(file);
+		for (const file of files) onupload?.(file);
 	}
 
 	/** Microphone: record, then hand the clip over as an audio file. */
@@ -151,7 +151,7 @@
 			clearRecording();
 			if (chunks.length === 0 || seconds < 1) return;
 			const type = current.mimeType || chunks[0].type || 'audio/webm';
-			onupload(new File(chunks, `voice-message.${type.includes('ogg') ? 'ogg' : 'webm'}`, { type }));
+			onupload?.(new File(chunks, `voice-message.${type.includes('ogg') ? 'ogg' : 'webm'}`, { type }));
 		};
 		current.start();
 	}

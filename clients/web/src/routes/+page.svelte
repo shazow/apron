@@ -18,7 +18,7 @@
 	import { backendHost, demoRetentionNotice, statusLabel } from '$lib/ui/connection';
 	import { FeedbackState } from '$lib/ui/feedback.svelte';
 	import { MentionTracker } from '$lib/ui/mentions.svelte';
-	import { embedFor, isOwn, mentionsMe, peopleIn, replySnippet, senderName } from '$lib/ui/messages';
+	import { isOwn, mentionsMe, peopleIn, replySnippet, senderName } from '$lib/ui/messages';
 	import { reactionChips, type ReactionChip } from '$lib/ui/reactions';
 	import { MessageSelection } from '$lib/ui/selection.svelte';
 	import { SessionView } from '$lib/ui/session.svelte';
@@ -361,26 +361,6 @@
 		replyId = undefined;
 		drafts = { ...drafts, [key]: '' };
 		replyDrafts = { ...replyDrafts, [key]: undefined };
-	}
-
-	/** Uploads one file (Appendix E) and sends it as an embed beside whatever is in the composer. */
-	async function sendUpload(file: File): Promise<void> {
-		if (!client || !paneRoom || !canCompose || !session.canUpload) return;
-		const chat = client;
-		const roomId = paneRoom.id;
-		const reply = replyId;
-		const text = composerText;
-		feedback.pending(`Uploading ${file.name}…`);
-		let url: string;
-		try {
-			url = await chat.uploadMedia(file);
-		} catch (cause) {
-			feedback.error(cause, 'Upload failed');
-			return;
-		}
-		clearComposer(roomId);
-		stickToBottom = true;
-		feedback.track(chat.send(roomId, text, 'markdown', { ...(reply ? { replyTo: reply } : {}), embeds: [embedFor(file, url)] }), 'Sending…');
 	}
 
 	function beginReply(event: MessageRecord): void {
@@ -766,7 +746,7 @@
 					canUpload={session.canUpload}
 					{people}
 					replyPreview={replyId ? replyPreview(replyId) : undefined}
-					oninput={composerInput} onsend={sendMessage} onupload={sendUpload} oncancelreply={cancelReply}
+					oninput={composerInput} onsend={sendMessage} oncancelreply={cancelReply}
 				/>
 			{/if}
 		{:else}

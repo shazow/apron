@@ -53,14 +53,14 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 		await state.connect();
 	});
 	const guest = await page.evaluate(() => (window as any).request('auth', { scheme: 'guest' }));
-	const guestRename = await page.evaluate(() => (window as any).request('name', { name: 'Guest rename' }));
+	const guestRename = await page.evaluate(() => (window as any).request('me', { name: 'Guest rename' }));
 	expect(guestRename.error.code).toBe(-32001);
 	expect(guest.result.you.user_id).toBeTruthy();
 	const registered = await page.evaluate(() => (window as any).passkey('register'));
 	expect(registered.error).toBeUndefined();
 	expect(registered.result.you.user_id).not.toBe(guest.result.you.user_id);
 	const userId = registered.result.you.user_id;
-	const renamed = await page.evaluate(() => (window as any).request('name', { name: 'Saved passkey name' }));
+	const renamed = await page.evaluate(() => (window as any).request('me', { name: 'Saved passkey name' }));
 	expect(renamed.result.you).toMatchObject({ user_id: userId, name: 'Saved passkey name' });
 	const { credentials } = await cdp.send('WebAuthn.getCredentials', { authenticatorId });
 	expect(credentials).toHaveLength(1);
@@ -206,6 +206,8 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 			for (const operation of result.operations) expect(operation.error).toBeUndefined();
 			expect(result.history.result.entries).toBeInstanceOf(Array);
 			expect(result.limited.error.code).toBe(-32002);
+			expect(result.limited.error.data.retry_after).toBeGreaterThanOrEqual(1);
+			expect(Number.isInteger(result.limited.error.data.retry_after)).toBe(true);
 		}
 	} finally {
 		await new Promise<void>((resolve, reject) => frontend.close(error => error ? reject(error) : resolve()));

@@ -37,7 +37,7 @@ export function statusLabel(snapshot: ClientSnapshot, stalled: boolean): string 
 }
 
 export function demoRetentionNotice(server: ServerParams | undefined): string {
-	const seconds = server?.demo?.retention_seconds;
+	const seconds = server?.ext?.demo?.retention_seconds;
 	if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return '';
 	const hours = Math.max(1, Math.round(seconds / 3600));
 	return hours >= 20 && hours <= 28

@@ -34,7 +34,8 @@ describe('connection state', () => {
 
 	it('describes demo retention in hours, or a day', () => {
 		expect(demoRetentionNotice(undefined)).toBe('');
-		expect(demoRetentionNotice({ protocol: 1, auth: [], demo: { retention_seconds: 86_400 } })).toMatch(/last day/);
-		expect(demoRetentionNotice({ protocol: 1, auth: [], demo: { retention_seconds: 7_200 } })).toMatch(/last 2 hours/);
+		expect(demoRetentionNotice({ protocol: 4, auth: [], ext: { demo: { retention_seconds: 86_400 } } })).toMatch(/last day/);
+		expect(demoRetentionNotice({ protocol: 4, auth: [], ext: { demo: { retention_seconds: 7_200 } } })).toMatch(/last 2 hours/);
+		expect(demoRetentionNotice({ protocol: 4, auth: [], ext: {} })).toBe('');
 	});
 });

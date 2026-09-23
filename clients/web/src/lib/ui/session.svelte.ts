@@ -53,7 +53,8 @@ export class SessionView {
 	readonly canManageRooms = $derived(canManageRooms(this.server));
 	/** Reaction chips and the React action (cap `reactions`). */
 	readonly canReact = $derived(canReact(this.server));
-	readonly canUpload = $derived(typeof this.server?.upload === 'string' && this.server.upload.length > 0);
+	/** Attachments need cap `embed:upload` (Appendix E), which this client does not implement yet. */
+	readonly canUpload = false;
 
 	/** Takes the client's next snapshot and keeps the held view in step with it. */
 	apply(next: ClientSnapshot, client: ChatClient): void {
