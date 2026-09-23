@@ -277,3 +277,57 @@ describe('failed handshake diagnostics', () => {
 		expect(FakeSocket.instances).toHaveLength(2);
 	});
 });
+
+describe('reconnect divider', () => {
+	let client: ChatClient;
+	let snapshot: ClientSnapshot;
+	const room = { room_id: 'general', log_id: '10', title: 'General', latest_log_id: '12', history_log_id: '10' };
+	const entry = (id: string) => ({ message_id: id, log_id: id, room_id: 'general', from: { user_id: 'guest_1' }, body: { text: id } });
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		FakeSocket.instances = [];
+		vi.stubGlobal('WebSocket', FakeSocket);
+		client = new ChatClient('ws://fake.test/');
+		client.subscribe((next) => (snapshot = next));
+		client.start();
+	});
+
+	afterEach(() => {
+		client.stop();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it('never marks a first load, or a reconnect that history fully recovers', async () => {
+		await latest().greet(['history', 'rooms'], { room });
+		expect(snapshot.showReconnectDivider).toBe(false);
+		await latest().reply('history', { entries: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
+		expect(snapshot.rooms[0].recovering).toBe(false);
+		expect(snapshot.showReconnectDivider).toBe(false);
+		// A thread's first load is not a reconnect either.
+		latest().receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '21', history_log_id: '20' } });
+		const load = client.loadRoom('20');
+		await latest().reply('history', { entries: [{ ...entry('21'), room_id: '20' }], more: false, latest_log_id: '21', history_log_id: '20' });
+		await load;
+		expect(snapshot.showReconnectDivider).toBe(false);
+
+		latest().drop();
+		vi.advanceTimersByTime(5_000);
+		await latest().greet(['history', 'rooms'], { room });
+		await latest().reply('history', { entries: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
+		expect(snapshot.authenticated).toBe(true);
+		expect(snapshot.showReconnectDivider).toBe(false);
+	});
+
+	it('marks a reconnect to a server without history, whose earlier messages are gone', async () => {
+		await latest().greet();
+		latest().receive({ method: 'message', params: { ...entry('11'), room_id: 'lobby' } });
+		expect(snapshot.showReconnectDivider).toBe(false);
+		latest().drop();
+		vi.advanceTimersByTime(5_000);
+		await latest().greet();
+		expect(snapshot.authenticated).toBe(true);
+		expect(snapshot.showReconnectDivider).toBe(true);
+	});
+});

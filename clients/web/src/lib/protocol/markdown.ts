@@ -1,7 +1,8 @@
 import { HtmlRenderer, Parser } from 'commonmark';
 
 const parser = new Parser();
-const renderer = new HtmlRenderer({ safe: true });
+// A line break typed in a chat message is meant: soft breaks render as `<br />`, not as a space.
+const renderer = new HtmlRenderer({ safe: true, softbreak: '<br />' });
 
 /** Someone the room has seen speak, so an `@handle` in a body can become a chip. */
 export interface MentionPerson {
@@ -19,7 +20,7 @@ interface MentionHandle {
 	person: MentionPerson;
 }
 
-/** CommonMark rendering with raw HTML and unsafe URL schemes disabled. */
+/** CommonMark rendering with raw HTML and unsafe URL schemes disabled, keeping typed line breaks. */
 export function renderMarkdown(source: string, people: MentionPerson[] = []): string {
 	return linkMentions(renderer.render(parser.parse(source)), people);
 }

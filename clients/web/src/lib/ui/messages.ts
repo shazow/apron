@@ -67,7 +67,7 @@ export function peopleIn(messages: MessageRecord[], me: Identity | undefined): M
 	return people;
 }
 
-/** Media kinds come from the file's type; anything else is a plain file (§6.1). */
+/** Media kinds come from the file's type; anything else is a plain file (Appendix E). */
 export function embedFor(file: File, url: string): Embed {
 	const kind = file.type.startsWith('image/') ? 'image'
 		: file.type.startsWith('video/') ? 'video'

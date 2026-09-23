@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
-import { editMessage, waitForMessage } from './test-helpers';
+import { editMessage, reactionChip, reactTo, sendMessage, startThread, waitForMessage } from './test-helpers';
 
 // This exercises browser-generated credentials and the actual Workers verifier.
 // Runtime/storage policy cases live in servers/cloudflare-worker/test.
@@ -12,7 +12,7 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 		hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true
 	} });
 	// An actual inert same-origin resource establishes localhost's address space
-	// without starting the frontend's extra anonymous protocol socket.
+	// without starting the frontend's extra guest protocol socket.
 	await page.goto('/robots.txt');
 	await page.evaluate(async () => {
 		const state = window as any;
@@ -52,15 +52,15 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 		};
 		await state.connect();
 	});
-	const guest = await page.evaluate(() => (window as any).request('auth', { scheme: 'anonymous' }));
-	const guestNick = await page.evaluate(() => (window as any).request('nick', { name: 'Guest rename' }));
-	expect(guestNick.error.code).toBe(-32001);
+	const guest = await page.evaluate(() => (window as any).request('auth', { scheme: 'guest' }));
+	const guestRename = await page.evaluate(() => (window as any).request('name', { name: 'Guest rename' }));
+	expect(guestRename.error.code).toBe(-32001);
 	expect(guest.result.you.user_id).toBeTruthy();
 	const registered = await page.evaluate(() => (window as any).passkey('register'));
 	expect(registered.error).toBeUndefined();
 	expect(registered.result.you.user_id).not.toBe(guest.result.you.user_id);
 	const userId = registered.result.you.user_id;
-	const renamed = await page.evaluate(() => (window as any).request('nick', { name: 'Saved passkey name' }));
+	const renamed = await page.evaluate(() => (window as any).request('name', { name: 'Saved passkey name' }));
 	expect(renamed.result.you).toMatchObject({ user_id: userId, name: 'Saved passkey name' });
 	const { credentials } = await cdp.send('WebAuthn.getCredentials', { authenticatorId });
 	expect(credentials).toHaveLength(1);
@@ -114,6 +114,18 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	const savedMessage = page.locator(`article[data-message-id="${posted.result.message_id}"]`);
 	await editMessage(savedMessage, 'verified returning owner');
 	await waitForMessage(page, 'verified returning owner');
+	// Threads on the demo: a thread under General, introduced by the message, with a reaction inside.
+	const threadId = await startThread(page, savedMessage);
+	await expect(savedMessage).toBeVisible();
+	await expect(page.getByRole('heading', { level: 1 })).toContainText('verified returning owner');
+	await sendMessage(page, 'worker thread reply');
+	const reply = await waitForMessage(page, 'worker thread reply');
+	await reactTo(reply, '🎉');
+	await expect(reactionChip(reply, '🎉')).toHaveText('🎉1');
+	await expect(reactionChip(reply, '🎉')).toHaveAttribute('aria-pressed', 'true');
+	await page.getByRole('button', { name: 'Back to room', exact: true }).click();
+	await expect(page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`)).toContainText('verified returning owner');
+	await expect(savedMessage).toHaveCount(0);
 });
 
 test('built frontend connects to the Worker and recovers retained history', async ({ page }) => {
@@ -125,6 +137,12 @@ test('built frontend connects to the Worker and recovers retained history', asyn
 	await page.getByRole('textbox', { name: 'Message', exact: true }).fill(message);
 	await page.getByRole('button', { name: 'Send message', exact: true }).click();
 	await expect(page.locator('article[data-message-id]').filter({ hasText: message })).toBeVisible();
+	// The demo denies guest renames; the profile editor says so and keeps the old handle.
+	await page.getByRole('button', { name: /^Your profile on/ }).click();
+	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
+	await dialog.getByTestId('display-name-input').fill('Renamed guest');
+	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('The server declined this handle. Your old one is still in use.');
 });
 
 test('custom frontend origins share guest quotas and cannot use passkeys', async ({ page }) => {
@@ -157,7 +175,7 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 					socket.send(JSON.stringify({ id, method, params }));
 				});
 				try {
-					const auth = await request('auth', { scheme: 'anonymous' });
+					const auth = await request('auth', { scheme: 'guest' });
 					const passkey = await request('auth', { scheme: 'webauthn', action: 'register', step: 'begin' });
 					let operations: any[] = [];
 					if (index === 0) {
@@ -182,7 +200,7 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 					await new Promise<void>(resolve => { socket.onclose = () => resolve(); socket.close(); });
 				}
 			}, index);
-			expect(result.announcement.auth).toEqual(['anonymous']);
+			expect(result.announcement.auth).toEqual(['guest']);
 			expect(result.auth.result.you.user_id).toBeTruthy();
 			expect(result.passkey.error.code).toBe(-32001);
 			for (const operation of result.operations) expect(operation.error).toBeUndefined();

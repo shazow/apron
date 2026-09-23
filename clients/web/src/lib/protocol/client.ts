@@ -1138,7 +1138,10 @@ export class ChatClient {
 		this.authRequested = false;
 		this.reconnectAttempt = 0;
 		this.disconnectedAt = undefined;
-		this.showReconnectDivider = this.showReconnectDivider || this.rooms.size > 0;
+		// A reconnect drops the store, and a server with cap `history` gives it all
+		// back through recovery; only a session-only scrollback (§4 fallback) has a
+		// real gap to mark.
+		this.showReconnectDivider = (this.showReconnectDivider || this.rooms.size > 0) && !this.hasCap('history');
 		// Requests queued while this connection was authenticating go out now.
 		for (const request of this.requests.values()) this.sendRequest(request);
 		if (this.displayName) this.sendName();
@@ -1362,7 +1365,6 @@ export class ChatClient {
 		room.checkpoint = maxDefined(room.checkpoint, recovery.head);
 		room.recovery = undefined;
 		room.dirty = true;
-		this.showReconnectDivider = [...this.rooms.values()].every((entry) => !entry.recovery);
 		for (const waiter of room.waiters.splice(0)) waiter.resolve();
 	}
 

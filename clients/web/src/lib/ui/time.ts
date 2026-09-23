@@ -3,10 +3,14 @@ import type { MessageRecord } from '$lib/protocol/types';
 /** Consecutive messages from one sender within this window read as one group. */
 export const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
-/** Message IDs are epoch milliseconds on the example servers; anything else has no time. */
-export function eventMillis(event: MessageRecord): number | undefined {
-	const millis = Number(event.message_id);
+/** Log IDs (and so message IDs, the creation `log_id`) are epoch milliseconds (§2); anything else has no time. */
+export function idMillis(id: string): number | undefined {
+	const millis = Number(id);
 	return Number.isSafeInteger(millis) && millis > 0 ? millis : undefined;
+}
+
+export function eventMillis(event: MessageRecord): number | undefined {
+	return idMillis(event.message_id);
 }
 
 /** Local 24h `14:02`, or empty when the ID carries no time. */
@@ -16,7 +20,12 @@ export function eventTime(event: MessageRecord): string {
 }
 
 export function dayKey(event: MessageRecord): string {
-	const millis = eventMillis(event);
+	return dayKeyOf(event.message_id);
+}
+
+/** The local day a log ID falls on, or empty when it carries no time. */
+export function dayKeyOf(id: string): string {
+	const millis = idMillis(id);
 	if (!millis) return '';
 	const date = new Date(millis);
 	return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
@@ -24,7 +33,11 @@ export function dayKey(event: MessageRecord): string {
 
 /** "Today", "Yesterday", then `Mon 14 Sep`, as the date dividers read. */
 export function dayLabel(event: MessageRecord, now = new Date()): string {
-	const millis = eventMillis(event);
+	return dayLabelOf(event.message_id, now);
+}
+
+export function dayLabelOf(id: string, now = new Date()): string {
+	const millis = idMillis(id);
 	if (!millis) return '';
 	const date = new Date(millis);
 	const yesterday = new Date(now);

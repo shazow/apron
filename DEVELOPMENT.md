@@ -52,11 +52,11 @@ local Wrangler. The public demo has persistent passkeys and rolling history;
 its passkey registration creates a new identity instead of upgrading guest
 ownership as the Go example does.
 
-The example starts with an anonymous identity. Use **Add passkey** in the profile
+The example starts with a guest identity. Use **Add passkey** in the profile
 editor's Sign-in row to retain that identity and its message ownership, and
 **Sign in with passkey** to return to it (or choose Passkey on the connect
 screen). Passkey sessions resume after transport disconnects;
-page reloads require signing in again. Anonymous reconnects receive a new identity.
+page reloads require signing in again. Guest reconnects receive a new identity.
 Edit and delete permissions belong to the identity that created the message.
 Messages and passkey registrations are held in memory and lost on server restart.
 Use `localhost` for the default passkey configuration; see
@@ -64,59 +64,69 @@ Use `localhost` for the default passkey configuration; see
 
 ## Threads
 
-Start a thread from one of your messages, then open it to reply. The room
-timeline shows only unthreaded messages; each thread shows its current members
-after replaying edits and moves. Open threads through the thread list. Drafts are kept separately for each room
-and thread.
+A thread is a room with a `parent_room_id` (PROTOCOL.md §3.4, Appendix C). The
+sidebar lists top-level rooms; the open room's threads are listed under it and
+shown as cards in its feed. Start a thread from any message in a room (Start
+thread in its toolbar; cap `rooms`): the client creates a room under the
+current one, titled after the message's first line, with the message as its
+`intro_message`. The message stays where it is. In the room feed it is shown as
+its thread's card; inside the thread it leads the timeline, pinned under the
+header and rendered like any message, followed by an "N replies" divider. A
+thread opens once the server has announced it. Drafts and reply targets are kept
+for each room, and a thread is a room of its own.
 
-Your messages move through select mode: shift-click one (or press `x` on it,
-long-press it on touch, or use More → Select) to enter it, shift-click another
-to fill the range, then pick a thread — or, from inside a thread, the room — or
-start a new thread from the selection bar that takes the composer's place. A new
-thread opens once it exists; other moves leave the pane where it is. Each message is
-a separate `message` request carrying the same `thread_id`; a new thread is
-requested once and reused for all of them. Messages the server denies stay
-selected and the bar reports how many didn't move. Escape leaves select mode.
+Thread cards preview up to three lines of the intro message, with its author,
+when it is available (not deleted and not empty), and otherwise the latest
+loaded message on one line. Threads load their own history (`history` on the
+thread's `room_id`) when opened, so message counts in the sidebar and on cards
+appear once a thread has loaded. The Edit button in a thread's header (cap
+`rooms`) opens a popover for its title; the save is a `room` request with the
+thread's `room_id` that resubmits `intro_message` and `ext` unchanged. Any
+authenticated user may create threads and edit their titles on the Go example;
+the Cloudflare demo allows creating threads but denies editing its permanent
+`general` room, and a denied request is reported like any other error.
 
-Thread cards in the room feed preview up to three lines of the summary, or the
-latest loaded message when no summary is present. Open a thread to read the
-full summary pinned under the header. The Edit button in the header opens a
-popover for the thread's name and summary. Without a summary, no summary
-section is shown. Saving an empty summary removes it and restores the message
-preview. Summaries are Markdown, rendered and sanitized like message bodies;
-the card previews the source. Any authenticated participant can edit thread
-metadata in the example server. A `thread` request with an existing `thread_id`
-and `title` and/or `summary` updates only the supplied fields and broadcasts the
-complete metadata; the root and messages stay intact. The jump prompt is hidden
-when the latest timeline item is already visible.
+Your messages move through select mode (cap `edit`): shift-click one (or press
+`x` on it, long-press it on touch, or use More → Select) to enter it,
+shift-click another to fill the range, then pick a thread (or, from inside a
+thread, the room) or start a new thread from the selection bar that takes the
+composer's place. A move is a `message` save with the destination's `room_id`;
+each message is a separate save. A new thread is created first, introduced by
+the earliest picked message and titled after it, and the moves go out once the
+server has named it; the thread then opens. Other moves leave the pane where it
+is. Messages the server denies stay selected and the bar reports how many didn't
+move. Escape leaves select mode. Moved messages keep their reply references and
+reactions.
 
 Mentions are a frontend reading of the text — the protocol carries none. An
 `@handle` matching a sender's name or ID (whole word, case-insensitive, outside
 code) renders as a chip; a message that names you tints its row and pulses once
-when it arrives, and shows an `@` badge on a room you aren't reading or a rust
-jump bar when it landed above the fold. Typing `@` in the composer lists the
-senders the room has seen so one can be inserted as plain text.
+when it arrives, and shows an `@` badge on a room you aren't reading (a thread's
+mentions badge its parent room) or a rust jump bar when it landed above the
+fold. Messages from history, including a thread's history loaded when it is
+opened, never ping. Typing `@` in the composer lists the senders the room (and,
+in a thread, its parent room) has seen so one can be inserted as plain text.
 
-Use a message's Reply action to reference it in a new message. Reply references
-are restricted to the same room but may cross thread boundaries. The
-composer keeps the reply target with the destination's draft. A reply shows the
-quoted message above its body; clicking the quote opens its destination, scrolls
-to the original and highlights it briefly. Edits preserve references; More →
-Remove reply removes one. Messages can move between threads while preserving
-reply references. Deleted targets display as “Message deleted”; targets outside
-loaded history display as “Message unavailable”.
+Use a message's Reply action to reference it in a new message. `reply_to` may
+name a message in any room, so a reply in a thread can quote a message in the
+room and the other way round. The composer keeps the reply target with the
+destination's draft. A reply shows the quoted message above its body; clicking
+the quote opens the room or thread the original lives in (loading a thread's
+history first), scrolls to it and highlights it briefly. Edits preserve
+references; More → Remove reply removes one. Deleted targets display as
+“Message deleted”; targets the client has never seen display as “Message
+unavailable”.
 
-TODO: Add an interface for bulk-moving messages into a thread.
+With cap `reactions`, a message's React action opens a small palette of emoji
+(👍 ❤️ 😂 🎉 😮 😢 👀 ✅). Reactions show as chips under the message with a
+count, highlighted when one of them is yours; a chip's tooltip lists who
+reacted, and clicking it adds or removes your reaction. Each change sends your
+complete emoji set for that message with `reactions`. Tombstones hide their
+reactions.
 
-The server stores thread metadata in memory and re-announces it on connection.
-Empty threads remain available; deleting or moving their root does not remove
-them. Create metadata through `thread`, then use `message` with the returned
-`thread_id` to add messages. Messages in a thread use `message.params.thread_id`;
-replies to a specific message also set `message.params.reply_message_id`. Edits and
-moves submit the complete editable message state with its `message_id`; omitting
-`thread_id` returns it to the room. Moves follow the example's author-only edit
-policy. Opening a thread also requests its history through a separate
-`history` query with `thread_id`.
+The Go server keeps rooms, threads and reactions in memory and re-announces
+every room on connection. Empty threads remain available; deleting or moving
+their intro message does not remove them.
 
 ## Build and serve
 

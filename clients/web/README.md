@@ -44,17 +44,36 @@ you aren't reading, and, when it lands above the fold, turns the jump bar rust
 with **Jump to mention**. Mentions are decided here from the text; the protocol
 carries none.
 
-With the `edit` cap, several of your messages move into one thread at a time:
-shift-click a message (or press `x` on it, long-press it on touch, or pick
-**Select** from its More menu) to enter select mode, shift-click another to fill
-the range, and the selection bar replaces the composer with the count, **Move to
-thread**, **New thread** and Cancel. Each message is its own `message` request;
-denied ones stay selected and the bar says how many didn't move. Escape leaves
-select mode.
+Threads are rooms with a `parent_room_id`. The sidebar lists top-level rooms
+and the open room's threads under it; the room feed shows each thread as a card
+that previews its intro message (or, without one, its latest loaded message).
+With the `rooms` cap, **Start thread** on a message creates a thread under the
+room with that message as its intro; the message stays in the room, where its
+card stands in for it, and leads the thread's timeline, pinned under the header.
+A thread's header offers **Edit** for its title. Threads load their history when
+opened; drafts are kept per room, threads included.
+
+With the `edit` cap, several of your messages move at a time: shift-click a
+message (or press `x` on it, long-press it on touch, or pick **Select** from its
+More menu) to enter select mode, shift-click another to fill the range, and the
+selection bar replaces the composer with the count, **Move to thread** (or, in a
+thread, back to the room), **New thread** (with the `rooms` cap) and Cancel. A
+move is a save of the message with the destination's `room_id`, one request per
+message; a new thread is created first and the moves follow once the server has
+named it. Denied ones stay selected and the bar says how many didn't move.
+Escape leaves select mode.
+
+A reply's quote may point into another room: clicking it opens that room or
+thread, loading the thread's history if needed, and highlights the message.
+
+With the `reactions` cap, a message's **React** action opens a small emoji
+palette, and reactions show as chips under the message: emoji and count,
+highlighted when one is yours, with a tooltip naming who reacted. Clicking a
+chip toggles your reaction. Tombstones show no reactions.
 
 When the server advertises an `upload` URL, the composer grows attach and
 microphone buttons: attach posts the file as `multipart/form-data` to that URL
-(§6.1) and sends the returned URL as an embed, and the microphone records a clip
+(Appendix E) and sends the returned URL as an embed, and the microphone records a clip
 and sends it as an `audio` embed. Neither example server in this repository
 offers uploads, so both buttons stay hidden there.
 
@@ -91,7 +110,7 @@ automatically replace them with a guest identity. Signing out clears the stored
 credentials and reconnects as a guest. The Go example's sessions are in memory
 and are lost on backend restart.
 
-The WebAuthn exchange follows [Appendix C of the protocol](../../PROTOCOL.md#appendix-c--webauthn-authentication-optional):
+The WebAuthn exchange follows [Appendix I of the protocol](../../PROTOCOL.md#appendix-i--webauthn-authentication-optional):
 both registration and login use `action` plus `step: "begin"` or
 `step: "finish"`, with the server's `challenge_id` and `public_key` and the
 browser's standard JSON credential representation. The implementation details
@@ -105,17 +124,18 @@ the reference theme; light follows `prefers-color-scheme`), and
 verbatim. The Svelte components under `src/lib/components` wrap its `ap-*`
 classes one to one with the system's React components — `ConnectScreen`,
 `Sidebar` and `ProfileBar`, `RoomHeader` and `ThreadEditor`, `ThreadCard`,
-`Message`, `Composer` with its `MentionPicker`, `SelectionBar`, `JumpBar`,
+`Message` with its `ReactionBar`, `Composer` with its `MentionPicker`, `SelectionBar`, `JumpBar`,
 `StatusBanner`, `Avatar` — and carry only the layout glue each needs. Re-copy
 `apron.css` when the design system changes rather than editing it here.
 
 `src/routes/+page.svelte` owns the session and the navigation (which room or
-thread is open, per-destination drafts) and composes the components. The
+thread is open, per-room drafts) and composes the components. The
 reactive state behind it lives in `src/lib/ui` as small classes — `SessionView`
 (the last authenticated view, held through a reconnect), `MentionTracker`,
 `MessageSelection`, `FeedbackState`, `SidebarLayout` — beside pure, unit-tested
-helpers: `timeline.ts` builds the room and thread views, `messages.ts` and
-`time.ts` read messages, `connection.ts` words the connection state, and
+helpers: `timeline.ts` groups threads under their rooms and builds the room and
+thread views, `reactions.ts` turns reaction summaries into chips, `messages.ts`
+and `time.ts` read messages, `connection.ts` words the connection state, and
 `storage.ts` keeps everything remembered between visits under `apron.*` keys.
 
 Protocol types, replay reduction, and the WebSocket session live under
