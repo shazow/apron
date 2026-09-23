@@ -522,7 +522,6 @@ the fallback:
 | `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | Appendix D |
 | `activity`     | typing indicators and read markers                           | no typing or read indicators | Appendix D |
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | Appendix E |
-| `embed:oembed` | `oembed` embeds: link and media previews the server fills    | links stay in the text       | Appendix E |
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | Appendix K |
 
 Features without a cap: other embeds are body content (Appendix E); push
@@ -887,7 +886,7 @@ broadcast carries the state.
 the renderer. Unknown kinds use the fallback card (§3.5).
 
 ```json
-{"embed_id": "embed_1240", "kind": "oembed", "url": "https://example.com/post", "oembed": {"type": "link", "version": "1.0", "title": "Shipping v4"}}
+{"embed_id": "embed_1235", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/embed_1235"}
 {"embed_id": "embed_1241", "kind": "iframe", "url": "https://backend:8443/term/abc", "height": 300}
 {"embed_id": "embed_1242", "kind": "html", "html": "<table>…</table>"}
 ```
@@ -900,7 +899,7 @@ the renderer. Unknown kinds use the fallback card (§3.5).
 - `html`: sanitize with an allowlist sanitizer (e.g. DOMPurify) before
   insertion, regardless of source. Servers make no safety promises about
   content flowing through them.
-- `oembed` and `upload` are below; `stream` is Appendix K.
+- `upload` is below; `stream` is Appendix K.
 - Future typed embeds (`diff`, `poll`, …) use the fallback rule.
 
 **Embed identity.** Servers that advertise any `embed:*` cap assign each
@@ -909,8 +908,9 @@ embed an opaque `embed_id`; other servers MAY store embeds as given.
 - A save keeps an embed by sending it back with its `embed_id`. An embed
   without one is new, an `embed_id` left out removes that embed, and an
   unknown `embed_id` is `invalid_params`.
-- The server owns `embed_id`, `oembed`, and a stream's `url` and `text`. It
-  ignores them on input and restores them on a save from its records.
+- The server owns `embed_id`, an upload's `url` and `oembed`, and a stream's
+  `url` and `text`. It ignores them on input and restores them on a save from
+  its records.
 - Content the server hosts for an embed belongs to that message. When the
   embed is removed or the message is deleted or redacted, servers SHOULD
   delete the content.
@@ -944,13 +944,14 @@ The `message` result lists them, in request order:
   }
 }
 // sender: curl -T before.png https://chat.example/w/4c7a…
-// <- the upload completes: the same embed_id, now an oembed
+// <- the upload completes: the server sets url and here adds oembed
 {
   "method": "message", "params": {
     "message_id": "1724803500000", "log_id": "1724803502210", "prev_log_id": "1724803500000",
     "room_id": "general", "from": {"user_id": "ada", "name": "Ada"},
     "body": {"text": "Before the fix:", "embeds": [{
-      "embed_id": "embed_1235", "kind": "oembed", "url": "https://chat.example/f/embed_1235",
+      "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
+      "url": "https://chat.example/f/embed_1235",
       "oembed": {
         "type": "photo", "version": "1.0", "title": "before.png",
         "url": "https://chat.example/f/embed_1235", "width": 1280, "height": 720,
@@ -968,25 +969,18 @@ The `message` result lists them, in request order:
   snapshot with the embed completed; if the write never starts in time or
   fails, it publishes a snapshot without the embed.
 
-**`oembed`** (cap `embed:oembed`). `oembed` holds an
-[oEmbed 1.0](https://oembed.com/) response produced by the server; `url`,
-if present, is where a click goes.
+**`upload`** (cap `embed:upload`). The sender gives an optional `title`, such
+as the file name. While `url` is absent the upload is pending, and clients
+show a placeholder. On success the server sets `url` to the file it hosts.
 
-- To add a preview, a client sends `{"kind": "oembed", "url": "..."}`. The
-  server fills `oembed` in a later snapshot from the page's oEmbed or
-  OpenGraph data, or removes the embed if it finds none. Servers MAY add
-  previews for links in `body.text` the same way.
-- The server hosts or proxies every image `oembed` references, including
-  `thumbnail_url` and a `photo`'s `url`, and sets their dimensions.
-- Clients MAY render `oembed` with any oEmbed library. They never insert
-  `html` (`video`, `rich`) into the page: they render it in a sandboxed
-  iframe under the `iframe` rules, or ignore it.
-
-**`upload`** (cap `embed:upload`). The sender gives an optional `title`,
-such as the file name. Clients show a placeholder while the upload is
-pending. On success the server replaces the embed, keeping its `embed_id`,
-with an `oembed` embed for the file: `photo` for images, `video` for audio
-and video, otherwise `link` with the file as `url`.
+- The server MAY add `oembed`, an [oEmbed 1.0](https://oembed.com/) response
+  describing the file, such as a `photo` with its dimensions and a
+  thumbnail. Clients MAY render it with any oEmbed library.
+- The server hosts every image `oembed` references and sets their
+  dimensions.
+- Clients never insert `oembed.html` into the page: they render it in a
+  sandboxed iframe under the `iframe` rules, or ignore it.
+- Without `oembed`, clients show a file card: `title` linking to `url`.
 
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
 the user's name.
