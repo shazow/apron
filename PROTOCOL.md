@@ -282,6 +282,19 @@ MAY comply, decline, or alter it:
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
 ```
 
+After authentication, the server MAY send a `you` notification at any time,
+such as after a forced rename or an authentication change. Its `params`
+mirror the `auth` result, and each replaces the previous identity:
+
+```json
+{"method": "you", "params": {"you": {"user_id": "alice", "name": "Alice (away)"}}}
+```
+
+If `user_id` changes, the connection now acts as the new identity. The
+server re-announces the rooms visible to it, removing those no longer
+visible (§3.4), and clients re-derive per-user state such as their own
+reactions (Appendix D).
+
 Bots and agents are ordinary senders; nothing distinguishes them.
 
 - Suggested convention: `@`-prefixed `user_id`s such as `@server` are system
@@ -290,9 +303,10 @@ Bots and agents are ordinary senders; nothing distinguishes them.
 ### 3.4 Rooms
 
 A room is a log with a server-chosen `room_id`. After authentication,
-servers MUST announce all currently visible rooms, and MUST announce a room
-before delivering anything in it. A minimal server may announce just one
-room.
+servers SHOULD announce the currently visible rooms, and MUST announce a room
+before delivering anything in it. A server with many rooms MAY announce a
+subset, such as joined rooms and recently active threads. A minimal server
+may announce just one room.
 
 ```json
 {
@@ -458,8 +472,8 @@ Three frame idioms cover everything logged or announced:
 - **Per-user state** (`reactions`, `typing`): `from` plus the user's complete
   state for a scope; newest wins per user. `reactions` is logged (§2),
   `typing` is not.
-- **Announcements** (`server`, `rtc`): unlogged, re-sent in full; each
-  replaces the last.
+- **Announcements** (`server`, `you`, `rtc`): unlogged, re-sent in full;
+  each replaces the last.
 
 ---
 
