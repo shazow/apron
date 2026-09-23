@@ -489,8 +489,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	case "auth":
 		result, operationErr = s.authenticate(c, req)
 		responseSent = operationErr == nil
-	case "name", "nick":
-		// "nick" is the pre-v3 spelling still sent by older clients.
+	case "name":
 		result, operationErr = s.rename(c, req)
 		cacheResult = operationErr == nil
 	case "message":
@@ -568,8 +567,7 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 		}
 		return s.authenticateToken(c, req, time.Now())
 	}
-	// "anonymous" is the pre-v3 name of the guest scheme and remains an alias.
-	if scheme != "guest" && scheme != "anonymous" {
+	if scheme != "guest" {
 		return nil, &rpcError{Code: codeUnsupported, Message: "Unsupported authentication scheme"}
 	}
 	name, err := parseString(req.params, "name", false)

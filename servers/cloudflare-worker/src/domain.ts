@@ -36,7 +36,6 @@ export interface DedupRecord {
 }
 
 export interface AdmissionSnapshot {
-	openConnections: number;
 	globalFrames: number;
 	globalPosts: number;
 }

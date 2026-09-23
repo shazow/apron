@@ -16,9 +16,8 @@ Defaults:
 - protocol: Apron v3 (`PROTOCOL.md` at the repository root)
 - capabilities: `history`, `edit`, `rooms`, `reactions`
 - seeded room: `general` (title `General`)
-- authentication: WebAuthn passkeys, bearer-token resume, and `guest`
-  (`anonymous` is accepted as an alias for older clients); guest user IDs are
-  `guest_<n>` and honor an optional requested `name`
+- authentication: WebAuthn passkeys, bearer-token resume, and `guest`; guest
+  user IDs are `guest_<n>` and honor an optional requested `name`
 - passkey RP ID: `localhost`; frontend origins: `http://localhost:5173` and
   `http://localhost:8080`
 
@@ -69,10 +68,10 @@ is then logged in the destination room.
 
 ## Rooms and threads
 
-A thread is a room with `parent_room_id`; there is no separate thread method or
-`thread_id`. `room` without `room_id` creates a room (optional
-`parent_room_id`, `title`, `intro_message`, `ext`); with `room_id` it replaces
-every client field except `parent_room_id`, which is fixed at creation.
+A thread is a room with `parent_room_id`. `room` without `room_id` creates a
+room (optional `parent_room_id`, `title`, `intro_message`, `ext`); with
+`room_id` it replaces every client field except `parent_room_id`, which is
+fixed at creation.
 Omitted fields are cleared. Both return `{"room_id": ...}` and broadcast the
 new room record, which is logged in the room's own log. Any authenticated
 user may create top-level rooms or threads (nested threads are allowed) and
@@ -100,10 +99,8 @@ user are `invalid_params`.
 Request IDs deduplicate accepted operations for the connection's current user:
 a retry returns the original result without re-executing or rebroadcasting,
 and reuse with a different method or params is `invalid_params`. Switching
-identities clears that cache. `name` renames the current identity (`nick` is
-accepted as an alias). `typing` is relayed to all clients. Unknown requests,
-including the removed v2 `thread` and `room_create` methods, return
-`unsupported`.
+identities clears that cache. `name` renames the current identity. `typing` is
+relayed to all clients. Unknown requests return `unsupported`.
 
 ## Passkeys
 

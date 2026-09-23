@@ -190,7 +190,7 @@ it('commits once for canonical retries, passes ext through, and sends no reply t
 		const saved = await reply(peer, '');
 		expect(saved.result.message_id).toMatch(/^[1-9][0-9]*$/);
 		const broadcast = await peer.next();
-		// A flat, self-describing snapshot: no params.message wrapper or echo.
+		// A flat, self-describing snapshot.
 		expect(broadcast).toEqual({ method: 'message', params: {
 			message_id: saved.result.message_id, log_id: saved.result.message_id, room_id: 'general',
 			from: you, body: { text: 'hello', format: 'plain', embeds: [] }, ext: { z: 1, a: 2 },
@@ -211,7 +211,7 @@ it('commits once for canonical retries, passes ext through, and sends no reply t
 	} finally { peer.close(); }
 });
 
-it('counts anonymous posting across sockets and returns retained retries after posting exhaustion', async () => {
+it('counts guest posting across sockets and returns retained retries after posting exhaustion', async () => {
 	const ip = `198.51.100.${nextIp++}`;
 	const first = await connect(ip);
 	const second = await connect(ip);
@@ -238,12 +238,11 @@ it('counts anonymous posting across sockets and returns retained retries after p
 	} finally { first.close(); second.close(); }
 });
 
-it('pipelined anonymous auth precedes mutation and errors preserve identifiable IDs', async () => {
+it('pipelined guest auth precedes mutation and errors preserve identifiable IDs', async () => {
 	const peer = await connect();
 	try {
 		expect((await peer.next()).method).toBe('server');
-		// The v2 scheme name remains an accepted alias for guest access.
-		peer.send({ id: 'a', method: 'auth', params: { scheme: 'anonymous' } });
+		peer.send({ id: 'a', method: 'auth', params: { scheme: 'guest' } });
 		peer.send({ id: 'm', method: 'message', params: { room_id: 'general', body: { text: 'pipelined' } } });
 		expect((await peer.next()).id).toBe('a');
 		expect((await peer.next()).method).toBe('room');
@@ -262,15 +261,13 @@ it('pipelined anonymous auth precedes mutation and errors preserve identifiable 
 
 // Tests below create thread rooms, which every later authentication announces.
 
-it('rejects removed v2 methods and requests without a room', async () => {
+it('rejects requests without a room and operations guests may not perform', async () => {
 	// Three invalid requests within a minute close a socket, so spread them.
 	const peer = await connect();
 	const other = await connect();
 	try {
 		await authenticate(peer);
 		await authenticate(other);
-		peer.send({ id: 'thread', method: 'thread', params: { room_id: 'general', title: 'v2 thread' } });
-		expect((await peer.next()).error.code).toBe(-32601);
 		peer.send({ id: 'no-room', method: 'message', params: { body: { text: 'where?' } } });
 		expect((await peer.next()).error.code).toBe(-32602);
 		peer.send({ id: 'no-room-history', method: 'history', params: { limit: 5 } });

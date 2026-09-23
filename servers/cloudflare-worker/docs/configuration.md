@@ -140,7 +140,7 @@ them. Cleanup and deduplication run in bounded batches/records, while
 `threadLimit` counts thread rooms (rooms with a `parent_room_id`) and
 `threadMetadataBytes` bounds a room's serialized client fields (`title`,
 `intro_message` reference, `ext`). The `anonymous*` variables configure the
-guest tier (the protocol v3 `guest` auth scheme); their names are unchanged.
+guest tier (the `guest` auth scheme).
 
 The numeric rows are grouped by their unit and enforcement scope:
 

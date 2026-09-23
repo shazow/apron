@@ -4,11 +4,11 @@ Date: 2026-09-20
 Status: Implementation specification
 Target: https://github.com/shazow/apron
 Protocol: https://github.com/shazow/apron/blob/main/PROTOCOL.md
-Protocol reference reviewed: protocol version 3, Git blob SHA `b847bb0b2220a7827e236c2b97166aace81296a7` (a file blob, not a commit). The implementation was first written against protocol version 2 (blob `d24de5ec177d0c042d7237a7783ccdc8bffec3d5`); section 4.1 records the v3 migration.
+Protocol reference reviewed: protocol version 3, Git blob SHA `b847bb0b2220a7827e236c2b97166aace81296a7` (a file blob, not a commit).
 
 ## 1. Objective and instructions to the coding harness
 
-Build a usable, publicly accessible Apron demo backend using native Cloudflare Workers, one SQLite-backed Durable Object (DO), and hibernating WebSockets. Support guest (anonymous) use and passkey authentication, bounded posting and history, and graceful resource exhaustion. The demo must run on the actual Workers Free plan without enabling paid services.
+Build a usable, publicly accessible Apron demo backend using native Cloudflare Workers, one SQLite-backed Durable Object (DO), and hibernating WebSockets. Support guest use and passkey authentication, bounded posting and history, and graceful resource exhaustion. The demo must run on the actual Workers Free plan without enabling paid services.
 
 Read the repository's `AGENTS.md`, existing code, package-manager configuration, and `PROTOCOL.md` before implementing. Reuse existing client/protocol utilities where appropriate. Compare the current protocol with the reference above; preserve its mandatory behavior and document material differences. This specification defines deployment policies within the base chat protocol.
 
@@ -23,7 +23,7 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 - `edit`: owner-authorized replacement, deletion, restoration, and moves between rooms of retained messages.
 - `rooms`: thread rooms (rooms with `parent_room_id`) created and edited by participants; `room_join`/`room_leave`. The permanent `general` room is the only top-level room.
 - `reactions`: per-user emoji sets on messages.
-- Guest authentication (`guest`, formerly `anonymous`) and verified WebAuthn registration/login.
+- Guest authentication (`guest`) and verified WebAuthn registration/login.
 - Persistent request deduplication for mutating operations.
 - Rolling 24-hour history with hourly cleanup, using the same room ID indefinitely.
 - Base-protocol history availability boundaries and client recovery support.
@@ -131,17 +131,17 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 - Allow at most 100 thread rooms, each with at most 2 KiB of serialized client fields. All room creation and saves consume posting and resource budgets. No implicit room creation. A thread room whose entire log (creation record included) has expired is removed at cleanup and announced as `{"room_id": ..., "removed": true}`, releasing its slot; deny further creation while the ceiling is full.
 - Reactions (cap `reactions`): a request sets the caller's complete emoji set on one retained message; `[]` clears it and duplicates collapse. Emoji are non-empty strings of at most 64 UTF-8 bytes without control characters, at most 8 distinct per user per message, and at most 32 reacting users per message (calibrated ceilings 16 and 64). A set that equals the current one is accepted without a new record. Non-empty sets on a tombstone are `invalid_params`; clearing is allowed. Each change is a logged record in the message's current room. Reactions are mutations: they share the posting quotas and request deduplication below.
 - Reject empty text with no embeds as local policy. Accept plain and Markdown formats. Limit embeds to four within all byte budgets; store accepted URLs/content without backend fetching or rendering. Unknown embed kinds remain opaque. Client sanitization/sandboxing remains mandatory under the base protocol.
-- `name` (and the older demo spelling `nick`) is implemented as a bounded, rate-limited identity operation for registered users; guests keep their assigned name (`denied`). No avatar downloads or automatic link previews.
+- `name` is implemented as a bounded, rate-limited identity operation for registered users; guests keep their assigned name (`denied`). No avatar downloads or automatic link previews.
 
-### 4.1 Protocol v3 migration
+### 4.1 Internal names
 
-The demo moved from protocol v2 to v3 without renaming the Durable Object. Wire changes: `protocol: 3`; caps `history`, `edit`, `rooms`, `reactions`; auth scheme `guest` (the old `anonymous` spelling is still accepted); flat message snapshots with `reply_to`, `ext`, and `room_id`; threads as rooms (the `thread` method and `thread_id` filters are gone and return `unsupported`/are ignored); one server-wide log across rooms and record kinds; history `rooms` and `reactions` arrays. The broadcast `echo` helper was dropped because no client uses it. Storage moved from schema 1 to schema 2; section 8 describes the upgrade. Internal names such as the `anonymous` quota tier and its `anonymousPosts*` configuration keys are unchanged; only wire-visible names use v3 terms (`guest_posts_per_minute` in `server.params.demo`).
+Internal names such as the `anonymous` quota tier and its `anonymousPosts*` configuration keys refer to guests; wire-visible names use `guest` (`guest_posts_per_minute` in `server.params.demo`).
 
 ## 5. Authentication and IP attribution
 
 ### Guest
 
-`auth` with `scheme: "guest"` (or the v2 alias `"anonymous"`) assigns a random server-authoritative guest ID prefixed `guest_` and a generated bounded display name. Repeated guest auth on that same connection must not mint fresh identities to escape limits. No durable account row is necessary for each guest socket.
+`auth` with `scheme: "guest"` assigns a random server-authoritative guest ID prefixed `guest_` and a generated bounded display name. Repeated guest auth on that same connection must not mint fresh identities to escape limits. No durable account row is necessary for each guest socket.
 
 Guest identity lasts for that socket, including hibernation. This initial version does not promise guest identity recovery after reconnect; explain that guest retry deduplication/ownership cannot span a reconnect that assigns a new identity. IP posting limits still span reconnects. Registered users have stable identity across devices/reconnects.
 

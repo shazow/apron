@@ -690,9 +690,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "reactions":
 				await this.handleReactions(socket, attachment, request);
 				return;
-			// `nick` is the demo client's older spelling of the protocol's `name`.
 			case "name":
-			case "nick":
 				await this.handleName(socket, attachment, request);
 				return;
 			default:
@@ -709,9 +707,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.store.reserveAuthAttempt({ ipKey: attachment.ipKey, now: nowMs() });
 		const params = request.params;
 		const scheme = requiredString(params, "scheme");
-		// Protocol v3 renamed the `anonymous` scheme to `guest`; the old name is
-		// still accepted (section 3.2 permits any scheme under guest access).
-		if (scheme === "guest" || scheme === "anonymous") {
+		if (scheme === "guest") {
 			if (attachment.tier === "anonymous" || attachment.tier === "registered") {
 				this.reply(socket, request, { you: publicIdentity(attachment) });
 				return;

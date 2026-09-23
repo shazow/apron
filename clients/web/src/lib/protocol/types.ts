@@ -11,8 +11,6 @@ export interface JsonObject {
 	[key: string]: JsonValue;
 }
 
-export const PROTOCOL_VERSION = 3;
-
 /** Optional features a server advertises in `server.params.caps` (§4). */
 export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'push';
 

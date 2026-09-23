@@ -9,9 +9,8 @@ nullable `history_log_id`, without extension negotiation. See
 WebAuthn uses the canonical [optional authentication scheme](../../../PROTOCOL.md#appendix-i--webauthn-authentication-optional),
 advertised through `auth: ["webauthn", "token", "guest"]` only on connections whose
 origin is in `RP_ORIGINS`. Other connections advertise `auth: ["guest"]`
-and reject WebAuthn requests. The v2 scheme name `anonymous` is accepted as an
-alias for `guest`. Guest user IDs begin with `guest_`. Server announcements are
-complete replacements.
+and reject WebAuthn requests. Guest user IDs begin with `guest_`. Server
+announcements are complete replacements.
 
 Production admits guest connections from any frontend origin, including opaque
 origins and clients without Origin. This does not relax passkey verification,
@@ -34,7 +33,7 @@ within it:
   characters) per user per message and 32 reacting users per message. New
   reactions on a deleted message are rejected; clearing is allowed. An
   unchanged set is accepted without a new record.
-- `name` (or the demo client's older `nick`) renames registered users only.
+- `name` renames registered users only.
 
 ## Authentication policy
 

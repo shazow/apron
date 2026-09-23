@@ -215,13 +215,6 @@ describe('ChatClient v3 operations', () => {
 		await socket.reply('name', { you: { user_id: 'guest_1', name: 'Ada!' } });
 		expect(snapshot.you).toEqual({ user_id: 'guest_1', name: 'Ada!' });
 	});
-
-	it('refuses to authenticate with an older protocol', async () => {
-		socket.open();
-		socket.receive({ method: 'server', params: { protocol: 2, auth: ['anonymous'] } });
-		expect(socket.sent).toEqual([]);
-		expect(snapshot.error).toMatch(/protocol 2/);
-	});
 });
 
 describe('ChatClient history per room', () => {

@@ -330,27 +330,16 @@ func TestServerFrameAndGuestAuth(t *testing.T) {
 	}
 	c.expectQuiet(t)
 
-	// The pre-v3 scheme name remains an alias for guest access.
-	alias, _ := dialRaw(t, httpServer)
-	you = alias.result(t, "auth", "legacy", map[string]any{"scheme": "anonymous"})["you"].(map[string]any)
-	if you["user_id"] != "guest_2" {
-		t.Fatalf("anonymous alias identity: %#v", you)
-	}
-	alias.notification(t, "room")
-
-	// name is the v3 rename request; nick remains accepted.
-	for _, method := range []string{"name", "nick"} {
-		you = c.result(t, method, method, map[string]any{"name": method})["you"].(map[string]any)
-		if you["user_id"] != "guest_1" || you["name"] != method {
-			t.Fatalf("%s: %#v", method, you)
-		}
+	you = c.result(t, "name", "rename", map[string]any{"name": "Grace"})["you"].(map[string]any)
+	if you["user_id"] != "guest_1" || you["name"] != "Grace" {
+		t.Fatalf("rename: %#v", you)
 	}
 }
 
-func TestRemovedAndUnknownMethodsAreUnsupported(t *testing.T) {
+func TestUnimplementedAndUnknownMethodsAreUnsupported(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
-	for _, method := range []string{"thread", "room_create", "push_register"} {
+	for _, method := range []string{"push_register", "frobnicate"} {
 		c.expectError(t, method, method, map[string]any{"room_id": "general"}, codeUnsupported)
 	}
 	c.expectQuiet(t)
@@ -788,8 +777,7 @@ func TestHistoryPaginatesAcrossRecordKinds(t *testing.T) {
 	if _, present := empty["first_id"]; present || empty["more"] != false || len(empty["entries"].([]any)) != 0 || empty["history_log_id"] != generalID {
 		t.Fatalf("empty page: %#v", empty)
 	}
-	// Removed parameters are ignored; invalid ones are rejected.
-	historyPage(t, c, "general", map[string]any{"thread_id": "t_1"})
+	// Invalid parameters are rejected.
 	for i, params := range []map[string]any{
 		{"room_id": "missing"}, {"room_id": "general", "limit": 0}, {"room_id": "general", "after": 5},
 		{"room_id": "general", "before": "-1"},

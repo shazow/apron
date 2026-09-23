@@ -24,10 +24,9 @@ no browser or running example server is needed. No new dependencies are required
 
 Each file has `format: 2`, `kind` (`replay` or `session`), `name`,
 `description`, `references`, `variants`, and `expected`, and no other
-top-level keys. Format 2 is protocol v3 and is not compatible with format 1
-(protocol v2). Each variant has `name` and ordered `steps`, starts with fresh
-client state, and must reach the top-level `expected` state. An `expect` step
-additionally checks an intermediate state.
+top-level keys. Frames are protocol 3. Each variant has `name` and ordered
+`steps`, starts with fresh client state, and must reach the top-level
+`expected` state. An `expect` step additionally checks an intermediate state.
 
 Each step is an object with exactly one key, the operation. Objects are
 unordered; arrays are ordered. All IDs are JSON strings. Small IDs such as
@@ -64,8 +63,7 @@ arrays are never merged, and `null` is a stored value.
 
 - Message notifications are flat snapshots:
   `{"method":"message","params":{message_id, log_id, room_id, from, body?, reply_to?, deleted?, ext?}}`.
-  History `entries` are the same flat objects. There is no `{log_id, message}`
-  wrapper and no `thread_id`.
+  History `entries` are the same flat objects.
 - A history result is `{rooms?, entries, reactions?, first_id?, last_id?, more, latest_log_id, history_log_id}`.
   Install every record in all three arrays. Do not filter records by the
   requested room: a move snapshot in room A's history carries `room_id` B and
@@ -244,8 +242,8 @@ unchanged.
 
 ### History recovery profile
 
-The fixtures pin the example client's existing (format 1) recovery profile,
-restated for v3. It is a test profile built from PROTOCOL.md Appendix A, not
+The fixtures pin the example client's recovery profile. It is a test profile
+built from PROTOCOL.md Appendix A, not
 the only conforming strategy. All of this state is per connection.
 
 - **Head and bound.** Per visible room the client tracks its known head, the
@@ -287,8 +285,8 @@ the only conforming strategy. All of this state is per connection.
   unchanged, and marks the room failed; the next `room` frame for it rebuilds.
   A failure is not retried on a timer (the `retry_after` variant's `ms` is
   not waited on).
-- **Thread rooms** never recover automatically. `loadRoom` loads one as the
-  format 1 `loadThread` did: H = its known head when invoked, `after` = F, or
+- **Thread rooms** never recover automatically. `loadRoom` loads one with
+  H = its known head when invoked, `after` = F, or
   `max(T + 1, F)` given the thread's own checkpoint T from an earlier
   `loadRoom` on this connection. Pages apply as they arrive; if F overtakes
   `after`, continue from F. T advances to each page's `last_id` and to H at
@@ -377,33 +375,6 @@ were checked with an independent reference reducer and client):
 
 Replay variants obey the same one-record-per-`log_id` rule and the history
 metadata constraints that do not depend on request bounds.
-
-## Changes from format 1
-
-- `format` is 2; frames are protocol 3 (`server.params.protocol: 3`, auth
-  scheme `guest`, guest IDs `guest_*`).
-- Messages are flat snapshots and history entries are the same objects; no
-  `{log_id, message}` pairs and no `params.message` wrapper.
-- Replay fixtures lost their top-level `room`; the replay projection is
-  `{rooms: [...]}` instead of `{events: [...]}`, and messages now include
-  `log_id` and `room_id` and an aggregated `reactions` array.
-- Unknown top-level message keys are no longer asserted; `ext` is.
-- Session rooms project as `{room_id, log_id?, parent_room_id?, title?, intro_message?, ext?, messages}`
-  instead of `{id, name, topic, events}`; the `threads` state key and the
-  `thread` method are gone (threads are rooms with `parent_room_id`).
-- Steps `moveThread`, `createThread`, and `loadThread` became `moveMessage`,
-  `createRoom`/`updateRoom`, and `loadRoom`; `react` is new; `editMessage` and
-  `deleteMessage` no longer take `room`; `send` takes `reply_to` instead of
-  `thread_id`.
-- The `echoFrom` receive binding (and the non-spec `echo` field) is gone:
-  operations settle on their reply.
-- History requests start at the effective lower bound where format 1 used
-  the `"0"` sentinel; pages mix all record kinds; there is no thread filter,
-  and thread rooms load with `loadRoom` as their own rooms.
-- `reconnect-history.json` keeps its name; `history-floor-recovery.json`
-  became `history-boundaries.json` and `request-error.json` became
-  `request-errors.json`; `thread-session.json` and `thread-history.json`
-  became `rooms.json` and `thread-recovery.json`; `reactions.json` is new.
 
 ## Scope and additions
 

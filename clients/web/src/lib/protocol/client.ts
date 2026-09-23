@@ -10,7 +10,6 @@ import {
 	type TimelineState
 } from './reducer';
 import {
-	PROTOCOL_VERSION,
 	cloneJson,
 	decodeMessage,
 	decodeReactions,
@@ -363,11 +362,6 @@ export class ChatClient {
 			return this.sendName();
 		}
 		return undefined;
-	}
-
-	/** Alias of `setDisplayName`. */
-	rename(displayName: string): OperationHandle | undefined {
-		return this.setDisplayName(displayName);
 	}
 
 	private sendName(): OperationHandle {
@@ -1002,7 +996,7 @@ export class ChatClient {
 				}
 			}
 		} catch {
-			// Older servers and network failures may not expose HTTP diagnostics.
+			// Servers without the status probe and network failures expose no HTTP diagnostics.
 		} finally {
 			clearTimeout(timeout);
 			if (this.connectionProbe === controller) this.connectionProbe = undefined;
@@ -1059,11 +1053,6 @@ export class ChatClient {
 			...(isJsonObject(params.demo) ? { demo: params.demo } : {})
 		};
 		if (this.authenticated || this.authRequested) {
-			this.emit();
-			return;
-		}
-		if (params.protocol < PROTOCOL_VERSION) {
-			this.error = `This server speaks Apron protocol ${params.protocol}; this client needs protocol ${PROTOCOL_VERSION}.`;
 			this.emit();
 			return;
 		}

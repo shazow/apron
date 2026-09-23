@@ -277,7 +277,7 @@ func TestAddingPasskeyPreservesStoredNickname(t *testing.T) {
 			passkeyResult(t, passkeyCall(t, other, "resume", "token", "", map[string]any{"token": registered["token"]}))
 			other.read(t)
 			rename := func() {
-				owner.write(t, map[string]any{"method": "nick", "id": "rename", "params": map[string]any{"name": "Updated nickname"}})
+				owner.write(t, map[string]any{"method": "name", "id": "rename", "params": map[string]any{"name": "Updated nickname"}})
 				result := passkeyResult(t, owner.read(t))
 				if result["you"].(map[string]any)["name"] != "Updated nickname" {
 					t.Fatalf("rename was not accepted: %#v", result)

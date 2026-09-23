@@ -41,7 +41,7 @@ describe('trusted IP boundaries', () => {
 describe('frame policy boundaries', () => {
 	it('counts depth by containers and nodes by values', () => {
 		const options = { ...DEFAULT_PARSE_OPTIONS, maxJsonDepth: 2 };
-		expect(parseFrame(JSON.stringify({ id: 'a', method: 'auth', params: { scheme: 'anonymous' } }), options).request.id).toBe('a');
+		expect(parseFrame(JSON.stringify({ id: 'a', method: 'auth', params: { scheme: 'guest' } }), options).request.id).toBe('a');
 		expect(() => parseFrame(JSON.stringify({ id: 'a', method: 'auth', params: { nested: {} } }), options)).toThrow(FrameError);
 	});
 	it('preserves identifiable IDs on structural policy errors', () => {

@@ -86,7 +86,7 @@ async function pendingSocket(ip = testIp()) {
 	return peer;
 }
 
-async function anonymousSocket(ip = testIp()) {
+async function guestSocket(ip = testIp()) {
 	const peer = await pendingSocket(ip);
 	peer.socket.send(JSON.stringify({ id: "auth", method: "auth", params: { scheme: "guest" } }));
 	const auth = await peer.next();
@@ -97,7 +97,7 @@ async function anonymousSocket(ip = testIp()) {
 
 it("restores hibernated socket attachment state without re-announcing the session", async () => {
 	const stub = env.DEMO.getByName("public-demo-v1");
-	const peer = await anonymousSocket();
+	const peer = await guestSocket();
 	try {
 		await evictDurableObject(stub);
 		peer.socket.send(JSON.stringify({
@@ -269,7 +269,7 @@ it("ignores WebAuthn notifications and consumes matching malformed finishes", as
 	const stub = env.DEMO.getByName("public-demo-v1");
 	const peer = await pendingSocket();
 	try {
-		peer.socket.send(JSON.stringify({ id: "unknown-scheme", method: "auth", params: { scheme: "legacy", action: "login", step: "begin" } }));
+		peer.socket.send(JSON.stringify({ id: "unknown-scheme", method: "auth", params: { scheme: "password", action: "login", step: "begin" } }));
 		expect((await peer.next()).error?.code).toBe(-32601);
 		peer.socket.send(JSON.stringify({ method: "auth", params: { scheme: "webauthn", action: "register", step: "begin" } }));
 		peer.socket.send(JSON.stringify({ id: "notification-barrier", method: "lifecycle-noop" }));

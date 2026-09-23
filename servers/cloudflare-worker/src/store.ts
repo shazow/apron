@@ -341,8 +341,7 @@ export interface StoreMutationInput {
   tier?: Tier;
   ipKey: string;
   requestId?: string;
-  /** `nick` is accepted as the demo client's older spelling of `name`. */
-  method?: MutationMethod | "nick" | string;
+  method?: MutationMethod | string;
   now?: number;
   /** The complete request parameters; saves replace every client field. */
   params: Record<string, unknown>;
@@ -402,9 +401,6 @@ export interface StoreCleanupResult {
   next_due_ms: number;
   did_work: boolean;
 }
-
-/** Legacy/domain adapter input used by the websocket runtime. */
-export type MutationInput = StoreMutationInput;
 
 export interface BudgetCost {
   reads: number;
@@ -572,15 +568,7 @@ function idString(value: number): string {
 }
 
 function utf8Bytes(value: string): number {
-  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(value).byteLength;
-  // Workers and current Node always provide TextEncoder.  This fallback keeps
-  // small pure-logic tests usable in older JS runtimes.
-  let bytes = 0;
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
-  }
-  return bytes;
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function parseJson<T>(value: string, fallback?: T): T {
@@ -2159,9 +2147,6 @@ export class Store {
       );
       const frames = frameRows.length && frameRows[0].day === day ? integerColumn(frameRows[0].posts_day) : 0;
       return {
-        // Kept for the legacy inspection API; callers must use
-        // getWebSockets() for the live value.
-        openConnections: 0,
         globalFrames: frames,
         globalPosts: this.limitEventCount("post", "global", "post", now),
       };
@@ -2543,7 +2528,6 @@ export class Store {
   private mutationMethod(method: string | undefined): MutationMethod {
     if (method === undefined || method === "message") return "message";
     if (method === "room" || method === "reactions" || method === "name") return method;
-    if (method === "nick") return "name";
     throw new StoreError("unsupported", "Unsupported mutation");
   }
 
@@ -2957,11 +2941,5 @@ export class Store {
     } finally {
       this.assertReservation(reserved, this.observed.reads - actualReads, this.observed.writes - actualWrites);
     }
-  }
-
-  /** Compatibility adapter for older runtime callers during migration. */
-  setAlarmTask(task: { kind: "auth" | "cleanup"; dueAt: number; connectionId?: string }): void {
-    const socketDeadline = task.kind === "auth" ? task.dueAt : undefined;
-    void this.scheduleAlarm(socketDeadline, this.clock.now()).catch(() => undefined);
   }
 }

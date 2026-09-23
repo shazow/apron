@@ -95,8 +95,7 @@ an isolated sandbox: test messages are visible to others, guest ownership lasts
 only for the socket, and IP/resource quotas and retention still apply. Changing
 frontend origins does not give an IP a fresh allowance. Honor `retry_after`.
 
-The server advertises only `guest` authentication to custom frontends (the
-protocol v2 spelling `anonymous` is still accepted).
+The server advertises only `guest` authentication to custom frontends.
 `web.apron.chat` additionally receives `webauthn` and `token`; inspect each connection's
 `server.params.auth` rather than assuming passkeys are available everywhere.
 A frontend with a Content Security Policy must permit the endpoint in
@@ -174,7 +173,7 @@ The production backend at `wss://server.apron.chat/` uses
 `wrangler.production.toml`. The frontend is deployed separately at
 `https://web.apron.chat` using `clients/web/wrangler.toml`; `apron.chat` is
 reserved for static documentation. The production backend has no static assets.
-WebSocket upgrades use `/`; `/ws` remains an alias for existing clients.
+WebSocket upgrades use `/` or `/ws`.
 The default development Worker is `apron-cloudflare-demo-dev`; it is separate
 from the production Worker `apron-cloudflare-demo`. It keeps serving the
 frontend for local development and browser tests. Keep bindings, migrations,
