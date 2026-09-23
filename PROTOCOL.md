@@ -210,7 +210,6 @@ All IDs are strings.
 - Suggested convention: use a room's creation `log_id` as its `room_id`.
 - Suggested convention: keep `room_id`s distinct from `user_id`s, so
   `@mentions` are unambiguous. (Appendix J.3)
-- Field naming for extensions and future methods: Appendix J.
 
 ---
 
@@ -380,18 +379,18 @@ one room.
 `server`: assigned by the server, ignored on input. `client`: supplied by the
 client, replaced whole by a save. `delivery`: this client's view, not logged.
 
-| field            | set by   | meaning                                                          |
-|------------------|----------|------------------------------------------------------------------|
-| `room_id`        | server   | required                                                         |
-| `log_id`         | server   | position of this room record (§2)                                |
-| `prev_log_id`    | server   | optional; this room's previous record (§2)                       |
-| `parent_room_id` | client   | optional; fixed at creation; marks a thread (Appendix C)         |
-| `title`          | client   | optional plain string; absent falls back to `room_id`            |
+| field            | set by   | meaning                                                           |
+|------------------|----------|-------------------------------------------------------------------|
+| `room_id`        | server   | required                                                          |
+| `log_id`         | server   | position of this room record (§2)                                 |
+| `prev_log_id`    | server   | optional; this room's previous record (§2)                        |
+| `parent_room_id` | client   | optional; fixed at creation; marks a thread (Appendix C)          |
+| `title`          | client   | optional plain string; absent falls back to `room_id`             |
 | `intro_message`  | client   | optional message object (§3.5): the room's description or summary |
-| `ext`            | client   | optional opaque extension data (§3.5)                            |
-| `latest_log_id`  | delivery | greatest `log_id` in the room's log                              |
-| `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none  |
-| `removed`        | delivery | `true` when the room leaves the announced set                    |
+| `ext`            | client   | optional opaque extension data (§3.5)                             |
+| `latest_log_id`  | delivery | greatest `log_id` in the room's log                               |
+| `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none   |
+| `removed`        | delivery | `true` when the room leaves the announced set                     |
 
 A `room` frame is a complete room record (§2); omitted fields are cleared.
 Delivery fields describe this client's view and are not logged. A removal
@@ -403,9 +402,9 @@ carries only `room_id` and `removed`:
 
 `intro_message` is a message like any other. Servers SHOULD embed its
 snapshot in announcements so clients can render it without history; editing
-it is an ordinary message save (Appendix B). `log_id`, `latest_log_id`, and `history_log_id`
-are REQUIRED when cap `history` is advertised and OPTIONAL otherwise;
-Appendix A defines their use.
+it is an ordinary message save (Appendix B). `log_id`, `latest_log_id`, and
+`history_log_id` are REQUIRED when cap `history` is advertised and OPTIONAL
+otherwise; Appendix A defines their use.
 
 Threads are rooms with a `parent_room_id`. Clients that ignore the field
 render them as ordinary rooms; clients that understand it group them under
@@ -469,9 +468,9 @@ local policy.
   Both formats are mandatory to render. Markdown is CommonMark with fenced
   code blocks as the baseline rich-content path. Clients MUST disable raw
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
-  (Appendix E). Clients MUST render embeds of unknown `kind` from `og` if present,
-  otherwise as a labeled fallback card (kind name, plus `url` or plain
-  `text` if present).
+  (Appendix E). Clients MUST render embeds of unknown `kind` from `og` if
+  present, otherwise as a labeled fallback card (kind name, plus `url` or
+  plain `text` if present).
 - Suggested convention: mention users as `@user_id` in `body.text`
   (Appendix J.3).
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
@@ -616,10 +615,10 @@ history still counts as available, keeps checkpoints valid, and leaves
 **Compaction (optional).** After selecting the slice, a server MAY keep only
 the last room record and each message's last snapshot in the slice, and MAY
 fold each message's reaction sets into one record carrying each user's last
-set in the slice, under the greatest folded `log_id`. Empty sets are kept so removals replay.
-Retained records keep their original `log_id`s and contents and never
-incorporate changes after the slice. Compacted and uncompacted pages yield
-the same terminal state.
+set in the slice, under the greatest folded `log_id`. Empty sets are kept so
+removals replay. Retained records keep their original `log_id`s and contents
+and never incorporate changes after the slice. Compacted and uncompacted pages
+yield the same terminal state.
 
 **Replay** follows §2. No earlier state is needed to apply a record, and
 order across the arrays is irrelevant.
@@ -727,8 +726,8 @@ clients holding the old content drop it on the new tombstone.
 `room` is bidirectional, like `message`. A client request without `room_id`
 creates a room; with `room_id` it replaces the client fields (§3.4) other
 than `parent_room_id`, which is fixed at creation; omitted fields are
-cleared. Both return
-`{"room_id": "..."}` and broadcast the new room record (§3.4).
+cleared. Both return `{"room_id": "..."}` and broadcast the new room record
+(§3.4).
 
 ```jsonc
 // -> start a thread on an existing message
@@ -891,7 +890,7 @@ the renderer. Unknown kinds render from `og`, or else the fallback card
 (§3.5).
 
 ```json
-{"embed_id": "embed_1235", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/embed_1235"}
+{"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/embed_1240"}
 {"embed_id": "embed_1241", "kind": "iframe", "url": "https://backend:8443/term/abc", "height": 300}
 {"embed_id": "embed_1242", "kind": "html", "html": "<table>…</table>"}
 ```
@@ -905,7 +904,6 @@ the renderer. Unknown kinds render from `og`, or else the fallback card
   insertion, regardless of source. Servers make no safety promises about
   content flowing through them.
 - `upload` is below; `stream` is Appendix K.
-- Future typed embeds (`diff`, `poll`, …) use the fallback rule.
 
 **`og`.** Any embed MAY carry `og`, an [OpenGraph](https://ogp.me/)
 description of its content as JSON: property names without the `og:`
@@ -1171,8 +1169,7 @@ clients negotiate a single PeerConnection.
 
 **Exclusions.** Mute and camera state are derivable from media streams.
 Invite/ring/reject state machines are covered by an `rtc` frame plus a push
-notification; when `rtc` lands, push payloads (Appendix F) gain an optional
-call hint. Recording and transcoding are server-side.
+notification. Recording and transcoding are server-side.
 
 ---
 
@@ -1185,10 +1182,10 @@ Both steps are `auth` requests with string IDs and `scheme: "webauthn"`. Use
 `action: "register"` to create a credential or `action: "login"` to sign in,
 unchanged between steps. Notifications do not run ceremonies.
 
-| Step     | Additional request fields                  | Successful result                                     |
-|----------|--------------------------------------------|-------------------------------------------------------|
-| `begin`  | `step: "begin"`                            | `challenge_id` (opaque), `public_key` (WebAuthn options) |
-| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` (§3.3)                                       |
+| Step     | Additional request fields                      | Successful result                                        |
+|----------|------------------------------------------------|----------------------------------------------------------|
+| `begin`  | `step: "begin"`                                | `challenge_id` (opaque), `public_key` (WebAuthn options) |
+| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` (§3.3)                                             |
 
 `public_key` holds creation options for registration or request options for
 login, in standard
@@ -1246,9 +1243,9 @@ still work; clients MAY style them as system messages.
 ### J.2 Field naming
 
 Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
-`parent_room_id`, `session_id`). Embedded objects use descriptive names
-(`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id` keeps
-its name. Extensions and future methods should follow the same pattern.
+`embed_id`, `parent_room_id`, `session_id`). Embedded objects use descriptive
+names (`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id`
+keeps its name. Extensions and future methods should follow the same pattern.
 
 ### J.3 Mentions
 
