@@ -19,10 +19,8 @@ See [edge admission operations](docs/edge-admission.md) for applying WAF rules,
 their Free-plan limitations, and the quota-exhaustion runbook.
 
 Passkey session cleanup uses an ordered expiry index. Each alarm processes at
-most 16 expired index entries and, during migration, 16 legacy sessions. Existing
-tokens remain valid; a durable cursor makes migration incremental and a completion
-marker prevents repeated scans of live sessions. Once migration finishes, alarms
-with no expired entries perform only a small metered probe. Session issuance,
+most 16 expired index entries; alarms with no expired entries perform only a
+small metered probe. Session issuance,
 renewal, and cleanup share a queue so cleanup cannot delete a concurrent renewal.
 KV operations reserve conservative row allowances before running; an exhausted
 maintenance budget leaves unfinished cleanup for a later alarm.
@@ -222,12 +220,14 @@ For direct Wrangler production commands, always pass
 5. Review `wrangler.production.toml`: fixed DO binding, `new_sqlite_classes` migration,
    no paid-service bindings. Apply the initial migration once using the normal
    Wrangler deployment workflow. Do not rename or recreate the production
-   object to work around a quota or schema issue. The protocol v3 release
-   upgrades the object's storage from schema 1 to schema 2 on its first wake
-   (see [SPEC section 8](SPEC.md#schema-versions)): passkeys, sessions, quotas,
-   and budgets are kept, while the roughly one day of v2 chat history is
-   discarded and the retention floor moves past it. Deploy the v3 frontend
-   together with this backend; v2 clients cannot read v3 frames.
+   object to work around a quota or schema issue. Stored data is not migrated
+   between schema versions: a deploy that changes the storage schema (the
+   protocol v3 release does) resets the demo on the object's first wake (see
+   [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
+   identities, sessions, and limiter windows are deleted; users must register
+   their passkeys again, and saved session tokens fall back to sign-in. Only the
+   current day's resource reservations are carried over. Deploy the matching
+   frontend together with this backend.
 6. When deployment is authorized, run `make deploy-worker deploy-web` from the
    repository root. Verify guest access, passkey registration/login, edits, threads, reactions, history,
    duplicate retries, custom-origin guest access, and rejection of passkey

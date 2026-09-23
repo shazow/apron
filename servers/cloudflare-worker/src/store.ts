@@ -33,9 +33,9 @@ import { createHash } from "node:crypto";
 export const ROOM_ID = "general";
 export const ROOM_TITLE = "General";
 /**
- * Schema 1 stored the protocol v2 single-room log with thread IDs. Schema 2
- * stores the protocol v3 server-wide log: room records, flat message
- * snapshots, and reaction sets. See migrateSchemaV1().
+ * Schema 2 stores the protocol v3 server-wide log: room records, flat message
+ * snapshots, and reaction sets. Stored data from any other schema version is
+ * not migrated: the object is wiped and started fresh (see resetStorage()).
  */
 export const SCHEMA_VERSION = 2;
 /** Title the demo supplies for a thread room created or saved without one. */
@@ -108,6 +108,7 @@ export interface DurableStorageLike {
   sql: SqlStorageLike;
   transactionSync?: <T>(closure: () => T) => T;
   setAlarm?: (time: number | Date) => Promise<void>;
+  deleteAll?: () => Promise<void>;
   getAlarm?: () => Promise<number | null>;
 }
 
@@ -847,7 +848,7 @@ export class Store {
     // DDL is deliberately one initialization batch. The schema version marker
     // is checked before DDL so a wake/restart does not rewrite schema state.
     const version = this.readSchemaVersion();
-    if (version > SCHEMA_VERSION) throw new Error(`unsupported storage schema ${version}`);
+    if (version !== 0 && version !== SCHEMA_VERSION) throw new Error(`storage schema ${version} requires resetStorage()`);
     if (version === SCHEMA_VERSION) {
       const persistedEffective = Number(this.metaValue(META_EFFECTIVE_NOW));
       if (Number.isSafeInteger(persistedEffective) && persistedEffective >= 0) this.lastEffectiveMs = persistedEffective;
@@ -881,8 +882,7 @@ export class Store {
     const now = this.transaction(() => {
       this.rawScript(SCHEMA_V2_DDL);
       const now = this.effectiveNow(this.clock.now());
-      if (version === 1) this.migrateSchemaV1(now);
-      else this.bootstrapSchema(now);
+      this.bootstrapSchema(now);
       // Charge the one-time schema/bootstrap work to the maintenance reserve.
       // This marker is written only during a schema-version transition, never
       // on hibernation wakes or ordinary constructor calls.
@@ -908,14 +908,6 @@ export class Store {
       this.observed.reservedWrites += startupCost.writes;
       return now;
     });
-    if (version === 1) {
-      // An upgraded object keeps its durable accounting stop.
-      const unsafeMarker = this.metaValue(META_ACCOUNTING_UNSAFE).trim().toLowerCase();
-      if (unsafeMarker === "1" || unsafeMarker === "true") {
-        this.accountingUnsafe = true;
-        this.accountingUnsafePersisted = true;
-      }
-    }
     this.budgetCacheDay = null;
     this.budgetCache = null;
     this.budgetHandoverPending = true;
@@ -938,64 +930,73 @@ export class Store {
     this.seedGeneralRoom({ last_log_id: 0, history_floor: 1, last_commit_ms: 0 }, now);
   }
 
+  /** True when the object holds data from another schema version. */
+  requiresReset(): boolean {
+    const version = this.readSchemaVersion();
+    return version !== 0 && version !== SCHEMA_VERSION;
+  }
+
   /**
-   * Upgrade a protocol v2 object (schema 1) in place.
+   * Wipe every SQLite table and key-value entry (identities, credentials,
+   * passkey sessions, chat, limiter windows) and initialize a fresh schema.
+   * Used whenever the stored schema version differs from this code's, in
+   * either direction; there is no data migration.
    *
-   * Authority that is independent of chat content survives unchanged:
-   * passkey identities and credentials, daily resource reservations,
-   * principal limiter windows, accepted-request deduplication rows, the
-   * monotonic effective clock, the accounting stop, storage pressure, the
-   * account-usage snapshot, and the maintenance deadline. Passkey sessions
-   * live in key-value storage and are untouched.
-   *
-   * Chat content is discarded rather than rewritten: v2 messages were keyed
-   * by room and carried thread IDs, while v3 threads are separate rooms with
-   * their own creation records. Only roughly one day of content existed under
-   * the rolling-retention policy. The server-wide log continues above the v2
-   * head, and the retention floor advances past every discarded record, so
-   * `latest_log_id` never moves backwards and `history_log_id` only rises:
-   * recovering clients see the floor pass their checkpoint and rebuild
-   * (protocol Appendix A). Dropping a legacy table is a metadata operation
-   * (no per-row writes in the native runtime; see test/migration.test.ts),
-   * charged to the same one-time bootstrap reservation as a new object.
+   * Only the current UTC day's resource reservations are carried over, when
+   * the old schema's budget row is readable, so a deploy cannot replenish the
+   * daily SQL allowance the platform has already metered. The fresh schema's
+   * bootstrap reservation is added to that row without a capacity check, so
+   * the reset itself can never fail on, or be blocked by, an exhausted budget;
+   * an exhausted day simply stays exhausted until UTC midnight. The
+   * accounting-unsafe latch is not carried: a reset is the operator's recovery
+   * path for it. Callers must hold the object's input gate (the runtime uses
+   * blockConcurrencyWhile) so no request observes the empty storage.
    */
-  private migrateSchemaV1(now: number): void {
-    let head = 0;
-    let lastCommitMs = 0;
+  async resetStorage(): Promise<void> {
+    const deleteAll = this.durableStorage?.deleteAll;
+    if (typeof deleteAll !== "function") throw new Error("storage reset requires deleteAll()");
+    const day = dayFor(Math.max(this.clock.now(), this.lastEffectiveMs));
+    let carried: RawBudgetRow | null = null;
     try {
-      const rows = this.rawRows<{ last_log_id: number; last_commit_ms: number }>(
-        "SELECT last_log_id, last_commit_ms FROM room_state WHERE room_id = ? LIMIT 1",
-        ROOM_ID,
+      carried = this.rawRows<RawBudgetRow>(
+        `SELECT day, reads_reserved, writes_reserved, frames_reserved,
+            admissions_reserved, posts_reserved, registrations_reserved,
+            foreground_reads, foreground_writes, maintenance_reads, maintenance_writes
+         FROM resource_budgets WHERE day = ? LIMIT 1`,
+        day,
+      )[0] ?? null;
+    } catch {
+      // An unreadable old budget table carries nothing.
+    }
+    await deleteAll.call(this.durableStorage);
+    this.initialized = false;
+    this.accountingUnsafe = false;
+    this.accountingUnsafePersisted = false;
+    this.accountingUnsafePending = false;
+    this.lastEffectiveMs = 0;
+    this.scheduledAlarmAt = undefined;
+    this.initialize();
+    if (!carried) return;
+    const columns = ["reads_reserved", "writes_reserved", "frames_reserved", "admissions_reserved", "posts_reserved",
+      "registrations_reserved", "foreground_reads", "foreground_writes", "maintenance_reads", "maintenance_writes"] as const;
+    const values = columns.map((column) => Math.max(0, integerColumn(carried![column])));
+    this.transaction(() => {
+      this.rawExec(
+        `INSERT OR IGNORE INTO resource_budgets (day, ${columns.join(", ")}) VALUES (?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`,
+        day,
       );
-      if (rows.length) {
-        head = integerColumn(rows[0].last_log_id);
-        lastCommitMs = integerColumn(rows[0].last_commit_ms);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/no such table/i.test(message)) throw error;
-    }
-    for (const table of ["transitions", "messages", "threads", "room_state"]) {
-      this.rawExec(`DROP TABLE IF EXISTS ${table}`);
-    }
-    this.rawExec(
-      "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', ?), ('thread_count', '0')",
-      String(SCHEMA_VERSION),
-    );
-    this.rawExec("DELETE FROM _meta WHERE key = 'next_thread_seq'");
-    // The cleanup cursor was a v1 floor. Start a fresh job at the existing
-    // deadline; the new floor already covers everything that was discarded.
-    this.rawExec(
-      "UPDATE maintenance SET cleanup_cutoff_ms = NULL, cleanup_cursor = NULL, schema_version = ? WHERE id = 1",
-      SCHEMA_VERSION,
-    );
-    // Every record at or below the v2 head is discarded. The seeded general
-    // record is the first retained record, above that head.
-    this.seedGeneralRoom({ last_log_id: head, history_floor: head + 1, last_commit_ms: lastCommitMs }, now, true);
+      this.rawExec(
+        `UPDATE resource_budgets SET ${columns.map((column) => `${column} = ${column} + ?`).join(", ")} WHERE day = ?`,
+        ...values,
+        day,
+      );
+    });
+    this.budgetCacheDay = null;
+    this.budgetCache = null;
   }
 
   /** Log the `general` room's creation record as the next server record. */
-  private seedGeneralRoom(state: RawLogState, now: number, floorAtCreation = false): void {
+  private seedGeneralRoom(state: RawLogState, now: number): void {
     const context: CommitContext = { state: { ...state }, commitMs: Math.max(now, state.last_commit_ms), touched: new Map() };
     const logId = this.allocateLogId(context);
     const record = { room_id: ROOM_ID, log_id: idString(logId), title: ROOM_TITLE };
@@ -1010,7 +1011,7 @@ export class Store {
     this.rawExec(
       "INSERT INTO log_state (id, last_log_id, history_floor, last_commit_ms) VALUES (1, ?, ?, ?)",
       logId,
-      floorAtCreation ? logId : state.history_floor,
+      state.history_floor,
       context.commitMs,
     );
   }

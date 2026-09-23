@@ -28,8 +28,6 @@ const ATTACHMENT_VERSION = 1;
 const SESSION_KEY_PREFIX = "session:";
 /** Ordered, advisory expiry entries. The session record remains authoritative. */
 const SESSION_EXPIRY_PREFIX = "session-expiry:";
-const SESSION_LEGACY_CURSOR_KEY = "session-legacy-cursor";
-const SESSION_LEGACY_DONE_KEY = "session-legacy-done";
 const SESSION_CLEANUP_BATCH = 16;
 const MAX_SESSION_TOKEN_CHARS = 256;
 
@@ -392,9 +390,19 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.runtimeEnv = env;
 		this.config = loadConfig(env);
 		this.store = new Store(ctx as unknown as ConstructorParameters<typeof Store>[0], asStoreConfig(this.config));
-		this.store.initialize();
-		this.accountUsageSnapshot = this.store.accountUsageSnapshot();
 		this.webAuthn = new WebAuthnService(this.config);
+		if (this.store.requiresReset()) {
+			// Stored data from another schema version is wiped, not migrated. The
+			// input gate holds every event until the fresh schema exists.
+			void ctx.blockConcurrencyWhile(async () => {
+				await this.store.resetStorage();
+				this.accountUsageSnapshot = this.store.accountUsageSnapshot();
+				console.warn(JSON.stringify({ event: "storage_schema_reset" }));
+			});
+		} else {
+			this.store.initialize();
+			this.accountUsageSnapshot = this.store.accountUsageSnapshot();
+		}
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -863,34 +871,25 @@ export class ApronDemoServer extends DurableObject<Env> {
 		return token;
 	}
 
-	/**
-	 * Drops expired session records from a bounded expiry index. The separate
-	 * legacy cursor gradually indexes records written before this index existed,
-	 * so deployment does not require a destructive migration or an unbounded
-	 * first alarm. Cursors advance only after their batch has completed.
-	 */
+	/** Drops expired session records from a bounded, ordered expiry index. */
 	private async sweepSessions(now: number): Promise<void> {
 		return this.withSessionLock(() => this.sweepSessionsLocked(now));
 	}
 
 	private async sweepSessionsLocked(now: number): Promise<void> {
 		// Socket deadline alarms can be frequent. Probe the bounded expiry index
-		// before reserving a full batch; after legacy migration this is the only
-		// maintenance work performed until an expiry is actually due.
-		const { legacyDone, dueProbe } = await this.store.withMeterAsync("maintenance", { reads: 2 }, async () => ({
-			legacyDone: await this.ctx.storage.get<boolean>(SESSION_LEGACY_DONE_KEY),
-			dueProbe: await this.ctx.storage.list<SessionExpiryEntry>({
-				prefix: SESSION_EXPIRY_PREFIX,
-				end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
-				limit: 1,
-			}),
+		// before reserving a full batch; this is the only maintenance work
+		// performed until an expiry is actually due.
+		const dueProbe = await this.store.withMeterAsync("maintenance", { reads: 1 }, () => this.ctx.storage.list<SessionExpiryEntry>({
+			prefix: SESSION_EXPIRY_PREFIX,
+			end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
+			limit: 1,
 		}), now);
-		if (legacyDone === true && dueProbe.size === 0) return;
-		// Up to B index rows + B session reads + B legacy rows + cursor/control
-		// reads; writes cover 2B expiry deletes + B legacy changes + 2 markers.
+		if (dueProbe.size === 0) return;
+		// Up to B index rows + B session reads; writes cover 2B expiry deletes.
 		await this.store.withMeterAsync("maintenance", {
-			reads: 3 * SESSION_CLEANUP_BATCH + 4,
-			writes: 3 * SESSION_CLEANUP_BATCH + 2,
+			reads: 2 * SESSION_CLEANUP_BATCH + 2,
+			writes: 2 * SESSION_CLEANUP_BATCH,
 		}, async () => {
 			const indexed = await this.ctx.storage.list<SessionExpiryEntry>({
 				prefix: SESSION_EXPIRY_PREFIX,
@@ -920,26 +919,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 				await this.ctx.storage.delete(indexKey);
 			}
 
-			if (legacyDone === true) return;
-			const legacyCursor = await this.ctx.storage.get<string>(SESSION_LEGACY_CURSOR_KEY);
-			const legacy = await this.ctx.storage.list<StoredSession>({
-				prefix: SESSION_KEY_PREFIX,
-				...(legacyCursor ? { startAfter: legacyCursor } : {}),
-				limit: SESSION_CLEANUP_BATCH,
-			});
-			let nextLegacyCursor: string | null = legacyCursor ?? null;
-			for (const [key, session] of legacy) {
-				if (!session || session.v !== 1 || !Number.isSafeInteger(session.expiresMs)) {
-					nextLegacyCursor = key;
-					continue;
-				}
-				if (session.expiresMs <= now) await this.ctx.storage.delete(key);
-				else await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(session.expiresMs, key), { v: 1, sessionKey: key, expiresMs: session.expiresMs });
-				nextLegacyCursor = key;
-			}
-			if (legacy.size === 0 || legacy.size < SESSION_CLEANUP_BATCH) nextLegacyCursor = null;
-			await this.ctx.storage.put(SESSION_LEGACY_CURSOR_KEY, nextLegacyCursor);
-			if (nextLegacyCursor === null) await this.ctx.storage.put(SESSION_LEGACY_DONE_KEY, true);
 		});
 	}
 

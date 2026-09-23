@@ -207,14 +207,13 @@ physical delete. The move's reaction read and the room listing sort at most
 the capped per-message reaction sets and the capped room table respectively;
 the thread-room expiry check in cleanup scans that same capped table.
 
-## Schema upgrade
+## Schema reset
 
-`test/migration.test.ts` builds a populated schema 1 (protocol v2) object and
-upgrades it. The whole upgrade, including dropping the legacy chat tables and
-creating schema 2, measured 183 reads and 49 writes with a 5 MB legacy
-fixture and the same with a 25 MB fixture: dropping a table is not charged per
-row. It is charged to the one-time 512/512 bootstrap reservation. Occupied
-bytes fell from about 5 MB to 135,168 bytes.
+A stored schema version other than the current one resets the object with
+`deleteAll()` and recreates the schema (`test/schema-reset.integration.test.ts`).
+The reset is charged the same one-time 512/512 bootstrap reservation as a new
+object, added to the carried-over current-day reservation row without a
+capacity check.
 
 ## Measurement limits
 
