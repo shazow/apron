@@ -17,7 +17,7 @@ the sender.
 
 ```jsonc
 // <- server greeting with auth schemes
-{"method": "server", "params": {"protocol": 3, "auth": ["guest", "token"]}}
+{"method": "server", "params": {"protocol": 4, "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -208,7 +208,7 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 3,
+    "protocol": 4,
     "name": "impl-name/1.0",
     "caps": ["history", "edit"],
     "auth": ["token"],
@@ -217,7 +217,10 @@ frame, unprompted. There is no client hello.
 }
 ```
 
-- `protocol`: required integer. Current value `3`.
+- `protocol`: required integer, incremented with each revision of this spec.
+  Current value `4`. Implementations make a best effort to interoperate
+  across versions; mismatched optional features degrade to their fallbacks
+  (§4).
 - `name`: optional implementation/version string.
 - `caps`: array of capability strings (§4), default `[]`.
 - `auth`: required nonempty array of supported authentication schemes (§3.2),
@@ -278,7 +281,9 @@ absent `name` falls back to `user_id`. `avatar` (Appendix E) and `ext` (§3.5)
 are optional. Every identity on the wire (`you`, `from`, `members`, RTC
 members) uses this shape, and servers MAY send only `user_id`. Clients keep
 the latest user object they receive for each `user_id`, whichever frame
-carried it, and render every message with it.
+carried it, and render every message with it. Whether history carries a
+user's name from posting time or their current one is server policy; the
+protocol guarantees neither.
 
 - Suggested convention: servers include `name` in `from`, so clients can
   render messages from users who are no longer members.
@@ -480,8 +485,9 @@ The opening example is a complete session with a minimal server.
 ## 4. Capabilities
 
 `server.caps` advertises optional requests. Capabilities advertise support,
-not authorization; servers still apply local policy per request. Absence of a
-cap obligates the client to the fallback:
+not authorization; servers still apply local policy per request. Clients
+ignore caps they do not recognize. Absence of a cap obligates the client to
+the fallback:
 
 | cap         | adds                                                         | fallback                    | spec       |
 |-------------|--------------------------------------------------------------|-----------------------------|------------|
@@ -494,6 +500,9 @@ cap obligates the client to the fallback:
 Features without a cap: `typing` (Appendix D) is ephemeral and clients MAY
 send it blind; uploads follow `server.upload` (Appendix E); embeds are body
 content (Appendix E).
+
+- Suggested convention: third-party extension caps use an `ext:` prefix,
+  such as `ext:irc`.
 
 Three frame idioms cover everything logged or announced:
 
