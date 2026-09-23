@@ -1,4 +1,4 @@
-import type { ChatClient, ClientSnapshot, RoomSnapshot } from '$lib/protocol/client';
+import { capabilitiesOf, type ChatClient, type ClientSnapshot, type RoomSnapshot } from '$lib/protocol/client';
 import type { Identity, ServerParams } from '$lib/protocol/types';
 import { connectionStateOf, isSessionReady, reconnectErrorOf } from './connection';
 
@@ -8,7 +8,7 @@ type HeldSession = { rooms: RoomSnapshot[]; activeRoom?: string; you?: Identity;
 export const RECONNECT_STALL_MS = 10_000;
 
 export const blankSnapshot = (): ClientSnapshot => ({
-	status: 'idle', authenticated: false, rooms: [], pending: [], typing: [], showReconnectDivider: false
+	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], showReconnectDivider: false
 });
 
 /**

@@ -1,67 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatClient, type ClientSnapshot } from './client';
-
-/**
- * Minimal scripted WebSocket. Frames the client sends are parsed into `sent`;
- * the test replies through `receive` and drops the transport with `drop`.
- */
-class FakeSocket {
-	static instances: FakeSocket[] = [];
-	static CONNECTING = 0;
-	static OPEN = 1;
-	static CLOSING = 2;
-	static CLOSED = 3;
-	readyState = FakeSocket.CONNECTING;
-	sent: Array<Record<string, unknown>> = [];
-	onopen: (() => void) | null = null;
-	onmessage: ((event: { data: string }) => void) | null = null;
-	onerror: (() => void) | null = null;
-	onclose: (() => void) | null = null;
-
-	constructor(public url: string) {
-		FakeSocket.instances.push(this);
-	}
-
-	send(data: string): void {
-		this.sent.push(JSON.parse(data) as Record<string, unknown>);
-	}
-
-	close(): void {
-		this.readyState = FakeSocket.CLOSED;
-	}
-
-	open(): void {
-		this.readyState = FakeSocket.OPEN;
-		this.onopen?.();
-	}
-
-	receive(frame: Record<string, unknown>): void {
-		this.onmessage?.({ data: JSON.stringify(frame) });
-	}
-
-	drop(): void {
-		this.readyState = FakeSocket.CLOSED;
-		this.onclose?.();
-	}
-
-	/** Runs the greeting, answers the auth request, and announces one room. */
-	async greet(caps: string[] = [], options: { auth?: string[]; token?: string } = {}): Promise<void> {
-		this.open();
-		this.receive({ method: 'server', params: { protocol: 1, name: 'fake', auth: options.auth ?? ['anonymous'], caps } });
-		const auth = this.sent.find((frame) => frame.method === 'auth');
-		if (!auth) throw new Error('client did not authenticate');
-		this.receive({ id: auth.id, result: { you: { user_id: 'guest-1', name: 'Guest' }, ...(options.token ? { token: options.token } : {}) } });
-		// The auth response settles through a promise before the client applies it.
-		await Promise.resolve();
-		await Promise.resolve();
-		this.receive({ method: 'room', params: { room_id: 'lobby', name: 'Lobby' } });
-	}
-}
+import { FakeSocket } from './fake-socket';
 
 function latest(): FakeSocket {
-	const socket = FakeSocket.instances[FakeSocket.instances.length - 1];
-	if (!socket) throw new Error('no socket has been opened');
-	return socket;
+	return FakeSocket.latest();
 }
 
 describe('transport reconnects', () => {
@@ -78,7 +20,7 @@ describe('transport reconnects', () => {
 		await latest().greet();
 		latest().receive({
 			method: 'message',
-			params: { room_id: 'lobby', log_id: '1724803200001', message: { message_id: '1724803200001', from: { user_id: 'guest-1' }, body: { text: 'hi' } } }
+			params: { message_id: '1724803200001', log_id: '1724803200001', room_id: 'lobby', from: { user_id: 'guest_1' }, body: { text: 'hi' } }
 		});
 		expect(snapshot.status).toBe('connected');
 		expect(snapshot.authenticated).toBe(true);
@@ -209,15 +151,15 @@ describe('persisted session tokens', () => {
 		const first = new ChatClient('ws://fake.test/');
 		first.subscribe((next) => (snapshot = next));
 		first.start();
-		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'session-1' });
-		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'anonymous' }));
+		await latest().greet([], { auth: ['webauthn', 'token', 'guest'], token: 'session-1' });
+		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'guest' }));
 		expect(storage.get('apron.session:ws://fake.test/')).toBe('session-1');
 		first.stop();
 
 		const second = new ChatClient('ws://fake.test/');
 		second.subscribe((next) => (snapshot = next));
 		second.start();
-		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'session-1' });
+		await latest().greet([], { auth: ['webauthn', 'token', 'guest'], token: 'session-1' });
 		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'token', token: 'session-1' }));
 		expect(snapshot.passkeySession).toBe(true);
 		second.stop();
@@ -226,15 +168,15 @@ describe('persisted session tokens', () => {
 		const elsewhere = new ChatClient('ws://other.test/');
 		elsewhere.start();
 		latest().open();
-		latest().receive({ method: 'server', params: { protocol: 1, auth: ['webauthn', 'token', 'anonymous'], caps: [] } });
-		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'anonymous' }));
+		latest().receive({ method: 'server', params: { protocol: 3, auth: ['webauthn', 'token', 'guest'], caps: [] } });
+		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'guest' }));
 		elsewhere.stop();
 	});
 
 	it('does not persist a token when the server cannot resume with it', async () => {
 		const client = new ChatClient('ws://fake.test/');
 		client.start();
-		await latest().greet([], { auth: ['webauthn', 'anonymous'], token: 'session-2' });
+		await latest().greet([], { auth: ['webauthn', 'guest'], token: 'session-2' });
 		expect(storage.has('apron.session:ws://fake.test/')).toBe(false);
 		client.stop();
 	});
@@ -245,7 +187,7 @@ describe('persisted session tokens', () => {
 		client.subscribe((next) => (snapshot = next));
 		client.start();
 		latest().open();
-		latest().receive({ method: 'server', params: { protocol: 1, auth: ['webauthn', 'token', 'anonymous'], caps: [] } });
+		latest().receive({ method: 'server', params: { protocol: 3, auth: ['webauthn', 'token', 'guest'], caps: [] } });
 		const auth = latest().sent.find((frame) => frame.method === 'auth')!;
 		expect(auth.params).toEqual(expect.objectContaining({ scheme: 'token', token: 'stale' }));
 		latest().receive({ id: auth.id, error: { code: -32001, message: 'Session expired; sign in with your passkey' } });
@@ -258,7 +200,7 @@ describe('persisted session tokens', () => {
 		storage.set('apron.session:ws://fake.test/', 'fresh');
 		const again = new ChatClient('ws://fake.test/');
 		again.start();
-		await latest().greet([], { auth: ['webauthn', 'token', 'anonymous'], token: 'fresh' });
+		await latest().greet([], { auth: ['webauthn', 'token', 'guest'], token: 'fresh' });
 		await again.signOut();
 		expect(storage.has('apron.session:ws://fake.test/')).toBe(false);
 		again.stop();

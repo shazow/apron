@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientSnapshot } from '$lib/protocol/client';
+import { capabilitiesOf, type ClientSnapshot } from '$lib/protocol/client';
 import { connectionStateOf, demoRetentionNotice, statusLabel } from './connection';
 import { retryAfterLabel } from './time';
 
 const snapshot = (fields: Partial<ClientSnapshot>): ClientSnapshot => ({
-	status: 'idle', authenticated: false, rooms: [], pending: [], typing: [], showReconnectDivider: false, ...fields
+	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], showReconnectDivider: false, ...fields
 });
 
 describe('connection state', () => {

@@ -5,20 +5,21 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { ChatClient } from '../../clients/web/src/lib/protocol/client';
-import { timelineEvents } from '../../clients/web/src/lib/protocol/reducer';
+import { ChatClient, type RoomSnapshot } from '../../clients/web/src/lib/protocol/client';
 
 type ObjectValue = Record<string, unknown>;
 type Step =
-	| { receive: ObjectValue; echoFrom?: string }
+	| { receive: ObjectValue }
 	| { request: { as: string; match: ObjectValue } }
 	| { reply: { to: string; result?: ObjectValue; error?: ObjectValue } }
-	| { send: { as: string; room: string; text: string; format?: 'plain' | 'markdown'; thread_id?: string } }
-	| { moveThread: { as: string; room: string; target: string; thread_id: string | null } }
-	| { createThread: { as: string; room: string; title?: string; summary?: string; root_message_id?: string } }
-	| { editMessage: { as: string; room: string; message_id: string; text: string } }
-	| { deleteMessage: { as: string; room: string; message_id: string } }
-	| { loadThread: { as: string; room: string; thread_id: string } }
+	| { send: { as: string; room: string; text: string; format: 'plain' | 'markdown'; reply_to?: string } }
+	| { editMessage: { as: string; message_id: string; text: string } }
+	| { moveMessage: { as: string; message_id: string; room: string } }
+	| { deleteMessage: { as: string; message_id: string } }
+	| { react: { as: string; message_id: string; emojis: string[] } }
+	| { createRoom: { as: string; parent_room_id?: string; title?: string; intro_message_id?: string } }
+	| { updateRoom: { as: string; room: string; title?: string | null; intro_message_id?: string | null } }
+	| { loadRoom: { as: string; room: string } }
 	| { disconnect: true }
 	| { expect: ObjectValue };
 interface Fixture {
@@ -28,6 +29,9 @@ interface Fixture {
 	variants: { name: string; steps: Step[] }[];
 	expected: ObjectValue;
 }
+
+const MUTATIONS = new Set(['message', 'room', 'reactions']);
+const OPERATIONS = ['send', 'editMessage', 'moveMessage', 'deleteMessage', 'react', 'createRoom', 'updateRoom', 'loadRoom'];
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../..');
@@ -80,62 +84,109 @@ async function control(route: string, body?: ObjectValue): Promise<Response> {
 	return response;
 }
 
+const byString = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+
+/** The room projection of tests/fixtures/wire/README.md, from the client's public snapshot. */
+function projectRoom(room: RoomSnapshot): ObjectValue {
+	const record = room.record;
+	const has = (key: string) => record !== undefined && Object.hasOwn(record, key);
+	return {
+		room_id: room.id,
+		...(has('log_id') ? { log_id: record!.log_id } : {}),
+		...(has('parent_room_id') ? { parent_room_id: record!.parent_room_id } : {}),
+		...(has('title') ? { title: record!.title } : {}),
+		...(record?.intro_message ? { intro_message: { message_id: record.intro_message.message_id } } : {}),
+		...(has('ext') ? { ext: record!.ext } : {}),
+		messages: room.timeline.order.map((id) => {
+			const reactions = room.timeline.reactions[id];
+			return {
+				...room.timeline.events[id],
+				...(reactions ? { reactions: reactions.map(({ emoji, user_ids }) => ({ emoji, user_ids })) } : {})
+			};
+		})
+	};
+}
+
 function logicalState(client: ChatClient, operations: Record<string, string>): ObjectValue {
 	const snapshot = client.snapshot();
 	return JSON.parse(JSON.stringify({
 		you: snapshot.you ?? null,
-		typing: snapshot.typing.map((entry) => ({ room_id: entry.room, from: entry.from, active: entry.active })),
-		caps: [...(snapshot.server?.caps ?? [])].sort(),
-		threads: snapshot.rooms.flatMap((room) => room.threads).sort((left, right) =>
-			left.room_id < right.room_id ? -1 : left.room_id > right.room_id ? 1 : left.thread_id < right.thread_id ? -1 : left.thread_id > right.thread_id ? 1 : 0),
-		rooms: snapshot.rooms.map((room) => ({
-			id: room.id, name: room.name, topic: room.topic ?? null, events: timelineEvents(room.timeline)
-		})).sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+		caps: [...(snapshot.server?.caps ?? [])].sort(byString),
+		rooms: [...snapshot.rooms].sort((left, right) => byString(left.id, right.id)).map(projectRoom),
+		typing: snapshot.typing
+			.map((entry) => ({ room_id: entry.room, from: entry.from, active: entry.active }))
+			.sort((left, right) => byString(left.room_id, right.room_id) || byString(left.from.user_id, right.from.user_id)),
 		operations
 	}));
+}
+
+/** Only the given keys of the expected state (README "Session state"). */
+function pick(state: ObjectValue, expected: ObjectValue): ObjectValue {
+	return Object.fromEntries(Object.keys(expected).map((key) => [key, state[key]]));
+}
+
+/**
+ * The recursive subset of `actual` described by `expected`: objects keep the
+ * listed keys, arrays and scalars compare exactly.
+ */
+function restrict(actual: unknown, expected: unknown): unknown {
+	if (!isObject(expected) || !isObject(actual)) return actual;
+	const result: ObjectValue = {};
+	for (const key of Object.keys(expected)) {
+		if (Object.hasOwn(actual, key)) Object.defineProperty(result, key, { value: restrict(actual[key], expected[key]), enumerable: true, writable: true, configurable: true });
+	}
+	return result;
+}
+
+function isObject(value: unknown): value is ObjectValue {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function paramsOf(frame: ObjectValue): ObjectValue | undefined {
+	return isObject(frame.params) ? frame.params : undefined;
 }
 
 for (const fixture of fixtures) {
 	for (const variant of fixture.variants) {
 		for (const envelope of ['minimal', 'jsonrpc'] as const) {
 			test(`${fixture.name} / ${variant.name} / ${envelope}`, async () => {
-				expect(fixture.format).toBe(1);
+				expect(fixture.format).toBe(2);
 				expect(fixture.kind).toBe('session');
 				const client = new ChatClient(peerUrl.replace('http:', 'ws:') + '/ws');
 				const requests = new Map<string, ObjectValue>();
 				const unmatched: ObjectValue[] = [];
 				const operations: Record<string, string> = {};
 				const wire = (frame: ObjectValue) => envelope === 'jsonrpc' ? { ...frame, jsonrpc: '2.0' } : frame;
+				const track = (as: string, promise: Promise<unknown>) => {
+					expect(Object.hasOwn(operations, as), `duplicate operation ${as}`).toBe(false);
+					operations[as] = 'pending';
+					promise.then(() => { operations[as] = 'fulfilled'; }, () => { operations[as] = 'rejected'; });
+				};
 				client.start();
 				let connection: string;
 				try {
 					connection = await (await control('/next')).json();
 					for (const [index, step] of variant.steps.entries()) {
-						await test.step(`step ${index + 1}: ${Object.keys(step)[0]}`, async () => {
+						const kind = Object.keys(step)[0];
+						await test.step(`step ${index + 1}: ${kind}`, async () => {
+							expect(Object.keys(step)).toHaveLength(1);
 							if ('receive' in step) {
-								const frame = structuredClone(step.receive);
-								if (step.echoFrom) {
-									const request = requests.get(step.echoFrom);
-									expect(request, `uncaptured echo ${step.echoFrom}`).toBeDefined();
-									(frame.params as ObjectValue).echo = request!.id;
-								}
-								await control(`/connections/${connection}/send`, wire(frame));
+								await control(`/connections/${connection}/send`, wire(structuredClone(step.receive)));
 							} else if ('request' in step) {
 								const { as, match } = step.request;
 								expect(requests.has(as), `duplicate capture ${as}`).toBe(false);
-								const requestRoom = (match.params as ObjectValue | undefined)?.room_id;
-								const requestThread = (match.params as ObjectValue | undefined)?.thread_id;
+								const wanted = isObject(match.params) ? match.params : {};
 								const selects = (frame: ObjectValue) => frame.method === match.method &&
-									(requestRoom === undefined || (frame.params as ObjectValue | undefined)?.room_id === requestRoom) &&
-									(match.method !== 'history' || (frame.params as ObjectValue | undefined)?.thread_id === requestThread);
+									paramsOf(frame)?.room_id === wanted.room_id &&
+									paramsOf(frame)?.message_id === wanted.message_id;
 								let position = unmatched.findIndex(selects);
 								while (position < 0) {
 									unmatched.push(await (await control(`/connections/${connection}/receive`)).json());
 									position = unmatched.findIndex(selects);
 								}
 								const [frame] = unmatched.splice(position, 1);
-								expect(frame).toMatchObject(match);
-								if (match.method === 'message' || match.method === 'thread') expect(frame.params).toEqual(match.params);
+								expect(restrict(frame, match)).toEqual(match);
+								if (MUTATIONS.has(match.method as string)) expect(frame.params).toEqual(match.params);
 								if ('jsonrpc' in frame) expect(frame.jsonrpc).toBe('2.0');
 								expect(typeof frame.id).toBe('string');
 								expect([...requests.values()].some((previous) => previous.id === frame.id), 'new operation reuses a request ID').toBe(false);
@@ -146,49 +197,48 @@ for (const fixture of fixtures) {
 								const { to: _, ...result } = step.reply;
 								await control(`/connections/${connection}/send`, wire({ id: request!.id, ...result }));
 							} else if ('send' in step) {
-								const { as, room, text, format, thread_id } = step.send;
-								operations[as] = 'pending';
-								client.sendMessage(room, text, format, thread_id).promise.then(
-									() => { operations[as] = 'fulfilled'; },
-									() => { operations[as] = 'rejected'; }
-								);
-							} else if ('moveThread' in step) {
-								const { as, room, target, thread_id } = step.moveThread;
-								operations[as] = 'pending';
-								client.setMessageThread(room, target, thread_id).promise.then(
-									() => { operations[as] = 'fulfilled'; },
-									() => { operations[as] = 'rejected'; }
-								);
-							} else if ('createThread' in step || 'editMessage' in step || 'deleteMessage' in step || 'loadThread' in step) {
-								const action = 'createThread' in step ? step.createThread : 'editMessage' in step ? step.editMessage : 'deleteMessage' in step ? step.deleteMessage : step.loadThread;
-								operations[action.as] = 'pending';
-								let promise: Promise<unknown>;
-								if ('createThread' in step) {
-									const { as: _, room, ...metadata } = step.createThread;
-									promise = client.createThread(room, metadata).promise;
-								} else if ('editMessage' in step) {
-									const { room, message_id, text } = step.editMessage;
-									promise = client.updateMessage(room, message_id, text).promise;
-								} else if ('deleteMessage' in step) {
-									const { room, message_id } = step.deleteMessage;
-									promise = client.deleteMessage(room, message_id).promise;
-								} else {
-									const { room, thread_id } = step.loadThread;
-									promise = client.loadThread(room, thread_id);
-								}
-								promise.then(() => { operations[action.as] = 'fulfilled'; }, () => { operations[action.as] = 'rejected'; });
+								const { as, room, text, format, reply_to } = step.send;
+								track(as, client.send(room, text, format, reply_to !== undefined ? { replyTo: reply_to } : {}).promise);
+							} else if ('editMessage' in step) {
+								const { as, message_id, text } = step.editMessage;
+								track(as, client.editMessage(message_id, text).promise);
+							} else if ('moveMessage' in step) {
+								const { as, message_id, room } = step.moveMessage;
+								track(as, client.moveMessage(message_id, room).promise);
+							} else if ('deleteMessage' in step) {
+								const { as, message_id } = step.deleteMessage;
+								track(as, client.deleteMessage(message_id).promise);
+							} else if ('react' in step) {
+								const { as, message_id, emojis } = step.react;
+								track(as, client.react(message_id, emojis).promise);
+							} else if ('createRoom' in step) {
+								const { as, parent_room_id, title, intro_message_id } = step.createRoom;
+								track(as, client.createRoom({
+									...(parent_room_id !== undefined ? { parentRoomId: parent_room_id } : {}),
+									...(title !== undefined ? { title } : {}),
+									...(intro_message_id !== undefined ? { introMessageId: intro_message_id } : {})
+								}).promise);
+							} else if ('updateRoom' in step) {
+								const { as, room, ...patch } = step.updateRoom;
+								track(as, client.updateRoom(room, {
+									...(Object.hasOwn(patch, 'title') ? { title: patch.title } : {}),
+									...(Object.hasOwn(patch, 'intro_message_id') ? { introMessageId: patch.intro_message_id } : {})
+								}).promise);
+							} else if ('loadRoom' in step) {
+								const { as, room } = step.loadRoom;
+								track(as, client.loadRoom(room));
 							} else if ('disconnect' in step) {
 								await control(`/connections/${connection}/close`);
 								unmatched.length = 0;
 								connection = await (await control('/next')).json();
 							} else if ('expect' in step) {
-								await expect.poll(() => logicalState(client, operations)).toEqual(expect.objectContaining(step.expect));
+								await expect.poll(() => pick(logicalState(client, operations), step.expect)).toEqual(step.expect);
 							} else {
-								throw new Error(`Unknown fixture step: ${JSON.stringify(step)}`);
+								throw new Error(`Unknown fixture step: ${JSON.stringify(step)} (operations: ${OPERATIONS.join(', ')})`);
 							}
 						});
 					}
-					await expect.poll(() => logicalState(client, operations)).toEqual(expect.objectContaining(fixture.expected));
+					await expect.poll(() => pick(logicalState(client, operations), fixture.expected)).toEqual(fixture.expected);
 				} finally {
 					client.stop();
 				}

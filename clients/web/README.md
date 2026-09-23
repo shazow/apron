@@ -64,7 +64,7 @@ base URL, a display name, and a sign-in choice (Guest by default; Passkey signs
 in with an existing passkey once the guest session is up). The server and name
 are stored in local storage, and the last few backends are listed under the
 form. The profile bar at the foot of the sidebar edits your handle, which is
-sent with the protocol `nick` request after authentication; the editor shows
+sent with the protocol `name` request after authentication; the editor shows
 what the server actually kept.
 
 The profile editor's Sign-in row offers **Add passkey**, **Sign in with passkey**,
@@ -119,23 +119,32 @@ helpers: `timeline.ts` builds the room and thread views, `messages.ts` and
 `storage.ts` keeps everything remembered between visits under `apron.*` keys.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol`. Recovery uses the base protocol's `latest_log_id` and
-`history_log_id` fields. It tracks the monotonic effective boundary and a
-per-scope checkpoint, captures a fixed room head, pages complete snapshots from
-the retained boundary, and buffers bounded live snapshots until recovery
-finishes. A checkpoint at `history_log_id - 1` resumes safely; if retention
-overtakes the next uncovered range, the client rebuilds from the new boundary
-and ignores obsolete replies. `history_log_id: null` means the effective
-boundary is `latest_log_id + 1`. Sparse timestamp log IDs are expected.
-Opening a thread fetches its history independently with `thread_id` and a fixed
-head, without advancing room coverage. The reducer installs the greatest
-`log_id` for each `message_id`, so overlapping history and live delivery cannot
-revert newer state. The UI displays a notice that the demo retains roughly the
-last day and honors server retry delays with jittered reconnect backoff.
+`src/lib/protocol` and speak Apron protocol v3. `reducer.ts` keeps one store
+of room records, message snapshots, and per-user reaction sets for every room;
+each record replaces the stored one only when its `log_id` is greater, so
+overlapping history and live delivery cannot revert newer state, and a move
+snapshot re-homes a message into its new room. Embedded `reply_to` and
+`intro_message` snapshots install like any other record. Reactions aggregate
+per message (counts per emoji, who reacted, whether you did) and are hidden on
+tombstones.
+
+Recovery is per room and uses `latest_log_id` and `history_log_id`. For each
+top-level room the client tracks the monotonic effective lower bound and a
+checkpoint, captures a fixed head when the room is announced, pages every
+record kind from the bound (or the checkpoint), and buffers bounded live
+records until recovery finishes; the room's published timeline is held until
+then. If retention overtakes the next uncovered position the client rebuilds
+from the new bound and ignores obsolete replies. `history_log_id: null` means
+the effective bound is `latest_log_id + 1`. Sparse timestamp log IDs are
+expected. Threads are rooms with a `parent_room_id`; they load their own
+history with `loadRoom` when opened. The UI displays a notice that the demo
+retains roughly the last day and honors server retry delays with jittered
+reconnect backoff.
 
 Edits, moves, and deletion use the same `message` request as creation, with an
-existing `message_id` and complete editable state. The client preserves unknown
-extensions, embeds, and other fields it is not changing. Starting a thread first
-requests server-assigned metadata through `thread`, then saves the message with
-the returned `thread_id`. Thread titles fall back to the root excerpt or ID in
-the UI; empty threads remain available.
+existing `message_id`, and resubmit every client field of the latest snapshot
+(`room_id`, `body`, a bare `reply_to`, and `ext` unchanged). A move is a save
+with another `room_id`. Rooms and threads are created and updated with the
+`room` request (cap `rooms`); updates resubmit `title`, a bare `intro_message`,
+and `ext`. Reactions use the `reactions` request (cap `reactions`) with your
+complete emoji set.
