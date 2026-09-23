@@ -195,10 +195,11 @@ All IDs are strings.
 - A record MAY carry `prev_log_id`, the `log_id` of the previous record for
   the same key. It links changes backward even when that record is no longer
   retained (Appendix A); there is no lookup by `log_id`.
-- Suggested convention: holding the record at `prev_log_id`, a client diffs
-  the two to see exactly what changed; holding an older one, it knows changes
-  were missed; and a message whose `prev_log_id` equals its `message_id` has
-  changed once since creation.
+- Suggested convention: if a client already has the record that
+  `prev_log_id` names, it can diff the two to see exactly what changed. If
+  its copy is older than that, it missed at least one change in between. A
+  message whose `prev_log_id` equals its `message_id` has changed exactly
+  once since it was created.
 
 **Opaque IDs** — `room_id`, `user_id`, `session_id`, and request `id`.
 
@@ -207,8 +208,8 @@ All IDs are strings.
 - Request `id`s SHOULD be random, to avoid collisions across devices of the
   same user. They identify operations, not log positions.
 - Suggested convention: use a room's creation `log_id` as its `room_id`.
-- Suggested convention: keep `room_id`s distinct from `user_id`s, so an `@`
-  mention names one or the other (Appendix J.3).
+- Suggested convention: keep `room_id`s distinct from `user_id`s, so
+  `@mentions` are unambiguous. (Appendix J.3)
 - Field naming for extensions and future methods: Appendix J.
 
 ---
@@ -289,7 +290,6 @@ other requests get `denied` and other notifications are ignored.
 ### 3.3 Identity
 
 Identity is server-authoritative: every message carries its author in `from`.
-There is no user directory; a user object travels wherever the user appears.
 
 ```json
 "from": {"user_id": "alice", "name": "Alice"}
@@ -794,8 +794,11 @@ Discovery and membership:
   `members`, a list of user objects (§3.3). With `parent_room_id` it lists
   that room's threads, including ones never announced. Listing a room does
   not start deliveries. Servers MAY omit or truncate `members` by policy.
-- A room is joined when it is in the announced set; listings carry no
-  separate flag.
+- `room_list` has no "joined" flag: the rooms a user has joined are the
+  ones announced to their connection (§3.4).
+- Posting in a visible room the user has not joined MAY join them to it:
+  the server announces the room, then delivers the message. Otherwise the
+  post is `denied`.
 - `room_join` and `room_leave` return `{}`. A join announces the room; a
   leave, or losing visibility, sends `removed: true`. A room left but still
   visible stays in `room_list`.
@@ -1249,7 +1252,9 @@ its name. Extensions and future methods should follow the same pattern.
 
 ### J.3 Mentions
 
-A mention is `@` followed by a `user_id` or `room_id` in `body.text`:
+Mentions need no protocol support: they are plain text that clients and
+servers interpret by this convention. A mention is `@` followed by a
+`user_id` or `room_id` in `body.text`:
 
 ```json
 "body": {"text": "@guest_1234 can you check the deploy?"}
@@ -1273,11 +1278,13 @@ A mention is `@` followed by a `user_id` or `room_id` in `body.text`:
 
 ### J.4 Avatar uploads
 
-With cap `embed:upload`, a message sent to room `@avatar` with one `upload`
-embed asks the server to use that file as the sender's avatar. The server
-returns the write URL as usual, sets `avatar` and sends `user` (§3.3) when
-the upload completes, and neither delivers nor logs the message. Servers
-without the convention reject the unknown room as `invalid_params`.
+Avatar uploads need no protocol support beyond `embed:upload`: they are an
+ordinary message that servers interpret by this convention. A message sent
+to room `@avatar` with one `upload` embed asks the server to use that file
+as the sender's avatar. The server returns the write URL as usual, sets
+`avatar` and sends `user` (§3.3) when the upload completes, and neither
+delivers nor logs the message. Servers without the convention reject the
+unknown room as `invalid_params`.
 
 ---
 
