@@ -229,8 +229,7 @@ frame, unprompted. There is no client hello.
     "protocol": 4,
     "name": "impl-name/1.0",
     "caps": ["history", "edit"],
-    "auth": ["token"],
-    "upload": "https://example/upload"
+    "auth": ["token"]
   }
 }
 ```
@@ -243,7 +242,6 @@ frame, unprompted. There is no client hello.
 - `caps`: array of capability strings (§4), default `[]`.
 - `auth`: required nonempty array of supported authentication schemes (§3.2),
   in server preference order.
-- `upload`: optional upload URL; its presence enables uploads (Appendix E).
 - `ext`: optional extension metadata (§3.5), such as implementation limits.
 - `push`: optional object of supported push kinds; its presence enables push
   (Appendix F).
@@ -523,10 +521,12 @@ the fallback:
 | `rooms`        | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads  | Appendix C |
 | `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | Appendix D |
 | `activity`     | typing indicators and read markers                           | no typing or read indicators | Appendix D |
+| `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | Appendix E |
+| `embed:oembed` | `oembed` embeds: link and media previews the server fills    | links stay in the text       | Appendix E |
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | Appendix K |
 
-Features without a cap: uploads follow `server.upload` (Appendix E); embeds
-are body content (Appendix E); push follows `server.push` (Appendix F).
+Features without a cap: other embeds are body content (Appendix E); push
+follows `server.push` (Appendix F).
 
 - Suggested convention: third-party extension caps use an `ext:` prefix,
   such as `ext:irc`.
@@ -881,43 +881,120 @@ broadcast carries the state.
 
 ---
 
-## Appendix E — Uploads, embeds, and avatars
+## Appendix E — Embeds, uploads, and avatars
 
-**Upload.** Media travels over HTTP, not the socket. The client POSTs
-`multipart/form-data` to the `upload` URL from the `server` frame, receives
-`{"url": "..."}`, and references the URL in an embed. With `token` auth, the
-same token is the bearer. With other schemes the server SHOULD re-send the
-`server` frame after auth carrying a per-session `upload` URL (§3.1).
-
-**Embeds.** `body.embeds` holds media and rich content in display order;
-`kind` selects the renderer. Unknown kinds use the fallback card (§3.5).
+**Embeds.** `body.embeds` holds rich content in display order; `kind` selects
+the renderer. Unknown kinds use the fallback card (§3.5).
 
 ```json
-{"kind": "image", "url": "...", "mime": "image/png", "w": 800, "h": 600}
-{"kind": "file", "url": "...", "name": "report.pdf", "size": 12345}
-{"kind": "iframe", "url": "https://backend:8443/term/abc", "h": 300}
-{"kind": "html", "html": "<table>…</table>"}
+{"embed_id": "embed_1240", "kind": "oembed", "url": "https://example.com/post", "oembed": {"type": "link", "version": "1.0", "title": "Shipping v4"}}
+{"embed_id": "embed_1241", "kind": "iframe", "url": "https://backend:8443/term/abc", "height": 300}
+{"embed_id": "embed_1242", "kind": "html", "html": "<table>…</table>"}
 ```
 
-- Media kinds: `image`, `video`, `audio`, `file` (with `name`, `size`).
 - `iframe`: render with `sandbox="allow-scripts"` and **never**
   `allow-same-origin` alongside it; no top navigation or popups; restrictive
-  Permissions-Policy; clamped dimensions (`h` is a suggestion); lazy loading;
-  a cap on concurrently live iframes. Intended for backend-served live views
-  such as terminals and dashboards.
+  Permissions-Policy; clamped dimensions (`height` is a suggestion); lazy
+  loading; a cap on concurrently live iframes. Intended for backend-served
+  live views such as terminals and dashboards.
 - `html`: sanitize with an allowlist sanitizer (e.g. DOMPurify) before
   insertion, regardless of source. Servers make no safety promises about
   content flowing through them.
-- `stream`: live text written over HTTP (Appendix K).
+- `oembed` and `upload` are below; `stream` is Appendix K.
 - Future typed embeds (`diff`, `poll`, …) use the fallback rule.
+
+**Embed identity.** Servers that advertise any `embed:*` cap assign each
+embed an opaque `embed_id`; other servers MAY store embeds as given.
+
+- A save keeps an embed by sending it back with its `embed_id`. An embed
+  without one is new, an `embed_id` left out removes that embed, and an
+  unknown `embed_id` is `invalid_params`.
+- The server owns `embed_id`, `oembed`, and a stream's `url` and `text`. It
+  ignores them on input and restores them on a save from its records.
+- Content the server hosts for an embed belongs to that message. When the
+  embed is removed or the message is deleted or redacted, servers SHOULD
+  delete the content.
+- Suggested convention: `embed_` plus a server-wide counter, such as
+  `embed_1234`.
+
+**Writes.** New `upload` and `stream` embeds take their content over HTTP.
+The `message` result lists them, in request order:
+
+```jsonc
+// -> the sender attaches a file
+{
+  "method": "message", "id": "c8", "params": {
+    "room_id": "general",
+    "body": {"text": "Before the fix:", "embeds": [{"kind": "upload", "title": "before.png"}]}
+  }
+}
+// <-
+{
+  "id": "c8", "result": {
+    "message_id": "1724803500000",
+    "embeds": [{"embed_id": "embed_1235", "kind": "upload", "write_url": "https://chat.example/w/4c7a…"}]
+  }
+}
+// <- broadcast: the upload is pending
+{
+  "method": "message", "params": {
+    "message_id": "1724803500000", "log_id": "1724803500000", "room_id": "general",
+    "from": {"user_id": "ada", "name": "Ada"},
+    "body": {"text": "Before the fix:", "embeds": [{"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}]}
+  }
+}
+// sender: curl -T before.png https://chat.example/w/4c7a…
+// <- the upload completes: the same embed_id, now an oembed
+{
+  "method": "message", "params": {
+    "message_id": "1724803500000", "log_id": "1724803502210", "prev_log_id": "1724803500000",
+    "room_id": "general", "from": {"user_id": "ada", "name": "Ada"},
+    "body": {"text": "Before the fix:", "embeds": [{
+      "embed_id": "embed_1235", "kind": "oembed", "url": "https://chat.example/f/embed_1235",
+      "oembed": {
+        "type": "photo", "version": "1.0", "title": "before.png",
+        "url": "https://chat.example/f/embed_1235", "width": 1280, "height": 720,
+        "thumbnail_url": "https://chat.example/f/embed_1235/thumb",
+        "thumbnail_width": 320, "thumbnail_height": 180
+      }
+    }]}
+  }
+}
+```
+
+- The sender sends the content as an HTTP request body to `write_url`.
+  `write_url` is a credential and expires if unused.
+- The server finishes each write exactly once: on success it publishes a
+  snapshot with the embed completed; if the write never starts in time or
+  fails, it publishes a snapshot without the embed.
+
+**`oembed`** (cap `embed:oembed`). `oembed` holds an
+[oEmbed 1.0](https://oembed.com/) response produced by the server; `url`,
+if present, is where a click goes.
+
+- To add a preview, a client sends `{"kind": "oembed", "url": "..."}`. The
+  server fills `oembed` in a later snapshot from the page's oEmbed or
+  OpenGraph data, or removes the embed if it finds none. Servers MAY add
+  previews for links in `body.text` the same way.
+- The server hosts or proxies every image `oembed` references, including
+  `thumbnail_url` and a `photo`'s `url`, and sets their dimensions.
+- Clients MAY render `oembed` with any oEmbed library. They never insert
+  `html` (`video`, `rich`) into the page: they render it in a sandboxed
+  iframe under the `iframe` rules, or ignore it.
+
+**`upload`** (cap `embed:upload`). The sender gives an optional `title`,
+such as the file name. Clients show a placeholder while the upload is
+pending. On success the server replaces the embed, keeping its `embed_id`,
+with an `oembed` embed for the file: `photo` for images, `video` for audio
+and video, otherwise `link` with the file as `url`.
 
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
 the user's name.
 
 - Servers send `avatar` in `you`, `user`, and `members`, not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
-  `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through
-  upload.
+  `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through an
+  upload (Appendix J.4).
 - Clients own their security boundary and choose which sources to load; they
   MAY ignore any avatar. Load values only as images, never as documents, and
   bind or escape them rather than interpolating them into HTML.
@@ -1181,12 +1258,21 @@ A mention is `@` followed by a `user_id` or `room_id` in `body.text`:
 - Servers MAY apply the same rule to wake mentioned users (Appendix F).
 - Mentions that notify a whole room are not defined.
 
+### J.4 Avatar uploads
+
+With cap `embed:upload`, a message sent to room `@avatar` with one `upload`
+embed asks the server to use that file as the sender's avatar. The server
+returns the write URL as usual, sets `avatar` and sends `user` (§3.3) when
+the upload completes, and neither delivers nor logs the message. Servers
+without the convention reject the unknown room as `invalid_params`.
+
 ---
 
 ## Appendix K — `embed:stream`
 
 Cap `embed:stream`. A message can carry live text that the sender writes over
-HTTP while readers watch it grow. A message carries at most one stream embed.
+HTTP while readers watch it grow. Stream embeds follow Appendix E's embed
+identity and write rules.
 
 ```jsonc
 // -> the sender includes a stream embed
@@ -1196,12 +1282,34 @@ HTTP while readers watch it grow. A message carries at most one stream embed.
     "body": {"text": "Deploy log:", "embeds": [{"kind": "stream", "format": "terminal"}]}
   }
 }
-// <- the result adds a secret write_url
-{"id": "c9", "result": {"message_id": "1724803500000", "write_url": "https://chat.example/s/w/9b1e…"}}
-// <- the broadcast embed carries the read url
-{"kind": "stream", "format": "terminal", "url": "https://chat.example/s/r/1724803500000"}
-// <- after the stream ends, the final snapshot carries the text instead
-{"kind": "stream", "format": "terminal", "text": "…"}
+// <-
+{
+  "id": "c9", "result": {
+    "message_id": "1724803600000",
+    "embeds": [{"embed_id": "embed_1234", "kind": "stream", "write_url": "https://chat.example/w/9b1e…"}]
+  }
+}
+// <- broadcast: the stream is live at its url
+{
+  "method": "message", "params": {
+    "message_id": "1724803600000", "log_id": "1724803600000", "room_id": "ops",
+    "from": {"user_id": "ada", "name": "Ada"},
+    "body": {"text": "Deploy log:", "embeds": [
+      {"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/embed_1234"}
+    ]}
+  }
+}
+// sender: foo 2>&1 | curl -T - https://chat.example/w/9b1e…
+// <- the stream ends: the kept text replaces url
+{
+  "method": "message", "params": {
+    "message_id": "1724803600000", "log_id": "1724803661200", "prev_log_id": "1724803600000",
+    "room_id": "ops", "from": {"user_id": "ada", "name": "Ada"},
+    "body": {"text": "Deploy log:", "embeds": [
+      {"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
+    ]}
+  }
+}
 ```
 
 - `format` names how to render the text; default `"plain"`, shown as is with
@@ -1209,18 +1317,16 @@ HTTP while readers watch it grow. A message carries at most one stream embed.
   `"markdown"` (rendered under §3.5's rules) or `"terminal"`, and render
   unknown formats as plain.
 - Write: the sender sends UTF-8 text as a streaming HTTP request body to
-  `write_url`, for example `foo | curl -T - <write_url>`. The end of the body
-  ends the stream.
+  `write_url`. The end of the body ends the stream.
 - Read: `GET url` returns the text the server has kept, continues as more
   arrives, and ends when the stream does. A reader that reconnects replaces
   what it has shown with the new response.
 - Finish: when the stream ends, the server publishes a snapshot whose embed
   carries the kept text as `text` in place of `url`, and both URLs stop
-  working. A sender with cap `edit` MAY save the message first, which ends
-  the stream.
+  working. A sender with cap `edit` MAY save the message without the embed
+  first, which ends the stream.
 - How much text the server keeps, size and time limits, and the grace period
   after a writer disconnects are server policy. At a limit, the server ends
   the stream and keeps the trailing text.
-- `write_url` is a credential. `url` is served by the chat server; clients
-  SHOULD NOT connect to stream URLs on other origins.
-
+- `url` is served by the chat server; clients SHOULD NOT connect to stream
+  URLs on other origins.
