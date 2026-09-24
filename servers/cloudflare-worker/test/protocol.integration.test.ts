@@ -484,6 +484,40 @@ it('lists rooms and threads with the connected members, and throttles listing', 
 	} finally { alice.close(); bob.close(); }
 });
 
+it('pages room_list over creation order and lists one room by room_id', async () => {
+	const alice = await connect();
+	try {
+		await authenticate(alice);
+		const created: string[] = [];
+		for (let index = 0; index < 3; index += 1) {
+			alice.send({ id: `thread-${index}`, method: 'room', params: { parent_room_id: 'general', title: `Paged ${index}` } });
+			created.push((await until(alice, (frame) => frame.id === `thread-${index}`)).frame.result.room_id);
+		}
+		const list = async (id: string, params: Record<string, unknown>) => {
+			alice.send({ id, method: 'room_list', params });
+			return (await until(alice, (frame) => frame.id === id)).frame;
+		};
+		const ids = (result: { rooms: Array<{ room_id: string }> }) => result.rooms.map((room) => room.room_id);
+
+		// Without after, the newest threads, ascending, with more to page back to.
+		const newest = (await list('newest', { parent_room_id: 'general', limit: 2 })).result;
+		expect(ids(newest)).toEqual(created.slice(1));
+		expect(newest.more).toBe(true);
+		const older = (await list('older', { parent_room_id: 'general', limit: 1, before: String(BigInt(newest.first_id) - 1n) })).result;
+		expect(ids(older)).toEqual(created.slice(0, 1));
+		// With after, the oldest matches; these are the newest threads, so nothing follows.
+		const forward = (await list('forward', { parent_room_id: 'general', limit: 5, after: older.first_id })).result;
+		expect(ids(forward)).toEqual(created);
+		expect(forward).toMatchObject({ first_id: older.first_id, last_id: newest.last_id, more: false });
+
+		const one = (await list('one', { room_id: created[1] })).result;
+		expect(ids(one)).toEqual([created[1]]);
+		expect(one.rooms[0].members.length).toBeGreaterThan(0);
+		expect((await list('combined', { room_id: created[1], limit: 1 })).error.code).toBe(-32602);
+		expect((await list('unknown', { room_id: 'missing' })).error.code).toBe(-32602);
+	} finally { alice.close(); }
+});
+
 it('links each changed record to the previous one with prev_log_id', async () => {
 	const alice = await connect();
 	try {

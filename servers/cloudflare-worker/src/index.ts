@@ -1247,26 +1247,45 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Rooms for discovery (Appendix C): the top-level rooms, or one room's
-	 * threads. Every room is visible and joined, so `members` is everyone
-	 * connected now, capped; the list is the same for every room.
+	 * Rooms for discovery (Appendix C): a page of the top-level rooms or of one
+	 * room's threads, in creation order, or with `room_id` one room. Every room
+	 * is visible and joined, so `members` is everyone connected now, capped;
+	 * the list is the same for every room. The rooms table is capped, so pages
+	 * are cut from the full listing and `limit` defaults to all of it.
 	 */
 	private async handleRoomList(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: "Authenticate before listing rooms" } satisfies ProtocolError;
-		const parent = optionalString(request.params, "parent_room_id");
+		const params = request.params;
+		const parent = optionalString(params, "parent_room_id");
+		const roomId = optionalString(params, "room_id");
+		const after = asDecimalId(params.after, "after");
+		const before = asDecimalId(params.before, "before");
+		const limit = positiveIntParam(params, "limit");
+		if (roomId !== undefined && (parent !== undefined || after !== undefined || before !== undefined || limit !== undefined)) {
+			throw { name: "invalid_params", message: "room_id lists one room and takes no other parameters" } satisfies ProtocolError;
+		}
 		const now = nowMs();
 		const retry = this.throttleRetry(identity.user_id, "room_list", this.config.limits.roomListRequestsPerUserMinute, now);
 		if (retry !== undefined) throw { name: "retry_after", message: "Room listing limited", data: { retry_after: retry } } satisfies ProtocolError;
-		const rooms = this.store.listRooms(now);
+		const entries = this.store.listRoomEntries(now);
 		this.takeThrottle(socket, identity.user_id, "room_list", Number.MAX_SAFE_INTEGER, now);
-		for (const room of rooms) this.noteRoom(room.room_id, true);
-		if (parent !== undefined && !rooms.some((room) => room.room_id === parent)) throw { name: "invalid_params", message: "Unknown parent_room_id" } satisfies ProtocolError;
+		for (const entry of entries) this.noteRoom(entry.record.room_id, true);
+		if (parent !== undefined && !entries.some((entry) => entry.record.room_id === parent)) throw { name: "invalid_params", message: "Unknown parent_room_id" } satisfies ProtocolError;
+		if (roomId !== undefined && !entries.some((entry) => entry.record.room_id === roomId)) throw { name: "invalid_params", message: "Unknown room_id" } satisfies ProtocolError;
+		const matching = entries.filter((entry) => {
+			if (roomId !== undefined) return entry.record.room_id === roomId;
+			if (entry.record.parent_room_id !== parent) return false;
+			return (after === undefined || entry.created_log_id >= Number(after)) && (before === undefined || entry.created_log_id <= Number(before));
+		});
+		// As in history, `after` selects the oldest matches and otherwise the newest.
+		const more = limit !== undefined && matching.length > limit;
+		const page = !more ? matching : after !== undefined ? matching.slice(0, limit) : matching.slice(-limit);
 		const members = this.connectedMembers();
 		this.reply(socket, request, {
-			rooms: rooms
-				.filter((room) => (parent === undefined ? room.parent_room_id === undefined : room.parent_room_id === parent))
-				.map((room) => ({ ...room, members })),
+			rooms: page.map((entry) => ({ ...entry.record, members })),
+			...(page.length > 0 ? { first_id: String(page[0].created_log_id), last_id: String(page[page.length - 1].created_log_id) } : {}),
+			more,
 		});
 	}
 

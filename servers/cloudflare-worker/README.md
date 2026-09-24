@@ -89,7 +89,7 @@ socket.onmessage = ({ data }) => {
 Use the protocol's `message`, `room`, and `reactions` requests to exercise
 posting, editing, deletion/restoration, moves, threads, and reactions;
 `room_list` lists rooms and threads with the users connected now, up to 6
-times a minute per user. The whole server processes at most 300 frames a
+times a minute per user; every room fits one page unless `limit` asks for less. The whole server processes at most 300 frames a
 minute; past that, requests get `retry_after` and the socket stays open. The demo
 only creates thread rooms: `room` requests need `parent_room_id: "general"`,
 and `general` itself cannot be edited or left. This is a shared public room, not

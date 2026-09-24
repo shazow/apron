@@ -323,6 +323,12 @@ export interface RoomRecord {
   history_log_id: string | null;
 }
 
+/** A room record with the `log_id` of the record that created the room. */
+export interface RoomListEntry {
+  created_log_id: number;
+  record: RoomRecord;
+}
+
 /** One logged reaction change (protocol v4 Appendix D.2). */
 export interface ReactionsRecord {
   log_id: string;
@@ -1633,6 +1639,11 @@ export class Store {
    * was under an earlier retention floor.
    */
   listRooms(now = this.clock.now(), options: { maintenance?: boolean; changedSinceFloor?: number } = {}): RoomRecord[] {
+    return this.listRoomEntries(now, options).map((entry) => entry.record);
+  }
+
+  /** listRooms with each room's creation position, for paged `room_list`. */
+  listRoomEntries(now = this.clock.now(), options: { maintenance?: boolean; changedSinceFloor?: number } = {}): RoomListEntry[] {
     this.ensureReady();
     return this.reserved({ reads: this.roomListingReads() }, options.maintenance === true, now, () => {
       const floor = this.logState().history_floor;
@@ -1649,7 +1660,10 @@ export class Store {
       const since = options.changedSinceFloor;
       return rows
         .filter((row) => since === undefined || roomHistoryLogId(row, since) !== roomHistoryLogId(row, floor))
-        .map((row) => this.roomRecord(row, floor, { snapshot_json: row.intro_snapshot_json, latest_log_id: row.intro_log_id }));
+        .map((row) => ({
+          created_log_id: row.created_log_id,
+          record: this.roomRecord(row, floor, { snapshot_json: row.intro_snapshot_json, latest_log_id: row.intro_log_id }),
+        }));
     });
   }
 
