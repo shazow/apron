@@ -51,6 +51,8 @@ export class SessionView {
 	readonly canEdit = $derived(canEdit(this.server));
 	/** Create and update rooms and threads (cap `rooms`). */
 	readonly canManageRooms = $derived(canManageRooms(this.server));
+	/** Leaving needs cap `rooms`, and not a demo worker that says rooms are joined for good. */
+	readonly canLeaveRooms = $derived(this.canManageRooms && this.server?.ext?.demo?.room_leave !== false);
 	/** Reaction chips and the React action (cap `reactions`). */
 	readonly canReact = $derived(canReact(this.server));
 

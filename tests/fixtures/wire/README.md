@@ -244,7 +244,9 @@ unchanged.
 
 The fixtures pin the example client's recovery profile. It is a test profile
 built from PROTOCOL.md Appendix A, not
-the only conforming strategy. All of this state is per connection.
+the only conforming strategy. The recovery state below is kept per room across
+a lost connection (see Session state); a room announced for the first time
+starts without it.
 
 - **Head and bound.** Per visible room the client tracks its known head, the
   greatest `latest_log_id` from that room's `room` frames and history results
@@ -258,12 +260,13 @@ the only conforming strategy. All of this state is per connection.
   not evicted.
 - **Automatic recovery** (cap `history`, rooms without `parent_room_id`, no
   recovery already running), with H = the known head:
-  - A `room` frame starts one when the room is first announced on this
-    connection, when its last recovery failed, when there is no checkpoint C
-    yet, or when the known head is above C. It is a **rebuild** (clear the
-    room's messages and their reaction sets, start at `after = F`) for a first
-    announcement, after a failure, or with no C; otherwise it **resumes** at
-    `after = max(C + 1, F)` and keeps the room's state.
+  - A `room` frame starts one when the room is announced with no kept state,
+    when its last recovery failed, when there is no checkpoint C yet, or when
+    the known head is above C. It is a **rebuild** (clear the room's messages
+    and their reaction sets, start at `after = F`) for a room with no kept
+    state, after a failure, or with no C; otherwise it **resumes** at
+    `after = max(C + 1, F)` and keeps the room's state. A room kept from a
+    lost connection whose head has not moved past C needs no request.
   - When F grows outside a recovery and there is no C or `C + 1 < F`, a rebuild
     starts.
   - If `after > H` the recovery completes with no request.
@@ -288,7 +291,7 @@ the only conforming strategy. All of this state is per connection.
 - **Thread rooms** never recover automatically. `loadRoom` loads one with
   H = its known head when invoked, `after` = F, or
   `max(T + 1, F)` given the thread's own checkpoint T from an earlier
-  `loadRoom` on this connection. Pages apply as they arrive; if F overtakes
+  `loadRoom`, kept across a lost connection. Pages apply as they arrive; if F overtakes
   `after`, continue from F. T advances to each page's `last_id` and to H at
   `more: false`. Live records for the thread apply directly.
 
@@ -316,10 +319,10 @@ The normalized session state has these keys:
   `rejected`.
 
 On `disconnect` the client's protocol view is rebuilt from the next
-connection: `you` is `null`, `caps` and `typing` are `[]`, `rooms` is `[]`
-until rooms are announced again, and the record stores, floors, and
-checkpoints are discarded, so each re-announced room recovers in full from its
-lower bound. (The UI may keep showing the old view meanwhile; that is not part
+connection: `you` is `null`, `caps` and `typing` are `[]`, and `rooms` is `[]`
+until rooms are announced again. The record stores, floors, and checkpoints
+are kept, so each re-announced room resumes from its checkpoint rather than
+recovering in full (PROTOCOL.md Appendix A, recovery from `C + 1`). (The UI may keep showing the old view meanwhile; that is not part
 of the projection.) A pending operation across a disconnect is unconstrained.
 
 An omitted top-level `expected` key is unconstrained; `expected: {}` means
@@ -337,7 +340,7 @@ no sleeps, timers, or DOM selectors.
 | `history-live-boundary.json` | fixed H with live records above it (edit, room update, reaction), mixed-kind pages (limit counts every kind), raw and compacted |
 | `history-boundaries.json` | inclusive bound with eviction, bound overtaking a recovery by `room` frame or by page, sparse IDs, `null` bounds (empty log, expired cache, becoming retained, page head) |
 | `history-recovery-failure.json` | a head above the checkpoint resumes from `C + 1`; an error or invalid page keeps partial and buffered state; the next `room` frame rebuilds |
-| `reconnect-history.json` | new guest identity after reconnect; full recovery without persistent checkpoints, across message and reaction records |
+| `reconnect-history.json` | new guest identity after reconnect; recovery resumes from the kept checkpoint, across message and reaction records |
 | `thread-recovery.json` | thread room recovered only by `loadRoom`, as its own room; move in both rooms' logs; interleaved with room recovery |
 
 The Node adapter is [`tests/interop/wire.spec.ts`](../../interop/wire.spec.ts).

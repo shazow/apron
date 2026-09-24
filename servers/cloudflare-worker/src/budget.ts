@@ -72,6 +72,17 @@ export interface Limits {
 	frameLease: number;
 	/** Users listed as `members` of each room in a `room_list` result: those connected now. */
 	roomListMembers: number;
+	/**
+	 * How often a client that opts in sends the keepalive frame. The runtime
+	 * answers it without waking the object, so it costs no frame budget.
+	 */
+	keepaliveSeconds: number;
+	/**
+	 * A connection that has sent a keepalive is stale once this long passes
+	 * with no keepalive or frame. It is closed before `members` are listed and
+	 * before connections are counted for admission.
+	 */
+	keepaliveTimeoutSeconds: number;
 	sqlWritesPerDay: number;
 	sqlReadsPerDay: number;
 	foregroundWritesPerDay: number;
@@ -145,6 +156,8 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	activityMaxTypingSeconds: 30,
 	frameLease: 10,
 	roomListMembers: 20,
+	keepaliveSeconds: 45,
+	keepaliveTimeoutSeconds: 150,
 	sqlWritesPerDay: 80_000,
 	sqlReadsPerDay: 3_000_000,
 	foregroundWritesPerDay: 60_000,

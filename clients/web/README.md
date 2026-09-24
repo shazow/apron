@@ -49,8 +49,11 @@ so the same person has the same color on every client. Senders whose `user_id`
 starts with `@` render as quiet system lines.
 
 Mentions follow the `@user_id` convention (Appendix J.3). Typing `@` in the
-composer opens the mention picker over the room's recent senders and its
-`room_list` members, filtered by name or ID: arrows move, Tab or Enter picks,
+composer opens the mention picker over the room's `room_list` members (on the
+demo worker, the users connected now) and anyone who posted since that listing,
+or the room's recent senders on a server without `room_list`, filtered by name
+or ID. The members are listed again when the picker opens on a list more than
+15 seconds old, and after every reconnect. Arrows move, Tab or Enter picks,
 Escape dismisses. A picked person becomes a chip showing their name, and a
 typed `@name` (case-insensitive, spaces allowed) or `@user_id` collapses into
 the same chip once finished, when exactly one person in the room goes by it;
@@ -205,9 +208,20 @@ then. If retention overtakes the next uncovered position the client rebuilds
 from the new bound and ignores obsolete replies. `history_log_id: null` means
 the effective bound is `latest_log_id + 1`. Sparse timestamp log IDs are
 expected. Threads are rooms with a `parent_room_id`; they load their own
-history with `loadRoom` when opened. The UI displays a notice that the demo
+history with `loadRoom` when opened. A lost connection keeps each room's
+records, bound and checkpoint: a room announced again resumes from its
+checkpoint (or rebuilds if retention passed it), and a thread reopened after a
+reconnect loads only what came after its own checkpoint. Signing out or
+switching servers still starts over. The UI displays a notice that the demo
 retains roughly the last day (from the worker's `server.ext.demo` hints) and honors server retry delays with jittered
-reconnect backoff.
+reconnect backoff. When those hints carry `keepalive_seconds`, the client sends
+`{"method":"ping"}` at that interval, which the worker's runtime answers
+without waking it; it is how the worker tells a vanished peer from a quiet one,
+and it keeps Cloudflare from dropping an idle socket. A socket that goes two
+intervals without the `{"method":"pong"}` answer is presumed dead and replaced
+through the usual reconnect. With `room_leave: false` the client offers no
+Leave, and with `read_cursors: false` it moves your read cursor locally without
+sending it.
 
 Edits, moves, and deletion use the same `message` request as creation, with an
 existing `message_id`, and resubmit every client field of the latest snapshot
