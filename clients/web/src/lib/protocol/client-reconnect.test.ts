@@ -113,6 +113,16 @@ describe('transport reconnects', () => {
 		expect(typing()).toHaveLength(4);
 	});
 
+	it('lets a sent message end typing without another activity frame', () => {
+		const socket = latest();
+		advertiseActivity();
+		client.sendTyping('lobby', true);
+		client.send('lobby', 'hello').promise.catch(() => undefined);
+		client.sendTyping('lobby', false);
+		const typing = socket.sent.filter(frame => frame.method === 'activity');
+		expect(typing).toEqual([{ method: 'activity', params: { room_id: 'lobby', typing: 15 } }]);
+	});
+
 	it('sends no typing to a server without cap activity', () => {
 		client.sendTyping('lobby', true);
 		client.sendTyping('lobby', false);

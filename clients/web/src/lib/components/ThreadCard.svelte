@@ -14,7 +14,7 @@
 			{#if entry.participants.length > 0}
 				<span class="ap-thread-faces" aria-hidden="true">
 					{#each entry.participants as participant (participant.user_id)}
-						<Avatar name={directory.name(participant)} src={directory.avatar(participant)} size="sm" />
+						<Avatar name={directory.name(participant)} id={directory.person(participant)?.user_id} src={directory.avatar(participant)} size="sm" />
 					{/each}
 				</span>
 			{/if}

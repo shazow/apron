@@ -127,6 +127,26 @@ describe('ChatClient reference features', () => {
 		expect(snapshot.uploads).toEqual({});
 	});
 
+	it('shows an unlogged @server notice and still recovers the room after a reconnect', async () => {
+		await connect();
+		// A notice takes a log_id past the room's logged head and never appears in history.
+		socket.receive({ method: 'message', params: { message_id: '15', log_id: '15', room_id: 'general', from: { user_id: '@server', name: 'Server' }, body: { text: 'Typing updates are limited', format: 'plain' } } });
+		const general = () => snapshot.rooms.find((room) => room.id === 'general')!;
+		expect(general().timeline.order).toContain('15');
+		socket.drop();
+		client.retryNow();
+		socket = FakeSocket.latest();
+		await socket.greet(['history', 'rooms', 'activity'], { room: { room_id: 'general', log_id: '10', title: 'General', latest_log_id: '12', history_log_id: '10' } });
+		await settle();
+		const history = socket.request('history');
+		await socket.reply('history', { entries: [{ message_id: '12', log_id: '12', room_id: 'general', from: { user_id: 'bob', name: 'Bob' }, body: { text: 'hi' } }], more: false, latest_log_id: '12', history_log_id: '10' });
+		await settle();
+		// One page settles it: no loop chasing the notice's log_id.
+		expect(socket.sent.filter((frame) => frame.method === 'history')).toHaveLength(1);
+		expect(history.params.room_id).toBe('general');
+		expect(general().timeline.order).toContain('12');
+	});
+
 	it('uploads an avatar as a message to room @avatar', async () => {
 		await connect();
 		vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 201 })));

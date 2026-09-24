@@ -46,11 +46,11 @@ async function sweepOn(target: ReturnType<typeof env.DEMO.getByName>, now: numbe
 }
 
 /** Registers an identity straight into the object's store, bypassing the ceremony. */
-async function registerIdentity(userId: string): Promise<void> {
+async function registerIdentity(userId: string, ipKey = 'session-test-ip'): Promise<void> {
 	await runInDurableObject(stub(), async (instance) => {
 		const runtime = instance as unknown as { store: { registerIdentity(input: Record<string, unknown>): unknown } };
 		runtime.store.registerIdentity({
-			userId, name: `Name of ${userId}`, userHandle: `handle-${userId}`, now: Date.now(), ipKey: 'session-test-ip',
+			userId, name: `Name of ${userId}`, userHandle: `handle-${userId}`, now: Date.now(), ipKey,
 			credential: { credentialId: `cred-${userId}`, userId, publicKey: 'AAAA', counter: 0 },
 		});
 	});
@@ -268,4 +268,36 @@ it('keeps concurrent async reservations isolated from unrelated SQL work', async
 		]);
 		expect(store.accountingStatus().unsafe).toBe(false);
 	});
+});
+
+it('sends user notifications for renames and for a guest signing in on its connection', async () => {
+	await registerIdentity('user_session_notify', 'session-notify-ip');
+	const token = await issueSession('user_session_notify', 'http://localhost:5173');
+	const watcher = await connect();
+	const tab = await connect();
+	const second = await connect();
+	const until = async (peer: Awaited<ReturnType<typeof connect>>, match: (frame: Frame) => boolean): Promise<Frame> => {
+		for (;;) {
+			const frame = await peer.next();
+			if (match(frame)) return frame;
+		}
+	};
+	try {
+		for (const peer of [watcher, tab, second]) await peer.next();
+		watcher.send({ id: 'guest', method: 'auth', params: { scheme: 'guest' } });
+		await until(watcher, (frame) => frame.id === 'guest');
+		tab.send({ id: 'guest', method: 'auth', params: { scheme: 'guest' } });
+		const guest = (await until(tab, (frame) => frame.id === 'guest')).result.you;
+		// Signing in on a guest's connection retires the guest for everyone else.
+		tab.send({ id: 'resume', method: 'auth', params: { scheme: 'token', token } });
+		expect((await until(tab, (frame) => frame.id === 'resume')).result.you.user_id).toBe('user_session_notify');
+		expect((await until(watcher, (frame) => frame.method === 'user')).params).toEqual({ new: { user_id: 'user_session_notify', name: 'Name of user_session_notify' }, old: guest });
+
+		second.send({ id: 'resume', method: 'auth', params: { scheme: 'token', token } });
+		await until(second, (frame) => frame.id === 'resume');
+		tab.send({ id: 'rename', method: 'me', params: { name: 'Notified' } });
+		await until(tab, (frame) => frame.id === 'rename');
+		expect((await until(second, (frame) => frame.method === 'user')).params).toEqual({ you: { user_id: 'user_session_notify', name: 'Notified' } });
+		expect((await until(watcher, (frame) => frame.method === 'user')).params).toEqual({ new: { user_id: 'user_session_notify', name: 'Notified' } });
+	} finally { watcher.close(); tab.close(); second.close(); }
 });

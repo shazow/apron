@@ -213,3 +213,31 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 		await new Promise<void>((resolve, reject) => frontend.close(error => error ? reject(error) : resolve()));
 	}
 });
+
+test('Worker leaves typing off, lists rooms, and colors guest avatars by user_id', async ({ browser }) => {
+	const writer = await browser.newContext();
+	const reader = await browser.newContext();
+	try {
+		const pageA = await writer.newPage();
+		const pageB = await reader.newPage();
+		for (const page of [pageA, pageB]) {
+			await page.goto('/');
+			await expect(page.getByTestId('connection-status')).toHaveText('Connected');
+		}
+		// The demo does not advertise `activity`, so typing is never sent or shown.
+		// Nothing is posted, so posting quotas are untouched.
+		await pageA.getByRole('textbox', { name: 'Message', exact: true }).pressSequentially('hello');
+		await pageB.waitForTimeout(500);
+		await expect(pageB.locator('.ap-roomhead-typing')).toHaveCount(0);
+		// room_list: every room is joined on the demo.
+		await pageB.getByTestId('browse-rooms').click();
+		await expect(pageB.getByTestId('room-directory')).toContainText('You’ve joined every room.');
+		// Placeholder avatars take their hue from the user_id, so two guests differ.
+		const hue = (page: typeof pageA) => page.locator('.ap-profile-me .ap-avatar').first().evaluate((element) => (element as HTMLElement).style.getPropertyValue('--avatar-hue'));
+		const [hueA, hueB] = [await hue(pageA), await hue(pageB)];
+		expect(hueA).toMatch(/^\d+$/);
+		expect(hueB).toMatch(/^\d+$/);
+	} finally {
+		await Promise.all([writer.close(), reader.close()]);
+	}
+});

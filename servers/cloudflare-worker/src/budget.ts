@@ -45,6 +45,33 @@ export interface Limits {
 	framesPerIpMinute: number;
 	processedFramesPerDay: number;
 	repeatedPolicyViolations: number;
+	/**
+	 * Frames the whole server processes in a rolling minute, counted in memory
+	 * before any SQL. Past it, requests get `retry_after` and notifications are
+	 * dropped; the socket stays open. Sized for a spike from 50 connected users,
+	 * 10 of them active: about 20 frames a minute per active user (posts,
+	 * reactions, edits, history pages, room lookups), one per quiet user, and a
+	 * reconnect wave of auth plus a history page each.
+	 */
+	globalFramesPerMinute: number;
+	/**
+	 * Per-type throttles, counted per user across their connections. Activity
+	 * over its limit is dropped and the sender gets one `@server` notice per
+	 * window; other requests over theirs are answered with `retry_after`.
+	 */
+	activityBroadcastsPerUserMinute: number;
+	roomListRequestsPerUserMinute: number;
+	/** The longest typing indicator a relayed `activity` may ask for, in seconds. */
+	activityMaxTypingSeconds: number;
+	/**
+	 * Frames one connection reserves at once. Each reservation's SQL
+	 * bookkeeping (about 24 reserved writes) is then shared by the block;
+	 * operations that do SQL work still reserve their own cost. An unspent
+	 * block is burned when the connection closes or the UTC day ends.
+	 */
+	frameLease: number;
+	/** Users listed as `members` of each room in a `room_list` result: those connected now. */
+	roomListMembers: number;
 	sqlWritesPerDay: number;
 	sqlReadsPerDay: number;
 	foregroundWritesPerDay: number;
@@ -112,6 +139,12 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	framesPerIpMinute: 120,
 	processedFramesPerDay: 100_000,
 	repeatedPolicyViolations: 3,
+	globalFramesPerMinute: 300,
+	activityBroadcastsPerUserMinute: 10,
+	roomListRequestsPerUserMinute: 6,
+	activityMaxTypingSeconds: 30,
+	frameLease: 10,
+	roomListMembers: 20,
 	sqlWritesPerDay: 80_000,
 	sqlReadsPerDay: 3_000_000,
 	foregroundWritesPerDay: 60_000,
@@ -167,6 +200,15 @@ export const MAX_REACTION_USERS_PER_MESSAGE = 64;
 export const MAX_REACTION_EMOJIS_PER_USER = 16;
 export const MAX_EMOJI_BYTES = 64;
 export const MAX_CONNECTION_FRAME_RATE = 120;
+// The server-wide frame window is one in-memory timestamp per frame.
+export const MAX_GLOBAL_FRAMES_PER_MINUTE = 1_000;
+// Throttle windows live in connection attachments, one timestamp per event.
+export const MAX_TYPE_THROTTLE_PER_MINUTE = 60;
+// A block counts against the IP's frame minute all at once.
+export const MAX_FRAME_LEASE = 20;
+// Every room in a listing carries the members list, so it multiplies the
+// response by the thread ceiling.
+export const MAX_ROOM_LIST_MEMBERS = 50;
 export const MAX_SQL_WRITES = DEFAULT_LIMITS.sqlWritesPerDay;
 export const MAX_SQL_READS = DEFAULT_LIMITS.sqlReadsPerDay;
 export const MAX_DATABASE_HIGH_WATER_BYTES = DEFAULT_LIMITS.databaseHighWaterBytes;

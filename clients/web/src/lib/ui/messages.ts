@@ -30,6 +30,25 @@ export function initials(name: string): string {
 	return (first + last).toUpperCase();
 }
 
+/**
+ * The hue of an avatar placeholder: FNV-1a over the `user_id`, so each person
+ * keeps one color everywhere and on every client. The murmur3 finalizer
+ * spreads IDs that differ in one character, such as `guest_1` and `guest_2`.
+ */
+export function avatarHue(userId: string): number {
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < userId.length; index += 1) {
+		hash ^= userId.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	hash ^= hash >>> 16;
+	hash = Math.imul(hash, 0x85ebca6b);
+	hash ^= hash >>> 13;
+	hash = Math.imul(hash, 0xc2b2ae35);
+	hash ^= hash >>> 16;
+	return (hash >>> 0) % 360;
+}
+
 /** One line of a quoted message: the first non-empty line, about 120 characters. */
 export function replySnippet(target: MessageRecord): string {
 	const line = textOf(target).split('\n').find((part) => part.trim())?.trim() ?? '';

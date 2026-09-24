@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { AuthError, AuthTooLargeError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
 import { isAllowedOrigin, loadConfig, type RuntimeConfig } from "./config";
-import { ACCOUNT_USAGE_POLICY, ADMISSION_BUDGET } from "./budget";
+import { ACCOUNT_USAGE_POLICY, ADMISSION_BUDGET, MAX_FRAME_LEASE, MAX_TYPE_THROTTLE_PER_MINUTE } from "./budget";
 import { fetchAccountUsage, type AccountUsageSnapshot } from "./account-usage";
 import { extractClientIp, hashIpKey, stripForwardingHeaders } from "./ip";
 import {
@@ -52,8 +52,21 @@ interface ConnectionAttachment {
 	policyViolations: number[];
 	historyInFlight: number;
 	frameTimes: number[];
+	/** Per-type throttle events from this connection, oldest first (budget.ts). */
+	throttles?: Partial<Record<ThrottledType, number[]>>;
+	/** When this connection last got a `@server` throttle notice, per type. */
+	notices?: Partial<Record<ThrottledType, number>>;
+	/** Frames this connection has already reserved and not yet spent, for one UTC day. */
+	frameLease?: { day: string; remaining: number };
 	closing?: boolean;
 }
+
+/** Message types with their own per-user rate (budget.ts). */
+type ThrottledType = "activity" | "room_list";
+const THROTTLED_TYPES: readonly ThrottledType[] = ["activity", "room_list"];
+const THROTTLE_WINDOW_MS = 60_000;
+/** The system identity for server notices (Appendix J.1). */
+const SERVER_IDENTITY = { user_id: "@server", name: "Server" } as const;
 
 /**
  * A bearer session minted by a verified passkey login (protocol Appendix I,
@@ -200,11 +213,32 @@ function connectionAttachment(socket: WebSocketConnection): ConnectionAttachment
 			policyViolations: Array.isArray(attachment.policyViolations) ? attachment.policyViolations.filter((value): value is number => typeof value === "number").slice(-120) : [],
 			historyInFlight: typeof attachment.historyInFlight === "number" ? attachment.historyInFlight : 0,
 			frameTimes: Array.isArray(attachment.frameTimes) ? attachment.frameTimes.slice(-120) : [],
+			...throttleState(attachment),
 			...(attachment.closing ? { closing: true } : {}),
 		};
 	} catch {
 		return null;
 	}
+}
+
+/** The throttle fields of a stored attachment, bounded and type-checked. */
+function throttleState(attachment: Partial<ConnectionAttachment>): Pick<ConnectionAttachment, "throttles" | "notices" | "frameLease"> {
+	const out: Pick<ConnectionAttachment, "throttles" | "notices" | "frameLease"> = {};
+	const throttles: Partial<Record<ThrottledType, number[]>> = {};
+	const notices: Partial<Record<ThrottledType, number>> = {};
+	for (const type of THROTTLED_TYPES) {
+		const events = attachment.throttles?.[type];
+		if (Array.isArray(events)) throttles[type] = events.filter((value): value is number => typeof value === "number").slice(-MAX_TYPE_THROTTLE_PER_MINUTE);
+		const notice = attachment.notices?.[type];
+		if (typeof notice === "number") notices[type] = notice;
+	}
+	if (Object.keys(throttles).length) out.throttles = throttles;
+	if (Object.keys(notices).length) out.notices = notices;
+	const lease = attachment.frameLease;
+	if (lease && typeof lease.day === "string" && Number.isSafeInteger(lease.remaining) && lease.remaining > 0) {
+		out.frameLease = { day: lease.day, remaining: Math.min(lease.remaining, MAX_FRAME_LEASE) };
+	}
+	return out;
 }
 
 function writeAttachment(socket: WebSocketConnection, attachment: ConnectionAttachment): void {
@@ -228,6 +262,9 @@ function writeSessionAttachment(socket: WebSocketConnection, attachment: Connect
 		attachment.pendingBytes = current.pendingBytes;
 		attachment.frameTimes = current.frameTimes;
 		attachment.policyViolations = current.policyViolations;
+		attachment.throttles = current.throttles;
+		attachment.notices = current.notices;
+		attachment.frameLease = current.frameLease;
 		attachment.closing = current.closing;
 	}
 	writeAttachment(socket, attachment);
@@ -386,6 +423,18 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private accountUsageRefresh?: Promise<void>;
 	private accountUsageSnapshot: AccountUsageSnapshot | null = null;
 	private readonly queues = new WeakMap<WebSocketConnection, Promise<void>>();
+	/**
+	 * Room IDs known to exist (true) or not (false), so relaying activity needs
+	 * no storage read. Lost on hibernation and refilled from listings, record
+	 * broadcasts, and one lookup per unknown ID; bounded like the rooms table.
+	 */
+	private readonly knownRooms = new Map<string, boolean>();
+	/**
+	 * When each frame the server processed in the last minute arrived, oldest
+	 * first, for `globalFramesPerMinute`. In memory: a hibernating object has
+	 * received nothing, so a reset window loses no spike.
+	 */
+	private readonly recentFrames: number[] = [];
 	private sessionWorkTail: Promise<void> = Promise.resolve();
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -549,7 +598,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		// Committed removals need no store access; announce them before any
 		// listing that could fail on an exhausted budget.
-		for (const roomId of result?.removed_rooms ?? []) this.broadcast({ method: "room", params: { room_id: roomId, removed: true } });
+		for (const roomId of result?.removed_rooms ?? []) {
+			this.noteRoom(roomId, false);
+			this.broadcast({ method: "room", params: { room_id: roomId, removed: true } });
+		}
 		if (!result || result.history_floor !== result.previous_floor) {
 			try {
 				// Only rooms whose history_log_id moved need a new announcement.
@@ -578,7 +630,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 			params: {
 				protocol: 4,
 				name: "apron-cloudflare-demo/3",
-				caps: ["history", "edit", "rooms", "reactions"],
+				caps: ["history", "edit", "rooms", "reactions", ...(this.config.activityEnabled ? ["activity"] : [])],
 				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["guest"],
 				ext: {
 					demo: {
@@ -589,6 +641,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 						max_snapshot_bytes: limits.maxSnapshotBytes,
 						guest_posts_per_minute: limits.anonymousPostsPerMinute,
 						registered_posts_per_minute: limits.registeredPostsPerMinute,
+						server_frames_per_minute: limits.globalFramesPerMinute,
+						room_list_per_minute: limits.roomListRequestsPerUserMinute,
+						// With `activity`, typing is relayed; read cursors are neither kept nor relayed.
+						...(this.config.activityEnabled ? { activity_per_minute: limits.activityBroadcastsPerUserMinute } : {}),
 					},
 				},
 			},
@@ -636,19 +692,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private async processFrame(socket: WebSocketConnection, raw: string | ArrayBuffer): Promise<void> {
 		const attachment = connectionAttachment(socket);
 		if (!attachment || attachment.closing) return;
-		try {
-			this.store.reserveFrames({ ipKey: attachment.ipKey, now: nowMs(), count: 1 });
-		} catch (error) {
-			const failure = errorToProtocol(error);
-			if (failure.message.includes("Daily frame budget")) {
-				for (const peer of this.ctx.getWebSockets()) {
-					const state = connectionAttachment(peer);
-					if (state) this.closePolicy(peer, state, 1013, "Demo capacity reached; try after daily reset");
-				}
-			} else this.closePolicy(socket, attachment, 1013, failure.message);
-			return;
-		}
-		let parsed;
+		// Parsing is bounded CPU work with no storage; it comes first so an
+		// activity notification can draw on its block lease. Every frame,
+		// malformed ones included, is still charged before any other work.
+		let parsed: ReturnType<typeof parseFrame> | undefined;
+		let parseFailure: unknown;
 		try {
 			parsed = parseFrame(raw, {
 				maxFrameBytes: this.config.limits.maxFrameBytes,
@@ -657,6 +705,22 @@ export class ApronDemoServer extends DurableObject<Env> {
 				maxRequestIdBytes: this.config.limits.maxRequestIdBytes,
 			});
 		} catch (error) {
+			parseFailure = error;
+		}
+		// A server-wide spike limit, checked before any SQL. Over it, a request
+		// gets retry_after and a notification is dropped; the socket stays open.
+		const busy = this.takeServerFrame(nowMs());
+		if (busy !== undefined) {
+			if (parsed && parsed.request.id !== undefined) {
+				this.fail(socket, parsed.request, { name: "retry_after", message: "Demo is busy; try again shortly", data: { retry_after: busy } });
+			}
+			return;
+		}
+		if (!this.chargeFrame(socket, attachment)) return;
+		// The charge updated the attachment; handlers must not write back the copy read before it.
+		const current = connectionAttachment(socket) ?? attachment;
+		if (!parsed) {
+			const error = parseFailure;
 			if (error instanceof FrameError) {
 				const request = error.id === null ? null : { method: "", params: {}, id: error.id, full: error.full };
 				if (!error.notification) this.fail(socket, request, error.protocol);
@@ -671,13 +735,58 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		const request = parsed.request;
 		try {
-			await this.dispatch(socket, attachment, request);
+			await this.dispatch(socket, current, request);
 		} catch (error) {
 			const failure = errorToProtocol(error);
 			this.fail(socket, request, failure);
 			this.recordViolation(socket, failure);
 		}
 		if (!this.alarmKnown) await this.rescheduleAlarm();
+	}
+
+	/** Counts one frame against the server-wide minute; the seconds to wait when it is full. */
+	private takeServerFrame(now: number): number | undefined {
+		const frames = this.recentFrames;
+		while (frames.length > 0 && frames[0] <= now - 60_000) frames.shift();
+		if (frames.length >= this.config.limits.globalFramesPerMinute) return Math.max(1, Math.ceil((frames[0] + 60_000 - now) / 1_000));
+		frames.push(now);
+		return undefined;
+	}
+
+	/**
+	 * Charges one incoming frame to the IP and daily frame budgets. A
+	 * connection reserves `frameLease` frames at once and spends them from its
+	 * attachment, so each frame carries a fraction of the reservation's SQL
+	 * bookkeeping (SPEC section 7, durable block reservation). A block is never
+	 * granted twice: it lives only in this connection's attachment, and an
+	 * unspent one is burned when the connection closes or the UTC day ends.
+	 */
+	private chargeFrame(socket: WebSocketConnection, attachment: ConnectionAttachment): boolean {
+		const now = nowMs();
+		try {
+			const latest = connectionAttachment(socket) ?? attachment;
+			const day = new Date(now).toISOString().slice(0, 10);
+			const lease = latest.frameLease?.day === day ? latest.frameLease.remaining : 0;
+			if (lease > 0) {
+				latest.frameLease = { day, remaining: lease - 1 };
+			} else {
+				const count = this.config.limits.frameLease;
+				this.store.reserveFrames({ ipKey: attachment.ipKey, now, count });
+				latest.frameLease = { day, remaining: count - 1 };
+			}
+			if (latest.frameLease.remaining === 0) delete latest.frameLease;
+			writeAttachment(socket, latest);
+			return true;
+		} catch (error) {
+			const failure = errorToProtocol(error);
+			if (failure.message.includes("Daily frame budget")) {
+				for (const peer of this.ctx.getWebSockets()) {
+					const state = connectionAttachment(peer);
+					if (state) this.closePolicy(peer, state, 1013, "Demo capacity reached; try after daily reset");
+				}
+			} else this.closePolicy(socket, connectionAttachment(socket) ?? attachment, 1013, failure.message);
+			return false;
+		}
 	}
 
 	private async dispatch(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
@@ -706,11 +815,18 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "me":
 				await this.handleMe(socket, attachment, request);
 				return;
-			default:
-				if (request.id === undefined) return;
-				if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
-				throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
+			case "activity":
+				// Off by default (`ACTIVITY`): typing then gets the unsupported-method path.
+				if (!this.config.activityEnabled) break;
+				await this.handleActivity(socket, request);
+				return;
+			case "room_list":
+				await this.handleRoomList(socket, attachment, request);
+				return;
 		}
+		if (request.id === undefined) return;
+		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
+		throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 	}
 
 	private async handleAuth(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
@@ -792,11 +908,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.assertRegisteredCapacity(socket, finished.identity.user_id);
 		const token = await this.issueSession(finished.identity.user_id, origin, nowMs());
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
+		const guest = attachment.tier === "anonymous" ? publicIdentity(attachment) : null;
 		attachment.tier = "registered";
 		attachment.userId = finished.identity.user_id;
 		attachment.name = finished.identity.name;
 		writeSessionAttachment(socket, attachment);
 		this.reply(socket, request, { you: publicIdentity(attachment), token });
+		if (guest) this.announceUser(socket, publicIdentity(attachment), guest);
 		this.announceAuthenticated(socket, attachment);
 		await this.rescheduleAlarm();
 	}
@@ -852,11 +970,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 			if (oldIndex !== newIndex) await this.ctx.storage.delete(oldIndex);
 		});
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
+		const guest = attachment.tier === "anonymous" ? publicIdentity(attachment) : null;
 		attachment.tier = "registered";
 		attachment.userId = identity.userId;
 		attachment.name = identity.name;
 		writeSessionAttachment(socket, attachment);
 		this.reply(socket, request, { you: publicIdentity(attachment), token });
+		if (guest) this.announceUser(socket, publicIdentity(attachment), guest);
 		this.announceAuthenticated(socket, attachment);
 		await this.rescheduleAlarm();
 	}
@@ -949,7 +1069,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private announceAuthenticated(socket: WebSocketConnection, attachment: ConnectionAttachment): void {
 		try {
 			// Every room is visible to every authenticated client.
-			for (const room of this.store.listRooms(nowMs())) this.send(socket, { method: "room", params: room });
+			for (const room of this.store.listRooms(nowMs())) {
+				this.noteRoom(room.room_id, true);
+				this.send(socket, { method: "room", params: room });
+			}
 		} catch {
 			// A session without its initial room boundaries cannot safely receive live records.
 			this.closePolicy(socket, attachment, 1013, "History temporarily unavailable; reconnect later");
@@ -1024,6 +1147,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 			}
 			const current = connectionAttachment(socket);
 			if (current) this.reply(socket, request, { you: publicIdentity(current) });
+			// Section 3.3: `you` to the user's other connections, `new` to everyone
+			// else, since every connection shares every room on this demo.
+			if (!result.deduplicated && current) this.announceUser(socket, publicIdentity(current));
 		});
 	}
 
@@ -1084,6 +1210,157 @@ export class ApronDemoServer extends DurableObject<Env> {
 		throw { name: "denied", message: "Every demo room stays visible to all clients" } satisfies ProtocolError;
 	}
 
+	/**
+	 * Typing (Appendix D.1), relayed to every other connection and never
+	 * stored. Read cursors are dropped: the demo neither keeps nor relays them.
+	 * At most `activityBroadcastsPerUserMinute` relays per user; past that the
+	 * update is dropped and the sender gets one `@server` notice per minute.
+	 */
+	private async handleActivity(socket: WebSocketConnection, request: RequestFrame): Promise<void> {
+		const attachment = connectionAttachment(socket);
+		const identity = attachment ? publicIdentity(attachment) : null;
+		if (!attachment || !identity) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
+		const roomId = request.params.room_id;
+		if (typeof roomId !== "string" || roomId.length === 0 || roomId.length > 64) throw { name: "invalid_params", message: "room_id must be a room" } satisfies ProtocolError;
+		const typing = request.params.typing;
+		if (typing !== undefined && (typeof typing !== "number" || !Number.isFinite(typing) || typing < 0)) {
+			throw { name: "invalid_params", message: "typing must be a non-negative number of seconds" } satisfies ProtocolError;
+		}
+		if (request.id !== undefined) this.reply(socket, request, {});
+		if (typing === undefined || !this.roomExists(roomId)) return;
+		const now = nowMs();
+		const limit = this.config.limits.activityBroadcastsPerUserMinute;
+		if (!this.takeThrottle(socket, identity.user_id, "activity", limit, now)) {
+			await this.noticeThrottled(socket, identity.user_id, "activity", roomId, now,
+				`Typing updates are limited to ${limit} per minute, so others may not see you typing for a moment.`);
+			return;
+		}
+		const seconds = Math.min(Math.floor(typing), this.config.limits.activityMaxTypingSeconds);
+		const frame = { method: "activity", params: { room_id: roomId, from: identity, typing: seconds } };
+		this.broadcast(frame, undefined, socket);
+	}
+
+	/**
+	 * Rooms for discovery (Appendix C): the top-level rooms, or one room's
+	 * threads. Every room is visible and joined, so `members` is everyone
+	 * connected now, capped; the list is the same for every room.
+	 */
+	private async handleRoomList(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		const identity = identityOf(attachment);
+		if (!identity) throw { name: "denied", message: "Authenticate before listing rooms" } satisfies ProtocolError;
+		const parent = optionalString(request.params, "parent_room_id");
+		const now = nowMs();
+		const retry = this.throttleRetry(identity.user_id, "room_list", this.config.limits.roomListRequestsPerUserMinute, now);
+		if (retry !== undefined) throw { name: "retry_after", message: "Room listing limited", data: { retry_after: retry } } satisfies ProtocolError;
+		const rooms = this.store.listRooms(now);
+		this.takeThrottle(socket, identity.user_id, "room_list", Number.MAX_SAFE_INTEGER, now);
+		for (const room of rooms) this.noteRoom(room.room_id, true);
+		if (parent !== undefined && !rooms.some((room) => room.room_id === parent)) throw { name: "invalid_params", message: "Unknown parent_room_id" } satisfies ProtocolError;
+		const members = this.connectedMembers();
+		this.reply(socket, request, {
+			rooms: rooms
+				.filter((room) => (parent === undefined ? room.parent_room_id === undefined : room.parent_room_id === parent))
+				.map((room) => ({ ...room, members })),
+		});
+	}
+
+	/** Everyone authenticated and connected, one entry per user, capped. */
+	private connectedMembers(): Array<{ user_id: string; name?: string }> {
+		const members = new Map<string, { user_id: string; name?: string }>();
+		for (const peer of this.ctx.getWebSockets()) {
+			const state = connectionAttachment(peer as WebSocketConnection);
+			const identity = state && !state.closing ? publicIdentity(state) : null;
+			if (!identity || members.has(identity.user_id)) continue;
+			members.set(identity.user_id, identity);
+			if (members.size >= this.config.limits.roomListMembers) break;
+		}
+		return [...members.values()];
+	}
+
+	/** Sends a profile change (section 3.3): `you` to the user's other connections, `new` (and `old`) to the rest. */
+	private announceUser(origin: WebSocketConnection, identity: { user_id: string; name?: string } | null, old?: { user_id: string; name?: string } | null): void {
+		if (!identity) return;
+		for (const peer of this.ctx.getWebSockets()) {
+			const socket = peer as WebSocketConnection;
+			if (socket === origin) continue;
+			const state = connectionAttachment(socket);
+			const own = state?.userId === identity.user_id;
+			this.broadcast({ method: "user", params: own ? { you: identity } : { new: identity, ...(old ? { old } : {}) } }, socket);
+		}
+	}
+
+	private noteRoom(roomId: string, exists: boolean): void {
+		this.knownRooms.delete(roomId);
+		// The rooms table is capped; unknown IDs are bounded by the same size.
+		if (this.knownRooms.size >= 2 * (this.config.limits.threadLimit + 1)) this.knownRooms.delete(this.knownRooms.keys().next().value!);
+		this.knownRooms.set(roomId, exists);
+	}
+
+	/** Whether a room exists, from the cache or one bounded lookup. */
+	private roomExists(roomId: string): boolean {
+		const known = this.knownRooms.get(roomId);
+		if (known !== undefined) return known;
+		const exists = this.store.getRoom(roomId, nowMs()) !== null;
+		this.noteRoom(roomId, exists);
+		return exists;
+	}
+
+	/** Events of one type from a user's connections within the window. */
+	private throttleEvents(userId: string, type: ThrottledType, now: number): number[] {
+		const events: number[] = [];
+		for (const peer of this.ctx.getWebSockets()) {
+			const state = connectionAttachment(peer as WebSocketConnection);
+			if (state?.userId !== userId) continue;
+			for (const at of state.throttles?.[type] ?? []) if (at > now - THROTTLE_WINDOW_MS) events.push(at);
+		}
+		return events.sort((a, b) => a - b);
+	}
+
+	/** Seconds until the user may send one more of this type, or undefined when they may now. */
+	private throttleRetry(userId: string, type: ThrottledType, limit: number, now: number): number | undefined {
+		const events = this.throttleEvents(userId, type, now);
+		if (events.length < limit) return undefined;
+		return Math.max(1, Math.ceil((events[events.length - limit] + THROTTLE_WINDOW_MS - now) / 1_000));
+	}
+
+	/** Counts one event against the user's per-type limit; false when the limit is reached. */
+	private takeThrottle(socket: WebSocketConnection, userId: string, type: ThrottledType, limit: number, now: number): boolean {
+		if (this.throttleRetry(userId, type, limit, now) !== undefined) return false;
+		const state = connectionAttachment(socket);
+		if (!state) return false;
+		const events = (state.throttles?.[type] ?? []).filter((at) => at > now - THROTTLE_WINDOW_MS);
+		state.throttles = { ...state.throttles, [type]: [...events, now].slice(-MAX_TYPE_THROTTLE_PER_MINUTE) };
+		writeAttachment(socket, state);
+		return true;
+	}
+
+	/**
+	 * Tells a throttled sender, once per window per user, with a `@server`
+	 * message (Appendix J.1) in the room they were active in. It goes to that
+	 * connection only and is never logged; its log_id still comes from the
+	 * server's sequence so no record can collide with it.
+	 */
+	private async noticeThrottled(socket: WebSocketConnection, userId: string, type: ThrottledType, roomId: string, now: number, text: string): Promise<void> {
+		for (const peer of this.ctx.getWebSockets()) {
+			const state = connectionAttachment(peer as WebSocketConnection);
+			if (state?.userId === userId && (state.notices?.[type] ?? 0) > now - THROTTLE_WINDOW_MS) return;
+		}
+		const state = connectionAttachment(socket);
+		if (!state) return;
+		state.notices = { ...state.notices, [type]: now };
+		writeAttachment(socket, state);
+		let logId: string;
+		try {
+			logId = this.store.allocateUnloggedLogId(now);
+		} catch {
+			return; // A notice is a courtesy; without capacity the update is still dropped.
+		}
+		this.broadcast({
+			method: "message",
+			params: { message_id: logId, log_id: logId, room_id: roomId, from: { ...SERVER_IDENTITY }, body: { text, format: "plain" } },
+		}, socket);
+	}
+
 	private async runMutation(fn: () => Promise<void>): Promise<void> {
 		const prior = this.mutationTail;
 		let release!: () => void;
@@ -1109,13 +1386,15 @@ export class ApronDemoServer extends DurableObject<Env> {
 	 * frame, delivered once per connection (section 3.5).
 	 */
 	private broadcastRecord(record: Broadcast): void {
+		if (record.method === "room" && typeof record.params.room_id === "string") this.noteRoom(record.params.room_id, true);
 		this.broadcast({ method: record.method, params: record.params });
 	}
 
-	private broadcast(value: unknown, only?: WebSocketConnection): void {
+	/** Sends to every authenticated connection, or only to `only`, or to all but `except`. */
+	private broadcast(value: unknown, only?: WebSocketConnection, except?: WebSocketConnection): void {
 		for (const ws of this.ctx.getWebSockets()) {
 			const socket = ws as WebSocketConnection;
-			if (only && socket !== only) continue;
+			if ((only && socket !== only) || socket === except) continue;
 			const attachment = connectionAttachment(socket);
 			if (!attachment || attachment.closing || (attachment.tier !== "anonymous" && attachment.tier !== "registered")) continue;
 			if (!this.send(socket, value)) {

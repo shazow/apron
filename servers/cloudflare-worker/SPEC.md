@@ -23,6 +23,8 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 - `edit`: owner-authorized replacement, deletion, restoration, and moves between rooms of retained messages.
 - `rooms`: thread rooms (rooms with `parent_room_id`) created and edited by participants; `room_join`/`room_leave`. The permanent `general` room is the only top-level room.
 - `reactions`: per-user emoji sets on messages.
+- `activity`: implemented but off by default (`ACTIVITY=true` advertises it): typing only, relayed and never stored, at most 10 relays per user per minute (section 4.2). Read cursors are neither kept nor relayed.
+- `room_list`: the top-level room or one room's threads, each with the users connected now as `members`.
 - Guest authentication (`guest`) and verified WebAuthn registration/login.
 - Persistent request deduplication for mutating operations.
 - Rolling 24-hour history with hourly cleanup, using the same room ID indefinitely.
@@ -31,7 +33,7 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 
 ### Non-goals
 
-No public workspace creation, top-level room creation, leaving rooms, federation, multiplexing proxy, presence service, typing broadcasts, uploads, R2, push, email, external URL previews, outbound bots, RTC, arbitrary search, FTS, or third-party analytics. Do not advertise unsupported capabilities. Passkeys do not establish one-human-one-account or solve Sybil resistance.
+No public workspace creation, top-level room creation, leaving rooms, federation, multiplexing proxy, presence service, read cursors, avatars, uploads (`embed:upload`, `@avatar`), streams (`embed:stream`), R2, push, email, external URL previews, outbound bots, RTC, arbitrary search, FTS, or third-party analytics. Do not advertise unsupported capabilities. Passkeys do not establish one-human-one-account or solve Sybil resistance.
 
 ## 2. User scenarios
 
@@ -85,7 +87,7 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20}}}}
+{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6}}}}
 ```
 
 `ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol Appendix I, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
@@ -132,6 +134,26 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 - Reactions (cap `reactions`): a request sets the caller's complete emoji set on one retained message; `[]` clears it and duplicates collapse. Emoji are non-empty strings of at most 64 UTF-8 bytes without control characters, at most 8 distinct per user per message, and at most 32 reacting users per message (calibrated ceilings 16 and 64). A set that equals the current one is accepted without a new record. Non-empty sets on a tombstone are `invalid_params`; clearing is allowed. Each change is a logged record in the message's current room. Reactions are mutations: they share the posting quotas and request deduplication below.
 - Reject empty text with no embeds as local policy. Accept plain and Markdown formats. Limit embeds to four within all byte budgets; store accepted URLs/content without backend fetching or rendering. Unknown embed kinds remain opaque. Client sanitization/sandboxing remains mandatory under the base protocol.
 - `me` changes the display name as a bounded, rate-limited identity operation for registered users; `name: ""` removes it (clients fall back to `user_id`), omitted fields are unchanged, and guests keep their assigned name (`denied`). The demo keeps no avatars or profile `ext`: `me` type-checks `avatar` and `ext` and then ignores them. No avatar downloads or automatic link previews.
+- A rename sends `user` (section 3.3): `you` to the user's other connections and `new` to every other connection. Signing in with a passkey or token on a guest's connection sends `new` with `old` (the retired guest) to every other connection.
+- Message snapshots and single-set reaction records carry `prev_log_id` when an earlier record for the same key is still stored. Room records and the reaction record a move re-logs do not. The link is added after the snapshot size check. Deleted messages are not redacted.
+- `room_list` (cap `rooms`) returns room records with delivery fields: without `parent_room_id`, the top-level `general`; with it, that room's threads; an unknown parent is `invalid_params`. Every room is visible and joined, so each room's `members` is the same list: the users connected now, one entry each, at most 20. It reads the capped room table under the room-listing reservation and writes nothing.
+
+### 4.2 Server-wide minute, activity, and per-type throttles
+
+The whole server processes at most `globalFramesPerMinute` (300) frames in a rolling minute, counted in memory after the per-connection gates and parsing but before any SQL. Over it, a request gets `retry_after` with the seconds until the oldest counted frame leaves the window, and a notification or malformed frame is dropped; the socket stays open and nothing is charged. The default is sized for a spike from 50 connected users, 10 of them active: about 20 frames a minute per active user (posts, reactions, edits, history pages, room lookups), about one per quiet user, and a reconnect wave of one auth and one history page each. It is at least one IP's frame minute, so a single client cannot be starved by its own limits. The window is lost on hibernation, when the object has received nothing to count. It shapes spikes; the daily frame and SQL budgets still bound the day.
+
+`activity` is off by default and not advertised; typing then gets the unsupported-method path (notifications are ignored, requests get `unsupported`). With `ACTIVITY=true`: `activity` is a notification. Typing (`typing`, seconds, capped at 30) in a known room is relayed to every other authenticated connection as `{room_id, from, typing}` and never stored. `read_message_id` is dropped: the demo keeps no read cursors. A missing or unknown room drops the update; room existence comes from an in-memory cache refilled by listings, record broadcasts, and one bounded lookup per unknown ID.
+
+Some message types have their own per-user rate, counted across the user's connections in a rolling 60-second window whose events live in connection attachments (so they survive hibernation and need no SQL):
+
+| Type | Default per user per minute | Over the limit |
+| --- | ---: | --- |
+| `activity` (relayed typing) | 10 | Dropped. The sender's connection gets one `@server` message per window (Appendix J.1) saying typing is limited |
+| `room_list` | 6 | `retry_after` with the seconds until the oldest counted listing leaves the window |
+
+The `@server` notice goes to the throttled connection only and is never logged. Its `message_id` and `log_id` still come from the server-wide sequence (one metered `log_state` write), so no logged record can reuse it. Posting quotas continue to cover every logged mutation (`message`, `room`, `reactions`, `me`).
+
+Every frame is charged to the IP and daily frame budgets before any other work (section 6). Each connection reserves frames in blocks of `frameLease` (10) and spends them from its attachment, so a frame carries a tenth of a reservation's SQL bookkeeping (section 7 allows durable block reservation). A block counts against the IP's frame minute and the daily frame budget when it is reserved, lives only in that connection's attachment so it is never granted twice, and is burned when the connection closes or the UTC day ends. A connection that sends a single frame costs what it did before blocks. Operations that do SQL work still reserve their own cost. Handlers read the attachment after the charge, so none writes back a copy with the block unspent. The frame is parsed before it is charged; parsing is bounded CPU work with no storage.
 
 ### 4.1 Internal names
 
@@ -238,6 +260,11 @@ The smaller frame limit is a documented demo exception to the protocol's advisor
 | pending_frames_per_connection | 8, additionally bounded to 128 KiB |
 | frames_per_connection_minute | 60 |
 | frames_per_ip_minute | 120 |
+| global_frames_per_minute | 300 server-wide, in memory, before SQL |
+| frame_lease | 10 frames reserved per block, per connection |
+| activity_broadcasts_per_user_minute | 10 relayed typing updates |
+| room_list_requests_per_user_minute | 6 |
+| room_list_members | 20 connected users listed per room |
 | processed_frames_per_day | 100,000 globally |
 | repeated_policy_violations | Close after 3 within 60 seconds; severe oversized/binary input closes immediately |
 

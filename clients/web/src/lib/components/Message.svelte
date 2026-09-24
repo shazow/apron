@@ -192,7 +192,7 @@
 		{#if grouped}
 			<span class="ap-msg-hovertime">{time}</span>
 		{:else}
-			<Avatar {name} src={directory.avatar(event.from)} />
+			<Avatar {name} id={directory.person(event.from)?.user_id} src={directory.avatar(event.from)} />
 		{/if}
 	</div>
 	<div class="ap-msg-main">
@@ -207,7 +207,7 @@
 				{@const targetName = senderName(replyTarget)}
 				<button class="ap-reply" data-testid="reply-reference" type="button" aria-label={`Replying to ${targetName}. Jump to their message`} onclick={() => onjump(replyTarget.message_id)}>
 					<span class="ap-reply-who">
-						<Avatar name={targetName} src={directory.avatar(replyTarget.from)} size="sm" />
+						<Avatar name={targetName} id={directory.person(replyTarget.from)?.user_id} src={directory.avatar(replyTarget.from)} size="sm" />
 						{targetName}
 					</span>
 					<span class="ap-reply-text">{#if replyTarget.deleted}<em>Message deleted</em>{:else}{replySnippet(replyTarget)}{/if}</span>

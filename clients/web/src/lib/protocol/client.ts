@@ -688,6 +688,9 @@ export class ChatClient {
 	 * message in any room and is sent as a bare reference.
 	 */
 	send(room: string, text: string, format: MessageFormat = 'plain', options: SendOptions = {}): OperationHandle<MessageResult> {
+		// The message ends this user's typing indicator for everyone (Appendix D.1),
+		// so no `typing: 0` needs to follow it.
+		this.sentTypingAt.delete(room);
 		const body: JsonObject = { text, format };
 		if (options.embeds && options.embeds.length > 0) body.embeds = options.embeds;
 		return this.enqueueRequest<MessageResult>('message', {

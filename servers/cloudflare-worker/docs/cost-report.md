@@ -46,6 +46,8 @@ upper bounds can be compared with the measured worst case.
 | Auth attempt reservation | 10 | 8 | 48 | 32 | accepted |
 | History quota reservation | 15 | 15 | 72 | 24 | accepted |
 | Frame reservation (one frame) | 15 | 15 | 28 | 24 | accepted |
+| Frame block (10 frames) | 11 | 10 | 64 | 24 | accepted |
+| Unlogged `@server` notice log ID | 5 | 2 | 12 | 12 | accepted |
 | Connection admission reservation | 16 | 15 | 72 | 40 | accepted |
 | Identity registration | 24 | 23 | 136 | 72 | accepted |
 | Credential lookup | 3 | 1 | 16 | 8 | accepted |
@@ -105,6 +107,34 @@ The final counters for that sample were 202 observed reads and 130 observed
 writes, against 2,516 reserved reads and 2,266 reserved writes. The native
 SQLite file reported `databaseSize = 135,168` bytes. These values are a
 small schema/data sample and are not a per-message capacity estimate.
+
+## Frame blocks, activity, and throttle notices
+
+Measured on 2026-09-24 with the operation matrix above. A single-frame
+reservation reserves 28 reads and 24 writes. Connections now reserve frames in
+blocks of 10 for 64 reads and 24 writes, so each frame's own bookkeeping is 2.4
+reserved writes instead of 24. The 60,000-row foreground write ceiling
+therefore covers about 25,000 frames a day on their own, up from 2,500. A
+connection that sends one frame and closes still pays a whole block, which is
+what a single frame cost before.
+
+Blocks change what frames without SQL work of their own cost (`room_join`
+lookups aside, notifications, rejected frames). They barely change posting: a
+post is one frame plus its mutation reservation (264–280 writes), so the
+foreground ceiling still allows about 210 posts a day (`60,000 / 282.4`), up
+from about 197 (`60,000 / 304`). The mutation floor below is what bounds posts.
+
+`activity` is off by default (`ACTIVITY=true` enables it). When it is on, the
+web client sends a typing update when typing starts, every 12 seconds while it
+continues, and when typing pauses: about 5 frames, or 12 reserved writes, per
+typing minute. Read-cursor updates, which the demo drops, cost the same per
+frame. The per-user relay limit (10 a minute) and the frame limits (60 per
+connection and 120 per IP a minute) bound a single sender.
+
+A throttled sender's `@server` notice advances the log sequence without a
+record: 12 reserved writes, at most once per user per minute. `room_list`
+reuses the room-listing reservation (444 reads, 8 writes) and adds no writes;
+its members come from connection attachments.
 
 The default foreground write ceiling is 60,000 rows per UTC day. At the
 current conservative floor this permits at most 227 mutations without a
