@@ -219,7 +219,9 @@ reconnect backoff. When those hints carry `keepalive_seconds`, the client sends
 without waking it; it is how the worker tells a vanished peer from a quiet one,
 and it keeps Cloudflare from dropping an idle socket. A socket that goes two
 intervals without the `{"method":"pong"}` answer is presumed dead and replaced
-through the usual reconnect.
+through the usual reconnect. With `room_leave: false` the client offers no
+Leave, and with `read_cursors: false` it moves your read cursor locally without
+sending it.
 
 Edits, moves, and deletion use the same `message` request as creation, with an
 existing `message_id`, and resubmit every client field of the latest snapshot

@@ -676,6 +676,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 						keepalive_seconds: limits.keepaliveSeconds,
 						// Every room is joined for good: `room_leave` is always denied.
 						room_leave: false,
+						// `read_message_id` in `activity` is dropped: no read cursors are kept.
+						read_cursors: false,
 						// With `activity`, typing is relayed; read cursors are neither kept nor relayed.
 						...(this.config.activityEnabled ? { activity_per_minute: limits.activityBroadcastsPerUserMinute } : {}),
 					},

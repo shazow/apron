@@ -83,7 +83,10 @@ but do consume frame and lookup resources.
 
 ## Demo policy metadata
 
-`server.params.ext.demo` describes retention and selected payload/posting policies.
+`server.params.ext.demo` describes retention and selected payload/posting policies,
+the keepalive interval (`keepalive_seconds`), and what the demo does not keep:
+`room_leave: false` (every room is joined for good) and `read_cursors: false`
+(read markers are dropped), so clients can skip sending them.
 The demo's 16 KiB frame policy is an explicit exception to the base protocol's
 advisory 256 KiB recommendation. Payload lengths count UTF-8 bytes. Errors use
 the base protocol codes; `retry_after` includes `data.retry_after`, whole

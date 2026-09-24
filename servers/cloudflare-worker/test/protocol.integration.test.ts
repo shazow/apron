@@ -563,6 +563,7 @@ it('advertises the keepalive interval', async () => {
 		const server = await peer.next();
 		expect(server.params.ext.demo.keepalive_seconds).toBe(45);
 		expect(server.params.ext.demo.room_leave).toBe(false);
+		expect(server.params.ext.demo.read_cursors).toBe(false);
 	} finally { peer.close(); }
 });
 

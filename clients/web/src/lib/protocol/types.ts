@@ -140,6 +140,8 @@ export interface DemoParams extends JsonObject {
 	keepalive_seconds?: number;
 	/** `false` when every room is joined for good and `room_leave` is always denied. */
 	room_leave?: boolean;
+	/** `false` when the server keeps no read cursors, so `read_message_id` is not worth sending. */
+	read_cursors?: boolean;
 }
 
 /** Delivery fields of a `room` frame (§3.4): this client's view, not logged. */

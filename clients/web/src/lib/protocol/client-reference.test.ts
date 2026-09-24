@@ -72,6 +72,18 @@ describe('ChatClient reference features', () => {
 		expect(general().readMessageId).toBe('31');
 	});
 
+	it('keeps your read cursor locally when the server keeps none', async () => {
+		await socket.greet(['history', 'rooms', 'activity'], {
+			room: { room_id: 'general', log_id: '10', title: 'General', latest_log_id: '10', history_log_id: '10' },
+			ext: { demo: { read_cursors: false } }
+		});
+		await socket.reply('history', { entries: [], more: false, latest_log_id: '10', history_log_id: '10' });
+		socket.sent = [];
+		client.markRead('general', '31');
+		expect(socket.sent).toEqual([]);
+		expect(snapshot.rooms.find((room) => room.id === 'general')?.readMessageId).toBe('31');
+	});
+
 	it('lists rooms with members and marks the joined ones', async () => {
 		await connect();
 		const listing = client.listRooms();
