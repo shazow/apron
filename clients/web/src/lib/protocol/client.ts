@@ -1456,6 +1456,8 @@ export class ChatClient {
 				this.authRequested = false;
 				this.usePasskey('login').catch((cause: Error) => {
 					if (socket !== this.socket) return;
+					// Wait for the user's "Sign in" instead of prompting again on every reconnect.
+					this.reconnectHeld = true;
 					this.error = cause.message;
 					this.emit();
 				});
@@ -1479,12 +1481,20 @@ export class ChatClient {
 		}).catch((cause: Error) => {
 			if (socket !== this.socket) return;
 			this.authRequested = false;
+			this.error = cause.message;
 			// Never silently downgrade a passkey session to a different guest identity.
 			if (resume) {
-				this.sessionToken = undefined;
-				this.storeSession(undefined);
+				const code = (cause as Error & { code?: number }).code;
+				if (code === -32001 || code === -32602) {
+					// The session is over. Signing in again takes a passkey prompt, which
+					// waits for the user's "Sign in" rather than popping up on its own.
+					this.sessionToken = undefined;
+					this.storeSession(undefined);
+					this.reconnectHeld = true;
+				}
+				// A limit or timeout keeps the token: reconnect, after any retry_after, and resume again.
+				socket?.close(1000, 'resume failed');
 			}
-			this.error = cause.message;
 			this.emit();
 		});
 	}

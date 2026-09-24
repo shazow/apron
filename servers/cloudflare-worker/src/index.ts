@@ -920,7 +920,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	private assertRegisteredCapacity(socket: WebSocketConnection, userId: string): void {
-		const activeForUser = this.ctx.getWebSockets().filter(peer => peer !== socket && connectionAttachment(peer)?.userId === userId).length;
+		// A dropped socket lingers here until its close is processed; counting it
+		// would refuse the reconnect that replaces it.
+		const activeForUser = this.ctx.getWebSockets().filter(peer => {
+			if (peer === socket || !openSocket(peer)) return false;
+			const state = connectionAttachment(peer);
+			return !!state && !state.closing && state.userId === userId;
+		}).length;
 		if (activeForUser >= this.config.limits.registeredConnectionsPerUser) throw { name: "retry_after", message: "Demo capacity reached", data: { retry_after: 60 } } satisfies ProtocolError;
 	}
 
