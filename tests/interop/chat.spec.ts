@@ -643,11 +643,55 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageB.getByTestId('jump-button')).toBeVisible();
 			await sendMessage(pageA, `${token}-one`);
 			await sendMessage(pageA, `${token}-two`);
-			await expect(pageB).toHaveTitle('Apron (2)');
+			await expect(pageB).toHaveTitle('(2) Apron');
 			await pageB.getByTestId('jump-button').click();
 			await expect(pageB).toHaveTitle('Apron');
 		} finally {
 			await Promise.all([writer.close(), reader.close()]);
+		}
+	});
+
+	test('chimes and flashes the tab title for a mention while the window is in the background', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const named = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await named.newPage();
+			// Count the chime's tones instead of playing them.
+			await pageB.addInitScript(() => {
+				(window as any).tones = 0;
+				class FakeAudio {
+					state = 'running';
+					currentTime = 0;
+					destination = {};
+					resume() { return Promise.resolve(); }
+					createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: (node: unknown) => node }; }
+					createOscillator() {
+						(window as any).tones++;
+						return { type: '', frequency: { value: 0 }, connect: (node: unknown) => node, start() {}, stop() {} };
+					}
+				}
+				(window as any).AudioContext = FakeAudio;
+			});
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const id = await userIdOf(pageB);
+			const token = `attention-${Date.now().toString(36)}`;
+
+			// While focused, a mention neither chimes nor flashes.
+			await sendMessage(pageA, `@${id} ${token} focused`);
+			await waitForMessage(pageB, `${token} focused`);
+			await pageB.waitForTimeout(300);
+			expect(await pageB.evaluate(() => (window as any).tones)).toBe(0);
+			await expect(pageB).toHaveTitle('Apron');
+
+			await pageB.evaluate(() => window.dispatchEvent(new Event('blur')));
+			await sendMessage(pageA, `@${id} ${token} away`);
+			await expect(pageB).toHaveTitle('@ You were mentioned');
+			expect(await pageB.evaluate(() => (window as any).tones)).toBeGreaterThan(0);
+			await pageB.evaluate(() => window.dispatchEvent(new Event('focus')));
+			await expect(pageB).toHaveTitle('Apron');
+		} finally {
+			await Promise.all([writer.close(), named.close()]);
 		}
 	});
 

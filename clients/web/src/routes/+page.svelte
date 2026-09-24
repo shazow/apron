@@ -30,6 +30,7 @@
 	import { loadDisplayName, loadRecentServers, loadServerUrl, rememberServer, type RecentServer } from '$lib/ui/storage';
 	import { buildRoomTimeline, buildThreadTimeline, threadEntries, threadTitleFor } from '$lib/ui/timeline';
 	import { idTime } from '$lib/ui/time';
+	import { playPing, tabTitle } from '$lib/ui/attention';
 
 	/** A thread this viewer created, opened once the server has announced it. */
 	type PendingOpen = { room: string; thread: string };
@@ -43,6 +44,12 @@
 	const unread = new UnreadTracker();
 	/** Whether this tab is in front: a hidden tab doesn't read what arrives. */
 	let pageVisible = $state(typeof document === 'undefined' || document.visibilityState === 'visible');
+	/** Whether this window has focus: a mention while it doesn't alerts the tab. */
+	let pageFocused = $state(typeof document === 'undefined' || document.hasFocus());
+	/** A mention arrived while you were away; the title flashes until you're back. */
+	let attention = $state(false);
+	let titleFlash = $state(false);
+	let alertedMentions = 0;
 	const selection = new MessageSelection();
 	const sidebar = new SidebarLayout();
 
@@ -133,6 +140,26 @@
 
 	$effect(() => {
 		unread.observe(session.rooms, session.you, paneRoom?.id, latestVisible && pageVisible);
+	});
+
+	// Each mention that lands while you're in another window or tab chimes once and flags the tab.
+	$effect(() => {
+		const arrived = mentions.arrived;
+		if (arrived === alertedMentions) return;
+		alertedMentions = arrived;
+		if (untrack(() => pageFocused && pageVisible)) return;
+		attention = true;
+		playPing();
+	});
+
+	$effect(() => {
+		if (!attention) {
+			titleFlash = false;
+			return;
+		}
+		titleFlash = true;
+		const timer = setInterval(() => (titleFlash = !titleFlash), 1000);
+		return () => clearInterval(timer);
 	});
 
 	// The New divider is placed once per visit, from the read cursor the server kept.
@@ -713,11 +740,15 @@
 	}
 </script>
 
-<svelte:window onkeydown={windowKeydown} />
-<svelte:document onvisibilitychange={() => (pageVisible = document.visibilityState === 'visible')} />
+<svelte:window onkeydown={windowKeydown} onfocus={() => { pageFocused = true; attention = false; }} onblur={() => (pageFocused = false)} />
+<svelte:document onvisibilitychange={() => {
+	pageVisible = document.visibilityState === 'visible';
+	pageFocused = document.hasFocus();
+	if (pageVisible && pageFocused) attention = false;
+}} />
 
 <svelte:head>
-	<title>{unread.total > 0 ? `Apron (${unread.total})` : 'Apron'}</title>
+	<title>{tabTitle(unread.total, titleFlash)}</title>
 	<meta name="description" content="Apron, a chat frontend for the Bottomless Chat protocol." />
 </svelte:head>
 

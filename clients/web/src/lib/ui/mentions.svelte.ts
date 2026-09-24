@@ -22,6 +22,8 @@ export class MentionTracker {
 	byRoom = $state<Record<string, number>>({});
 	/** Mentions that arrived in the open pane while you were scrolled up, oldest first. */
 	unseen = $state<string[]>([]);
+	/** How many mentions of you have arrived so far: it ticks up once per new one. */
+	arrived = $state(0);
 	private readonly shown = new Map<string, Set<string>>();
 	private readonly watermarks = new Map<string, string>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -53,6 +55,7 @@ export class MentionTracker {
 				const event = room.timeline.events[id];
 				if (!event || !mentionsMe(event, me)) continue;
 				this.ping(id);
+				this.arrived++;
 				if (room.id !== pane) {
 					const next = { ...this.byRoom, [badge]: (this.byRoom[badge] ?? 0) + 1 };
 					if (badge !== room.id) next[room.id] = (next[room.id] ?? 0) + 1;
