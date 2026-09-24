@@ -541,3 +541,46 @@ describe('keepalive', () => {
 		client.stop();
 	});
 });
+
+describe('display name on connect', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		FakeSocket.instances = [];
+		vi.stubGlobal('WebSocket', FakeSocket);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	const renames = (socket: FakeSocket) => socket.sent.filter((frame) => frame.method === 'me').length;
+
+	it('skips a name the server already has', async () => {
+		const client = new ChatClient('ws://fake.test/', 'Guest');
+		client.start();
+		// greet() authenticates as { user_id: 'guest_1', name: 'Guest' }.
+		await latest().greet();
+		expect(renames(latest())).toBe(0);
+		client.stop();
+	});
+
+	it('does not resend a name the server denied after a reconnect', async () => {
+		const client = new ChatClient('ws://fake.test/', 'Dana');
+		client.start();
+		await latest().greet();
+		const first = latest();
+		expect(renames(first)).toBe(1);
+		first.receive({ id: first.request('me').id, error: { code: -32001, message: 'Only registered users may change their name' } });
+		await Promise.resolve();
+		first.drop();
+		vi.advanceTimersByTime(5_000);
+		await latest().greet();
+		expect(latest()).not.toBe(first);
+		expect(renames(latest())).toBe(0);
+		// Choosing a new name sends it again.
+		client.setDisplayName('Dee');
+		expect(renames(latest())).toBe(1);
+		client.stop();
+	});
+});

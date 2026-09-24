@@ -410,6 +410,8 @@ export class ChatClient {
 	private displayName = '';
 	/** The `me` request `handleAuth` sent for `displayName`, if any. */
 	private authNameRequest?: OperationHandle;
+	/** A name the server denied (a guest on a server that only lets registered users rename): not resent on reconnect. */
+	private declinedName?: string;
 	private status: ConnectionStatus = 'idle';
 	private error?: string;
 	private showReconnectDivider = false;
@@ -465,17 +467,20 @@ export class ChatClient {
 	}
 
 	private sendName(): OperationHandle {
-		const request = this.enqueueRequest('me', { name: this.displayName }, {
+		const name = this.displayName;
+		const request = this.enqueueRequest('me', { name }, {
 			visible: false,
 			allowBeforeAuth: false
 		});
 		request.promise
 			.then((result) => {
 				if (isJsonObject(result.you) && typeof result.you.user_id === 'string') this.setYou(result.you as Identity);
+				if (this.declinedName === name) this.declinedName = undefined;
 				this.emit();
 			})
-			.catch(() => {
+			.catch((cause: Error & { code?: number }) => {
 				// A name is advisory; a server may decline it without affecting the session.
+				if (cause.code === -32001) this.declinedName = name;
 			});
 		return request;
 	}
@@ -1599,7 +1604,13 @@ export class ChatClient {
 		this.showReconnectDivider = (this.showReconnectDivider || this.rooms.size > 0) && !this.hasCap('history');
 		// Requests queued while this connection was authenticating go out now.
 		for (const request of this.requests.values()) this.sendRequest(request);
-		this.authNameRequest = this.displayName ? this.sendName() : undefined;
+		// Renaming is a logged mutation on some servers: send the saved name only
+		// when the server doesn't already have it, and not again after it was
+		// denied, unless this sign-in is a registered one that may now be allowed.
+		const registered = passkey || typeof result.token === 'string';
+		const name = this.displayName;
+		const wanted = Boolean(name) && name !== this.you?.name && (registered || this.declinedName !== name);
+		this.authNameRequest = wanted ? this.sendName() : undefined;
 		this.startKeepalive();
 		this.emit();
 		return true;
