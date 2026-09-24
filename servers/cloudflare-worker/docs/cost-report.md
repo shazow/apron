@@ -29,6 +29,12 @@ room listing) is charged about 61 writes instead of 176, a post about 39 instead
 of 280, and an idle alarm run about 14 instead of 30. The reservation sizes still
 matter: they decide whether an operation is admitted near the ceiling.
 
+Also since 2026-09-24, only a `message` mutation naming a `message_id` (an edit,
+which may be a move) keeps the 256-write floor; creates, reactions, rooms and
+renames, measured at most 37 writes, reserve a 96-write floor. History pages
+reserve a 32-write floor (about 20 observed for a first request). Reads keep
+their floors. The figures below predate these changes.
+
 `reserveCost` adds eight read and eight write rows for its bounded control
 work. The first reservation after a wake or UTC-day handover also carries an
 eight-row handover allowance. A normal mutation has a conservative 256/256

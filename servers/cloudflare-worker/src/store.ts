@@ -2648,13 +2648,16 @@ export class Store {
       effective = lookup.now;
       if (lookup.row) return this.deduplicatedCommit(lookup.row, method, digest);
     }
+    // Conservative floors for the three posting limiter rows, dedup row,
+    // records, current state, and room/log bookkeeping. An edit may be a move,
+    // which also re-logs the message's capped reaction sets (measured at 158
+    // writes); every other mutation measured at most 37. Unused rows are
+    // credited back, so the floor only decides admission near the ceiling.
+    const mayMove = method === "message" && typeof input.params.message_id === "string";
     const mutationCost = {
       ...this.config.mutationCost,
-      // The default is a conservative floor for the three posting limiter
-      // rows, dedup row, records, current state, and room/log bookkeeping.
-      // A move also re-logs the message's capped reaction sets.
       reads: Math.max(256, this.config.mutationCost.reads ?? 0),
-      writes: Math.max(256, this.config.mutationCost.writes ?? 0),
+      writes: Math.max(mayMove ? 256 : 96, this.config.mutationCost.writes ?? 0),
     };
     const beforeReads = this.observed.reads;
     const beforeWrites = this.observed.writes;
@@ -2706,7 +2709,9 @@ export class Store {
     return this.reserved({
       ...this.config.historyCost,
       reads: Math.max(256, this.config.historyCost.reads ?? 0),
-      writes: Math.max(64, this.config.historyCost.writes ?? 0),
+      // A page writes only its two limiter rows and the budget row: about 20
+      // rows for a first request, which creates both limiter rows.
+      writes: Math.max(32, this.config.historyCost.writes ?? 0),
     }, false, operationNow, () => {
       const now = this.effectiveNow(operationNow);
       return this.transaction(() => {

@@ -196,7 +196,7 @@ describe('measured storage accounting', () => {
 		});
 		// The mutation reserved far more than it wrote; the day is charged what it
 		// wrote, and the credit's own row update is paid from the reservation.
-		expect(result.reserved).toBeGreaterThan(200);
+		expect(result.reserved).toBeGreaterThan(2 * result.observed);
 		expect(result.charged).toBeGreaterThanOrEqual(result.observed - 1);
 		expect(result.charged).toBeLessThanOrEqual(result.observed + 1);
 		expect(result.chargedReads).toBeLessThanOrEqual(result.observedReads + 1);
