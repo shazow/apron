@@ -66,8 +66,9 @@ pending challenge without extending the initial 30-second authentication
 deadline. A matching finish attempt consumes the challenge even on failure.
 A verified login or registration returns a bearer `token` (protocol Appendix I,
 session resume). Presenting it with `scheme: "token"` on a later connection from
-the same origin resumes the registered identity without a ceremony and renews
-the session for another 12 hours; the token itself does not change. Sessions
+the same origin resumes the registered identity without a ceremony; once less
+than half of its 12 hours remain, the resume renews it for another 12. The token
+itself does not change. Sessions
 are stored hashed in the object and swept on expiry. Signing out is local to
 the client: it drops the stored token, and the connection returns as a fresh
 guest.

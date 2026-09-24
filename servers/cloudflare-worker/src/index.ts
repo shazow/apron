@@ -966,8 +966,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 	/**
 	 * Resumes a passkey session through the protocol's `token` scheme. The
 	 * session must come from a ceremony on this same allowed origin and be
-	 * unexpired; a successful resume renews it for a full lifetime. The token is
-	 * not rotated, so several tabs may share one persisted token.
+	 * unexpired. A resume once less than half its lifetime remains renews it for
+	 * a full lifetime; earlier resumes leave it as is, since renewal is three KV
+	 * writes charged at their bound on every reload, tab and reconnect. The
+	 * token is not rotated, so several tabs may share one persisted token.
 	 */
 	private async handleTokenResume(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		return this.withSessionLock(() => this.handleTokenResumeLocked(socket, attachment, request));
@@ -996,18 +998,21 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 		this.assertRegisteredCapacity(socket, identity.userId);
-		const renewed = { ...session, expiresMs: now + this.config.limits.sessionTtlSeconds * 1_000 };
-		await this.store.withMeterAsync("foreground", { writes: 3 }, async () => {
-			// The index is advisory. Writing it first means a crash cannot leave a
-			// live session without an expiry entry; a stale entry is harmless.
-			await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(renewed.expiresMs, key), {
-				v: 1, sessionKey: key, expiresMs: renewed.expiresMs,
+		const lifetimeMs = this.config.limits.sessionTtlSeconds * 1_000;
+		const renewed = { ...session, expiresMs: now + lifetimeMs };
+		if (session.expiresMs - now < lifetimeMs / 2) {
+			await this.store.withMeterAsync("foreground", { writes: 3 }, async () => {
+				// The index is advisory. Writing it first means a crash cannot leave a
+				// live session without an expiry entry; a stale entry is harmless.
+				await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(renewed.expiresMs, key), {
+					v: 1, sessionKey: key, expiresMs: renewed.expiresMs,
+				});
+				await this.ctx.storage.put<StoredSession>(key, renewed);
+				const oldIndex = sessionExpiryKey(session.expiresMs, key);
+				const newIndex = sessionExpiryKey(renewed.expiresMs, key);
+				if (oldIndex !== newIndex) await this.ctx.storage.delete(oldIndex);
 			});
-			await this.ctx.storage.put<StoredSession>(key, renewed);
-			const oldIndex = sessionExpiryKey(session.expiresMs, key);
-			const newIndex = sessionExpiryKey(renewed.expiresMs, key);
-			if (oldIndex !== newIndex) await this.ctx.storage.delete(oldIndex);
-		});
+		}
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 		const guest = attachment.tier === "anonymous" ? publicIdentity(attachment) : null;
 		attachment.tier = "registered";

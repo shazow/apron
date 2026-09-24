@@ -97,7 +97,7 @@ it('resumes a registered identity from a session token, renews it, and rejects b
 	expect((await peer.next()).error.code).toBe(-32001);
 	peer.close();
 
-	// The resume pushed the expiry out to a full lifetime.
+	// A fresh session still has most of its lifetime: the resume left it as is.
 	const expiresMs = await runInDurableObject(stub(), async (_instance, state) => {
 		const sessions = await state.storage.list<{ userId: string; expiresMs: number }>({ prefix: 'session:' });
 		return [...sessions.values()].find((session) => session.userId === 'user_session_one')!.expiresMs;
@@ -128,6 +128,43 @@ it('resumes a registered identity from a session token, renews it, and rejects b
 		return [...sessions.values()].some((session) => session.userId === 'user_session_one' && session.expiresMs > Date.now());
 	});
 	expect(sessionStillLive).toBe(true);
+});
+
+it('renews a resumed session only once less than half its lifetime remains', async () => {
+	await registerIdentity('user_session_renew', 'session-renew-ip');
+	const token = await issueSession('user_session_renew', 'http://localhost:5173');
+	const stored = () => runInDurableObject(stub(), async (_instance, state) => {
+		const sessions = await state.storage.list<StoredSessionTest>({ prefix: 'session:' });
+		const index = await state.storage.list<{ sessionKey: string; expiresMs: number }>({ prefix: 'session-expiry:' });
+		const [key, session] = [...sessions].find(([, value]) => value.userId === 'user_session_renew')!;
+		return { key, session, indexed: [...index.values()].filter((entry) => entry.sessionKey === key).map((entry) => entry.expiresMs) };
+	});
+	const resume = async () => {
+		const peer = await connect();
+		await peer.next();
+		peer.send({ id: 'resume', method: 'auth', params: { scheme: 'token', token } });
+		expect((await peer.next()).result.you.user_id).toBe('user_session_renew');
+		peer.close();
+	};
+
+	const issued = await stored();
+	await resume();
+	// Most of the lifetime remains: nothing is rewritten.
+	expect(await stored()).toEqual(issued);
+
+	// Two hours left: the resume renews it and moves its index entry.
+	const soon = Date.now() + 2 * 60 * 60 * 1000;
+	await runInDurableObject(stub(), async (_instance, state) => {
+		await state.storage.put(issued.key, { ...issued.session, expiresMs: soon });
+		for (const [indexKey, entry] of await state.storage.list<{ sessionKey: string }>({ prefix: 'session-expiry:' })) {
+			if (entry.sessionKey === issued.key) await state.storage.delete(indexKey);
+		}
+		await state.storage.put(`session-expiry:${soon.toString().padStart(16, '0')}:${issued.key.slice('session:'.length)}`, { v: 1, sessionKey: issued.key, expiresMs: soon });
+	});
+	await resume();
+	const renewed = await stored();
+	expect(renewed.session.expiresMs).toBeGreaterThan(Date.now() + 11 * 60 * 60 * 1000);
+	expect(renewed.indexed).toEqual([renewed.session.expiresMs]);
 });
 
 it('binds sessions to their origin and drops expired ones on the alarm', async () => {
