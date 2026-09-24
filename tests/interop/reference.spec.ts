@@ -196,6 +196,11 @@ test.describe('reference features against the Go server', () => {
 		await sendMessage(page, `${token} root`);
 		const threadId = await startThread(page, await waitForMessage(page, `${token} root`));
 		page.on('dialog', (dialog) => dialog.accept());
+		// Nothing left to join yet: no Browse rooms, and no More threads… under General.
+		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
+		await expect(page.getByTestId('more-threads')).toHaveCount(0);
+		await expect(page.getByTestId('browse-rooms')).toHaveCount(0);
+		await page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
 
 		// Leaving a thread removes it; More threads… lists it again to join.
 		await page.getByTestId('leave-room').click();
