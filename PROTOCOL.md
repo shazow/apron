@@ -310,6 +310,10 @@ every message with the kept object. Whether history carries a user's name
 from posting time or their current one is server policy; the protocol
 guarantees neither.
 
+Clients SHOULD show a user as `Name (@user_id)` where space allows, and
+MUST when another user in the same room shares the name, so no one can pass
+as someone else.
+
 Servers SHOULD include `name` in `from`, so clients can render any message
 without looking its author up.
 
@@ -371,9 +375,10 @@ A room is a log with a server-chosen `room_id`. Announced rooms are the ones
 this connection receives deliveries for. After authentication, servers
 SHOULD announce the rooms the user has joined (every visible room, for
 servers without membership), and MUST announce a room before delivering
-anything in it. Servers MAY announce only recently active threads; the rest
-are found with `room_list` (Appendix C). A minimal server may announce just
-one room.
+anything in it. Servers MAY announce only recently active rooms and
+threads, and a room that becomes active later when it does; the rest are
+found with `room_list` (Appendix C). A thread's parent is announced before
+the thread. A minimal server may announce just one room.
 
 ```json
 {
@@ -910,7 +915,7 @@ the renderer. Unknown kinds render from `og`, or else the fallback card
 (§3.5).
 
 ```json
-{"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/embed_1240"}
+{"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/Qm7xk2…"}
 {"embed_id": "embed_1241", "kind": "iframe", "url": "https://backend:8443/term/abc", "height": 300}
 {"embed_id": "embed_1242", "kind": "html", "html": "<table>…</table>"}
 ```
@@ -933,7 +938,7 @@ prefix, with structured properties nested (`og:image:width` becomes
 ```json
 "og": {
   "title": "before.png",
-  "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180, "alt": "Dashboard before the fix"}
+  "image": {"url": "https://chat.example/f/Zr8Tq1…/thumb", "type": "image/webp", "width": 320, "height": 180, "alt": "Dashboard before the fix"}
 }
 ```
 
@@ -960,6 +965,9 @@ embed an opaque `embed_id`; other servers MAY store embeds as given.
 - Content the server hosts for an embed belongs to that message. When the
   embed is removed or the message is deleted or redacted, servers SHOULD
   delete the content.
+- Anyone with a URL the server hosts can fetch it, so servers SHOULD make
+  these URLs unguessable, such as a random path, and never derive them
+  from `embed_id`.
 - Suggested convention: `embed_` plus a server-wide counter, such as
   `embed_1234`.
 
@@ -986,10 +994,10 @@ The `message` result lists them, in request order:
 {"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}
 {
   "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
-  "url": "https://chat.example/f/embed_1235",
+  "url": "https://chat.example/f/Zr8Tq1…",
   "og": {
     "title": "before.png",
-    "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180}
+    "image": {"url": "https://chat.example/f/Zr8Tq1…/thumb", "type": "image/webp", "width": 320, "height": 180}
   }
 }
 ```
@@ -1304,7 +1312,7 @@ identity and write rules.
 {"kind": "stream", "format": "terminal"}
 // sender: foo 2>&1 | curl -T - <write_url>
 // <- the embed as broadcast: live at its url, then finished with the kept text
-{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/embed_1234"}
+{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/p3Wn9d…"}
 {"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
 ```
 
