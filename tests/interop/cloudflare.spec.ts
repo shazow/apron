@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
-import { editMessage, reactionChip, reactTo, sendMessage, startThread, waitForMessage } from './test-helpers';
+import { disablePasskeyAutofill, editMessage, reactionChip, reactTo, sendMessage, startThread, waitForMessage } from './test-helpers';
 
 // This exercises browser-generated credentials and the actual Workers verifier.
 // Runtime/storage policy cases live in servers/cloudflare-worker/test.
@@ -11,6 +11,7 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 		protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
 		hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true
 	} });
+	await disablePasskeyAutofill(page);
 	// An actual inert same-origin resource establishes localhost's address space
 	// without starting the frontend's extra guest protocol socket.
 	await page.goto('/robots.txt');
@@ -90,7 +91,9 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	await profile.click();
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	await expect(dialog.locator('code')).not.toHaveText(userId);
-	await dialog.getByRole('button', { name: 'Sign in with passkey', exact: true }).click();
+	// The passkey was made over a raw socket, so the client has no record of it
+	// and "Continue with passkey" would register; the link signs in with an existing one.
+	await dialog.getByTestId('other-passkey').click();
 	await expect(dialog.getByText('Signed in with your passkey.', { exact: true })).toBeVisible();
 	await expect(dialog.locator('code')).toHaveText(userId);
 	await expect(dialog.getByTestId('display-name-input')).toHaveValue('Saved passkey name');
@@ -142,7 +145,9 @@ test('built frontend connects to the Worker and recovers retained history', asyn
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	await dialog.getByTestId('display-name-input').fill('Renamed guest');
 	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
-	await expect(dialog.getByRole('alert')).toHaveText('The server declined this handle. Your old one is still in use.');
+	await expect(dialog.getByRole('alert')).toHaveText(
+		'The server declined this handle (Only registered users may change their name). Continue with a passkey and it’s applied once you’re signed in.'
+	);
 });
 
 test('custom frontend origins share guest quotas and cannot use passkeys', async ({ page }) => {

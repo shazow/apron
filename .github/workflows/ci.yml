@@ -1,8 +1,12 @@
 name: Example implementations
 
 on:
+  # Branches with a pull request are covered by the pull_request run; pushing
+  # to any branch as well ran every PR commit twice.
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

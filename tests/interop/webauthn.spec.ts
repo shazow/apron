@@ -1,5 +1,5 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
-import { editMessage, openChat, sendMessage, waitForMessage } from './test-helpers';
+import { disablePasskeyAutofill, editMessage, openChat, sendMessage, waitForMessage } from './test-helpers';
 
 test.use({ baseURL: 'http://localhost:5173' });
 
@@ -17,6 +17,7 @@ test('passkeys preserve identity and edit ownership through sign-out, login, and
 		protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
 		hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true
 	} });
+	await disablePasskeyAutofill(page);
 	await openChat(page);
 	const message = `passkey-${Date.now()}`;
 	await sendMessage(page, message);
@@ -26,7 +27,7 @@ test('passkeys preserve identity and edit ownership through sign-out, login, and
 	await profile.click();
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	const identity = await dialog.locator('code').textContent();
-	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
 	await expect(dialog.getByText('Passkey saved', { exact: false })).toBeVisible();
 	const { credentials } = await cdp.send('WebAuthn.getCredentials', { authenticatorId });
 	expect(credentials).toHaveLength(1);
@@ -35,7 +36,7 @@ test('passkeys preserve identity and edit ownership through sign-out, login, and
 	await dialog.getByRole('button', { name: 'Sign out', exact: true }).click();
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	await expect(dialog.locator('code')).not.toHaveText(identity!);
-	await dialog.getByRole('button', { name: 'Sign in with passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
 	await expect(dialog.getByText('Signed in with your passkey.', { exact: true })).toBeVisible();
 	await expect(dialog.locator('code')).toHaveText(identity!);
 	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
@@ -65,7 +66,7 @@ test('passkeys preserve identity and edit ownership through sign-out, login, and
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	await profile.click();
 	await expect(dialog.locator('code')).not.toHaveText(identity!);
-	await dialog.getByRole('button', { name: 'Sign in with passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
 	await expect(dialog.locator('code')).toHaveText(identity!);
 });
 
@@ -76,22 +77,44 @@ test('a rejected passkey verification leaves the guest usable and allows retry',
 		protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
 		hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true
 	} });
+	await disablePasskeyAutofill(page);
 	await openChat(page);
 	await page.getByRole('button', { name: /^Your profile on/ }).click();
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	const identity = await dialog.locator('code').textContent();
-	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
 	await expect(dialog.getByText('Passkey saved', { exact: false })).toBeVisible();
 	await dialog.getByRole('button', { name: 'Sign out', exact: true }).click();
 	await expect(dialog.locator('code')).not.toHaveText(identity!);
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	const guest = await dialog.locator('code').textContent();
 	await cdp.send('WebAuthn.setResponseOverrideBits', { authenticatorId, isBogusSignature: true });
-	await dialog.getByRole('button', { name: 'Sign in with passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
 	await expect(dialog.getByRole('alert')).toContainText('Passkey verification failed');
 	await expect(dialog.locator('code')).toHaveText(guest!);
 	await cdp.send('WebAuthn.setResponseOverrideBits', { authenticatorId, isBogusSignature: false });
-	await dialog.getByRole('button', { name: 'Sign in with passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
+	await expect(dialog.locator('code')).toHaveText(identity!);
+});
+
+test('passkey autofill on the handle field signs a returning user in', async ({ page, context }) => {
+	const cdp = await context.newCDPSession(page);
+	await cdp.send('WebAuthn.enable');
+	await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
+		protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
+		hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true
+	} });
+	await openChat(page);
+	await page.getByRole('button', { name: /^Your profile on/ }).click();
+	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
+	await expect(dialog.getByTestId('display-name-input')).toHaveAttribute('autocomplete', 'username webauthn');
+	const identity = await dialog.locator('code').textContent();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
+	await expect(dialog.getByText('Passkey saved', { exact: false })).toBeVisible();
+	await dialog.getByRole('button', { name: 'Sign out', exact: true }).click();
+	// The editor stays open to a guest, so the handle field offers the passkey
+	// again; the virtual authenticator picks it the way a tap on the suggestion would.
+	await expect(dialog.getByText('Signed in with your passkey.', { exact: true })).toBeVisible();
 	await expect(dialog.locator('code')).toHaveText(identity!);
 });
 
@@ -102,10 +125,11 @@ test('changing servers cancels an active passkey prompt', async ({ page, context
 		protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
 		hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: false
 	} });
+	await disablePasskeyAutofill(page);
 	await openChat(page);
 	await page.getByRole('button', { name: /^Your profile on/ }).click();
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
-	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
 	await expect(dialog.getByText('Confirm on your device…')).toBeVisible();
 	await page.getByRole('button', { name: /^Your profile on/ }).click();
 	await page.getByRole('button', { name: 'Connection settings', exact: true }).click();
@@ -114,8 +138,8 @@ test('changing servers cancels an active passkey prompt', async ({ page, context
 	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	await page.getByRole('button', { name: /^Your profile on/ }).click();
 	await expect(dialog.getByText('Confirm on your device…')).toHaveCount(0);
-	await expect(dialog.getByRole('button', { name: 'Add passkey', exact: true })).toBeEnabled();
+	await expect(dialog.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled();
 	await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: true });
-	await dialog.getByRole('button', { name: 'Add passkey', exact: true }).click();
+	await dialog.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
 	await expect(dialog.getByText('Passkey saved', { exact: false })).toBeVisible();
 });

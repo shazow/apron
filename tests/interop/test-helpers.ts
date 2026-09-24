@@ -4,6 +4,18 @@ export function composer(page: Page): Locator {
 	return page.getByRole('textbox', { name: 'Message', exact: true });
 }
 
+/**
+ * Chromium's virtual authenticator answers passkey autofill (conditional
+ * mediation) on its own, where a person would pick a passkey from the
+ * keyboard. Tests that drive the passkey buttons turn autofill off so it
+ * cannot sign in behind their back. Call before the page loads.
+ */
+export async function disablePasskeyAutofill(page: Page): Promise<void> {
+	await page.addInitScript(() => {
+		if (typeof PublicKeyCredential !== 'undefined') PublicKeyCredential.isConditionalMediationAvailable = async () => false;
+	});
+}
+
 export async function openChat(page: Page): Promise<void> {
 	await page.goto('/');
 	await page.waitForLoadState('domcontentloaded');
