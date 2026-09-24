@@ -291,6 +291,6 @@
 	.reply-static { cursor: default; }
 	.reply-static:hover { background: var(--bg-200); }
 	.plain { white-space: pre-wrap; }
-	.edit { display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--timeline-max-w); }
+	.edit { display: flex; flex-direction: column; gap: var(--space-2); }
 	.edit-field { height: auto; min-height: 66px; padding: var(--space-2); resize: vertical; font-size: 15px; line-height: 22px; }
 </style>
