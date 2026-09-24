@@ -75,7 +75,7 @@ the sender.
   then send exactly `{"method":"ping"}` at that interval, fixed bytes so
   servers can answer without parsing, and the server answers
   `{"method":"pong"}`. A server MAY close a connection that pinged and then
-  stopped. On WebSocket, servers MAY also use protocol ping frames.
+  stopped.
 
 ### 1.1 Envelope and replies
 
@@ -282,10 +282,13 @@ Except for `webauthn`, servers MAY accept `auth` regardless of `scheme` and
 ignore credentials under guest-access policies. Token validation,
 identity assignment, and privilege policy are implementation-defined.
 
-`name` is an optional requested display name, valid with any scheme; the
-server MAY comply, decline, or alter it, and `you.name` is the answer.
-Clients MUST NOT supply `user_id`: identity is server-assigned. `client` is
-an optional free-form implementation string for debugging.
+`name` is an optional requested display name and `user_id` an optional
+requested ID, both valid with any scheme. The server MAY comply, decline,
+or assign something else, and `you` is the answer: identity is
+server-assigned. Servers SHOULD NOT grant a `user_id` used before unless the
+request authenticates as its owner, since past records and mentions refer
+to it. `client` is an optional free-form implementation string for
+debugging.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
 other requests get `denied` and other notifications are ignored.
