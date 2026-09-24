@@ -50,8 +50,8 @@ starts with `@` render as quiet system lines.
 
 Mentions follow the `@user_id` convention (Appendix J.3). Typing `@` in the
 composer opens the mention picker over the room's recent senders and its
-`room_list` members, filtered by name or ID: arrows move, Tab or Enter picks,
-Escape dismisses. A picked person becomes a chip showing their name, and a
+members (`room_list` with the room's `room_id`), filtered by name or ID:
+arrows move, Tab or Enter picks, Escape dismisses. A picked person becomes a chip showing their name, and a
 typed `@name` (case-insensitive, spaces allowed) or `@user_id` collapses into
 the same chip once finished, when exactly one person in the room goes by it;
 one ending the draft collapses on send. Chips are always sent as `@user_id`, so
@@ -80,7 +80,8 @@ With the `rooms` cap the header also offers **Leave**, which leaves the room (an
 its threads) or the thread. **Browse rooms** in the sidebar lists, via
 `room_list`, the visible rooms you haven't joined, and **More threads…** under
 the open room lists its other threads; picking one joins it and opens it once
-the server announces it.
+the server announces it. Listings arrive a page at a time, newest first;
+**Show older rooms** and **Show older threads** add the page before.
 
 With the `edit` cap, several of your messages move at a time: shift-click a
 message (or press `x` on it, long-press it on touch, or pick **Select** from its

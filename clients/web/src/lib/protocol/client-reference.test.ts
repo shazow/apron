@@ -91,6 +91,36 @@ describe('ChatClient reference features', () => {
 		expect(snapshot.threadDirectory.general.map((room) => room.id)).toEqual(['t1']);
 	});
 
+	it('pages thread listings back, keeps older pages on refresh, and lists one room for its members', async () => {
+		await connect();
+		const thread = (id: string) => ({ room_id: id, log_id: id, parent_room_id: 'general', title: `Thread ${id}`, members: [] });
+		const ids = () => snapshot.threadDirectory.general.map((room) => room.id);
+		quiet(client.listRooms('general'));
+		expect(socket.request('room_list').params).toEqual({ parent_room_id: 'general' });
+		await socket.reply('room_list', { rooms: [thread('30'), thread('40')], first_id: '30', last_id: '40', more: true });
+		expect(ids()).toEqual(['30', '40']);
+		expect(snapshot.threadDirectoryMore).toEqual({ general: true });
+		// The next page ends just before the oldest listed room.
+		quiet(client.listOlderRooms('general'));
+		expect(socket.request('room_list').params).toEqual({ parent_room_id: 'general', before: '29' });
+		await socket.reply('room_list', { rooms: [thread('10'), thread('20')], first_id: '10', last_id: '20', more: false });
+		expect(ids()).toEqual(['10', '20', '30', '40']);
+		expect(snapshot.threadDirectoryMore).toEqual({});
+		// A fresh newest page keeps the older pages already listed.
+		quiet(client.listRooms('general'));
+		await socket.reply('room_list', { rooms: [thread('40'), thread('50')], first_id: '40', last_id: '50', more: true });
+		expect(ids()).toEqual(['10', '20', '30', '40', '50']);
+		expect(snapshot.threadDirectoryMore).toEqual({});
+		await expect(client.listOlderRooms('general')).resolves.toHaveLength(5);
+
+		const members = client.listRoomMembers('20');
+		expect(socket.request('room_list').params).toEqual({ room_id: '20' });
+		await socket.reply('room_list', { rooms: [{ ...thread('20'), members: [{ user_id: 'carol', name: 'Carol' }] }] });
+		await expect(members).resolves.toEqual([{ user_id: 'carol', name: 'Carol' }]);
+		expect(snapshot.users.carol).toEqual({ user_id: 'carol', name: 'Carol' });
+		expect(ids()).toEqual(['10', '20', '30', '40', '50']);
+	});
+
 	it('updates the profile with me and adopts what the server kept', async () => {
 		await connect();
 		const saved = client.updateProfile({ avatar: '' });

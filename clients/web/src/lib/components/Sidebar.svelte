@@ -36,6 +36,9 @@
 	let unjoined = $derived((session.snapshot.directory ?? []).filter((listing) => !listing.joined));
 	/** Threads of the active room this user hasn't joined, once `room_list` has listed them. */
 	let unjoinedThreads = $derived(session.activeRoomId ? (session.snapshot.threadDirectory[session.activeRoomId] ?? []).filter((listing) => !listing.joined) : []);
+	/** `room_list` pages: the server has older rooms, or older threads of the active room, than listed. */
+	let olderRooms = $derived(Boolean(session.snapshot.directoryMore));
+	let olderThreads = $derived(Boolean(session.activeRoomId && session.snapshot.threadDirectoryMore?.[session.activeRoomId]));
 
 	/** Changes whenever a room or thread is joined or left. */
 	let joinedKey = $derived(session.rooms.map((room) => room.id).join('\u0000'));
@@ -55,6 +58,11 @@
 	function list(parentRoomId?: string): void {
 		listError = '';
 		client.listRooms(parentRoomId).catch((cause: unknown) => (listError = cause instanceof Error ? cause.message : 'Unable to list rooms'));
+	}
+
+	function listOlder(parentRoomId?: string): void {
+		listError = '';
+		client.listOlderRooms(parentRoomId).catch((cause: unknown) => (listError = cause instanceof Error ? cause.message : 'Unable to list rooms'));
 	}
 
 	function toggleBrowse(): void {
@@ -111,7 +119,7 @@
 										{/if}
 									</button>
 								{/each}
-								{#if canBrowse && unjoinedThreads.length > 0}
+								{#if canBrowse && (unjoinedThreads.length > 0 || olderThreads)}
 									<button class="ap-room ap-room-nested more" type="button" data-testid="more-threads" aria-expanded={moreThreadsFor === room.id} onclick={() => showMoreThreads(room.id)}>
 										<span class="ap-room-text"><span class="ap-room-topic">More threads…</span></span>
 									</button>
@@ -121,6 +129,11 @@
 												<span class="ap-room-text"><span class="ap-room-name">{listing.title}</span><span class="ap-room-topic">Join</span></span>
 											</button>
 										{/each}
+										{#if olderThreads}
+											<button class="ap-room ap-room-nested more" type="button" data-testid="older-threads" onclick={() => listOlder(room.id)}>
+												<span class="ap-room-text"><span class="ap-room-topic">Show older threads</span></span>
+											</button>
+										{/if}
 									{/if}
 								{/if}
 							</div>
@@ -129,7 +142,7 @@
 				{/if}
 			</div>
 		</section>
-		{#if canBrowse && unjoined.length > 0}
+		{#if canBrowse && (unjoined.length > 0 || olderRooms)}
 			<section class="ap-sect" class:ap-sect-closed={!browseOpen}>
 				<div class="ap-sect-head">
 					<button class="ap-sect-toggle" type="button" aria-expanded={browseOpen} data-testid="browse-rooms" onclick={toggleBrowse}><span class="ap-sect-caret" aria-hidden="true">▾</span>Browse rooms</button>
@@ -144,6 +157,11 @@
 								</span>
 							</button>
 						{/each}
+						{#if olderRooms}
+							<button class="ap-room more" type="button" data-testid="older-rooms" onclick={() => listOlder()}>
+								<span class="ap-room-text"><span class="ap-room-topic">Show older rooms</span></span>
+							</button>
+						{/if}
 						{#if listError}<p class="muted" role="alert">{listError}</p>{/if}
 					</div>
 				{/if}

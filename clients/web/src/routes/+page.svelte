@@ -185,14 +185,14 @@
 		untrack(() => client?.markRead(room.id, last.message_id));
 	});
 
-	// Members for the mention picker come from `room_list` (cap `rooms`), once per room per connection.
+	// Members for the mention picker come from `room_list` with `room_id` (cap `rooms`), once per room per connection.
 	$effect(() => {
 		const room = paneRoom;
 		if (!client || !room || !session.ready || !session.canManageRooms) return;
-		const key = `${client.url}\u0000${room.parentRoomId ?? ''}`;
+		const key = `${client.url}\u0000${room.id}`;
 		if (listedFor.has(key)) return;
 		listedFor.add(key);
-		untrack(() => client?.listRooms(room.parentRoomId).catch(() => listedFor.delete(key)));
+		untrack(() => client?.listRoomMembers(room.id).catch(() => listedFor.delete(key)));
 	});
 
 	// A room joined from the directory opens once the server has announced it.

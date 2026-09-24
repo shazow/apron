@@ -159,10 +159,14 @@ export interface ClientSnapshot {
 	userAliases: Record<string, string>;
 	/** Files being written to upload embeds, by `embed_id`. */
 	uploads: Record<string, UploadState>;
-	/** Top-level rooms from the latest `room_list`, joined or not; undefined until listed. */
+	/** Top-level rooms from `room_list`, joined or not, oldest first; undefined until listed. */
 	directory?: RoomListing[];
-	/** Threads per parent room from the latest `room_list` with `parent_room_id`. */
+	/** Threads per parent room from `room_list` with `parent_room_id`, oldest first. */
 	threadDirectory: Record<string, RoomListing[]>;
+	/** The server has older top-level rooms than `directory` holds (`listOlderRooms`). */
+	directoryMore?: boolean;
+	/** Parent rooms with older threads than `threadDirectory` holds. */
+	threadDirectoryMore?: Record<string, boolean>;
 	showReconnectDivider: boolean;
 	/** Server supplied retry delay for the most recent temporary limit. */
 	retryAfterMs?: number;
@@ -372,6 +376,12 @@ export class ChatClient {
 	private readonly roomMembers = new Map<string, Identity[]>();
 	private directory?: RoomListing[];
 	private readonly threadDirectory = new Map<string, RoomListing[]>();
+	/**
+	 * Paging per directory, keyed by parent room ('' for top-level rooms):
+	 * where the oldest listed page starts, whether the server has older rooms,
+	 * and whether older pages were added to the newest one.
+	 */
+	private readonly listingPages = new Map<string, { firstId?: string; more: boolean; extended: boolean }>();
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private connectionId = 0;
@@ -621,6 +631,8 @@ export class ChatClient {
 			uploads: Object.fromEntries(this.uploads),
 			...(this.directory ? { directory: this.directory.map((listing) => this.withJoined(listing)) } : {}),
 			threadDirectory: Object.fromEntries([...this.threadDirectory].map(([parent, listings]) => [parent, listings.map((listing) => this.withJoined(listing))])),
+			...(this.listingPages.get('')?.more ? { directoryMore: true } : {}),
+			threadDirectoryMore: Object.fromEntries([...this.listingPages].filter(([parent, page]) => parent !== '' && page.more).map(([parent]) => [parent, true])),
 			showReconnectDivider: this.showReconnectDivider,
 			retryAfterMs: this.retryAfterRemaining(),
 			...(this.reconnectHeld ? { held: true } : {}),
@@ -1096,38 +1108,100 @@ export class ChatClient {
 	}
 
 	/**
-	 * Lists visible rooms (cap `rooms`, Appendix C): top-level rooms, or with
-	 * `parentRoomId` that room's threads, including ones never announced. The
-	 * result also lands in the snapshot's `directory` or `threadDirectory`, and
-	 * members become known users.
+	 * Lists visible rooms (cap `rooms`, Appendix C): the newest page of
+	 * top-level rooms, or with `parentRoomId` of that room's threads, including
+	 * ones never announced. The page lands in the snapshot's `directory` or
+	 * `threadDirectory`, keeping older pages `listOlderRooms` added, and members
+	 * become known users. Resolves with the directory.
 	 */
 	listRooms(parentRoomId?: string): Promise<RoomListing[]> {
-		const params: JsonObject = parentRoomId === undefined ? {} : { parent_room_id: parentRoomId };
-		return this.enqueueRequest('room_list', params, { visible: false, allowBeforeAuth: false }).promise.then((result) => {
-			const listings: RoomListing[] = [];
-			for (const value of Array.isArray(result.rooms) ? result.rooms : []) {
-				const decoded = decodeRoom(value);
-				if (!decoded) continue;
-				const members = (isJsonObject(value) && Array.isArray(value.members) ? value.members : []).filter(isIdentity).map((member) => cloneJson(member));
-				for (const member of members) this.noteUser(member, 'profile');
-				for (const message of decoded.embedded) this.installMessage(message);
-				const record = decoded.record;
-				this.roomMembers.set(record.room_id, members);
-				listings.push({
-					id: record.room_id,
-					title: typeof record.title === 'string' && record.title ? record.title : record.room_id,
-					record,
-					...(record.parent_room_id !== undefined ? { parentRoomId: record.parent_room_id } : {}),
-					...(decoded.delivery.latest_log_id !== undefined ? { latestLogId: decoded.delivery.latest_log_id } : {}),
-					members,
-					joined: false
-				});
-			}
-			if (parentRoomId === undefined) this.directory = listings;
-			else this.threadDirectory.set(parentRoomId, listings);
+		return this.requestListing(parentRoomId);
+	}
+
+	/**
+	 * Adds the page before the oldest one listed, when the server said there are
+	 * older rooms (`directoryMore`, `threadDirectoryMore`). Resolves with the
+	 * directory.
+	 */
+	listOlderRooms(parentRoomId?: string): Promise<RoomListing[]> {
+		const page = this.listingPages.get(parentRoomId ?? '');
+		if (!page?.more || page.firstId === undefined) return Promise.resolve(this.listingsOf(parentRoomId).map((listing) => this.withJoined(listing)));
+		return this.requestListing(parentRoomId, (BigInt(page.firstId) - 1n).toString());
+	}
+
+	/**
+	 * Lists one room (`room_list` with `room_id`) for its members, as the
+	 * mention picker needs, without listing its siblings. Members become known
+	 * users; the directories are unchanged.
+	 */
+	listRoomMembers(roomId: string): Promise<Identity[]> {
+		return this.enqueueRequest('room_list', { room_id: roomId }, { visible: false, allowBeforeAuth: false }).promise.then((result) => {
+			this.decodeListings(result);
 			this.emit();
-			return listings.map((listing) => this.withJoined(listing));
+			return this.roomMembers.get(roomId) ?? [];
 		});
+	}
+
+	private listingsOf(parentRoomId: string | undefined): RoomListing[] {
+		return (parentRoomId === undefined ? this.directory : this.threadDirectory.get(parentRoomId)) ?? [];
+	}
+
+	/**
+	 * Requests the newest page of a directory, or with `before` the page before
+	 * it, and merges it: rooms are only ever added at the newest end, so rooms
+	 * listed earlier and missing from a fresh newest page are older ones.
+	 */
+	private requestListing(parentRoomId: string | undefined, before?: string): Promise<RoomListing[]> {
+		const params: JsonObject = {
+			...(parentRoomId !== undefined ? { parent_room_id: parentRoomId } : {}),
+			...(before !== undefined ? { before } : {})
+		};
+		return this.enqueueRequest('room_list', params, { visible: false, allowBeforeAuth: false }).promise.then((result) => {
+			const listings = this.decodeListings(result);
+			const key = parentRoomId ?? '';
+			const page = this.listingPages.get(key);
+			const listed = new Set(listings.map((listing) => listing.id));
+			const previous = this.listingsOf(parentRoomId).filter((listing) => !listed.has(listing.id));
+			const firstId = typeof result.first_id === 'string' ? result.first_id : undefined;
+			let merged: RoomListing[];
+			if (before !== undefined) {
+				merged = [...listings, ...previous];
+				this.listingPages.set(key, { firstId: firstId ?? page?.firstId, more: result.more === true, extended: true });
+			} else if (page?.extended) {
+				merged = [...previous, ...listings];
+			} else {
+				merged = listings;
+				this.listingPages.set(key, { ...(firstId !== undefined ? { firstId } : {}), more: result.more === true, extended: false });
+			}
+			if (parentRoomId === undefined) this.directory = merged;
+			else this.threadDirectory.set(parentRoomId, merged);
+			this.emit();
+			return merged.map((listing) => this.withJoined(listing));
+		});
+	}
+
+	/** Decodes a `room_list` result's rooms, noting their members, users, and embedded messages. */
+	private decodeListings(result: JsonObject): RoomListing[] {
+		const listings: RoomListing[] = [];
+		for (const value of Array.isArray(result.rooms) ? result.rooms : []) {
+			const decoded = decodeRoom(value);
+			if (!decoded) continue;
+			const members = (isJsonObject(value) && Array.isArray(value.members) ? value.members : []).filter(isIdentity).map((member) => cloneJson(member));
+			for (const member of members) this.noteUser(member, 'profile');
+			for (const message of decoded.embedded) this.installMessage(message);
+			const record = decoded.record;
+			this.roomMembers.set(record.room_id, members);
+			listings.push({
+				id: record.room_id,
+				title: typeof record.title === 'string' && record.title ? record.title : record.room_id,
+				record,
+				...(record.parent_room_id !== undefined ? { parentRoomId: record.parent_room_id } : {}),
+				...(decoded.delivery.latest_log_id !== undefined ? { latestLogId: decoded.delivery.latest_log_id } : {}),
+				members,
+				joined: false
+			});
+		}
+		return listings;
 	}
 
 	private withJoined(listing: RoomListing): RoomListing {
@@ -1924,6 +1998,7 @@ export class ChatClient {
 		this.roomMembers.clear();
 		this.directory = undefined;
 		this.threadDirectory.clear();
+		this.listingPages.clear();
 	}
 
 	private defaultRoomId(): string | undefined {
