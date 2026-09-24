@@ -156,8 +156,14 @@ test.describe('chat protocol interoperability', () => {
 		await expect(jump).toBeVisible();
 		await jump.click();
 		await expect(jump).toHaveCount(0);
+		const day = page.getByTestId('floating-day');
+		await expect(day).not.toHaveClass(/day-float-shown/);
 		await list.evaluate((node) => { node.scrollTop = 0; });
 		await expect(jump).toBeVisible();
+		// Scrolling back floats the day at the top, only while you're scrolling.
+		await expect(day).toHaveClass(/day-float-shown/);
+		await expect(day).toHaveText('Today');
+		await expect(day).not.toHaveClass(/day-float-shown/, { timeout: 3000 });
 		await page.setViewportSize({ width: 900, height: 1800 });
 		await expect(jump).toHaveCount(0);
 		await page.setViewportSize({ width: 900, height: 700 });

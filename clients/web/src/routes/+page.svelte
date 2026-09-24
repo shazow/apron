@@ -29,7 +29,7 @@
 	import { SidebarLayout } from '$lib/ui/sidebar.svelte';
 	import { loadDisplayName, loadRecentServers, loadServerUrl, rememberServer, type RecentServer } from '$lib/ui/storage';
 	import { buildRoomTimeline, buildThreadTimeline, threadEntries, threadTitleFor } from '$lib/ui/timeline';
-	import { idTime } from '$lib/ui/time';
+	import { dayLabelOf, idDateTime, idIso, idTime } from '$lib/ui/time';
 	import { playPing, tabTitle } from '$lib/ui/attention';
 
 	/** A thread this viewer created, opened once the server has announced it. */
@@ -50,6 +50,10 @@
 	let attention = $state(false);
 	let titleFlash = $state(false);
 	let alertedMentions = 0;
+	/** The day at the top of the timeline, floated there only while you scroll back. */
+	let floatingDay = $state('');
+	let floatingDayShown = $state(false);
+	let floatingDayTimer: ReturnType<typeof setTimeout> | undefined;
 	const selection = new MessageSelection();
 	const sidebar = new SidebarLayout();
 
@@ -301,6 +305,7 @@
 		return () => {
 			if (typingTimer) clearTimeout(typingTimer);
 			if (highlightTimer) clearTimeout(highlightTimer);
+			if (floatingDayTimer) clearTimeout(floatingDayTimer);
 			feedback.dispose();
 			mentions.dispose();
 			session.dispose();
@@ -633,6 +638,30 @@
 		const atBottom = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 96;
 		if (!atBottom && stickToBottom) seenCount = messages.length;
 		stickToBottom = atBottom;
+		floatDay(atBottom);
+	}
+
+	/** While you scroll back, the day you're reading floats at the top; it fades once you stop. */
+	function floatDay(atBottom: boolean): void {
+		if (floatingDayTimer) clearTimeout(floatingDayTimer);
+		if (!messageScroll || atBottom) {
+			floatingDayShown = false;
+			return;
+		}
+		// The first message still showing below the top edge; rows are in order, so bisect.
+		const top = messageScroll.getBoundingClientRect().top;
+		const rows = messageScroll.querySelectorAll<HTMLElement>('article[data-message-id]');
+		let low = 0;
+		let high = rows.length - 1;
+		while (low < high) {
+			const middle = (low + high) >> 1;
+			if (rows[middle].getBoundingClientRect().bottom <= top) low = middle + 1;
+			else high = middle;
+		}
+		const label = rows.length ? dayLabelOf(rows[low].dataset.messageId ?? '') : '';
+		floatingDay = label;
+		floatingDayShown = Boolean(label);
+		floatingDayTimer = setTimeout(() => (floatingDayShown = false), 1200);
 	}
 
 	// --- Editing ---
@@ -829,6 +858,7 @@
 			{/if}
 
 			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.title} messages`}>
+				<div class="day-float" class:day-float-shown={floatingDayShown} aria-hidden="true" data-testid="floating-day"><span>{floatingDay}</span></div>
 				{#if snapshot.showReconnectDivider}
 					<div class="ap-divider ap-divider-gap" role="separator" data-testid="reconnect-divider"><span>Reconnected · earlier messages aren’t available</span></div>
 				{/if}
@@ -840,7 +870,7 @@
 				{:else}
 					{#each timeline as item (item.key)}
 						{#if item.kind === 'date'}
-							<div class="ap-divider ap-divider-date ap-divider-sticky" role="separator"><span>{item.label}</span></div>
+							<div class="ap-divider ap-divider-date" role="separator"><span>{item.label}</span></div>
 						{:else if item.kind === 'replies'}
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count} {item.count === 1 ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
@@ -848,7 +878,7 @@
 						{:else if item.kind === 'renamed'}
 							<div data-timeline-item class="ap-msg ap-msg-system" data-testid="thread-renamed">
 								<div class="ap-msg-system-body">{#if item.title}Thread renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}Thread name cleared{/if}</div>
-								{#if idTime(item.logId)}<time class="ap-msg-system-time">{idTime(item.logId)}</time>{/if}
+								{#if idTime(item.logId)}<time class="ap-msg-system-time" datetime={idIso(item.logId)} title={idDateTime(item.logId)}>{idTime(item.logId)}</time>{/if}
 							</div>
 						{:else}
 							{@const event = item.event}
@@ -961,6 +991,11 @@
 	.empty p { margin: 0; }
 	.empty .ap-btn { margin-top: var(--space-2); }
 	.typing-row { min-height: 20px; padding-top: var(--space-1); }
+	/* A zero-height sticky row, so the pill floats over the timeline without taking space. */
+	.day-float { position: sticky; top: var(--space-2); z-index: 2; height: 0; display: flex; justify-content: center; pointer-events: none; }
+	.day-float span { padding: 3px var(--space-3); border-radius: var(--radius-full); background: var(--bg-200); border: 1px solid var(--line); box-shadow: var(--shadow-float); color: var(--ink); font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; opacity: 0; transform: translateY(-4px); transition: opacity .2s, transform .2s; }
+	.day-float-shown span { opacity: 1; transform: none; }
+	@media (prefers-reduced-motion: reduce) { .day-float span { transition: none; transform: none; } }
 	.toast { position: fixed; z-index: 10; left: 50%; bottom: calc(var(--space-4) + 64px); transform: translateX(-50%); max-width: min(480px, calc(100% - var(--space-8))); }
 	.toast :global(.ap-status) { box-shadow: var(--shadow-float); }
 	.toast-right { left: auto; right: var(--space-4); transform: none; }

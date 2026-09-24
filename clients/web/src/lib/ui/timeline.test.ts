@@ -43,6 +43,9 @@ describe('grouping', () => {
 		expect(dayLabel(message(-DAY, 'alice'), now)).toBe('Yesterday');
 		expect(dayLabel(message(-3 * DAY, 'alice'), now)).not.toMatch(/Today|Yesterday/);
 		expect(dayLabel(message(0, 'alice', { message_id: 'opaque' }), now)).toBe('');
+		// Another year spells the year out.
+		expect(dayLabel(message(-400 * DAY, 'alice'), now)).toMatch(/\d{4}/);
+		expect(dayLabel(message(-3 * DAY, 'alice'), now)).not.toMatch(/\d{4}/);
 	});
 });
 

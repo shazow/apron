@@ -13,15 +13,40 @@ export function eventMillis(event: MessageRecord): number | undefined {
 	return idMillis(event.message_id);
 }
 
-/** Local 24h `14:02`, or empty when the ID carries no time. */
+// Formats follow the browser's locale and its 12/24-hour preference.
+const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const fullFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' });
+const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+const dayYearFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
+/** The local time of day, `2:02 PM` or `14:02` as the browser prefers, or empty when the ID carries no time. */
 export function eventTime(event: MessageRecord): string {
 	return idTime(event.message_id);
 }
 
-/** The local 24h time a log ID falls at, or empty when it carries no time. */
+/** The local time of day a log ID falls at, or empty when it carries no time. */
 export function idTime(id: string): string {
 	const millis = idMillis(id);
-	return millis ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(millis) : '';
+	return millis ? timeFormat.format(millis) : '';
+}
+
+/** The time of day without AM/PM (`2:02`), for the narrow hover time beside grouped messages. */
+export function idTimeCompact(id: string): string {
+	const millis = idMillis(id);
+	if (!millis) return '';
+	return timeFormat.formatToParts(millis).filter((part) => part.type !== 'dayPeriod').map((part) => part.value).join('').trim();
+}
+
+/** The full local date and time, for a timestamp's tooltip. */
+export function idDateTime(id: string): string {
+	const millis = idMillis(id);
+	return millis ? fullFormat.format(millis) : '';
+}
+
+/** A `<time datetime>` value, or undefined when the ID carries no time. */
+export function idIso(id: string): string | undefined {
+	const millis = idMillis(id);
+	return millis ? new Date(millis).toISOString() : undefined;
 }
 
 export function dayKey(event: MessageRecord): string {
@@ -49,7 +74,7 @@ export function dayLabelOf(id: string, now = new Date()): string {
 	yesterday.setDate(now.getDate() - 1);
 	if (sameDay(date, now)) return 'Today';
 	if (sameDay(date, yesterday)) return 'Yesterday';
-	return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(date);
+	return (date.getFullYear() === now.getFullYear() ? dayFormat : dayYearFormat).format(date);
 }
 
 function sameDay(a: Date, b: Date): boolean {

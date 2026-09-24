@@ -5,7 +5,7 @@
 	import { directory } from '$lib/ui/directory.svelte';
 	import { embedsOf, isSystem, replySnippet, senderName, textOf } from '$lib/ui/messages';
 	import type { ReactionChip } from '$lib/ui/reactions';
-	import { eventTime } from '$lib/ui/time';
+	import { eventTime, idDateTime, idIso, idTimeCompact } from '$lib/ui/time';
 	import Avatar from './Avatar.svelte';
 	import ReactionBar from './ReactionBar.svelte';
 	import Embed from './embeds/Embed.svelte';
@@ -71,6 +71,8 @@
 
 	let name = $derived(senderName(event));
 	let time = $derived(eventTime(event));
+	let fullTime = $derived(idDateTime(event.message_id));
+	let isoTime = $derived(idIso(event.message_id));
 	let text = $derived(textOf(event));
 	let embeds = $derived(embedsOf(event));
 	let system = $derived(isSystem(event));
@@ -163,7 +165,7 @@
 		<div class="ap-msg-system-body">
 			{#if event.deleted}<span class="ap-msg-tomb">Message deleted</span>{:else}<div class="ap-msg-text" class:plain={event.body?.format !== 'markdown'}>{@html body}</div>{/if}
 		</div>
-		{#if time}<time class="ap-msg-system-time">{time}</time>{/if}
+		{#if time}<time class="ap-msg-system-time" datetime={isoTime} title={fullTime}>{time}</time>{/if}
 	</article>
 {:else}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -190,7 +192,7 @@
 	{/if}
 	<div class="ap-msg-gutter">
 		{#if grouped}
-			<span class="ap-msg-hovertime">{time}</span>
+			<time class="ap-msg-hovertime" datetime={isoTime} title={fullTime}>{idTimeCompact(event.message_id)}</time>
 		{:else}
 			<Avatar {name} id={directory.person(event.from)?.user_id} src={directory.avatar(event.from)} />
 		{/if}
@@ -199,7 +201,7 @@
 		{#if !grouped}
 			<header class="ap-msg-head">
 				<span class="ap-msg-sender">{name}</span>
-				<span class="ap-msg-meta">{#if time}<time>{time}</time>{/if}</span>
+				<span class="ap-msg-meta">{#if time}<time datetime={isoTime} title={fullTime}>{time}</time>{/if}</span>
 			</header>
 		{/if}
 		{#if replyId && !event.deleted}
