@@ -253,6 +253,11 @@ interface RoomState {
 	waiters: Array<{ resolve: () => void; reject: (error: Error) => void }>;
 	/** Thread checkpoint T of `loadRoom`. */
 	loadCheckpoint?: string;
+	/**
+	 * Kept from an earlier connection: a thread's records after T are not
+	 * loaded yet, so it reports unloaded until the next `loadRoom` catches up.
+	 */
+	resumed?: boolean;
 	loadGeneration: number;
 	loading: boolean;
 	/** The published timeline; rebuilt from the store when dirty and not recovering. */
@@ -386,6 +391,12 @@ export class ChatClient {
 	private readonly reads = new Map<string, Map<string, string>>();
 	private readonly uploads = new Map<string, UploadState>();
 	private readonly roomMembers = new Map<string, { members: Identity[]; asOf?: string }>();
+	/**
+	 * Rooms kept from a lost connection with their records, floors and
+	 * checkpoints. Hidden until announced again, when recovery resumes from the
+	 * checkpoint instead of paging all retained history (Appendix A).
+	 */
+	private readonly retainedRooms = new Map<string, RoomState>();
 	private directory?: RoomListing[];
 	private readonly threadDirectory = new Map<string, RoomListing[]>();
 	/** The latest `room_list` per parent (`''` for top-level), shared while in flight and reused while recent. */
@@ -635,7 +646,7 @@ export class ChatClient {
 					timeline: room.timeline,
 					recovering: Boolean(room.recovery),
 					...(room.recoveryError ? { recoveryError: room.recoveryError } : {}),
-					loaded: !history || (thread ? room.loadCheckpoint !== undefined : room.checkpoint !== undefined),
+					loaded: !history || (thread ? room.loadCheckpoint !== undefined && !room.resumed : room.checkpoint !== undefined),
 					loading: room.loading,
 					...(this.readCursor(room.id) !== undefined ? { readMessageId: this.readCursor(room.id) } : {}),
 					...this.membersOf(room.id)
@@ -1307,7 +1318,10 @@ export class ChatClient {
 
 	private async loadThread(room: RoomState): Promise<void> {
 		const head = room.latestLogId;
-		if (!head) return;
+		if (!head) {
+			room.resumed = false;
+			return;
+		}
 		const generation = ++room.loadGeneration;
 		const stale = () => this.rooms.get(room.id) !== room || room.loadGeneration !== generation;
 		room.loading = true;
@@ -1333,6 +1347,7 @@ export class ChatClient {
 				if (!result.more) {
 					checkpoint = maxDefined(checkpoint, head);
 					room.loadCheckpoint = checkpoint;
+					room.resumed = false;
 					return;
 				}
 				const lastId = result.last_id;
@@ -1400,9 +1415,11 @@ export class ChatClient {
 			this.stopKeepalive();
 			this.clearStableTimer();
 			// The protocol view is rebuilt from the next connection's announcements
-			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session). The UI keeps the
-			// last authenticated view on screen meanwhile, keyed off disconnectedAt.
-			this.discardProtocolView('Connection closed');
+			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session), but each room's
+			// records and checkpoint are kept so it resumes where it stopped. The
+			// UI keeps the last authenticated view on screen meanwhile, keyed off
+			// disconnectedAt.
+			this.suspendProtocolView('Connection closed');
 			if (this.running) {
 				this.disconnectedAt ??= Date.now();
 				this.status = 'reconnecting';
@@ -1619,9 +1636,9 @@ export class ChatClient {
 			if (this.socket === stableSocket && this.authenticated) this.reconnectAttempt = 0;
 		}, STABLE_CONNECTION_MS);
 		this.disconnectedAt = undefined;
-		// A reconnect drops the store, and a server with cap `history` gives it all
-		// back through recovery; only a session-only scrollback (§4 fallback) has a
-		// real gap to mark.
+		// A reconnect keeps each room's records, and a server with cap `history`
+		// fills the gap through recovery; only a session-only scrollback (§4
+		// fallback) has a real gap to mark.
 		this.showReconnectDivider = (this.showReconnectDivider || this.rooms.size > 0) && !this.hasCap('history');
 		// Requests queued while this connection was authenticating go out now.
 		for (const request of this.requests.values()) this.sendRequest(request);
@@ -1768,7 +1785,7 @@ export class ChatClient {
 		const decoded = decodeRoom(params);
 		if (!decoded) return;
 		this.installRoom(decoded.record);
-		const existing = this.rooms.get(roomId);
+		const existing = this.rooms.get(roomId) ?? this.adoptRetainedRoom(roomId);
 		if (!existing) this.forgetListingMissing(decoded.record.parent_room_id ?? '', roomId);
 		const room: RoomState = existing ?? {
 			id: roomId,
@@ -2048,20 +2065,55 @@ export class ChatClient {
 		for (const waiter of room.waiters.splice(0)) waiter.reject(new Error(reason));
 	}
 
+	/**
+	 * After a lost connection: hide every room until the next connection
+	 * announces it, but keep its records, floor and checkpoint so it resumes
+	 * from there (Appendix A recovery from `C + 1`). Everything else scoped to
+	 * the connection is forgotten as in `discardProtocolView`.
+	 */
+	private suspendProtocolView(reason: string): void {
+		for (const room of this.rooms.values()) {
+			this.discardRoom(room, reason);
+			this.retainedRooms.set(room.id, room);
+		}
+		this.rooms.clear();
+		this.forgetConnectionState();
+	}
+
+	/** A room kept from a lost connection, now announced again. */
+	private adoptRetainedRoom(roomId: string): RoomState | undefined {
+		const room = this.retainedRooms.get(roomId);
+		if (!room) return undefined;
+		this.retainedRooms.delete(roomId);
+		// Anything in flight was cancelled with the old connection.
+		room.loading = false;
+		room.recoveryError = undefined;
+		// A thread's checkpoint predates the gap; the next load catches up from it.
+		if (room.loadCheckpoint !== undefined) room.resumed = true;
+		// Reaction summaries depend on the viewer, who may be a new guest.
+		room.dirty = true;
+		return room;
+	}
+
 	/** Forget every connection-scoped protocol record; the next connection re-announces. */
 	private discardProtocolView(reason: string): void {
 		for (const room of this.rooms.values()) this.discardRoom(room, reason);
 		this.rooms.clear();
+		this.retainedRooms.clear();
 		this.store.clear();
 		this.store.takeTouched();
+		this.users.clear();
+		this.userAliases.clear();
+		this.forgetConnectionState();
+	}
+
+	private forgetConnectionState(): void {
 		this.reactionIntents.clear();
 		this.pendingMessageSaves.clear();
 		this.pendingRoomSaves.clear();
 		this.activeRoomId = undefined;
 		this.server = undefined;
 		this.you = undefined;
-		this.users.clear();
-		this.userAliases.clear();
 		this.reads.clear();
 		this.roomMembers.clear();
 		this.listings.clear();

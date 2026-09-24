@@ -208,7 +208,11 @@ then. If retention overtakes the next uncovered position the client rebuilds
 from the new bound and ignores obsolete replies. `history_log_id: null` means
 the effective bound is `latest_log_id + 1`. Sparse timestamp log IDs are
 expected. Threads are rooms with a `parent_room_id`; they load their own
-history with `loadRoom` when opened. The UI displays a notice that the demo
+history with `loadRoom` when opened. A lost connection keeps each room's
+records, bound and checkpoint: a room announced again resumes from its
+checkpoint (or rebuilds if retention passed it), and a thread reopened after a
+reconnect loads only what came after its own checkpoint. Signing out or
+switching servers still starts over. The UI displays a notice that the demo
 retains roughly the last day (from the worker's `server.ext.demo` hints) and honors server retry delays with jittered
 reconnect backoff. When those hints carry `keepalive_seconds`, the client sends
 `{"method":"ping"}` at that interval, which the worker's runtime answers
