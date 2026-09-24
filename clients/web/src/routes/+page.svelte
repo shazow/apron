@@ -6,7 +6,7 @@
 	import { compareLogIds } from '$lib/protocol/reducer';
 	import type { MessageRecord } from '$lib/protocol/types';
 	import Composer from '$lib/components/Composer.svelte';
-	import ConnectScreen from '$lib/components/ConnectScreen.svelte';
+	import ConnectScreen, { type Scheme } from '$lib/components/ConnectScreen.svelte';
 	import JumpBar from '$lib/components/JumpBar.svelte';
 	import Message, { type MessageCaps } from '$lib/components/Message.svelte';
 	import RoomHeader from '$lib/components/RoomHeader.svelte';
@@ -46,6 +46,8 @@
 	let displayName = $state('');
 	let composerText = $state('');
 	let connectOpen = $state(false);
+	/** The sign-in scheme the connect screen opens with, when something asked for one. */
+	let connectScheme = $state<Scheme | undefined>();
 	let recentServers = $state<RecentServer[]>([]);
 	let passkeyUnavailable = $state<string | undefined>();
 	let highlightedId = $state<string | undefined>();
@@ -275,7 +277,10 @@
 
 	// --- Connecting ---
 
-	function openConnect(): void {
+	/** The profile's "Sign in with a passkey" opens here too, carrying the handle typed there. */
+	function openConnect(options: { passkey?: boolean; name?: string } = {}): void {
+		connectScheme = options.passkey ? 'webauthn' : undefined;
+		if (options.name) displayName = options.name;
 		connectOpen = true;
 	}
 
@@ -715,8 +720,8 @@
 {:else if connectOpen}
 	<ConnectScreen
 		{client} {session} bind:serverInput bind:displayName {passkeyUnavailable} {recentServers}
-		canCancel={session.rooms.length > 0 || session.ready}
-		onconnect={leaveBackend} onconnected={connected} oncancel={() => (connectOpen = false)}
+		canCancel={session.rooms.length > 0 || session.ready} initialScheme={connectScheme}
+		onconnect={leaveBackend} onconnected={connected} oncancel={() => (connectOpen = false)} onsignout={() => session.forget()}
 	/>
 {:else}
 <div
@@ -728,7 +733,8 @@
 >
 	<Sidebar
 		{client} {session} {backendLabel} {threads} {activeThread} mentions={mentions.byRoom} bind:displayName {passkeyUnavailable}
-		onconnect={openConnect} onroom={chooseRoom} onthread={chooseThread} onjoin={joinRoom} onsignout={() => session.forget()}
+		onconnect={() => openConnect()} onsignin={(name) => openConnect({ passkey: true, name })}
+		onroom={chooseRoom} onthread={chooseThread} onjoin={joinRoom} onsignout={() => session.forget()}
 	/>
 	<SidebarHandle layout={sidebar} />
 
@@ -878,7 +884,7 @@
 					<h2>No room open</h2>
 					<p>Pick a room from the list.</p>
 				{/if}
-				<button class="ap-btn ap-btn-sm" type="button" onclick={openConnect}>Connect to a backend</button>
+				<button class="ap-btn ap-btn-sm" type="button" onclick={() => openConnect()}>Connect to a backend</button>
 			</div>
 		{/if}
 	</main>

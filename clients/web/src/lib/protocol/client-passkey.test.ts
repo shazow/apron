@@ -93,6 +93,25 @@ describe('passkey ceremonies carry a chosen handle', () => {
 	});
 });
 
+describe('passkey ceremonies and requests in flight', () => {
+	const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+	it('waits for requests sent as the old identity before starting', async () => {
+		vi.mocked(requestPasskey).mockResolvedValue({ id: 'credential' });
+		const { client, socket } = await connected();
+		client.setDisplayName('Renamed');
+		const pending = client.usePasskey('login');
+		await pause(120);
+		expect(authRequests(socket).some((params) => params.scheme === 'webauthn')).toBe(false);
+		await socket.reply('me', { you: { user_id: 'guest_1', name: 'Renamed' } });
+		await pause(120);
+		expect(socket.request('auth').params).toEqual(expect.objectContaining({ action: 'login', step: 'begin' }));
+		await ceremony(socket, { user_id: 'u_1', name: 'Existing' });
+		await expect(pending).resolves.toBeDefined();
+		client.stop();
+	});
+});
+
 describe('continue with passkey', () => {
 	it('signs in when immediate mediation finds a passkey on this device', async () => {
 		vi.mocked(immediatePasskeysAvailable).mockResolvedValue(true);

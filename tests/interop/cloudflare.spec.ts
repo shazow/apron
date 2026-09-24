@@ -91,10 +91,14 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	await profile.click();
 	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
 	await expect(dialog.locator('code')).not.toHaveText(userId);
-	// The passkey was made over a raw socket, so the client has no record of it
-	// and "Continue with passkey" would register; the link signs in with an existing one.
-	await dialog.getByTestId('other-passkey').click();
-	await expect(dialog.getByText('Signed in with your passkey.', { exact: true })).toBeVisible();
+	// Sign-in lives on the connect screen. The passkey was made over a raw socket,
+	// so the client has no record of it and "Continue with passkey" would
+	// register; the link signs in with an existing one.
+	await dialog.getByRole('button', { name: 'Sign in with a passkey', exact: true }).click();
+	const card = page.getByRole('form', { name: 'Connect to a backend' });
+	await card.getByTestId('other-passkey').click();
+	await expect(card).toHaveCount(0);
+	await profile.click();
 	await expect(dialog.locator('code')).toHaveText(userId);
 	await expect(dialog.getByTestId('display-name-input')).toHaveValue('Saved passkey name');
 	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
@@ -146,7 +150,7 @@ test('built frontend connects to the Worker and recovers retained history', asyn
 	await dialog.getByTestId('display-name-input').fill('Renamed guest');
 	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(dialog.getByRole('alert')).toHaveText(
-		'The server declined this handle (Only registered users may change their name). Continue with a passkey and it’s applied once you’re signed in.'
+		'The server declined this handle (Only registered users may change their name). Sign in with a passkey and it’s applied once you’re signed in.'
 	);
 });
 
