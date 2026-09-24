@@ -21,8 +21,10 @@
 		/** Join a visible room or thread from `room_list` (cap `rooms`); it opens once announced. */
 		onjoin: (roomId: string) => void;
 		onsignout: () => void;
+		/** Opens the connect screen to sign in with a passkey, carrying a handle typed in the profile. */
+		onsignin: (name?: string) => void;
 	}
-	let { client, session, backendLabel, threads, activeThread, mentions, displayName = $bindable(), passkeyUnavailable, onconnect, onroom, onthread, onjoin, onsignout }: Props = $props();
+	let { client, session, backendLabel, threads, activeThread, mentions, displayName = $bindable(), passkeyUnavailable, onconnect, onroom, onthread, onjoin, onsignout, onsignin }: Props = $props();
 	/** Threads are listed under their parent, not as rooms of their own. */
 	let rooms = $derived(sidebarRooms(session.rooms));
 	let canBrowse = $derived(session.canManageRooms && session.ready);
@@ -131,7 +133,7 @@
 			</section>
 		{/if}
 	</div>
-	<ProfileBar {client} {session} {backendLabel} bind:displayName {passkeyUnavailable} {onsignout} />
+	<ProfileBar {client} {session} {backendLabel} bind:displayName {passkeyUnavailable} {onsignout} {onsignin} />
 </aside>
 
 <style>

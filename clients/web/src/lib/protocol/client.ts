@@ -327,6 +327,9 @@ const AUTOFILL_REFRESH_MARGIN_MS = 10_000;
 const AUTOFILL_MIN_REFRESH_MS = 15_000;
 /** Assumed challenge lifetime when the server's options carry no `timeout`. */
 const AUTOFILL_CHALLENGE_MS = 120_000;
+/** How long a passkey ceremony waits for in-flight requests (history, a rename) before giving up. */
+const PASSKEY_IDLE_WAIT_MS = 5_000;
+const PASSKEY_IDLE_POLL_MS = 50;
 /** The lowest possible log_id: the `after` bound when no lower bound is known. */
 const FIRST_LOG_ID = '1';
 const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'activity', 'embed:upload', 'embed:stream'];
@@ -661,6 +664,11 @@ export class ChatClient {
 		if (!this.server?.auth.includes('webauthn')) throw new Error('This server does not support passkeys');
 		// A pending autofill holds the browser's credential request; release it first.
 		await this.stopAutofill();
+		// Requests sent as the old identity settle first; right after connecting
+		// that is usually history and the `me` for the display name.
+		for (let waited = 0; (this.authRequested || this.requests.size) && waited < PASSKEY_IDLE_WAIT_MS; waited += PASSKEY_IDLE_POLL_MS) {
+			await new Promise((resolve) => setTimeout(resolve, PASSKEY_IDLE_POLL_MS));
+		}
 		if (this.passkeyAbort || this.authRequested || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
 		if (this.status !== 'connected') throw new Error('Connect to the server first');
 		const controller = new AbortController();
@@ -835,6 +843,14 @@ export class ChatClient {
 		return this.enqueueRequest('auth', params, {
 			visible: false, allowBeforeAuth: true
 		}).promise;
+	}
+
+	/** Abandons a passkey prompt the user walked away from; its ceremony rejects with an AbortError. */
+	cancelPasskeyPrompt(): void {
+		if (!this.passkeyAbort) return;
+		this.passkeyAbort.abort(new DOMException('Cancelled', 'AbortError'));
+		this.passkeyAbort = undefined;
+		this.emit();
 	}
 
 	private cancelPasskey(): void {
