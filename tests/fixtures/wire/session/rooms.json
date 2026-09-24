@@ -12,7 +12,7 @@
     {
       "name": "result-before-broadcast",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"90","title":"General"}}},
@@ -61,7 +61,7 @@
     {
       "name": "broadcast-before-result",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"90","title":"General"}}},

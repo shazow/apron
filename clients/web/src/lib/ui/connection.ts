@@ -28,6 +28,7 @@ export function statusLabel(snapshot: ClientSnapshot, stalled: boolean): string 
 	if (state === 'offline') return 'Offline';
 	if (state === 'reconnecting') {
 		const error = reconnectErrorOf(snapshot);
+		if (snapshot.held) return error ? `Signed out: ${error}` : 'Signed out';
 		if (snapshot.retryAfterMs && snapshot.retryAfterMs > 0) return `${error || 'Connection limited'}. Retrying in ${retryAfterLabel(snapshot.retryAfterMs)}…`;
 		if (error) return stalled ? `Still disconnected: ${error}` : error;
 		return stalled ? 'Still trying to reconnect…' : 'Reconnecting…';
@@ -37,7 +38,7 @@ export function statusLabel(snapshot: ClientSnapshot, stalled: boolean): string 
 }
 
 export function demoRetentionNotice(server: ServerParams | undefined): string {
-	const seconds = server?.demo?.retention_seconds;
+	const seconds = server?.ext?.demo?.retention_seconds;
 	if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return '';
 	const hours = Math.max(1, Math.round(seconds / 3600));
 	return hours >= 20 && hours <= 28

@@ -50,6 +50,10 @@ func TestShutdownClosesConnections(t *testing.T) {
 	if err := app.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown with accepted connections: %v", err)
 	}
+	// The connection is told to retry later (an error without id), then closed.
+	if failure := active.read(t); failure["id"] != nil || failure["error"].(map[string]any)["code"] != float64(codeRetryAfter) {
+		t.Fatalf("shutdown frame = %#v", failure)
+	}
 	if _, _, err := active.ws.Read(ctx); err == nil {
 		t.Fatal("active connection remained open after shutdown")
 	}
@@ -87,7 +91,8 @@ func dialTestClient(t *testing.T, httpServer *httptest.Server, id string, full b
 }
 
 // dialTestClientWithRooms authenticates as a guest and returns every room
-// announcement that followed the auth result, in order.
+// announcement that followed the auth result, in order. Read cursors re-sent
+// after an announcement (activity frames) are skipped.
 func dialTestClientWithRooms(t *testing.T, httpServer *httptest.Server, id string, full bool) (*testClient, []map[string]any) {
 	t.Helper()
 	c, _ := dialRaw(t, httpServer)
@@ -107,9 +112,13 @@ func dialTestClientWithRooms(t *testing.T, httpServer *httptest.Server, id strin
 	if full && result["jsonrpc"] != "2.0" {
 		t.Fatalf("full auth result = %#v, want jsonrpc 2.0", result)
 	}
-	rooms := c.drain(t)
-	for _, frame := range rooms {
-		if frame["method"] != "room" {
+	rooms := make([]map[string]any, 0)
+	for _, frame := range c.drain(t) {
+		switch frame["method"] {
+		case "room":
+			rooms = append(rooms, frame)
+		case "activity":
+		default:
 			t.Fatalf("auth follow-up = %#v, want room", frame)
 		}
 	}
@@ -305,10 +314,10 @@ func TestServerFrameAndGuestAuth(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c, frame := dialRaw(t, httpServer)
 	params := frame["params"].(map[string]any)
-	if params["protocol"] != float64(3) {
+	if params["protocol"] != float64(4) {
 		t.Fatalf("protocol: %#v", params)
 	}
-	if !reflect.DeepEqual(params["caps"], []any{"history", "edit", "rooms", "reactions"}) {
+	if !reflect.DeepEqual(params["caps"], []any{"history", "edit", "rooms", "reactions", "activity", "embed:upload", "embed:stream"}) {
 		t.Fatalf("caps: %#v", params["caps"])
 	}
 	if !reflect.DeepEqual(params["auth"], []any{"guest"}) {
@@ -330,16 +339,26 @@ func TestServerFrameAndGuestAuth(t *testing.T) {
 	}
 	c.expectQuiet(t)
 
-	you = c.result(t, "name", "rename", map[string]any{"name": "Grace"})["you"].(map[string]any)
-	if you["user_id"] != "guest_1" || you["name"] != "Grace" {
+	you = c.result(t, "me", "rename", map[string]any{"name": "Grace", "avatar": "https://example.com/a.png"})["you"].(map[string]any)
+	if !reflect.DeepEqual(you, map[string]any{"user_id": "guest_1", "name": "Grace", "avatar": "https://example.com/a.png"}) {
 		t.Fatalf("rename: %#v", you)
 	}
+	c.expectError(t, "me", "bad-avatar", map[string]any{"avatar": "javascript:alert(1)"}, codeInvalidParams)
+	you = c.result(t, "me", "keep", map[string]any{})["you"].(map[string]any)
+	if you["name"] != "Grace" {
+		t.Fatalf("empty me changed the name: %#v", you)
+	}
+	you = c.result(t, "me", "clear", map[string]any{"name": "", "avatar": ""})["you"].(map[string]any)
+	if !reflect.DeepEqual(you, map[string]any{"user_id": "guest_1"}) {
+		t.Fatalf("clearing the name: %#v", you)
+	}
+	c.expectError(t, "me", "bad-name", map[string]any{"name": 7}, codeInvalidParams)
 }
 
 func TestUnimplementedAndUnknownMethodsAreUnsupported(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
-	for _, method := range []string{"push_register", "frobnicate"} {
+	for _, method := range []string{"frobnicate", "room_teleport"} {
 		c.expectError(t, method, method, map[string]any{"room_id": "general"}, codeUnsupported)
 	}
 	c.expectQuiet(t)
@@ -349,7 +368,10 @@ func TestMessageSnapshotsReplaceEditableState(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	owner := dialTestClient(t, httpServer, "a", true)
 	observer := dialTestClient(t, httpServer, "b", false)
-	owner.result(t, "name", "name", map[string]any{"name": "Alice"})
+	owner.result(t, "me", "name", map[string]any{"name": "Alice"})
+	if renamed := observer.notification(t, "user"); !reflect.DeepEqual(renamed, map[string]any{"new": map[string]any{"user_id": "guest_1", "name": "Alice"}}) {
+		t.Fatalf("rename notification: %#v", renamed)
+	}
 	ext := map[string]any{"irc": map[string]any{"nick": "ada_"}}
 	id, creation := save(t, owner, "create", map[string]any{
 		"from":    map[string]any{"user_id": "forged"},
@@ -371,7 +393,8 @@ func TestMessageSnapshotsReplaceEditableState(t *testing.T) {
 		t.Fatalf("creation fields: %#v", creation)
 	}
 
-	owner.result(t, "name", "rename", map[string]any{"name": "Later"})
+	owner.result(t, "me", "rename", map[string]any{"name": "Later"})
+	observer.notification(t, "user")
 	stable, edit := save(t, owner, "edit", map[string]any{"message_id": id, "body": map[string]any{"text": "edited"}, "from": nil})
 	observer.notification(t, "message")
 	if stable != id || parseID(t, edit["log_id"]) <= parseID(t, id) {
@@ -392,7 +415,14 @@ func TestMessageSnapshotsReplaceEditableState(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("history: %#v", page)
 	}
-	for i, expected := range []map[string]any{creation, edit, deleted} {
+	// Deletion redacts earlier snapshots into tombstones at their log_ids.
+	redacted := func(snapshot map[string]any) map[string]any {
+		value := maps.Clone(snapshot)
+		delete(value, "body")
+		value["deleted"] = true
+		return value
+	}
+	for i, expected := range []map[string]any{redacted(creation), redacted(edit), deleted} {
 		if !reflect.DeepEqual(entries[i], any(expected)) {
 			t.Fatalf("history entry %d = %#v, want %#v", i, entries[i], expected)
 		}
@@ -562,7 +592,7 @@ func TestRoomCreateUpdateAndThreads(t *testing.T) {
 		t.Fatalf("announcement did not embed the current intro snapshot: %#v", rooms[1])
 	}
 
-	// room_join re-announces; room_leave is denied by policy.
+	// room_join re-announces a joined room; room_leave removes it.
 	if result := observer.result(t, "room_join", "join", map[string]any{"room_id": thread}); len(result) != 0 {
 		t.Fatalf("room_join result: %#v", result)
 	}
@@ -570,7 +600,15 @@ func TestRoomCreateUpdateAndThreads(t *testing.T) {
 		t.Fatalf("room_join announcement: %#v", joined)
 	}
 	observer.expectError(t, "room_join", "join-missing", map[string]any{"room_id": "missing"}, codeInvalidParams)
-	observer.expectError(t, "room_leave", "leave", map[string]any{"room_id": thread}, codeDenied)
+	if result := observer.result(t, "room_leave", "leave", map[string]any{"room_id": thread}); len(result) != 0 {
+		t.Fatalf("room_leave result: %#v", result)
+	}
+	// Leaving a room leaves its threads too.
+	for _, roomID := range []string{thread, untitled["room_id"].(string)} {
+		if left := observer.notification(t, "room"); !reflect.DeepEqual(left, map[string]any{"room_id": roomID, "removed": true}) {
+			t.Fatalf("room_leave removal: %#v", left)
+		}
+	}
 	observer.expectError(t, "room_leave", "leave-missing", map[string]any{"room_id": "missing"}, codeInvalidParams)
 	observer.expectQuiet(t)
 }
@@ -866,13 +904,25 @@ func TestNotificationsDoNotReceiveRepliesAndHealth(t *testing.T) {
 	c := dialTestClient(t, httpServer, "a", false)
 	c.write(t, map[string]any{"method": "unknown_notification"})
 	c.write(t, map[string]any{"method": "message", "params": []any{}})
-	c.write(t, map[string]any{"method": "name", "params": map[string]any{"name": nil}})
+	c.write(t, map[string]any{"method": "me", "params": map[string]any{"name": nil}})
 	c.write(t, map[string]any{"method": "reactions", "params": map[string]any{"message_id": "999", "emojis": []any{}}})
 	c.write(t, map[string]any{"method": "auth"})
-	c.write(t, map[string]any{"method": "name", "id": "n1", "params": map[string]any{"name": "A"}})
+	// Errors not tied to a request omit id (PROTOCOL.md §1.1).
+	for _, raw := range []string{`{`, `{"method":"me","id":1}`} {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		if err := c.ws.Write(ctx, websocket.MessageText, []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		failure := c.read(t)
+		if _, hasID := failure["id"]; hasID || failure["error"] == nil {
+			t.Fatalf("%s: error frame = %#v, want an error without id", raw, failure)
+		}
+	}
+	c.write(t, map[string]any{"method": "me", "id": "n1", "params": map[string]any{"name": "A"}})
 	response := c.read(t)
 	if response["id"] != "n1" {
-		t.Fatalf("notification produced a response before name: %#v", response)
+		t.Fatalf("notification produced a response before me: %#v", response)
 	}
 
 	responseHTTP, err := http.Get(httpServer.URL + "/healthz")
@@ -921,14 +971,20 @@ func TestStaticDirectoryAndOrigins(t *testing.T) {
 	}
 }
 
-func TestTypingUsesInlineIdentity(t *testing.T) {
+func TestActivityRelaysTypingWithInlineIdentity(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
 	thread, _ := saveRoom(t, c, "thread", map[string]any{"parent_room_id": "general"})
-	c.write(t, map[string]any{"method": "typing", "params": map[string]any{"room_id": thread, "active": true, "from": map[string]any{"user_id": "forged"}}})
-	params := c.notification(t, "typing")
-	if params["room_id"] != thread || params["from"].(map[string]any)["user_id"] != "guest_1" {
-		t.Fatalf("typing: %#v", params)
+	c.write(t, map[string]any{"method": "activity", "params": map[string]any{"room_id": thread, "typing": 8, "from": map[string]any{"user_id": "forged"}}})
+	params := c.notification(t, "activity")
+	want := map[string]any{"room_id": thread, "from": map[string]any{"user_id": "guest_1"}, "typing": float64(8)}
+	if !reflect.DeepEqual(params, want) {
+		t.Fatalf("activity = %#v, want %#v", params, want)
 	}
-	c.expectError(t, "typing", "missing", map[string]any{"room_id": "missing", "active": true}, codeInvalidParams)
+	c.write(t, map[string]any{"method": "activity", "params": map[string]any{"room_id": thread, "typing": 0}})
+	if stop := c.notification(t, "activity"); stop["typing"] != float64(0) {
+		t.Fatalf("stop: %#v", stop)
+	}
+	c.expectError(t, "activity", "missing", map[string]any{"room_id": "missing", "typing": 8}, codeInvalidParams)
+	c.expectError(t, "activity", "negative", map[string]any{"room_id": thread, "typing": -1}, codeInvalidParams)
 }

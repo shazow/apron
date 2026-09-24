@@ -1,68 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import { mentionsHandle, renderMarkdown, type MentionPerson } from './markdown';
+import { mentionedIds, renderMarkdown, renderPlain, type MentionResolver } from './markdown';
 
-const room: MentionPerson[] = [
-	{ id: 'alice', name: 'Alice Chen' },
-	{ id: 'bob', name: 'Bob' },
-	{ id: 'sam', name: 'Sam', me: true }
-];
+const resolve: MentionResolver = (id) => {
+	if (id === 'alice') return { kind: 'user', id, name: 'Alice Chen' };
+	if (id === 'guest_1') return { kind: 'user', id, name: 'Sam', me: true };
+	if (id === '@server') return { kind: 'user', id, name: 'Server' };
+	if (id === 'ops') return { kind: 'room', id, title: 'Ops & Co' };
+	return undefined;
+};
 
-describe('mention chips', () => {
-	it('chips a handle that matches a sender, by name or by id', () => {
-		const html = renderMarkdown('Handing this to @Alice Chen and @bob.', room);
-		expect(html).toContain('<span class="ap-mention" data-id="alice" title="alice">@Alice Chen</span>');
-		expect(html).toContain('<span class="ap-mention" data-id="bob" title="bob">@bob</span>');
+describe('mentions (Appendix J.3)', () => {
+	it('renders a known user_id with the latest name', () => {
+		expect(renderMarkdown('Handing this to @alice.', resolve)).toBe('<p>Handing this to <span class="ap-mention" data-user-id="alice" title="@alice">@Alice Chen</span>.</p>\n');
 	});
 
-	it('marks the viewer’s own chip so the row can ping', () => {
-		expect(renderMarkdown('@sam can you look?', room)).toContain('class="ap-mention ap-mention-me"');
+	it('marks the viewer’s own chip', () => {
+		expect(renderMarkdown('@guest_1 can you look?', resolve)).toContain('class="ap-mention ap-mention-me" data-user-id="guest_1"');
 	});
 
-	it('matches case-insensitively and keeps the writer’s spelling', () => {
-		expect(renderMarkdown('@BOB ping', room)).toContain('>@BOB</span>');
+	it('links a room mention and escapes its title', () => {
+		expect(renderMarkdown('see @ops', resolve)).toContain('<button type="button" class="ap-mention ap-mention-room" data-room-id="ops" title="Open Ops &amp; Co">Ops &amp; Co</button>');
 	});
 
-	it('takes the longest handle when one is a prefix of another', () => {
-		const html = renderMarkdown('@Alice Chen', [{ id: 'alice2', name: 'Alice' }, ...room]);
-		expect(html).toContain('data-id="alice"');
-		expect(html).not.toContain('data-id="alice2"');
+	it('takes a second @ for system identities and drops trailing dots and dashes', () => {
+		expect(renderPlain('ask @@server-- now', resolve)).toBe('ask <span class="ap-mention" data-user-id="@server" title="@@server">@Server</span>-- now');
 	});
 
-	it('leaves partial words, unknown handles and emails alone', () => {
-		const html = renderMarkdown('@bobby, @nobody and mail@bob today', room);
+	it('leaves unknown IDs, emails, and mentions inside code or links as written', () => {
+		expect(renderMarkdown('@nobody and mail@alice.com', resolve)).not.toContain('ap-mention');
+		expect(renderMarkdown('`@alice` stays', resolve)).not.toContain('ap-mention');
+		expect(renderMarkdown('```\n@alice\n```', resolve)).not.toContain('ap-mention');
+		const html = renderMarkdown('[@alice](https://example.com/@alice)', resolve);
+		expect(html).toContain('href="https://example.com/@alice"');
 		expect(html).not.toContain('ap-mention');
 	});
 
-	it('leaves handles inside code and fenced blocks as code', () => {
-		expect(renderMarkdown('`@bob` stays', room)).not.toContain('ap-mention');
-		expect(renderMarkdown('```\n@bob\n```', room)).not.toContain('ap-mention');
+	it('escapes plain bodies and renders without a resolver as before', () => {
+		expect(renderPlain('<b>@alice</b>', resolve)).toBe('&lt;b&gt;<span class="ap-mention" data-user-id="alice" title="@alice">@Alice Chen</span>&lt;/b&gt;');
+		expect(renderMarkdown('@alice is here')).toBe('<p>@alice is here</p>\n');
 	});
 
-	it('never chips inside a tag or a URL', () => {
-		const html = renderMarkdown('[@bob](https://example.com/@bob)', room);
-		expect(html).toContain('href="https://example.com/@bob"');
-		expect(html.match(/ap-mention/g)).toHaveLength(1);
-	});
-
-	it('matches a handle the renderer escapes', () => {
-		const html = renderMarkdown('thanks @Ops & Co', [{ id: 'ops', name: 'Ops & Co' }]);
-		expect(html).toContain('data-id="ops"');
-		expect(html).toContain('>@Ops &amp; Co</span>');
-	});
-
-	it('renders without people, as before', () => {
-		expect(renderMarkdown('@bob is here')).toBe('<p>@bob is here</p>\n');
-	});
-});
-
-describe('mentionsHandle', () => {
-	it('follows the same whole-word rule as the chips', () => {
-		expect(mentionsHandle('ping @Sam now', ['Sam', 'sam'])).toBe(true);
-		expect(mentionsHandle('ping @SAM', ['Sam'])).toBe(true);
-		expect(mentionsHandle('ping @Samuel', ['Sam'])).toBe(false);
-		expect(mentionsHandle('mail@sam', ['sam'])).toBe(false);
-		expect(mentionsHandle('nothing here', ['sam'])).toBe(false);
-		expect(mentionsHandle('@sam', [undefined, ''])).toBe(false);
+	it('lists mentioned IDs outside code', () => {
+		expect(mentionedIds('@alice, `@bob` and @carol.', true)).toEqual(['alice', 'carol']);
+		expect(mentionedIds('@alice, `@bob`', false)).toEqual(['alice', 'bob']);
 	});
 });
 

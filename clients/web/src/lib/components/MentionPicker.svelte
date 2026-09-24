@@ -42,7 +42,7 @@
 				<Avatar name={label} src={person.avatar} size="sm" />
 				<span class="ap-mpick-name">{name.before}{#if name.hit}<mark class="ap-mpick-hit">{name.hit}</mark>{/if}{name.after}</span>
 				{#if person.id !== label}
-					<span class="ap-mpick-id">{id.before}{#if id.hit}<mark class="ap-mpick-hit">{id.hit}</mark>{/if}{id.after}</span>
+					<span class="ap-mpick-id">@{id.before}{#if id.hit}<mark class="ap-mpick-hit">{id.hit}</mark>{/if}{id.after}</span>
 				{/if}
 				{#if index === active}<kbd class="ap-mpick-kbd">Tab</kbd>{/if}
 			</li>

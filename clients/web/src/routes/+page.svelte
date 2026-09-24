@@ -2,6 +2,8 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { passkeySupportError } from '$lib/protocol/webauthn';
 	import { ChatClient, childRooms, defaultWebSocketUrl, findMessage, normalizeWebSocketUrl, timelineMessages, type RoomSnapshot } from '$lib/protocol/client';
+	import { serverOrigin } from '$lib/protocol/embeds';
+	import { compareLogIds } from '$lib/protocol/reducer';
 	import type { MessageRecord } from '$lib/protocol/types';
 	import Composer from '$lib/components/Composer.svelte';
 	import ConnectScreen from '$lib/components/ConnectScreen.svelte';
@@ -16,9 +18,10 @@
 	import ThreadEditor from '$lib/components/ThreadEditor.svelte';
 	import TypingDots from '$lib/components/TypingDots.svelte';
 	import { backendHost, demoRetentionNotice, statusLabel } from '$lib/ui/connection';
+	import { directory } from '$lib/ui/directory.svelte';
 	import { FeedbackState } from '$lib/ui/feedback.svelte';
 	import { MentionTracker } from '$lib/ui/mentions.svelte';
-	import { embedFor, isOwn, mentionsMe, peopleIn, replySnippet, senderName } from '$lib/ui/messages';
+	import { isOwn, mentionsMe, peopleIn, replySnippet, senderName } from '$lib/ui/messages';
 	import { reactionChips, type ReactionChip } from '$lib/ui/reactions';
 	import { MessageSelection } from '$lib/ui/selection.svelte';
 	import { SessionView } from '$lib/ui/session.svelte';
@@ -55,6 +58,15 @@
 	let replyDrafts = $state<Record<string, string | undefined>>({});
 	let replyId = $state<string | undefined>();
 	let pendingOpen = $state<PendingOpen | undefined>();
+	/** A room or thread joined from the directory, opened once the server has announced it. */
+	let pendingJoin = $state<string | undefined>();
+	/**
+	 * Where the New divider sits in the open pane: after your read cursor as it
+	 * was when the pane opened (Appendix D.1). It stays put while you read.
+	 */
+	let newDivider = $state<{ room: string; after?: string; fixed: boolean }>({ room: '', fixed: false });
+	/** Rooms whose members this pane has asked `room_list` for. */
+	const listedFor = new Set<string>();
 	/** Messages a thread is being started from, for the button's "Starting…". */
 	let startingThreads = $state<Record<string, true>>({});
 	let mobilePane = $state<'rooms' | 'main'>('main');
@@ -80,10 +92,21 @@
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
 	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro }) : buildRoomTimeline({ messages, threads }));
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
-	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you));
+	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members ?? []));
 	let typingNames = $derived(snapshot.typing
 		.filter((entry) => entry.room === paneRoom?.id && entry.from.user_id !== session.you?.user_id)
-		.map((entry) => entry.from.name || entry.from.user_id));
+		.map((entry) => directory.name(entry.from)));
+	/** The first message after your read cursor, unless you wrote it: the New divider goes above it. */
+	let newDividerBefore = $derived.by(() => {
+		if (newDivider.room !== paneRoom?.id || newDivider.after === undefined) return undefined;
+		const after = newDivider.after;
+		// The first message row after the cursor; thread intros show as cards and carry no row.
+		for (const item of timeline) {
+			if (item.kind !== 'message' || compareLogIds(item.event.message_id, after) <= 0) continue;
+			return isOwn(item.event, session.you) ? undefined : item.event.message_id;
+		}
+		return undefined;
+	});
 	let backendLabel = $derived(session.server?.name || backendHost(serverInput) || 'Apron');
 	let threadReplyCount = $derived(threadRoom?.loaded ? messages.filter((event) => event.message_id !== intro?.message_id).length : undefined);
 	let unseenCount = $derived(stickToBottom ? 0 : Math.max(0, messages.length - seenCount));
@@ -101,6 +124,45 @@
 
 	$effect(() => {
 		mentions.observe(session.rooms, session.you, paneRoom?.id, latestVisible);
+	});
+
+	// The New divider is placed once per visit, from the read cursor the server kept.
+	$effect(() => {
+		const room = paneRoom;
+		if (!room) return;
+		if (newDivider.room !== room.id) newDivider = { room: room.id, fixed: false };
+		else if (!newDivider.fixed && room.loaded) newDivider = { room: room.id, after: room.readMessageId, fixed: true };
+	});
+
+	// Reading the latest message advances your read cursor (cap `activity`); the server syncs it to your other devices.
+	$effect(() => {
+		const room = paneRoom;
+		const last = messages[messages.length - 1];
+		// Only once this pane's divider is in place: advancing first would hide what was new.
+		if (!client || !room || !last || !latestVisible || !room.loaded || !session.ready || newDivider.room !== room.id || !newDivider.fixed) return;
+		untrack(() => client?.markRead(room.id, last.message_id));
+	});
+
+	// Members for the mention picker come from `room_list` (cap `rooms`), once per room per connection.
+	$effect(() => {
+		const room = paneRoom;
+		if (!client || !room || !session.ready || !session.canManageRooms) return;
+		const key = `${client.url}\u0000${room.parentRoomId ?? ''}`;
+		if (listedFor.has(key)) return;
+		listedFor.add(key);
+		untrack(() => client?.listRooms(room.parentRoomId).catch(() => listedFor.delete(key)));
+	});
+
+	// A room joined from the directory opens once the server has announced it.
+	$effect(() => {
+		const joined = pendingJoin;
+		const room = joined ? session.rooms.find((candidate) => candidate.id === joined) : undefined;
+		if (!room) return;
+		pendingJoin = undefined;
+		untrack(() => {
+			if (room.parentRoomId !== undefined && session.rooms.some((candidate) => candidate.id === room.parentRoomId)) openDestination(room.parentRoomId, room.id);
+			else chooseRoom(room);
+		});
 	});
 
 	// Leaving a pane ends its selection in setDestination; losing the cap ends it here.
@@ -194,7 +256,10 @@
 		displayName = loadDisplayName();
 		recentServers = loadRecentServers();
 		const chat = new ChatClient(normalizeWebSocketUrl(serverInput, window.location), displayName);
-		const unsubscribe = chat.subscribe((next) => session.apply(next, chat));
+		const unsubscribe = chat.subscribe((next) => {
+			session.apply(next, chat);
+			directory.apply(next, serverOrigin(chat.url));
+		});
 		chat.start();
 		client = chat;
 		return () => {
@@ -226,6 +291,8 @@
 		threadEditorOpen = false;
 		selection.cancel();
 		session.forget();
+		directory.forget();
+		listedFor.clear();
 	}
 
 	function connected(): void {
@@ -355,32 +422,60 @@
 		composer?.focus();
 	}
 
+	/**
+	 * Sends picked files (cap `embed:upload`) as upload embeds, with whatever
+	 * is in the composer as the text; each file is written to the URL the
+	 * server hands back, and the message shows it pending until then.
+	 */
+	function sendFiles(files: File[]): void {
+		if (!client || !paneRoom || !canCompose || !session.snapshot.capabilities['embed:upload']) return;
+		const roomId = paneRoom.id;
+		const reply = replyId;
+		const text = composerText;
+		const { sent, uploaded } = client.sendFiles(roomId, text, files, 'markdown', reply ? { replyTo: reply } : {});
+		feedback.pending(files.length === 1 ? `Uploading ${files[0].name || 'file'}…` : `Uploading ${files.length} files…`);
+		sent.then(() => {
+			clearComposer(roomId);
+		}, (cause: unknown) => feedback.error(cause, 'Unable to send the attachment'));
+		uploaded.then(() => feedback.clear(), (cause: unknown) => feedback.error(cause, 'Upload failed'));
+		stickToBottom = true;
+		composer?.focus();
+	}
+
+	// --- Rooms ---
+
+	function joinRoom(roomId: string): void {
+		if (!client) return;
+		pendingJoin = roomId;
+		feedback.track(client.joinRoom(roomId), 'Joining…');
+	}
+
+	/** Leaves the open room or thread (cap `rooms`); the server removes it from the list. */
+	function leavePane(): void {
+		if (!client || !paneRoom) return;
+		const leaving = paneRoom;
+		if (!confirm(`Leave ${leaving.title}? You can join it again from Browse rooms.`)) return;
+		if (activeThread && activeRoom) backToRoom();
+		feedback.track(client.leaveRoom(leaving.id), 'Leaving…');
+	}
+
+	/** A room mention in a message was clicked: open it, or join it when it isn't announced to you. */
+	function openMentionedRoom(roomId: string): void {
+		const room = session.rooms.find((candidate) => candidate.id === roomId);
+		if (!room) {
+			if (session.canManageRooms) joinRoom(roomId);
+			return;
+		}
+		if (room.parentRoomId !== undefined && session.rooms.some((candidate) => candidate.id === room.parentRoomId)) openDestination(room.parentRoomId, room.id);
+		else chooseRoom(room);
+	}
+
 	function clearComposer(roomId: string): void {
 		const key = draftKey(roomId);
 		composerText = '';
 		replyId = undefined;
 		drafts = { ...drafts, [key]: '' };
 		replyDrafts = { ...replyDrafts, [key]: undefined };
-	}
-
-	/** Uploads one file (Appendix E) and sends it as an embed beside whatever is in the composer. */
-	async function sendUpload(file: File): Promise<void> {
-		if (!client || !paneRoom || !canCompose || !session.canUpload) return;
-		const chat = client;
-		const roomId = paneRoom.id;
-		const reply = replyId;
-		const text = composerText;
-		feedback.pending(`Uploading ${file.name}…`);
-		let url: string;
-		try {
-			url = await chat.uploadMedia(file);
-		} catch (cause) {
-			feedback.error(cause, 'Upload failed');
-			return;
-		}
-		clearComposer(roomId);
-		stickToBottom = true;
-		feedback.track(chat.send(roomId, text, 'markdown', { ...(reply ? { replyTo: reply } : {}), embeds: [embedFor(file, url)] }), 'Sending…');
 	}
 
 	function beginReply(event: MessageRecord): void {
@@ -633,7 +728,7 @@
 >
 	<Sidebar
 		{client} {session} {backendLabel} {threads} {activeThread} mentions={mentions.byRoom} bind:displayName {passkeyUnavailable}
-		onconnect={openConnect} onroom={chooseRoom} onthread={chooseThread} onsignout={() => session.forget()}
+		onconnect={openConnect} onroom={chooseRoom} onthread={chooseThread} onjoin={joinRoom} onsignout={() => session.forget()}
 	/>
 	<SidebarHandle layout={sidebar} />
 
@@ -648,7 +743,8 @@
 				canEditThread={Boolean(activeThread && session.canManageRooms && activeThreadEntry)}
 				editorOpen={threadEditorOpen}
 				editDisabled={!canCompose}
-				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)}
+				canLeave={session.canManageRooms && Boolean(paneRoom)}
+				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)} onleave={leavePane}
 			/>
 			{#if threadEditorOpen && activeThreadEntry}
 				{#key activeThreadEntry.id}
@@ -668,7 +764,7 @@
 						{statusLabel(snapshot, session.stalled)}
 						{#snippet action()}
 							{#if session.reconnectNeedsAttention}
-								<button class="ap-btn ap-btn-sm" type="button" data-testid="reconnect-retry" disabled={Boolean(snapshot.retryAfterMs)} onclick={() => client && session.retryNow(client)}>Try Again</button>
+								<button class="ap-btn ap-btn-sm" type="button" data-testid="reconnect-retry" disabled={Boolean(snapshot.retryAfterMs)} onclick={() => client && session.retryNow(client)}>{snapshot.held ? 'Sign in' : 'Try Again'}</button>
 							{/if}
 						{/snippet}
 					</StatusBanner>
@@ -709,12 +805,15 @@
 							<ThreadCard entry={item.entry} onopen={() => chooseThread(item.entry.id)} />
 						{:else}
 							{@const event = item.event}
+							{#if event.message_id === newDividerBefore}
+								<div class="ap-divider ap-divider-new" role="separator" data-testid="new-divider"><span>New</span></div>
+							{/if}
 							<Message
 								{event}
 								grouped={item.grouped}
 								resolve={resolveMessage}
 								reactions={reactionsFor(event)}
-								{people}
+								uploads={snapshot.uploads}
 								mention={mentionsMe(event, session.you)}
 								pinged={mentions.pinged.includes(event.message_id)}
 								highlighted={highlightedId === event.message_id}
@@ -725,6 +824,7 @@
 								caps={capsFor(event)}
 								onreply={() => beginReply(event)}
 								onjump={jumpToMessage}
+								onopenroom={openMentionedRoom}
 								onedit={() => (editingId = event.message_id)}
 								onsave={(text) => saveEdit(event, text)}
 								oncanceledit={() => (editingId = undefined)}
@@ -763,10 +863,10 @@
 					bind:value={composerText}
 					placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.title}`}
 					disabled={!canCompose}
-					canUpload={session.canUpload}
+					canUpload={snapshot.capabilities['embed:upload']}
 					{people}
 					replyPreview={replyId ? replyPreview(replyId) : undefined}
-					oninput={composerInput} onsend={sendMessage} onupload={sendUpload} oncancelreply={cancelReply}
+					oninput={composerInput} onsend={sendMessage} onfiles={sendFiles} oncancelreply={cancelReply}
 				/>
 			{/if}
 		{:else}

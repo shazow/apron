@@ -76,6 +76,16 @@ export async function setDisplayName(page: Page, name: string): Promise<void> {
 	await expect(page.getByRole('button', { name: new RegExp(`^Your profile on .*: ${name}\\.`) })).toBeVisible();
 }
 
+/** The `user_id` the server assigned this page, as the profile editor shows it. */
+export async function userIdOf(page: Page): Promise<string> {
+	await page.getByRole('button', { name: /^Your profile on/ }).click();
+	const dialog = page.getByRole('dialog', { name: 'Edit profile', exact: true });
+	const id = (await dialog.locator('.ap-profedit-hint code').first().textContent())?.trim() ?? '';
+	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	expect(id).toMatch(/\S/);
+	return id;
+}
+
 /** Picks one message with a shift-click and moves it through the selection bar: to a thread by title, or back to the room. */
 export async function moveMessage(page: Page, message: Locator, destination: string | 'room'): Promise<void> {
 	await message.click({ modifiers: ['Shift'] });

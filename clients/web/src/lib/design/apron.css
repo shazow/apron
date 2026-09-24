@@ -3,7 +3,7 @@
 body { margin: 0; font-family: var(--font-sans); font-size: 15px; line-height: 22px; background: var(--bg-100); color: var(--ink); -webkit-font-smoothing: antialiased; }
 .ap-stack { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); }
 .ap-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-4); }
-:where(.ap-btn, .ap-link, .ap-room, .ap-thread, .ap-composer-field, .ap-embed-card, .ap-embed-url, .ap-actions-btn, .ap-jumpbar-btn, .ap-jumpfab, .ap-sect-toggle, .ap-rail-item, .ap-roomhead-back, .ap-roomhead-crumb, .ap-profile-me, .ap-field, .ap-reply, .ap-seg-item, .ap-connect-recent-item, .ap-msg-check, .ap-menu-item, .ap-iconbtn):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+:where(.ap-btn, .ap-link, .ap-room, .ap-thread, .ap-composer-field, .ap-embed-card, .ap-embed-url, .ap-actions-btn, .ap-jumpbar-btn, .ap-jumpfab, .ap-sect-toggle, .ap-rail-item, .ap-roomhead-back, .ap-roomhead-crumb, .ap-profile-me, .ap-field, .ap-reply, .ap-seg-item, .ap-connect-recent-item, .ap-msg-check, .ap-menu-item, .ap-iconbtn, .ap-rchip, .ap-rpick, .ap-embed-ogcard, .ap-embed-imagelink, .ap-mention-room):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* Button */
 .ap-btn { font: inherit; font-size: 13px; line-height: 18px; font-weight: 600; height: 32px; padding: 0 14px; border-radius: var(--radius-full); border: 1px solid var(--line-strong); background: var(--bg-200); color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
@@ -262,6 +262,7 @@ a.ap-embed-card:hover { background: var(--bg-300); }
   .ap-typing-dots i { animation: none; opacity: .7; }
   .ap-composer-recdot { animation: none; }
   .ap-msg-pinged { animation: none; }
+  .ap-embed-livebadge i, .ap-embed-caret { animation: none; }
 }
 
 /* ReplyPreview — the quoted message above a reply; click to jump */
@@ -346,3 +347,65 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 .ap-count-at { font-weight: 700; }
 .ap-count-quiet { background: var(--bg-300); color: var(--ink); }
 .ap-jumpbar-at { border-color: var(--accent); }
+
+/* System messages — from @-prefixed user_ids (Appendix J.1): a quiet centered line, no avatar */
+.ap-msg-system { display: flex; align-items: baseline; justify-content: center; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) var(--space-6) 0; padding: var(--space-1) var(--space-3); font-size: 13px; line-height: 18px; color: var(--ink-muted); text-align: center; }
+.ap-msg-system:hover { background: transparent; }
+.ap-msg-system-who { font-weight: 600; color: var(--ink-muted); }
+.ap-msg-system-body .ap-msg-text { color: var(--ink); }
+.ap-msg-system-time { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* Embeds v4 — upload (pending / image / video / audio / file), stream, og card */
+.ap-embed-figure { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.ap-embed-figure .ap-embed-media { display: block; max-width: 100%; border-radius: var(--radius-lg); }
+.ap-embed-imagelink { display: block; border-radius: var(--radius-lg); }
+.ap-embed-caption { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.ap-embed-caption a { color: var(--denim); }
+.ap-embed-file, .ap-embed-pending { flex-direction: row; align-items: center; gap: var(--space-3); min-width: 260px; }
+.ap-embed-fileglyph { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: var(--radius-md); background: var(--denim-soft); color: var(--denim); }
+.ap-embed-cardtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ap-embed-pending { position: relative; overflow: hidden; border-style: dashed; border-color: var(--line-strong); }
+.ap-embed-pending .ap-embed-fileglyph { background: var(--bg-300); color: var(--ink-muted); }
+.ap-embed-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--bg-300); }
+.ap-embed-progress i { display: block; height: 100%; background: var(--accent); }
+.ap-embed-audiocard { gap: var(--space-2); }
+.ap-embed-audiocard .ap-embed-audio { width: 100%; }
+.ap-embed-stream { width: min(100%, 640px); overflow: hidden; border: 1px solid var(--line); background: var(--bg-200); }
+.ap-embed-streamhead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 6px var(--space-3); border-bottom: 1px solid var(--line); font-size: 12px; line-height: 16px; }
+.ap-embed-streamkind { font-weight: 600; color: var(--ink-muted); }
+.ap-embed-livebadge { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--accent); }
+.ap-embed-livebadge i { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--accent); animation: ap-blink 1.2s steps(1) infinite; }
+.ap-embed-streambody { margin: 0; max-height: 280px; overflow: auto; padding: var(--space-2) var(--space-3); font-size: 13px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.ap-embed-streambody { font-family: var(--font-mono); }
+.ap-embed-stream-terminal { background: var(--bg-rail); }
+.ap-embed-stream-terminal .ap-embed-streambody { color: var(--ink); }
+.ap-embed-caret { display: inline-block; width: .55em; height: 1.1em; margin-left: 1px; vertical-align: text-bottom; background: var(--ink-muted); animation: ap-blink 1s steps(1) infinite; }
+.ap-embed-ogcard { display: flex; flex-direction: column; overflow: hidden; width: min(100%, 420px); border: 1px solid var(--line); background: var(--bg-200); color: var(--ink); text-decoration: none; }
+a.ap-embed-ogcard:hover { background: var(--bg-300); }
+.ap-embed-ogimg { display: block; width: 100%; aspect-ratio: 1.91 / 1; object-fit: cover; background: var(--bg-300); }
+.ap-embed-ogcard .ap-embed-cardtext { padding: var(--space-3) var(--space-4); }
+.ap-embed-site { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.ap-embed-desc { font-size: 13px; line-height: 18px; color: var(--ink-muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+
+/* ReactionBar — chips under a message, and the palette */
+.ap-reactions { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
+.ap-rchip { font: inherit; display: inline-flex; align-items: center; gap: var(--space-1); height: 26px; padding: 0 var(--space-2); box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-full); background: var(--bg-200); color: var(--ink-muted); font-size: 13px; line-height: 16px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.ap-rchip:hover:not(:disabled) { background: var(--bg-300); color: var(--ink); }
+.ap-rchip-mine { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+.ap-rchip:disabled { cursor: default; }
+.ap-rchip-emoji { font-size: 15px; }
+.ap-rchip-count { font-weight: 600; }
+.ap-rchip-add { width: 26px; justify-content: center; padding: 0; font-size: 15px; visibility: hidden; }
+.ap-msg:hover .ap-rchip-add, .ap-msg:focus-within .ap-rchip-add { visibility: visible; }
+.ap-rpalette { display: inline-flex; align-self: flex-start; max-width: 100%; flex-wrap: wrap; gap: 2px; margin-top: var(--space-1); padding: 3px; background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-float); }
+.ap-rpick { font: inherit; display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ink-muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.ap-rpick:hover:not(:disabled) { background: var(--bg-300); color: var(--ink); }
+.ap-rpick-mine { background: var(--accent-soft); }
+
+/* Room mentions and unknown mentions */
+.ap-mention-room { font: inherit; border: 0; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.ap-mention-room::before { content: "\21B3 "; font-weight: 400; }
+.ap-mention-unknown { color: var(--ink-muted); }
+.ap-status-retry { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.ap-profedit-avbtns { display: inline-flex; align-items: center; gap: var(--space-3); }
+.ap-profedit-remove { font-size: 12px; color: var(--ink-muted); }

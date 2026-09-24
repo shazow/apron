@@ -26,7 +26,7 @@ export default defineConfig({
 	projects: [
 		{
 			name: 'desktop',
-			testMatch: /(chat|webauthn)\.spec\.ts$/,
+			testMatch: /(chat|webauthn|reference)\.spec\.ts$/,
 			use: {
 				...devices['Desktop Chrome'],
 				...(chromiumExecutablePath

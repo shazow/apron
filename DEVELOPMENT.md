@@ -7,8 +7,9 @@ server keeps rooms and history in memory; restarting it clears messages.
 
 - `clients/web`: SvelteKit and TypeScript client; connection and replay logic
   lives separately from UI components under `src/lib/protocol`.
-- `servers/go`: Go module; `cmd/aprond` is the executable and `internal`
-  contains implementation packages.
+- `servers/go`: Go module and the reference server, implementing every
+  capability in PROTOCOL.md; `cmd/aprond` is the executable and `internal`
+  contains implementation packages. See its [README](servers/go/README.md).
 - `servers/cloudflare-worker`: TypeScript Worker and SQLite Durable Object for
   the bounded public demo; see its [setup and operating guide](servers/cloudflare-worker/README.md).
 - `tests/interop`: Playwright tests against real clients and the Go or Workers backend.
@@ -98,14 +99,16 @@ is. Messages the server denies stay selected and the bar reports how many didn't
 move. Escape leaves select mode. Moved messages keep their reply references and
 reactions.
 
-Mentions are a frontend reading of the text — the protocol carries none. An
-`@handle` matching a sender's name or ID (whole word, case-insensitive, outside
-code) renders as a chip; a message that names you tints its row and pulses once
-when it arrives, and shows an `@` badge on a room you aren't reading (a thread's
-mentions badge its parent room) or a rust jump bar when it landed above the
-fold. Messages from history, including a thread's history loaded when it is
-opened, never ping. Typing `@` in the composer lists the senders the room (and,
-in a thread, its parent room) has seen so one can be inserted as plain text.
+Mentions follow the `@user_id` convention (PROTOCOL.md Appendix J.3): a
+known user renders as a chip with their current name, a room as a link, and
+unknown IDs as written, never inside code. A message that names you tints its
+row and pulses once when it arrives, and shows an `@` badge on a room you
+aren't reading (a thread's mentions badge its parent room) or a rust jump bar
+when it landed above the fold. Messages from history, including a thread's
+history loaded when it is opened, never ping. Typing `@` in the composer lists
+the room's recent senders and members; a picked person, or a finished `@name`
+or `@user_id` that names exactly one of them, becomes a chip showing their
+name that is sent as `@user_id`.
 
 Use a message's Reply action to reference it in a new message. `reply_to` may
 name a message in any room, so a reply in a thread can quote a message in the
@@ -124,9 +127,14 @@ reacted, and clicking it adds or removes your reaction. Each change sends your
 complete emoji set for that message with `reactions`. Tombstones hide their
 reactions.
 
-The Go server keeps rooms, threads and reactions in memory and re-announces
-every room on connection. Empty threads remain available; deleting or moving
-their intro message does not remove them.
+The Go server keeps rooms, threads, reactions, and uploads in memory. A new
+user joins every room and thread, so the client sees them all on connection.
+Empty threads remain available; deleting or moving their intro message does
+not remove them. With the Go server the client also sends attachments and
+voice clips, shows live streams, sets avatars, marks where you stopped reading,
+and browses, joins, and leaves rooms; see
+[`clients/web/README.md`](clients/web/README.md). The interop suite's
+`reference.spec.ts` exercises these against the Go server.
 
 ## Build and serve
 

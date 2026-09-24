@@ -64,7 +64,7 @@ export class FakeSocket {
 	/** Runs the greeting, answers the auth request, and announces one room. */
 	async greet(caps: string[] = [], options: { auth?: string[]; token?: string; room?: Record<string, unknown> } = {}): Promise<void> {
 		this.open();
-		this.receive({ method: 'server', params: { protocol: 3, name: 'fake', auth: options.auth ?? ['guest'], caps } });
+		this.receive({ method: 'server', params: { protocol: 4, name: 'fake', auth: options.auth ?? ['guest'], caps } });
 		const auth = this.sent.find((frame) => frame.method === 'auth');
 		if (!auth) throw new Error('client did not authenticate');
 		this.receive({ id: auth.id, result: { you: { user_id: 'guest_1', name: 'Guest' }, ...(options.token ? { token: options.token } : {}) } });

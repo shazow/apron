@@ -59,9 +59,10 @@ describe('client recovery policies', () => {
 
 describe('capability gating', () => {
 	it('derives feature flags from the latest server frame', () => {
-		const server = { protocol: 3, auth: ['guest'], caps: ['history', 'reactions'] };
-		expect(capabilitiesOf(server)).toEqual({ history: true, edit: false, rooms: false, reactions: true, push: false });
-		expect(capabilitiesOf(undefined)).toEqual({ history: false, edit: false, rooms: false, reactions: false, push: false });
+		// Unknown caps are ignored.
+		const server = { protocol: 4, auth: ['guest'], caps: ['history', 'reactions', 'activity', 'frobnicate', 'ext:irc'] };
+		expect(capabilitiesOf(server)).toEqual({ history: true, edit: false, rooms: false, reactions: true, activity: true, 'embed:upload': false, 'embed:stream': false });
+		expect(capabilitiesOf(undefined)).toEqual({ history: false, edit: false, rooms: false, reactions: false, activity: false, 'embed:upload': false, 'embed:stream': false });
 		expect([canEdit(server), canManageRooms(server), canReact(server), hasHistory(server)]).toEqual([false, false, true, true]);
 	});
 });

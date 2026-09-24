@@ -13,7 +13,7 @@
     {
       "name": "room-then-thread",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"100"}}},
@@ -34,7 +34,7 @@
     {
       "name": "interleaved",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":3,"auth":["guest"],"caps":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"100"}}},

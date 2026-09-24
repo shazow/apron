@@ -77,10 +77,12 @@ async function until(peer: Awaited<ReturnType<typeof connect>>, match: (frame: F
 async function authenticate(peer: Awaited<ReturnType<typeof connect>>, scheme = 'guest') {
 	const server = await peer.next();
 	expect(server.method).toBe('server');
-	expect(server.params.protocol).toBe(3);
+	expect(server.params.protocol).toBe(4);
 	expect(server.params.caps).toEqual(['history', 'edit', 'rooms', 'reactions']);
 	expect(server.params.auth).toContain('webauthn');
 	expect(server.params.extensions).toBeUndefined();
+	// Demo hints live under the standard ext object, not a top-level key.
+	expect(server.params.ext.demo.retention_seconds).toBeGreaterThan(0);
 	peer.send({ method: 'auth', id: 'auth', params: { scheme } });
 	const auth = await peer.next();
 	expect(auth.result.you.user_id).toMatch(/^guest_/);
@@ -232,7 +234,8 @@ it('counts guest posting across sockets and returns retained retries after posti
 		second.send({ id: 'sixth', method: 'message', params: { room_id: 'general', body: { text: 'limited' } } });
 		const limited = await second.next();
 		expect(limited.error.code).toBe(-32002);
-		expect(limited.error.data.ms).toBeGreaterThan(0);
+		expect(Number.isInteger(limited.error.data.retry_after)).toBe(true);
+		expect(limited.error.data.retry_after).toBeGreaterThanOrEqual(1);
 		first.send({ id: 'post-0', method: 'message', params: { room_id: 'general', body: { text: 'post-0' } } });
 		expect((await first.next()).result).toEqual(accepted);
 	} finally { first.close(); second.close(); }
@@ -250,7 +253,8 @@ it('pipelined guest auth precedes mutation and errors preserve identifiable IDs'
 		expect((await peer.next()).method).toBe('message');
 		peer.socket.send('{');
 		const parse = await peer.next();
-		expect(parse.id).toBeNull();
+		// An error not tied to a request omits id.
+		expect('id' in parse).toBe(false);
 		expect(parse.error.code).toBe(-32700);
 		peer.send({ id: 'unknown', method: 'not-implemented' });
 		const unsupported = await peer.next();
@@ -277,7 +281,7 @@ it('rejects requests without a room and operations guests may not perform', asyn
 		peer.send({ id: 'leave', method: 'room_leave', params: { room_id: 'general' } });
 		expect((await peer.next()).error.code).toBe(-32001);
 		// Guests keep their assigned name.
-		peer.send({ id: 'rename', method: 'name', params: { name: 'Ada' } });
+		peer.send({ id: 'rename', method: 'me', params: { name: 'Ada' } });
 		expect((await peer.next()).error.code).toBe(-32001);
 		other.send({ id: 'unknown-history', method: 'history', params: { room_id: 'missing' } });
 		expect((await other.next()).error.code).toBe(-32602);

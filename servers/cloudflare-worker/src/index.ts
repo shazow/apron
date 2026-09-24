@@ -15,6 +15,7 @@ import {
 	protocolError,
 	protocolReply,
 	requiredString,
+	retryAfterSeconds,
 	utf8Bytes,
 	type ProtocolError,
 	type RequestFrame,
@@ -55,7 +56,7 @@ interface ConnectionAttachment {
 }
 
 /**
- * A bearer session minted by a verified passkey login (protocol Appendix C,
+ * A bearer session minted by a verified passkey login (protocol Appendix I,
  * session resume). Stored under a SHA-256 key so the plaintext token never
  * rests in storage. Kept in key-value storage rather than the SQL store: it is
  * throwaway state with its own expiry and needs no schema migration.
@@ -242,7 +243,9 @@ function errorToProtocol(error: unknown): ProtocolError {
 		return {
 			name: error.code,
 			message: error.message,
-			...(error.data ? { data: error.data } : error.retryAfterMs !== undefined ? { data: { ms: Math.max(1, Math.trunc(error.retryAfterMs)) } } : {}),
+			...(error.retryAfterMs !== undefined
+				? { data: { ...error.data, retry_after: retryAfterSeconds(error.retryAfterMs) } }
+				: error.data ? { data: error.data } : {}),
 		};
 	}
 	return errorFromUnknown(error);
@@ -563,9 +566,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private storeResponseError(error: unknown): Response {
 		const protocol = errorToProtocol(error);
 		const status = protocol.name === "retry_after" ? 429 : protocol.name === "denied" ? 403 : 503;
-		const retry = protocol.data?.ms;
+		const retry = protocol.data?.retry_after;
 		const message = protocol.data?.reason === "daily_budget" ? "Daily demo capacity reached" : protocol.message;
-		return responseError(status, message, typeof retry === "number" ? retry : undefined);
+		return responseError(status, message, typeof retry === "number" ? retry * 1_000 : undefined);
 	}
 
 	private serverAnnouncement(origin: string | null): Record<string, unknown> {
@@ -573,18 +576,20 @@ export class ApronDemoServer extends DurableObject<Env> {
 		return {
 			method: "server",
 			params: {
-				protocol: 3,
-				name: "apron-cloudflare-demo/2",
+				protocol: 4,
+				name: "apron-cloudflare-demo/3",
 				caps: ["history", "edit", "rooms", "reactions"],
 				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["guest"],
-				demo: {
-					retention_seconds: limits.retentionSeconds,
-					cleanup_seconds: limits.cleanupSeconds,
-					max_frame_bytes: limits.maxFrameBytes,
-					max_message_text_bytes: limits.maxTextBytes,
-					max_snapshot_bytes: limits.maxSnapshotBytes,
-					guest_posts_per_minute: limits.anonymousPostsPerMinute,
-					registered_posts_per_minute: limits.registeredPostsPerMinute,
+				ext: {
+					demo: {
+						retention_seconds: limits.retentionSeconds,
+						cleanup_seconds: limits.cleanupSeconds,
+						max_frame_bytes: limits.maxFrameBytes,
+						max_message_text_bytes: limits.maxTextBytes,
+						max_snapshot_bytes: limits.maxSnapshotBytes,
+						guest_posts_per_minute: limits.anonymousPostsPerMinute,
+						registered_posts_per_minute: limits.registeredPostsPerMinute,
+					},
 				},
 			},
 		};
@@ -698,8 +703,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "reactions":
 				await this.handleReactions(socket, attachment, request);
 				return;
-			case "name":
-				await this.handleName(socket, attachment, request);
+			case "me":
+				await this.handleMe(socket, attachment, request);
 				return;
 			default:
 				if (request.id === undefined) return;
@@ -798,7 +803,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	private assertRegisteredCapacity(socket: WebSocketConnection, userId: string): void {
 		const activeForUser = this.ctx.getWebSockets().filter(peer => peer !== socket && connectionAttachment(peer)?.userId === userId).length;
-		if (activeForUser >= this.config.limits.registeredConnectionsPerUser) throw { name: "retry_after", message: "Demo capacity reached", data: { ms: 60_000 } } satisfies ProtocolError;
+		if (activeForUser >= this.config.limits.registeredConnectionsPerUser) throw { name: "retry_after", message: "Demo capacity reached", data: { retry_after: 60 } } satisfies ProtocolError;
 	}
 
 	/**
@@ -953,7 +958,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	private async handleHistory(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before loading history" } satisfies ProtocolError;
-		if (attachment.historyInFlight >= this.config.limits.concurrentHistoryPerConnection) throw { name: "retry_after", message: "History request already in progress", data: { ms: 250 } } satisfies ProtocolError;
+		if (attachment.historyInFlight >= this.config.limits.concurrentHistoryPerConnection) throw { name: "retry_after", message: "History request already in progress", data: { retry_after: 1 } } satisfies ProtocolError;
 		const params = request.params;
 		const roomId = requiredString(params, "room_id");
 		const after = asDecimalId(params.after, "after");
@@ -982,16 +987,28 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 	}
 
-	private async handleName(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+	/**
+	 * Profile update (section 3.3). Only registered users may change their
+	 * name; `name: ""` removes it, so the user falls back to `user_id`. The demo
+	 * keeps no avatars or profile ext, so `avatar` and `ext` are declined.
+	 */
+	private async handleMe(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
-		if (!identity || attachment.tier !== "registered") {
+		if (!identity) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
+		const name = optionalString(request.params, "name");
+		optionalString(request.params, "avatar");
+		objectParam(request.params, "ext", false);
+		if (name === undefined) {
+			this.reply(socket, request, { you: publicIdentity(attachment) });
+			return;
+		}
+		if (attachment.tier !== "registered") {
 			throw { name: "denied", message: "Only registered users may change their name" } satisfies ProtocolError;
 		}
-		const name = requiredString(request.params, "name");
 		await this.runMutation(async () => {
 			const result = this.store.commitMutation({
 				userId: identity.user_id, ipKey: attachment.ipKey,
-				requestId: request.id, method: "name", now: nowMs(),
+				requestId: request.id, method: "me", now: nowMs(),
 				params: request.params, identity,
 			});
 			// Persist first, then refresh every live attachment for this identity so

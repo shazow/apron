@@ -1,4 +1,4 @@
-// Apron Chat v3 for trusted, compliant clients. Requires Bun; no dependencies.
+// Apron Chat v4 for trusted, compliant clients. Requires Bun; no dependencies.
 // Run: bun apron-server.js
 // LAN: HOST=0.0.0.0 PORT=8765 bun apron-server.js
 // One room, guest identities, names, replies, ext pass-through, and the latest
@@ -7,7 +7,7 @@
 // credentials, or rate limits. Clients must send valid protocol frames;
 // malformed input may close the connection.
 
-const greeting = { protocol: 3, name: "apron-bun/3", auth: ["guest"], caps: ["history"] };
+const greeting = { protocol: 4, name: "apron-bun/4", auth: ["guest"], caps: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
 
@@ -86,8 +86,12 @@ function createMessage(you, params) {
 function dispatch(ws, method, params) {
   if (method === "auth") ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() }; // Any scheme.
   check(ws.data.you, "Authenticate first", -32001);
-  if (method === "auth" || method === "name") {
-    if (typeof params.name === "string") ws.data.you = { ...ws.data.you, name: params.name };
+  if (method === "auth" || method === "me") {
+    // "" removes the name; profile avatar and ext are declined.
+    if (typeof params.name === "string") {
+      const { name, ...rest } = ws.data.you;
+      ws.data.you = params.name ? { ...rest, name: params.name } : rest;
+    }
     return { you: ws.data.you };
   }
 

@@ -180,6 +180,40 @@ it('denies a session token whose identity no longer exists without recreating it
 	expect(after).toEqual({ identity: null, session: false });
 });
 
+it('updates a registered name with me, declines avatar and ext, and treats name as unknown', async () => {
+	await registerIdentity('user_session_me');
+	const token = await issueSession('user_session_me', 'http://localhost:5173');
+	const peer = await connect();
+	await peer.next();
+	peer.send({ id: 'resume', method: 'auth', params: { scheme: 'token', token } });
+	expect((await peer.next()).result.you.user_id).toBe('user_session_me');
+	const reply = async (id: string): Promise<Frame> => {
+		for (;;) {
+			const frame = await peer.next();
+			if (frame.id === id) return frame;
+		}
+	};
+
+	peer.send({ id: 'rename', method: 'me', params: { name: 'Ada' } });
+	expect((await reply('rename')).result).toEqual({ you: { user_id: 'user_session_me', name: 'Ada' } });
+	// Omitted fields stay unchanged; the demo keeps no avatars or profile ext.
+	peer.send({ id: 'profile', method: 'me', params: { avatar: 'https://example.test/a.png', ext: { demo: true } } });
+	expect((await reply('profile')).result).toEqual({ you: { user_id: 'user_session_me', name: 'Ada' } });
+	peer.send({ id: 'bad-avatar', method: 'me', params: { avatar: 7 } });
+	expect((await reply('bad-avatar')).error.code).toBe(-32602);
+	// An empty name removes it, so clients fall back to the user_id.
+	peer.send({ id: 'clear', method: 'me', params: { name: '' } });
+	expect((await reply('clear')).result).toEqual({ you: { user_id: 'user_session_me' } });
+	peer.close();
+
+	// The removal is durable: a later resume carries no name either.
+	const again = await connect();
+	await again.next();
+	again.send({ id: 'resume', method: 'auth', params: { scheme: 'token', token } });
+	expect((await again.next()).result.you).toEqual({ user_id: 'user_session_me' });
+	again.close();
+});
+
 it('stops session cleanup safely when the maintenance budget is exhausted', async () => {
 	const now = Date.now();
 	const target = isolatedStub();

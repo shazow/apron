@@ -22,11 +22,21 @@ func main() {
 	allowAnyOrigin := flag.Bool("allow-any-origin", false, "disable WebSocket origin checks")
 	rpID := flag.String("webauthn-rp-id", "localhost", "passkey relying party domain; empty disables passkeys")
 	rpOrigins := flag.String("webauthn-origin", "http://localhost:5173,http://localhost:8080", "comma-separated exact frontend origins for passkeys")
+	publicURL := flag.String("public-url", "", "external base URL of upload, file, and stream links, such as https://chat.example; empty uses each request's host")
+	maxConnections := flag.Int("max-connections", 0, "maximum concurrent WebSockets; 0 is unlimited")
+	messagesPerMinute := flag.Int("messages-per-minute", 0, "maximum new messages per user per minute; 0 is unlimited")
+	disablePush := flag.Bool("disable-push", false, "do not offer push registration")
+	allowInsecurePush := flag.Bool("allow-insecure-push", false, "accept http and internal push endpoints (development only)")
 	flag.Parse()
 
 	config := server.DefaultConfig()
 	config.StaticDir = *staticDir
 	config.AllowAnyOrigin = *allowAnyOrigin
+	config.PublicURL = *publicURL
+	config.MaxConnections = *maxConnections
+	config.MessagesPerMinute = *messagesPerMinute
+	config.DisablePush = *disablePush
+	config.AllowInsecurePush = *allowInsecurePush
 	if strings.TrimSpace(*origins) != "" {
 		config.OriginPatterns = splitNonEmpty(*origins)
 	}

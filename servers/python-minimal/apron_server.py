@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["websockets>=14,<17"]
 # ///
-"""Apron Chat v3 for trusted, compliant clients.
+"""Apron Chat v4 for trusted, compliant clients.
 
 Run: uv run apron_server.py [--host 0.0.0.0] [--port 8765]
 Or:  python -m pip install 'websockets>=14,<17'; python apron_server.py
@@ -26,7 +26,7 @@ from websockets.asyncio.server import broadcast, serve
 from websockets.exceptions import ConnectionClosed
 
 
-GREETING = {"protocol": 3, "name": "apron-python/3", "auth": ["guest"],
+GREETING = {"protocol": 4, "name": "apron-python/4", "auth": ["guest"],
             "caps": ["history"]}
 
 
@@ -102,9 +102,11 @@ class ApronServer:
             self.clients[ws] = {"user_id": "guest_" + uuid4().hex}
 
         require(ws in self.clients, "Authenticate first", -32001)
-        if method in ("auth", "name"):
+        if method in ("auth", "me"):
+            # "" removes the name; profile avatar and ext are declined.
             if isinstance(p.get("name"), str):
-                self.clients[ws] = {**self.clients[ws], "name": p["name"]}
+                you = {k: v for k, v in self.clients[ws].items() if k != "name"}
+                self.clients[ws] = {**you, "name": p["name"]} if p["name"] else you
             return {"you": self.clients[ws]}
 
         require(method in ("message", "history"), "Unsupported method", -32601)

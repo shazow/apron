@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { directory } from '$lib/ui/directory.svelte';
 	import { threadPreview, type ThreadEntry } from '$lib/ui/timeline';
 	import Avatar from './Avatar.svelte';
 
@@ -13,7 +14,7 @@
 			{#if entry.participants.length > 0}
 				<span class="ap-thread-faces" aria-hidden="true">
 					{#each entry.participants as participant (participant.user_id)}
-						<Avatar name={participant.name || participant.user_id} src={participant.avatar} size="sm" />
+						<Avatar name={directory.name(participant)} src={directory.avatar(participant)} size="sm" />
 					{/each}
 				</span>
 			{/if}

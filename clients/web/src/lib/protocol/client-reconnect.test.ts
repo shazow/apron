@@ -89,33 +89,149 @@ describe('transport reconnects', () => {
 		expect(FakeSocket.instances).toHaveLength(1);
 	});
 
+	/** Replaces the server frame, advertising cap `activity`. */
+	function advertiseActivity(socket = latest()): void {
+		socket.receive({ method: 'server', params: { protocol: 4, name: 'fake', auth: ['guest'], caps: ['activity'] } });
+	}
+
 	it('bounds typing traffic while refreshing it before expiry', () => {
 		const socket = latest();
-		const typing = () => socket.sent.filter(frame => frame.method === 'typing');
+		advertiseActivity();
+		const typing = () => socket.sent.filter(frame => frame.method === 'activity');
 		// Twenty seconds of keystrokes: one frame at the start and one refresh twelve seconds in.
 		for (let key = 0; key < 200; key++) {
 			client.sendTyping('lobby', true);
 			vi.advanceTimersByTime(100);
 		}
 		expect(typing()).toHaveLength(2);
-		expect(typing()[0].params).toMatchObject({ active: true, timeout: 15 });
+		expect(typing()[0]).toEqual({ method: 'activity', params: { room_id: 'lobby', typing: 15 } });
 		client.sendTyping('lobby', false);
 		client.sendTyping('lobby', false);
 		expect(typing()).toHaveLength(3);
-		expect(typing().at(-1)?.params).toMatchObject({ active: false });
+		expect(typing().at(-1)?.params).toEqual({ room_id: 'lobby', typing: 0 });
 		client.sendTyping('lobby', true);
 		expect(typing()).toHaveLength(4);
 	});
 
+	it('sends no typing to a server without cap activity', () => {
+		client.sendTyping('lobby', true);
+		client.sendTyping('lobby', false);
+		expect(latest().sent.filter(frame => frame.method === 'activity' || frame.method === 'typing')).toEqual([]);
+	});
+
 	it('keeps typing refreshes independent across rooms and transport reconnects', async () => {
+		advertiseActivity();
 		client.sendTyping('lobby', true);
 		client.sendTyping('another-room', true);
-		expect(latest().sent.filter(frame => frame.method === 'typing')).toHaveLength(2);
+		expect(latest().sent.filter(frame => frame.method === 'activity')).toHaveLength(2);
 		latest().drop();
 		client.retryNow();
-		await latest().greet();
+		await latest().greet(['activity']);
 		client.sendTyping('lobby', true);
-		expect(latest().sent.filter(frame => frame.method === 'typing')).toHaveLength(1);
+		expect(latest().sent.filter(frame => frame.method === 'activity')).toHaveLength(1);
+	});
+
+	it('shows typing from activity broadcasts for the given seconds', () => {
+		const bob = { user_id: 'bob', name: 'Bob' };
+		const activity = (params: Record<string, unknown>) => latest().receive({ method: 'activity', params: { room_id: 'lobby', from: bob, ...params } });
+		activity({ typing: 8 });
+		expect(snapshot.typing).toEqual([{ room: 'lobby', from: bob }]);
+		// Absent fields leave the state unchanged; read markers are not used.
+		vi.advanceTimersByTime(5_000);
+		activity({ read_message_id: '1724803200001' });
+		expect(snapshot.typing).toEqual([{ room: 'lobby', from: bob }]);
+		vi.advanceTimersByTime(3_000);
+		expect(snapshot.typing).toEqual([]);
+		// A refresh restarts the countdown; `typing: 0` stops at once.
+		activity({ typing: 8 });
+		vi.advanceTimersByTime(7_000);
+		activity({ typing: 8 });
+		vi.advanceTimersByTime(7_000);
+		expect(snapshot.typing).toHaveLength(1);
+		activity({ typing: 0 });
+		expect(snapshot.typing).toEqual([]);
+		// The old `typing` method is not a typing indicator any more.
+		latest().receive({ method: 'typing', params: { room_id: 'lobby', from: bob, active: true } });
+		expect(snapshot.typing).toEqual([]);
+	});
+
+	it('ends a typing indicator when a new message from that user arrives in the room', () => {
+		const bob = { user_id: 'bob', name: 'Bob' };
+		latest().receive({ method: 'activity', params: { room_id: 'lobby', from: bob, typing: 15 } });
+		latest().receive({ method: 'activity', params: { room_id: 'lobby', from: { user_id: 'carol' }, typing: 15 } });
+		// An edit is not a new message.
+		latest().receive({ method: 'message', params: { message_id: '1724803200001', log_id: '1724803200002', room_id: 'lobby', from: bob, body: { text: 'edit' } } });
+		expect(snapshot.typing.map((entry) => entry.from.user_id)).toEqual(['bob', 'carol']);
+		latest().receive({ method: 'message', params: { message_id: '1724803200003', log_id: '1724803200003', room_id: 'lobby', from: bob, body: { text: 'done' } } });
+		expect(snapshot.typing.map((entry) => entry.from.user_id)).toEqual(['carol']);
+	});
+});
+
+describe('connection errors', () => {
+	let client: ChatClient;
+	let snapshot: ClientSnapshot;
+
+	beforeEach(async () => {
+		vi.useFakeTimers();
+		FakeSocket.instances = [];
+		vi.stubGlobal('WebSocket', FakeSocket);
+		client = new ChatClient('ws://fake.test/');
+		client.subscribe((next) => (snapshot = next));
+		client.start();
+		await latest().greet();
+	});
+
+	afterEach(() => {
+		client.stop();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it('waits out retry_after before reconnecting', async () => {
+		const pending = client.send('lobby', 'hello');
+		pending.promise.catch(() => undefined);
+		latest().receive({ error: { code: -32002, message: 'Server at capacity', data: { retry_after: 30 } } });
+		// An error without `id` answers no request.
+		expect(snapshot.pending).toHaveLength(1);
+		expect(snapshot.error).toBe('Server at capacity');
+		expect(snapshot.retryAfterMs).toBe(30_000);
+		latest().drop();
+		expect(snapshot.error).toBe('Server at capacity');
+		vi.advanceTimersByTime(29_999);
+		expect(FakeSocket.instances).toHaveLength(1);
+		// A manual retry cannot skip the window either.
+		client.retryNow();
+		expect(FakeSocket.instances).toHaveLength(1);
+		vi.advanceTimersByTime(1);
+		expect(FakeSocket.instances).toHaveLength(2);
+		await latest().greet();
+		expect(snapshot.authenticated).toBe(true);
+		expect(snapshot.retryAfterMs).toBeUndefined();
+	});
+
+	it('does not reconnect after denied until the user retries', async () => {
+		latest().receive({ error: { code: -32001, message: 'Session expired; sign in again' } });
+		latest().onerror?.();
+		latest().drop();
+		expect(snapshot.status).toBe('reconnecting');
+		expect(snapshot.error).toBe('Session expired; sign in again');
+		vi.advanceTimersByTime(10 * 60_000);
+		expect(FakeSocket.instances).toHaveLength(1);
+		client.retryNow();
+		expect(FakeSocket.instances).toHaveLength(2);
+		expect(snapshot.error).toBeUndefined();
+		await latest().greet();
+		expect(snapshot.authenticated).toBe(true);
+		// Later drops reconnect automatically again.
+		latest().drop();
+		vi.advanceTimersByTime(5_000);
+		expect(FakeSocket.instances).toHaveLength(3);
+	});
+
+	it('treats a frame with a method and no id as a notification', () => {
+		latest().receive({ method: 'room', params: { room_id: 'other', title: 'Other' }, error: { code: -32001, message: 'ignored' } });
+		expect(snapshot.rooms.map((room) => room.id)).toEqual(['lobby', 'other']);
+		expect(snapshot.error).toBeUndefined();
 	});
 });
 
@@ -168,7 +284,7 @@ describe('persisted session tokens', () => {
 		const elsewhere = new ChatClient('ws://other.test/');
 		elsewhere.start();
 		latest().open();
-		latest().receive({ method: 'server', params: { protocol: 3, auth: ['webauthn', 'token', 'guest'], caps: [] } });
+		latest().receive({ method: 'server', params: { protocol: 4, auth: ['webauthn', 'token', 'guest'], caps: [] } });
 		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'guest' }));
 		elsewhere.stop();
 	});
@@ -187,7 +303,7 @@ describe('persisted session tokens', () => {
 		client.subscribe((next) => (snapshot = next));
 		client.start();
 		latest().open();
-		latest().receive({ method: 'server', params: { protocol: 3, auth: ['webauthn', 'token', 'guest'], caps: [] } });
+		latest().receive({ method: 'server', params: { protocol: 4, auth: ['webauthn', 'token', 'guest'], caps: [] } });
 		const auth = latest().sent.find((frame) => frame.method === 'auth')!;
 		expect(auth.params).toEqual(expect.objectContaining({ scheme: 'token', token: 'stale' }));
 		latest().receive({ id: auth.id, error: { code: -32001, message: 'Session expired; sign in with your passkey' } });

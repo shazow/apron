@@ -4,7 +4,7 @@ import { connectionStateOf, demoRetentionNotice, statusLabel } from './connectio
 import { retryAfterLabel } from './time';
 
 const snapshot = (fields: Partial<ClientSnapshot>): ClientSnapshot => ({
-	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], showReconnectDivider: false, ...fields
+	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], users: {}, userAliases: {}, uploads: {}, threadDirectory: {}, showReconnectDivider: false, ...fields
 });
 
 describe('connection state', () => {
@@ -34,7 +34,8 @@ describe('connection state', () => {
 
 	it('describes demo retention in hours, or a day', () => {
 		expect(demoRetentionNotice(undefined)).toBe('');
-		expect(demoRetentionNotice({ protocol: 1, auth: [], demo: { retention_seconds: 86_400 } })).toMatch(/last day/);
-		expect(demoRetentionNotice({ protocol: 1, auth: [], demo: { retention_seconds: 7_200 } })).toMatch(/last 2 hours/);
+		expect(demoRetentionNotice({ protocol: 4, auth: [], ext: { demo: { retention_seconds: 86_400 } } })).toMatch(/last day/);
+		expect(demoRetentionNotice({ protocol: 4, auth: [], ext: { demo: { retention_seconds: 7_200 } } })).toMatch(/last 2 hours/);
+		expect(demoRetentionNotice({ protocol: 4, auth: [], ext: {} })).toBe('');
 	});
 });

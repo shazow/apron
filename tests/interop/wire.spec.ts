@@ -114,7 +114,7 @@ function logicalState(client: ChatClient, operations: Record<string, string>): O
 		caps: [...(snapshot.server?.caps ?? [])].sort(byString),
 		rooms: [...snapshot.rooms].sort((left, right) => byString(left.id, right.id)).map(projectRoom),
 		typing: snapshot.typing
-			.map((entry) => ({ room_id: entry.room, from: entry.from, active: entry.active }))
+			.map((entry) => ({ room_id: entry.room, from: entry.from }))
 			.sort((left, right) => byString(left.room_id, right.room_id) || byString(left.from.user_id, right.from.user_id)),
 		operations
 	}));

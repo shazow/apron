@@ -4,7 +4,7 @@ A single SQLite Durable Object serves the permanent `general` room and its
 thread rooms over hibernating WebSockets. The backend supports guest access,
 discoverable passkeys, complete-snapshot history, message
 replacement/deletion/restoration/moves, thread rooms, emoji reactions, and a
-rolling retention floor. It speaks protocol 3 with `history`, `edit`, `rooms`,
+rolling retention floor. It speaks protocol 4 with `history`, `edit`, `rooms`,
 and `reactions`; see [authentication and policy](docs/policy.md) and [the
 implementation specification](SPEC.md).
 
@@ -127,7 +127,8 @@ changes, and thread room creation or edits all consume posting quota.
 Matching accepted request retries consume lookup and frame resources, but do
 not post again. Request deduplication lasts 24 hours.
 
-Temporary limits return `retry_after` with `data.ms`; clients back off. Daily
+Temporary limits return `retry_after` with `data.retry_after` (whole
+seconds); clients back off. Daily
 posting/write exhaustion makes the demo read-only while affordable reads remain
 available. History exhaustion returns an error. Registration caps do not revoke
 existing passkeys. Permanent identity/thread-room caps return `denied`. Storage
@@ -221,8 +222,8 @@ For direct Wrangler production commands, always pass
    no paid-service bindings. Apply the initial migration once using the normal
    Wrangler deployment workflow. Do not rename or recreate the production
    object to work around a quota or schema issue. Stored data is not migrated
-   between schema versions: a deploy that changes the storage schema (the
-   protocol v3 release does) resets the demo on the object's first wake (see
+   between schema versions: a deploy that changes the storage schema resets the
+   demo on the object's first wake (see
    [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
    identities, sessions, and limiter windows are deleted; users must register
    their passkeys again, and saved session tokens fall back to sign-in. Only the

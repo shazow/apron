@@ -1,5 +1,5 @@
 /**
- * Wire types and decoders for Apron protocol v3 (PROTOCOL.md at the repository
+ * Wire types and decoders for Apron protocol v4 (PROTOCOL.md at the repository
  * root). Decoders normalize server records to the fields the protocol defines
  * and drop unknown top-level keys (§1: unknown keys MAY be dropped), while
  * copying known values exactly, including `ext`, literal `null`s, unknown embed
@@ -11,13 +11,18 @@ export interface JsonObject {
 	[key: string]: JsonValue;
 }
 
-/** Optional features a server advertises in `server.params.caps` (§4). */
-export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'push';
+/**
+ * Optional features of `server.params.caps` (§4) that this client uses;
+ * it ignores the rest.
+ */
+export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'activity' | 'embed:upload' | 'embed:stream';
 
+/** A user object (§3.3): `you`, `from`, `members`, and `user` notifications. */
 export interface Identity extends JsonObject {
 	user_id: string;
 	name?: string;
 	avatar?: string;
+	ext?: JsonObject;
 }
 
 export interface MessageBody extends JsonObject {
@@ -27,14 +32,40 @@ export interface MessageBody extends JsonObject {
 	embeds?: Embed[];
 }
 
+/** OpenGraph description of an embed (Appendix E): `og:` prefix dropped, structured properties nested. */
+export interface OpenGraph extends JsonObject {
+	title?: string;
+	description?: string;
+	site_name?: string;
+	image?: OpenGraphMedia;
+	video?: OpenGraphMedia;
+	audio?: OpenGraphMedia;
+}
+
+export interface OpenGraphMedia extends JsonObject {
+	url: string;
+	type?: string;
+	width?: number;
+	height?: number;
+	alt?: string;
+}
+
+/**
+ * One entry of `body.embeds` (Appendix E). `kind` picks the renderer:
+ * `upload` (a file the server hosts; pending while `url` is absent), `stream`
+ * (live text at `url`, finished with `text`), `iframe`, `html`, and any other
+ * kind from `og` or as a fallback card.
+ */
 export interface Embed extends JsonObject {
 	kind: string;
+	embed_id?: string;
 	url?: string;
-	mime?: string;
-	name?: string;
-	size?: number;
-	w?: number;
-	h?: number;
+	title?: string;
+	text?: string;
+	format?: string;
+	html?: string;
+	height?: number;
+	og?: OpenGraph;
 }
 
 /** A bare message reference (`reply_to`, `intro_message`) as clients send and store it. */
@@ -88,11 +119,15 @@ export interface ServerParams {
 	name?: string;
 	caps?: string[];
 	auth: string[];
-	upload?: string;
+	/** Extension metadata (§3.1). */
+	ext?: ServerExt;
+}
+
+export interface ServerExt extends JsonObject {
 	demo?: DemoParams;
 }
 
-/** Non-standard hints from the public demo worker. */
+/** Non-standard hints from the public demo worker, in `server.ext.demo`. */
 export interface DemoParams extends JsonObject {
 	retention_seconds?: number;
 	cleanup_seconds?: number;

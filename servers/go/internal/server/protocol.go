@@ -13,6 +13,7 @@ const (
 	codeInvalidParams  = -32602
 	codeInternalError  = -32603
 	codeDenied         = -32001
+	codeRetryAfter     = -32002
 	codeTooLarge       = -32003
 )
 
@@ -24,7 +25,7 @@ type rpcError struct {
 
 type rpcResponse struct {
 	JSONRPC string    `json:"jsonrpc,omitempty"`
-	ID      any       `json:"id"`
+	ID      any       `json:"id,omitempty"`
 	Result  any       `json:"result,omitempty"`
 	Error   *rpcError `json:"error,omitempty"`
 }
@@ -106,6 +107,8 @@ func response(id string, full bool, result any) rpcResponse {
 	return r
 }
 
+// errorResponse builds an error reply. A nil id omits "id", as for errors not
+// tied to a request (PROTOCOL.md §1.1).
 func errorResponse(id any, full bool, e *rpcError) rpcResponse {
 	r := rpcResponse{ID: id, Error: e}
 	if full {

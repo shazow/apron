@@ -1,17 +1,15 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -19,12 +17,22 @@ import (
 )
 
 const (
-	defaultReadLimit       int64 = 256 << 10
-	defaultOutgoingQueue         = 128
-	defaultHistoryPageSize       = 100
-	defaultPingInterval          = 30 * time.Second
-	defaultPingTimeout           = 10 * time.Second
-	defaultWriteTimeout          = 10 * time.Second
+	defaultReadLimit          int64 = 256 << 10
+	defaultOutgoingQueue            = 128
+	defaultHistoryPageSize          = 100
+	maxHistoryPageSize              = 1000
+	defaultPingInterval             = 30 * time.Second
+	defaultPingTimeout              = 10 * time.Second
+	defaultWriteTimeout             = 10 * time.Second
+	defaultMaxUploadBytes     int64 = 32 << 20
+	defaultMaxAvatarBytes     int64 = 2 << 20
+	defaultUploadStartTimeout       = 5 * time.Minute
+	defaultStreamKeepBytes          = 64 << 10
+	defaultStreamMaxBytes     int64 = 16 << 20
+	defaultStreamMaxDuration        = time.Hour
+	// retryAfterSeconds is the delay suggested by connection-level
+	// retry_after errors (capacity and shutdown).
+	retryAfterSeconds = 30
 )
 
 // Config controls the HTTP and WebSocket behavior of a Server.
@@ -45,17 +53,47 @@ type Config struct {
 	PingInterval    time.Duration
 	PingTimeout     time.Duration
 	WriteTimeout    time.Duration
+
+	// PublicURL is the external base URL (scheme and host, such as
+	// https://chat.example) of write, file, and stream URLs. Empty derives it
+	// from each WebSocket request's Host header.
+	PublicURL string
+	// MaxUploadBytes bounds one upload; MaxAvatarBytes bounds an @avatar upload.
+	MaxUploadBytes int64
+	MaxAvatarBytes int64
+	// UploadStartTimeout is how long an unused write URL stays valid.
+	UploadStartTimeout time.Duration
+	// StreamKeepBytes is the trailing text a stream keeps; StreamMaxBytes and
+	// StreamMaxDuration end a stream.
+	StreamKeepBytes   int
+	StreamMaxBytes    int64
+	StreamMaxDuration time.Duration
+	// DisablePush omits server.push and push registration.
+	DisablePush bool
+	// AllowInsecurePush accepts http push endpoints and internal addresses.
+	// Use only for development and tests.
+	AllowInsecurePush bool
+	// MaxConnections bounds concurrent WebSockets; 0 is unlimited.
+	MaxConnections int
+	// MessagesPerMinute bounds each user's new messages; 0 is unlimited.
+	MessagesPerMinute int
 }
 
 func DefaultConfig() Config {
 	return Config{
-		OriginPatterns:  []string{"http://localhost:*", "http://127.0.0.1:*", "http://[[]::1]:*"},
-		ReadLimit:       defaultReadLimit,
-		OutgoingQueue:   defaultOutgoingQueue,
-		HistoryPageSize: defaultHistoryPageSize,
-		PingInterval:    defaultPingInterval,
-		PingTimeout:     defaultPingTimeout,
-		WriteTimeout:    defaultWriteTimeout,
+		OriginPatterns:     []string{"http://localhost:*", "http://127.0.0.1:*", "http://[[]::1]:*"},
+		ReadLimit:          defaultReadLimit,
+		OutgoingQueue:      defaultOutgoingQueue,
+		HistoryPageSize:    defaultHistoryPageSize,
+		PingInterval:       defaultPingInterval,
+		PingTimeout:        defaultPingTimeout,
+		WriteTimeout:       defaultWriteTimeout,
+		MaxUploadBytes:     defaultMaxUploadBytes,
+		MaxAvatarBytes:     defaultMaxAvatarBytes,
+		UploadStartTimeout: defaultUploadStartTimeout,
+		StreamKeepBytes:    defaultStreamKeepBytes,
+		StreamMaxBytes:     defaultStreamMaxBytes,
+		StreamMaxDuration:  defaultStreamMaxDuration,
 	}
 }
 
@@ -82,24 +120,26 @@ func (c Config) withDefaults() Config {
 	if c.WriteTimeout <= 0 {
 		c.WriteTimeout = defaults.WriteTimeout
 	}
+	if c.MaxUploadBytes <= 0 {
+		c.MaxUploadBytes = defaults.MaxUploadBytes
+	}
+	if c.MaxAvatarBytes <= 0 {
+		c.MaxAvatarBytes = defaults.MaxAvatarBytes
+	}
+	if c.UploadStartTimeout <= 0 {
+		c.UploadStartTimeout = defaults.UploadStartTimeout
+	}
+	if c.StreamKeepBytes <= 0 {
+		c.StreamKeepBytes = defaults.StreamKeepBytes
+	}
+	if c.StreamMaxBytes <= 0 {
+		c.StreamMaxBytes = defaults.StreamMaxBytes
+	}
+	if c.StreamMaxDuration <= 0 {
+		c.StreamMaxDuration = defaults.StreamMaxDuration
+	}
+	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
 	return c
-}
-
-type identity struct {
-	ID     string `json:"user_id"`
-	Name   string `json:"name,omitempty"`
-	Avatar string `json:"avatar,omitempty"`
-}
-
-func (i identity) object() map[string]any {
-	value := map[string]any{"user_id": i.ID}
-	if i.Name != "" {
-		value["name"] = i.Name
-	}
-	if i.Avatar != "" {
-		value["avatar"] = i.Avatar
-	}
-	return value
 }
 
 // recordKind partitions the server's single append-only log (PROTOCOL.md §2).
@@ -111,60 +151,19 @@ const (
 	kindReactions
 )
 
-// logRecord is one committed change. value is the complete, immutable wire
-// object (including log_id) as it was at commit time; it is cloned on output.
-// A record is referenced from the log of every room it belongs to, so a move
-// snapshot appears in both the source and destination room logs.
+// logRecord is one committed change. value is the complete wire object
+// (including log_id) as it was at commit time; it is cloned on output and
+// rewritten only by redaction (Appendix B). A record is referenced from the
+// log of every room it belongs to, so a move snapshot appears in both the
+// source and destination room logs.
 type logRecord struct {
 	id    int64
 	kind  recordKind
 	value map[string]any
 }
 
-// roomState is a room's current record and its log. All rooms, including
-// threads (rooms with parent_room_id), are visible to every authenticated user.
-type roomState struct {
-	id     string
-	parent string
-	// record holds the latest logged room record with a bare intro_message.
-	record    map[string]any
-	createdID int64
-	latestID  int64
-	log       []*logRecord
-}
-
-// deliveryFields returns the room's log head and the inclusive lower bound of
-// retained history. The Go server retains every record, so history always
-// starts at the room's creation record. Callers hold s.mu.
-func (r *roomState) deliveryFields() map[string]any {
-	return map[string]any{
-		"latest_log_id":  formatID(r.latestID),
-		"history_log_id": formatID(r.createdID),
-	}
-}
-
-type reactionSet struct {
-	from   map[string]any
-	emojis []string
-}
-
-// messageState is the current state of one message. Only non-empty reaction
-// sets are kept; clearing removes the user's entry.
-type messageState struct {
-	snapshot  map[string]any
-	owner     string
-	roomID    string
-	reactions map[string]reactionSet
-}
-
 func formatID(id int64) string {
 	return strconv.FormatInt(id, 10)
-}
-
-type dedupResult struct {
-	fingerprint string
-	result      any
-	err         *rpcError
 }
 
 type client struct {
@@ -174,21 +173,28 @@ type client struct {
 	done   chan struct{}
 	stop   sync.Once
 
-	mu       sync.Mutex
-	dedup    map[string]dedupResult
-	identity identity
-	authed   bool
+	// user is the connection's identity, nil before authentication. Guarded
+	// by server.mu.
+	user *userState
+	// baseURL prefixes the write, file, and stream URLs this connection mints.
+	baseURL  string
 	origin   string
 	ceremony *passkeyCeremony
 	token    [32]byte
+	// closing is set once the final batch is queued; later frames are dropped.
+	closing atomic.Bool
 }
 
 // outboundBatch keeps a sequence of protocol frames together in the writer's
 // queue while each frame is still written as its own WebSocket message. This
 // lets authentication announce an arbitrary number of rooms and threads without
 // consuming one queue slot per announcement or interleaving another broadcast
-// between the announcements.
-type outboundBatch [][]byte
+// between the announcements. A batch with closeReason is the connection's last:
+// the writer closes the connection after writing it.
+type outboundBatch struct {
+	frames      [][]byte
+	closeReason string
+}
 
 type Server struct {
 	config Config
@@ -198,15 +204,24 @@ type Server struct {
 	lastID int64
 	rooms  map[string]*roomState
 	// roomOrder lists room IDs in creation order, so parents precede threads.
-	roomOrder   []string
-	messages    map[string]*messageState
-	clients     map[*client]struct{}
+	roomOrder []string
+	messages  map[string]*messageState
+	clients   map[*client]struct{}
+	// users holds every live identity: connected guests and passkey users.
+	users       map[string]*userState
 	guestNumber uint64
+	embedNumber uint64
+	embeds      map[string]*embedState
+	// writes maps an unused or in-progress write token to its embed.
+	writes      map[string]*embedState
+	pushes      map[string]*pushRegistration
 	closed      bool
-	users       map[string]*passkeyUser
+	passkeys    map[string]*passkeyUser
 	credentials map[string]*passkeyUser
 	sessions    map[[32]byte]passkeySession
 
+	ops         map[string]operation
+	push        *pushDeliverer
 	connections sync.WaitGroup
 }
 
@@ -217,23 +232,33 @@ func New(config Config) *Server {
 		rooms:       make(map[string]*roomState),
 		messages:    make(map[string]*messageState),
 		clients:     make(map[*client]struct{}),
-		users:       make(map[string]*passkeyUser),
+		users:       make(map[string]*userState),
+		embeds:      make(map[string]*embedState),
+		writes:      make(map[string]*embedState),
+		pushes:      make(map[string]*pushRegistration),
+		passkeys:    make(map[string]*passkeyUser),
 		credentials: make(map[string]*passkeyUser),
 		sessions:    make(map[[32]byte]passkeySession),
 	}
+	s.ops = s.operations()
+	s.push = newPushDeliverer(config.AllowInsecurePush)
 	// The seeded default room has a logged creation record like any other room,
 	// so its history_log_id is never null.
-	s.commitRoomLocked(defaultRoomID, "", map[string]any{"title": "General"})
+	s.commitRoomLocked(defaultRoomID, nil, map[string]any{"title": "General"})
 	return s
 }
 
 const defaultRoomID = "general"
 
-// Handler returns the HTTP handler serving /ws, /healthz, and StaticDir.
+// Handler returns the HTTP handler serving /ws, /healthz, the upload, file,
+// and stream endpoints, and StaticDir.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc(writePath, s.handleWrite)
+	mux.HandleFunc(filePath, s.handleFile)
+	mux.HandleFunc(streamPath, s.handleStream)
 	if s.config.StaticDir != "" {
 		root := filepath.Clean(s.config.StaticDir)
 		mux.Handle("/", http.FileServer(http.Dir(root)))
@@ -260,13 +285,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// Shutdown closes active WebSockets and waits for their handlers to finish.
+// Shutdown tells active WebSockets to retry later, closes them, ends live
+// streams, and waits for the connection handlers to finish.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	if !s.closed {
 		s.closed = true
 		for c := range s.clients {
-			c.stopConnection()
+			c.closeWithError(&rpcError{Code: codeRetryAfter, Message: "Server is shutting down; reconnect shortly", Data: map[string]any{"retry_after": 5}})
+		}
+		for _, e := range s.embeds {
+			e.endStream()
 		}
 	}
 	s.mu.Unlock()
@@ -274,6 +303,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		s.connections.Wait()
+		s.push.wait()
 		close(done)
 	}()
 	select {
@@ -308,45 +338,41 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	ws.SetReadLimit(s.config.ReadLimit)
 
 	c := &client{
-		server: s,
-		ws:     ws,
-		out:    make(chan outboundBatch, s.config.OutgoingQueue),
-		done:   make(chan struct{}),
-		dedup:  make(map[string]dedupResult),
-		origin: r.Header.Get("Origin"),
+		server:  s,
+		ws:      ws,
+		out:     make(chan outboundBatch, s.config.OutgoingQueue),
+		done:    make(chan struct{}),
+		origin:  r.Header.Get("Origin"),
+		baseURL: s.baseURL(r),
 	}
+	go c.writeLoop()
+	go c.pingLoop()
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		_ = ws.Close(websocket.StatusGoingAway, "server is shutting down")
+		c.stopConnection()
+		return
+	}
+	if s.config.MaxConnections > 0 && len(s.clients) >= s.config.MaxConnections {
+		// An error about the connection as a whole omits id (§1.1).
+		c.enqueue(map[string]any{"method": "server", "params": s.serverParams()})
+		c.closeWithError(&rpcError{Code: codeRetryAfter, Message: "Server at capacity; try again shortly", Data: map[string]any{"retry_after": retryAfterSeconds}})
+		s.mu.Unlock()
+		<-c.done
 		return
 	}
 	s.clients[c] = struct{}{}
+	// The server announcement is queued before the reader starts accepting auth.
+	c.enqueue(map[string]any{"method": "server", "params": s.serverParams()})
 	s.mu.Unlock()
 
 	defer func() {
 		c.stopConnection()
 		s.mu.Lock()
 		delete(s.clients, c)
+		s.detachLocked(c)
 		s.mu.Unlock()
 	}()
-
-	go c.writeLoop()
-	go c.pingLoop()
-	// The server announcement is queued before the reader starts accepting auth.
-	authSchemes := []string{"guest"}
-	if s.config.WebAuthn != nil {
-		authSchemes = []string{"webauthn", "token", "guest"}
-	}
-	c.enqueue(map[string]any{
-		"method": "server",
-		"params": map[string]any{
-			"protocol": 3,
-			"name":     "apron-go/0.3",
-			"caps":     []string{"history", "edit", "rooms", "reactions"},
-			"auth":     authSchemes,
-		},
-	})
 
 	ctx := r.Context()
 	for {
@@ -362,13 +388,55 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// baseURL is the configured PublicURL or the scheme and host the WebSocket
+// request arrived on.
+func (s *Server) baseURL(r *http.Request) string {
+	if s.config.PublicURL != "" {
+		return s.config.PublicURL
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return (&url.URL{Scheme: scheme, Host: r.Host}).String()
+}
+
+// serverParams is the `server` frame (PROTOCOL.md §3.1).
+func (s *Server) serverParams() map[string]any {
+	authSchemes := []string{"guest"}
+	if s.config.WebAuthn != nil {
+		authSchemes = []string{"webauthn", "token", "guest"}
+	}
+	params := map[string]any{
+		"protocol": 4,
+		"name":     "apron-go/0.5",
+		"caps":     []string{"history", "edit", "rooms", "reactions", "activity", "embed:upload", "embed:stream"},
+		"auth":     authSchemes,
+		"ext": map[string]any{"apron-go": map[string]any{
+			"max_frame_bytes":           s.config.ReadLimit,
+			"max_history_limit":         maxHistoryPageSize,
+			"max_upload_bytes":          s.config.MaxUploadBytes,
+			"max_avatar_bytes":          s.config.MaxAvatarBytes,
+			"stream_keep_bytes":         s.config.StreamKeepBytes,
+			"max_stream_bytes":          s.config.StreamMaxBytes,
+			"max_stream_seconds":        int(s.config.StreamMaxDuration / time.Second),
+			"messages_per_minute":       s.config.MessagesPerMinute,
+			"write_url_timeout_seconds": int(s.config.UploadStartTimeout / time.Second),
+		}},
+	}
+	if !s.config.DisablePush {
+		params["push"] = map[string]any{"relay": map[string]any{}}
+	}
+	return params
+}
+
 func (c *client) writeLoop() {
 	for {
 		select {
 		case <-c.done:
 			return
 		case batch := <-c.out:
-			for _, payload := range batch {
+			for _, payload := range batch.frames {
 				select {
 				case <-c.done:
 					return
@@ -381,6 +449,12 @@ func (c *client) writeLoop() {
 					c.stopConnection()
 					return
 				}
+			}
+			if batch.closeReason != "" {
+				// The error frame explains the close; a close handshake would
+				// wait on a peer that may not be reading.
+				c.stopConnection()
+				return
 			}
 		}
 	}
@@ -412,6 +486,21 @@ func (c *client) stopConnection() {
 	})
 }
 
+// closeWithError sends an error about the connection as a whole, without id
+// (PROTOCOL.md §1.1), after the frames already queued, then closes the
+// connection.
+func (c *client) closeWithError(e *rpcError) {
+	payload, err := json.Marshal(errorResponse(nil, false, e))
+	if err != nil || !c.closing.CompareAndSwap(false, true) {
+		return
+	}
+	select {
+	case c.out <- outboundBatch{frames: [][]byte{payload}, closeReason: e.Message}:
+	default:
+		c.stopConnection()
+	}
+}
+
 func (c *client) enqueue(value any) bool {
 	return c.enqueueBatch(value)
 }
@@ -420,14 +509,17 @@ func (c *client) enqueueBatch(values ...any) bool {
 	if len(values) == 0 {
 		return true
 	}
-	batch := make(outboundBatch, 0, len(values))
+	if c.closing.Load() {
+		return false
+	}
+	batch := outboundBatch{frames: make([][]byte, 0, len(values))}
 	for _, value := range values {
 		payload, err := json.Marshal(value)
 		if err != nil {
 			c.stopConnection()
 			return false
 		}
-		batch = append(batch, payload)
+		batch.frames = append(batch.frames, payload)
 	}
 	select {
 	case <-c.done:
@@ -441,108 +533,6 @@ func (c *client) enqueueBatch(values ...any) bool {
 	}
 }
 
-func (s *Server) processFrame(c *client, payload []byte) {
-	req, parseErr := parseRequest(payload)
-	if parseErr != nil {
-		if parseErr.Code == codeInvalidParams && !req.hasID {
-			return
-		}
-		if req.hasID {
-			c.enqueue(errorResponse(req.id, req.full, parseErr))
-		} else {
-			c.enqueue(errorResponse(nil, req.full, parseErr))
-		}
-		return
-	}
-
-	if req.hasID && req.method != "auth" {
-		fingerprint := requestFingerprint(req)
-		c.mu.Lock()
-		previous, exists := c.dedup[req.id]
-		c.mu.Unlock()
-		if exists {
-			if previous.fingerprint != fingerprint {
-				c.sendError(req, invalidParams("Request id was already used for another operation"))
-				return
-			}
-			if previous.err != nil {
-				c.sendError(req, previous.err)
-			} else {
-				c.sendResult(req, previous.result)
-			}
-			return
-		}
-	}
-
-	if req.method != "auth" && !c.isAuthenticated() {
-		if req.hasID {
-			c.sendError(req, &rpcError{Code: codeDenied, Message: "Authenticate first"})
-		}
-		return
-	}
-
-	var result any
-	var operationErr *rpcError
-	cacheResult := false
-	responseSent := false
-	switch req.method {
-	case "auth":
-		result, operationErr = s.authenticate(c, req)
-		responseSent = operationErr == nil
-	case "name":
-		result, operationErr = s.rename(c, req)
-		cacheResult = operationErr == nil
-	case "message":
-		result, operationErr = s.saveMessage(c, req)
-		cacheResult = operationErr == nil
-		responseSent = operationErr == nil
-	case "history":
-		result, operationErr = s.history(req)
-		cacheResult = operationErr == nil
-	case "room":
-		result, operationErr = s.saveRoom(c, req)
-		cacheResult = operationErr == nil
-		responseSent = operationErr == nil
-	case "room_join":
-		result, operationErr = s.joinRoom(c, req)
-		cacheResult = operationErr == nil
-		responseSent = operationErr == nil
-	case "room_leave":
-		result, operationErr = s.leaveRoom(req)
-		cacheResult = operationErr == nil
-	case "reactions":
-		result, operationErr = s.react(c, req)
-		cacheResult = operationErr == nil
-		responseSent = operationErr == nil
-	case "typing":
-		result, operationErr = s.typing(c, req)
-		cacheResult = operationErr == nil
-		responseSent = operationErr == nil
-	default:
-		operationErr = &rpcError{Code: codeUnsupported, Message: "Unsupported method"}
-	}
-
-	if req.hasID && !responseSent {
-		if operationErr != nil {
-			c.sendError(req, operationErr)
-		} else {
-			c.sendResult(req, result)
-		}
-	}
-	if req.hasID && cacheResult {
-		c.mu.Lock()
-		c.dedup[req.id] = dedupResult{fingerprint: requestFingerprint(req), result: result}
-		c.mu.Unlock()
-	}
-}
-
-func (c *client) isAuthenticated() bool {
-	c.server.mu.RLock()
-	authed := c.authed
-	c.server.mu.RUnlock()
-	return authed
-}
-
 func (c *client) sendResult(req request, result any) {
 	c.enqueue(response(req.id, req.full, result))
 }
@@ -551,663 +541,115 @@ func (c *client) sendError(req request, err *rpcError) {
 	c.enqueue(errorResponse(req.id, req.full, err))
 }
 
-func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	scheme, err := parseString(req.params, "scheme", true)
-	if err != nil {
-		return nil, err
+// operation is a request handler. When it succeeds and has already queued its
+// own reply (to order it before broadcasts), it reports replied.
+type operation func(s *Server, c *client, req request) (result any, replied bool, err *rpcError)
+
+func (s *Server) operations() map[string]operation {
+	ops := map[string]operation{
+		"me":         (*Server).updateProfile,
+		"message":    (*Server).saveMessage,
+		"history":    (*Server).history,
+		"room":       (*Server).saveRoom,
+		"room_list":  (*Server).listRooms,
+		"room_join":  (*Server).joinRoom,
+		"room_leave": (*Server).leaveRoom,
+		"reactions":  (*Server).react,
+		"activity":   (*Server).activity,
 	}
-	if scheme == "webauthn" {
-		return s.authenticatePasskey(c, req)
+	if !s.config.DisablePush {
+		ops["push_register"] = (*Server).registerPush
+		ops["push_unregister"] = (*Server).unregisterPush
 	}
-	if scheme == "token" {
-		if s.config.WebAuthn == nil {
-			return nil, &rpcError{Code: codeUnsupported, Message: "Unsupported authentication scheme"}
+	return ops
+}
+
+func (s *Server) processFrame(c *client, payload []byte) {
+	req, parseErr := parseRequest(payload)
+	if parseErr != nil {
+		if parseErr.Code == codeInvalidParams && !req.hasID {
+			return
 		}
-		return s.authenticateToken(c, req, time.Now())
-	}
-	if scheme != "guest" {
-		return nil, &rpcError{Code: codeUnsupported, Message: "Unsupported authentication scheme"}
-	}
-	name, err := parseString(req.params, "name", false)
-	if err != nil {
-		return nil, err
-	}
-	if c.authed {
-		result := map[string]any{"you": c.identity.object()}
 		if req.hasID {
-			c.enqueue(response(req.id, req.full, result))
-		}
-		return result, nil
-	}
-	s.guestNumber++
-	c.identity = identity{ID: fmt.Sprintf("guest_%d", s.guestNumber), Name: name}
-	c.authed = true
-
-	result := map[string]any{"you": c.identity.object()}
-	s.announceAuthenticated(c, req, result)
-	return result, nil
-}
-
-// announceAuthenticated runs under s.mu, ordering identity before the room
-// announcements and both before any later broadcast. Rooms are announced in
-// creation order, so every parent precedes its threads.
-func (s *Server) announceAuthenticated(c *client, req request, result map[string]any) {
-	frames := make([]any, 0, 1+len(s.roomOrder))
-	if req.hasID {
-		frames = append(frames, response(req.id, req.full, result))
-	}
-	for _, roomID := range s.roomOrder {
-		frames = append(frames, s.roomAnnouncementLocked(s.rooms[roomID]))
-	}
-	c.enqueueBatch(frames...)
-}
-
-// roomAnnouncementLocked renders a room's current record with the current
-// intro_message snapshot embedded and this client's delivery fields.
-func (s *Server) roomAnnouncementLocked(r *roomState) map[string]any {
-	return roomFrame(s.embedIntroLocked(r.record), r)
-}
-
-func roomFrame(record map[string]any, r *roomState) map[string]any {
-	params := cloneObject(record)
-	for key, value := range r.deliveryFields() {
-		params[key] = value
-	}
-	return map[string]any{"method": "room", "params": params}
-}
-
-// embedIntroLocked returns a copy of a room record whose bare intro_message
-// reference is replaced by the referenced message's current snapshot.
-func (s *Server) embedIntroLocked(record map[string]any) map[string]any {
-	value := cloneObject(record)
-	if intro, ok := value["intro_message"].(map[string]any); ok {
-		if id, ok := intro["message_id"].(string); ok {
-			if m := s.messages[id]; m != nil {
-				value["intro_message"] = cloneObject(m.snapshot)
-			}
-		}
-	}
-	return value
-}
-
-func (s *Server) rename(c *client, req request) (any, *rpcError) {
-	name, err := parseString(req.params, "name", true)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	c.identity.Name = name
-	if user := s.users[c.identity.ID]; user != nil {
-		user.identity.Name = name
-	}
-	result := map[string]any{"you": c.identity.object()}
-	s.mu.Unlock()
-	return result, nil
-}
-
-// saveMessage creates a message (no message_id) or saves an existing one
-// (Appendix B): every client field is replaced by the submitted state. A save
-// naming a different room_id moves the message; the snapshot is logged in and
-// broadcast to both rooms, followed by a reactions record in the destination
-// when the message has reactions.
-func (s *Server) saveMessage(c *client, req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room_id", true)
-	if err != nil {
-		return nil, err
-	}
-	messageID, err := parseString(req.params, "message_id", false)
-	if err != nil {
-		return nil, err
-	}
-	_, replacing := req.params["message_id"]
-	if replacing && !validMessageID(messageID) {
-		return nil, invalidParams("message_id must be a positive decimal string")
-	}
-	replyID, hasReply, err := parseMessageRef(req.params, "reply_to")
-	if err != nil {
-		return nil, err
-	}
-	deleted, err := parseBool(req.params, "deleted", false)
-	if err != nil {
-		return nil, err
-	}
-	if deleted && !replacing {
-		return nil, invalidParams("Cannot create a deleted message")
-	}
-	var body map[string]any
-	if !deleted {
-		body, err = parseObject(req.params, "body", true)
-		if err != nil {
-			return nil, err
-		}
-		if err := validateBody(body); err != nil {
-			return nil, err
-		}
-	}
-	ext, err := parseObject(req.params, "ext", false)
-	if err != nil {
-		return nil, err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	destination := s.rooms[roomID]
-	if destination == nil {
-		return nil, invalidParams("Unknown room %q", roomID)
-	}
-	from := c.identity.object()
-	var current *messageState
-	if replacing {
-		current = s.messages[messageID]
-		if current == nil {
-			return nil, invalidParams("Unknown message %q", messageID)
-		}
-		if current.owner != c.identity.ID {
-			return nil, &rpcError{Code: codeDenied, Message: "Only the author may update this message"}
-		}
-		from = cloneObject(current.snapshot["from"].(map[string]any))
-	}
-	if hasReply {
-		if _, exists := s.messages[replyID]; !exists || (replacing && replyID == messageID) {
-			return nil, invalidParams("reply_to must name another existing message")
-		}
-	}
-
-	logID := s.nextIDLocked()
-	if !replacing {
-		messageID = formatID(logID)
-	}
-	snapshot := map[string]any{
-		"message_id": messageID,
-		"log_id":     formatID(logID),
-		"room_id":    roomID,
-		"from":       from,
-	}
-	if deleted {
-		snapshot["deleted"] = true
-	} else {
-		snapshot["body"] = body
-	}
-	if hasReply {
-		snapshot["reply_to"] = map[string]any{"message_id": replyID}
-	}
-	if ext != nil {
-		snapshot["ext"] = ext
-	}
-
-	members := []*roomState{destination}
-	moved := false
-	if current == nil {
-		current = &messageState{owner: c.identity.ID, reactions: make(map[string]reactionSet)}
-		s.messages[messageID] = current
-	} else if current.roomID != roomID {
-		moved = true
-		members = []*roomState{s.rooms[current.roomID], destination}
-	}
-	current.snapshot = snapshot
-	current.roomID = roomID
-	s.appendLocked(&logRecord{id: logID, kind: kindMessage, value: snapshot}, members...)
-
-	result := map[string]any{"message_id": messageID}
-	if req.hasID {
-		c.enqueue(response(req.id, req.full, result))
-	}
-	s.broadcastLocked(map[string]any{"method": "message", "params": snapshot})
-	if moved && len(current.reactions) > 0 {
-		s.commitReactionsLocked(current, current.reactionElements())
-	}
-	return result, nil
-}
-
-// reactionElements returns every non-empty reaction set, ordered by user ID.
-func (m *messageState) reactionElements() []any {
-	users := make([]string, 0, len(m.reactions))
-	for userID := range m.reactions {
-		users = append(users, userID)
-	}
-	sort.Strings(users)
-	elements := make([]any, 0, len(users))
-	for _, userID := range users {
-		set := m.reactions[userID]
-		elements = append(elements, map[string]any{"from": cloneObject(set.from), "emojis": slices.Clone(set.emojis)})
-	}
-	return elements
-}
-
-func validMessageID(id string) bool {
-	if len(id) == 0 || id[0] < '1' || id[0] > '9' {
-		return false
-	}
-	for _, ch := range id {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// parseMessageRef reads a message reference (reply_to, intro_message). Clients
-// send bare references; any other keys, such as an echoed snapshot, are ignored.
-func parseMessageRef(params map[string]json.RawMessage, name string) (string, bool, *rpcError) {
-	raw, present := params[name]
-	if !present {
-		return "", false, nil
-	}
-	var ref map[string]json.RawMessage
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &ref) != nil || ref == nil {
-		return "", false, invalidParams("%s must be a message object", name)
-	}
-	id, err := parseString(ref, "message_id", true)
-	if err != nil || !validMessageID(id) {
-		return "", false, invalidParams("%s.message_id must be a positive decimal string", name)
-	}
-	return id, true, nil
-}
-
-func validateBody(body map[string]any) *rpcError {
-	if raw, ok := body["text"]; ok {
-		if _, ok := raw.(string); !ok {
-			return invalidParams("body.text must be a string")
-		}
-	}
-	if raw, ok := body["format"]; ok {
-		format, ok := raw.(string)
-		if !ok || (format != "plain" && format != "markdown") {
-			return invalidParams("body.format must be plain or markdown")
-		}
-	}
-	if raw, ok := body["embeds"]; ok {
-		if _, ok := raw.([]any); !ok {
-			return invalidParams("body.embeds must be an array")
-		}
-	}
-	return nil
-}
-
-// saveRoom creates a room (no room_id) or replaces an existing room's client
-// fields (Appendix C). parent_room_id is fixed at creation and ignored on
-// updates. Any authenticated user may create rooms and threads and update any
-// room's client fields.
-func (s *Server) saveRoom(c *client, req request) (any, *rpcError) {
-	_, updating := req.params["room_id"]
-	var roomID, parent string
-	var err *rpcError
-	if updating {
-		roomID, err = parseString(req.params, "room_id", true)
-		if err != nil {
-			return nil, err
-		}
-	} else if _, present := req.params["parent_room_id"]; present {
-		parent, err = parseString(req.params, "parent_room_id", true)
-		if err != nil {
-			return nil, err
-		}
-		if parent == "" {
-			return nil, invalidParams("parent_room_id must be a non-empty string")
-		}
-	}
-	title, err := parseString(req.params, "title", false)
-	if err != nil {
-		return nil, err
-	}
-	introID, hasIntro, err := parseMessageRef(req.params, "intro_message")
-	if err != nil {
-		return nil, err
-	}
-	ext, err := parseObject(req.params, "ext", false)
-	if err != nil {
-		return nil, err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if updating {
-		existing := s.rooms[roomID]
-		if existing == nil {
-			return nil, invalidParams("Unknown room %q", roomID)
-		}
-		parent = existing.parent
-	} else if parent != "" && s.rooms[parent] == nil {
-		return nil, invalidParams("Unknown parent room %q", parent)
-	}
-	if hasIntro && s.messages[introID] == nil {
-		return nil, invalidParams("Unknown intro_message %q", introID)
-	}
-	fields := make(map[string]any)
-	if title == "" && parent != "" {
-		// Servers title threads so clients unaware of parent_room_id render them.
-		title = s.threadTitleLocked(introID)
-	}
-	if title != "" {
-		fields["title"] = title
-	}
-	if hasIntro {
-		fields["intro_message"] = map[string]any{"message_id": introID}
-	}
-	if ext != nil {
-		fields["ext"] = ext
-	}
-	r, record := s.commitRoomLocked(roomID, parent, fields)
-	result := map[string]any{"room_id": r.id}
-	if req.hasID {
-		c.enqueue(response(req.id, req.full, result))
-	}
-	s.broadcastLocked(roomFrame(record, r))
-	return result, nil
-}
-
-const maxThreadTitleRunes = 60
-
-// threadTitleLocked derives a default thread title from the intro message's
-// first line of text.
-func (s *Server) threadTitleLocked(introID string) string {
-	if m := s.messages[introID]; m != nil {
-		if body, ok := m.snapshot["body"].(map[string]any); ok {
-			text, _ := body["text"].(string)
-			line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
-			line = strings.TrimSpace(line)
-			if runes := []rune(line); len(runes) > maxThreadTitleRunes {
-				line = strings.TrimSpace(string(runes[:maxThreadTitleRunes])) + "…"
-			}
-			if line != "" {
-				return line
-			}
-		}
-	}
-	return "Thread"
-}
-
-// commitRoomLocked logs a room record holding fields, the client fields other
-// than parent_room_id. An unknown roomID creates the room; an empty one names
-// it by its creation log_id. It returns the logged record, whose
-// intro_message embeds the snapshot current at commit time.
-func (s *Server) commitRoomLocked(roomID, parent string, fields map[string]any) (*roomState, map[string]any) {
-	logID := s.nextIDLocked()
-	r := s.rooms[roomID]
-	if r == nil {
-		if roomID == "" {
-			roomID = formatID(logID)
-		}
-		r = &roomState{id: roomID, parent: parent, createdID: logID}
-		s.rooms[roomID] = r
-		s.roomOrder = append(s.roomOrder, roomID)
-	}
-	record := map[string]any{"room_id": r.id, "log_id": formatID(logID)}
-	if r.parent != "" {
-		record["parent_room_id"] = r.parent
-	}
-	for key, value := range fields {
-		record[key] = value
-	}
-	r.record = record
-	logged := s.embedIntroLocked(record)
-	s.appendLocked(&logRecord{id: logID, kind: kindRoom, value: logged}, r)
-	return r, logged
-}
-
-// joinRoom re-announces a known room. Every room is visible to everyone, so
-// joining changes no membership.
-func (s *Server) joinRoom(c *client, req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room_id", true)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r := s.rooms[roomID]
-	if r == nil {
-		return nil, invalidParams("Unknown room %q", roomID)
-	}
-	result := map[string]any{}
-	frames := make([]any, 0, 2)
-	if req.hasID {
-		frames = append(frames, response(req.id, req.full, result))
-	}
-	frames = append(frames, s.roomAnnouncementLocked(r))
-	c.enqueueBatch(frames...)
-	return result, nil
-}
-
-// leaveRoom is denied by policy: every room stays visible to every user.
-func (s *Server) leaveRoom(req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room_id", true)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.rooms[roomID] == nil {
-		return nil, invalidParams("Unknown room %q", roomID)
-	}
-	return nil, &rpcError{Code: codeDenied, Message: "Rooms on this server cannot be left"}
-}
-
-const (
-	maxEmojiBytes    = 64
-	maxDistinctEmoji = 20
-)
-
-// react replaces the caller's complete reaction set on one message
-// (Appendix D.2). Duplicates collapse; an unchanged set logs nothing.
-func (s *Server) react(c *client, req request) (any, *rpcError) {
-	messageID, err := parseString(req.params, "message_id", true)
-	if err != nil {
-		return nil, err
-	}
-	emojis, err := parseEmojis(req.params)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m := s.messages[messageID]
-	if m == nil {
-		return nil, invalidParams("Unknown message %q", messageID)
-	}
-	result := map[string]any{}
-	if req.hasID {
-		c.enqueue(response(req.id, req.full, result))
-	}
-	if sameEmojiSet(m.reactions[c.identity.ID].emojis, emojis) {
-		return result, nil
-	}
-	from := c.identity.object()
-	if len(emojis) == 0 {
-		delete(m.reactions, c.identity.ID)
-	} else {
-		m.reactions[c.identity.ID] = reactionSet{from: from, emojis: emojis}
-	}
-	s.commitReactionsLocked(m, []any{map[string]any{"from": cloneObject(from), "emojis": slices.Clone(emojis)}})
-	return result, nil
-}
-
-// commitReactionsLocked logs and broadcasts one reactions record in the
-// message's current room.
-func (s *Server) commitReactionsLocked(m *messageState, elements []any) {
-	logID := s.nextIDLocked()
-	value := map[string]any{
-		"log_id":     formatID(logID),
-		"message_id": m.snapshot["message_id"],
-		"room_id":    m.roomID,
-		"reactions":  elements,
-	}
-	s.appendLocked(&logRecord{id: logID, kind: kindReactions, value: value}, s.rooms[m.roomID])
-	s.broadcastLocked(map[string]any{"method": "reactions", "params": value})
-}
-
-func parseEmojis(params map[string]json.RawMessage) ([]string, *rpcError) {
-	raw, ok := params["emojis"]
-	if !ok {
-		return nil, invalidParams("Missing emojis")
-	}
-	var values []json.RawMessage
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &values) != nil {
-		return nil, invalidParams("emojis must be an array of strings")
-	}
-	emojis := make([]string, 0, len(values))
-	for _, value := range values {
-		var emoji string
-		if json.Unmarshal(value, &emoji) != nil || emoji == "" || len(emoji) > maxEmojiBytes {
-			return nil, invalidParams("emojis must be non-empty strings of at most %d bytes", maxEmojiBytes)
-		}
-		if !slices.Contains(emojis, emoji) {
-			emojis = append(emojis, emoji)
-		}
-	}
-	if len(emojis) > maxDistinctEmoji {
-		return nil, invalidParams("At most %d distinct emoji per message", maxDistinctEmoji)
-	}
-	return emojis, nil
-}
-
-func sameEmojiSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, emoji := range a {
-		if !slices.Contains(b, emoji) {
-			return false
-		}
-	}
-	return true
-}
-
-// history returns a window of one room's log (Appendix A). limit counts records
-// of every kind; the slice is partitioned into rooms, entries, and reactions.
-// The server retains all records and does not compact.
-func (s *Server) history(req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room_id", true)
-	if err != nil {
-		return nil, err
-	}
-	after, hasAfter, err := parseBound(req.params, "after")
-	if err != nil {
-		return nil, err
-	}
-	before, hasBefore, err := parseBound(req.params, "before")
-	if err != nil {
-		return nil, err
-	}
-	limit, err := parseLimit(req.params, s.config.HistoryPageSize)
-	if err != nil {
-		return nil, err
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	r := s.rooms[roomID]
-	if r == nil {
-		return nil, invalidParams("Unknown room %q", roomID)
-	}
-	matching := make([]*logRecord, 0)
-	for _, record := range r.log {
-		if (hasAfter && record.id < after) || (hasBefore && record.id > before) {
-			continue
-		}
-		matching = append(matching, record)
-	}
-	more := len(matching) > limit
-	if more {
-		if hasAfter {
-			matching = matching[:limit]
+			c.sendError(req, parseErr)
 		} else {
-			matching = matching[len(matching)-limit:]
+			c.enqueue(errorResponse(nil, req.full, parseErr))
 		}
+		return
 	}
-	rooms := make([]any, 0)
-	entries := make([]any, 0, len(matching))
-	reactions := make([]any, 0)
-	for _, record := range matching {
-		value := cloneObject(record.value)
-		switch record.kind {
-		case kindRoom:
-			rooms = append(rooms, value)
-		case kindMessage:
-			entries = append(entries, value)
-		case kindReactions:
-			reactions = append(reactions, value)
+
+	if req.method == "auth" {
+		if _, err := s.authenticate(c, req); err != nil && req.hasID {
+			c.sendError(req, err)
 		}
+		return
 	}
-	result := map[string]any{"rooms": rooms, "entries": entries, "reactions": reactions, "more": more}
-	for key, value := range r.deliveryFields() {
-		result[key] = value
-	}
-	if len(matching) > 0 {
-		result["first_id"] = formatID(matching[0].id)
-		result["last_id"] = formatID(matching[len(matching)-1].id)
-	}
-	return result, nil
-}
 
-func parseBound(params map[string]json.RawMessage, name string) (int64, bool, *rpcError) {
-	raw, ok := params[name]
-	if !ok {
-		return 0, false, nil
-	}
-	var value string
-	if json.Unmarshal(raw, &value) != nil {
-		return 0, false, invalidParams("%s must be a decimal string", name)
-	}
-	number, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || number < 0 {
-		return 0, false, invalidParams("%s must be a non-negative decimal string", name)
-	}
-	return number, true, nil
-}
-
-func parseLimit(params map[string]json.RawMessage, defaultLimit int) (int, *rpcError) {
-	raw, ok := params["limit"]
-	if !ok {
-		return defaultLimit, nil
-	}
-	var value int
-	if json.Unmarshal(raw, &value) != nil || value <= 0 {
-		return 0, invalidParams("limit must be a positive integer")
-	}
-	if value > 1000 {
-		value = 1000
-	}
-	return value, nil
-}
-
-func (s *Server) typing(c *client, req request) (any, *rpcError) {
-	roomID, err := parseString(req.params, "room_id", true)
-	if err != nil {
-		return nil, err
-	}
-	active, err := parseBool(req.params, "active", true)
-	if err != nil {
-		return nil, err
-	}
-	var timeout any
-	if raw, ok := req.params["timeout"]; ok {
-		var value int
-		if json.Unmarshal(raw, &value) != nil || value < 0 {
-			return nil, invalidParams("timeout must be a non-negative integer")
-		}
-		timeout = value
-	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.rooms[roomID] == nil {
-		return nil, invalidParams("Unknown room %q", roomID)
+	user := c.user
+	if user == nil {
+		s.mu.Unlock()
+		if req.hasID {
+			c.sendError(req, &rpcError{Code: codeDenied, Message: "Sign in before sending requests"})
+		}
+		return
 	}
-	params := map[string]any{
-		"room_id": roomID,
-		"from":    c.identity.object(),
-		"active":  active,
+	op := s.ops[req.method]
+	if op == nil {
+		s.mu.Unlock()
+		if req.hasID {
+			c.sendError(req, &rpcError{Code: codeUnsupported, Message: "Unsupported method " + strconv.Quote(req.method)})
+		}
+		return
 	}
-	if timeout != nil {
-		params["timeout"] = timeout
-	}
-	result := map[string]any{}
+	// Requests deduplicate per user (§1.2): a duplicate waits for the original,
+	// even one running on another connection, and replies with its outcome.
+	var entry *dedupEntry
 	if req.hasID {
-		c.enqueue(response(req.id, req.full, result))
+		fingerprint := requestFingerprint(req)
+		if prior := user.dedup.get(req.id); prior != nil {
+			s.mu.Unlock()
+			if prior.fingerprint != fingerprint {
+				c.sendError(req, invalidParams("Request id %q was already used for another operation", req.id))
+				return
+			}
+			<-prior.done
+			if prior.err != nil {
+				c.sendError(req, prior.err)
+			} else {
+				c.sendResult(req, prior.result)
+			}
+			return
+		}
+		entry = &dedupEntry{fingerprint: fingerprint, done: make(chan struct{})}
+		user.dedup.put(req.id, entry)
 	}
-	s.broadcastLocked(map[string]any{"method": "typing", "params": params})
-	return result, nil
+	s.mu.Unlock()
+
+	result, replied, err := op(s, c, req)
+	if req.hasID && !replied {
+		if err != nil {
+			c.sendError(req, err)
+		} else {
+			c.sendResult(req, result)
+		}
+	}
+	if entry != nil {
+		s.mu.Lock()
+		entry.result, entry.err = result, err
+		if err != nil {
+			// Failed operations are not cached; a retry executes again.
+			user.dedup.remove(req.id, entry)
+		}
+		close(entry.done)
+		s.mu.Unlock()
+	}
+}
+
+func (c *client) isAuthenticated() bool {
+	c.server.mu.RLock()
+	defer c.server.mu.RUnlock()
+	return c.user != nil
 }
 
 // nextIDLocked returns the next log_id in the server-wide sequence: the commit
@@ -1222,14 +664,6 @@ func (s *Server) appendLocked(record *logRecord, rooms ...*roomState) {
 	for _, r := range rooms {
 		r.log = append(r.log, record)
 		r.latestID = record.id
-	}
-}
-
-func (s *Server) broadcastLocked(frame any) {
-	for c := range s.clients {
-		if c.authed {
-			c.enqueue(frame)
-		}
 	}
 }
 

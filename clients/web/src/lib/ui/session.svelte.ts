@@ -8,7 +8,7 @@ type HeldSession = { rooms: RoomSnapshot[]; activeRoom?: string; you?: Identity;
 export const RECONNECT_STALL_MS = 10_000;
 
 export const blankSnapshot = (): ClientSnapshot => ({
-	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], showReconnectDivider: false
+	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], users: {}, userAliases: {}, uploads: {}, threadDirectory: {}, showReconnectDivider: false
 });
 
 /**
@@ -53,12 +53,13 @@ export class SessionView {
 	readonly canManageRooms = $derived(canManageRooms(this.server));
 	/** Reaction chips and the React action (cap `reactions`). */
 	readonly canReact = $derived(canReact(this.server));
-	readonly canUpload = $derived(typeof this.server?.upload === 'string' && this.server.upload.length > 0);
 
 	/** Takes the client's next snapshot and keeps the held view in step with it. */
 	apply(next: ClientSnapshot, client: ChatClient): void {
+		const wasReady = isSessionReady(this.snapshot) && this.snapshot.rooms.length > 0;
 		this.snapshot = next;
-		if (next.status === 'offline') {
+		if (next.status === 'offline' || (wasReady && isSessionReady(next) && next.rooms.length === 0)) {
+			// Offline, or a ready session that left its last room: nothing is being rebuilt.
 			this.held = undefined;
 		} else if (isSessionReady(next) && next.disconnectedAt === undefined && next.rooms.length > 0
 			&& !next.rooms.some((room) => room.recovering && room.timeline.order.length === 0)) {

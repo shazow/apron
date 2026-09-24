@@ -1,4 +1,5 @@
 import { requestPasskey } from './webauthn';
+import { writeEmbed } from './embeds';
 import {
 	ProtocolStore,
 	compareLogIds,
@@ -14,6 +15,7 @@ import {
 	decodeMessage,
 	decodeReactions,
 	decodeRoom,
+	isIdentity,
 	isJsonObject,
 	isLogId,
 	isString,
@@ -27,6 +29,7 @@ import {
 	type ReactionSet,
 	type RoomRecord,
 	type RpcError,
+	type ServerExt,
 	type ServerParams,
 	type WireFrame
 } from './types';
@@ -79,6 +82,34 @@ export interface RoomSnapshot {
 	loaded: boolean;
 	/** A `loadRoom` request is in flight. */
 	loading: boolean;
+	/** Your read cursor in this room (Appendix D.1), as the server last reported or you advanced it. */
+	readMessageId?: string;
+	/** The room's members from the latest `room_list` that listed it (Appendix C). */
+	members?: Identity[];
+}
+
+/**
+ * A visible room as `room_list` returns it (Appendix C): its record, its head,
+ * and its members. Listing a room does not join it.
+ */
+export interface RoomListing {
+	id: string;
+	title: string;
+	record: RoomRecord;
+	parentRoomId?: string;
+	latestLogId?: string;
+	members: Identity[];
+	/** Announced to this connection: the user has joined it. */
+	joined: boolean;
+}
+
+/** A file this client is writing to an embed's `write_url` (Appendix E). */
+export interface UploadState {
+	name: string;
+	/** Fraction written, 0–1, once the write started. */
+	progress?: number;
+	/** Why the write failed; the server then publishes the message without the embed. */
+	failed?: string;
 }
 
 export interface PendingOperation {
@@ -89,10 +120,10 @@ export interface PendingOperation {
 	createdAt: number;
 }
 
+/** A typing indicator shown for another user (Appendix D.1). */
 export interface TypingSnapshot {
 	room: string;
 	from: Identity;
-	active: boolean;
 }
 
 export type Capabilities = Record<Capability, boolean>;
@@ -113,9 +144,25 @@ export interface ClientSnapshot {
 	activeRoom?: string;
 	pending: PendingOperation[];
 	typing: TypingSnapshot[];
+	/**
+	 * The latest user object seen for each `user_id` (§3.3): from `you`, `user`
+	 * notifications, and `members`, then live `from`s. Render every message
+	 * with it. Look users up with `userIn`, which follows renames.
+	 */
+	users: Record<string, Identity>;
+	/** Retired `user_id`s mapped to the identity that replaced them (a `user` notification with `old`). */
+	userAliases: Record<string, string>;
+	/** Files being written to upload embeds, by `embed_id`. */
+	uploads: Record<string, UploadState>;
+	/** Top-level rooms from the latest `room_list`, joined or not; undefined until listed. */
+	directory?: RoomListing[];
+	/** Threads per parent room from the latest `room_list` with `parent_room_id`. */
+	threadDirectory: Record<string, RoomListing[]>;
 	showReconnectDivider: boolean;
 	/** Server supplied retry delay for the most recent temporary limit. */
 	retryAfterMs?: number;
+	/** The server denied the connection (§1.1): no reconnect until the user acts (`retryNow`). */
+	held?: boolean;
 	/**
 	 * When the transport dropped (or failed to open) while the client kept
 	 * running; cleared once a connection authenticates again. The protocol
@@ -251,8 +298,7 @@ interface PendingRequest<T extends JsonObject = JsonObject> {
 interface TypingState {
 	room: string;
 	from: Identity;
-	active: boolean;
-	timer?: ReturnType<typeof setTimeout>;
+	timer: ReturnType<typeof setTimeout>;
 }
 
 type ValidHistoryResponse = JsonObject & {
@@ -265,8 +311,10 @@ type ValidHistoryResponse = JsonObject & {
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
 const MAX_RECONNECT_DELAY_MS = 60_000;
-/** How long a typing indicator this client sends should persist without a refresh, in the frame's `timeout` seconds. */
+/** How long a typing indicator this client sends should persist without a refresh, in the `activity` frame's `typing` seconds. */
 const TYPING_TIMEOUT_S = 15;
+/** The longest a received typing indicator is shown without a refresh. */
+const MAX_TYPING_S = 300;
 /** How often the indicator is refreshed while typing continues: well inside the timeout, and far from one frame per keystroke. */
 const TYPING_REFRESH_MS = 12_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
@@ -274,10 +322,12 @@ const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
 /** The lowest possible log_id: the `after` bound when no lower bound is known. */
 const FIRST_LOG_ID = '1';
-const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'push'];
+const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'activity', 'embed:upload', 'embed:stream'];
+/** The room of the avatar upload convention (Appendix J.4). */
+export const AVATAR_ROOM = '@avatar';
 
 /**
- * A browser-only Apron protocol v3 session; instantiate one per mounted UI.
+ * A browser-only Apron protocol v4 session; instantiate one per mounted UI.
  *
  * State model: one store of room records, message snapshots, and reaction
  * sets shared by every room (PROTOCOL.md §2), projected per visible room in
@@ -300,6 +350,15 @@ export class ChatClient {
 	private readonly pendingMessageSaves = new Map<string, PendingSave>();
 	/** Latest submitted client fields per room while an update is unconfirmed. */
 	private readonly pendingRoomSaves = new Map<string, PendingSave>();
+	/** Latest user object per user_id, and whether it came from a profile (you, user, members) rather than a `from`. */
+	private readonly users = new Map<string, { identity: Identity; profile: boolean }>();
+	private readonly userAliases = new Map<string, string>();
+	/** Read cursors per room, per user (Appendix D.1). */
+	private readonly reads = new Map<string, Map<string, string>>();
+	private readonly uploads = new Map<string, UploadState>();
+	private readonly roomMembers = new Map<string, Identity[]>();
+	private directory?: RoomListing[];
+	private readonly threadDirectory = new Map<string, RoomListing[]>();
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private connectionId = 0;
@@ -320,6 +379,10 @@ export class ChatClient {
 	private error?: string;
 	private showReconnectDivider = false;
 	private retryAfterUntil = 0;
+	/** The server denied the connection as a whole (§1.1): no automatic reconnect until the user acts. */
+	private reconnectHeld = false;
+	/** The current socket carried an error about the connection; its message outlives the close. */
+	private connectionErrored = false;
 	private connectionProbe?: AbortController;
 	private disconnectedAt?: number;
 
@@ -346,13 +409,14 @@ export class ChatClient {
 		this.passkeyRequired = false;
 		this.registeredSession = false;
 		this.retryAfterUntil = 0;
+		this.reconnectHeld = false;
 		this.loadStoredSession();
 		this.resetSession('Server URL changed; pending requests were cancelled');
 		if (this.running) this.restart();
 	}
 
 	/**
-	 * Sets the display name, sent with `auth` and as a `name` request (§3.3).
+	 * Sets the display name, sent with `auth` and as a `me` request (§3.3).
 	 * When authenticated the request goes out at once and its handle is
 	 * returned so the caller can show what the server actually kept (`you`).
 	 */
@@ -365,7 +429,7 @@ export class ChatClient {
 	}
 
 	private sendName(): OperationHandle {
-		const request = this.enqueueRequest('name', { name: this.displayName }, {
+		const request = this.enqueueRequest('me', { name: this.displayName }, {
 			visible: false,
 			allowBeforeAuth: false
 		});
@@ -383,6 +447,7 @@ export class ChatClient {
 	start(): void {
 		if (this.running) return;
 		this.running = true;
+		this.reconnectHeld = false;
 		this.showReconnectDivider = this.reconnectAttempt > 0;
 		this.connectNow();
 	}
@@ -412,6 +477,7 @@ export class ChatClient {
 		if (!this.running) return;
 		this.connectionProbe?.abort();
 		this.connectionId += 1;
+		this.reconnectHeld = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
 		this.cancelPasskey();
@@ -431,7 +497,8 @@ export class ChatClient {
 	/**
 	 * Skips the remaining backoff and reconnects at once, keeping the current
 	 * session state. Meant for an explicit user action after a reconnect has
-	 * stalled; the exponential backoff restarts from its shortest delay.
+	 * stalled or the server denied the connection; the exponential backoff
+	 * restarts from its shortest delay.
 	 */
 	retryNow(): void {
 		if (!this.running) return;
@@ -439,6 +506,7 @@ export class ChatClient {
 			this.emit();
 			return;
 		}
+		this.reconnectHeld = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
 		this.reconnectAttempt = 0;
@@ -510,7 +578,9 @@ export class ChatClient {
 					recovering: Boolean(room.recovery),
 					...(room.recoveryError ? { recoveryError: room.recoveryError } : {}),
 					loaded: !history || (thread ? room.loadCheckpoint !== undefined : room.checkpoint !== undefined),
-					loading: room.loading
+					loading: room.loading,
+					...(this.readCursor(room.id) !== undefined ? { readMessageId: this.readCursor(room.id) } : {}),
+					...(this.roomMembers.has(room.id) ? { members: this.roomMembers.get(room.id) } : {})
 				};
 			}),
 			activeRoom: this.activeRoomId,
@@ -523,11 +593,15 @@ export class ChatClient {
 					...(typeof params.message_id === 'string' ? { messageId: params.message_id } : {}),
 					createdAt
 				})),
-			typing: [...this.typing.values()]
-				.filter((entry) => entry.active)
-				.map(({ room, from, active }) => ({ room, from, active })),
+			typing: [...this.typing.values()].map(({ room, from }) => ({ room, from })),
+			users: Object.fromEntries([...this.users].map(([id, entry]) => [id, entry.identity])),
+			userAliases: Object.fromEntries(this.userAliases),
+			uploads: Object.fromEntries(this.uploads),
+			...(this.directory ? { directory: this.directory.map((listing) => this.withJoined(listing)) } : {}),
+			threadDirectory: Object.fromEntries([...this.threadDirectory].map(([parent, listings]) => [parent, listings.map((listing) => this.withJoined(listing))])),
 			showReconnectDivider: this.showReconnectDivider,
 			retryAfterMs: this.retryAfterRemaining(),
+			...(this.reconnectHeld ? { held: true } : {}),
 			...(this.disconnectedAt !== undefined ? { disconnectedAt: this.disconnectedAt } : {})
 		};
 	}
@@ -622,29 +696,6 @@ export class ChatClient {
 			...(options.replyTo !== undefined ? { reply_to: { message_id: options.replyTo } } : {}),
 			...(options.ext !== undefined ? { ext: options.ext } : {})
 		}, { visible: true, allowBeforeAuth: false });
-	}
-
-	/**
-	 * Media travels over HTTP, not the socket (Appendix E): POST the file as
-	 * `multipart/form-data` to the `upload` URL the `server` frame carried and
-	 * take the URL back. A token session sends the same token as bearer; other
-	 * schemes rely on the per-session URL the server re-sent after auth.
-	 */
-	async uploadMedia(file: File, signal?: AbortSignal): Promise<string> {
-		const endpoint = this.server?.upload;
-		if (!endpoint) throw new Error('This backend accepts no uploads');
-		const form = new FormData();
-		form.append('file', file, file.name);
-		const response = await fetch(endpoint, {
-			method: 'POST',
-			body: form,
-			...(signal ? { signal } : {}),
-			...(this.sessionToken ? { headers: { Authorization: `Bearer ${this.sessionToken}` } } : {})
-		});
-		if (!response.ok) throw new Error(`The server refused the upload (${response.status})`);
-		const payload: unknown = await response.json().catch(() => undefined);
-		if (!isJsonObject(payload) || typeof payload.url !== 'string') throw new Error('The server returned no upload URL');
-		return payload.url;
 	}
 
 	/**
@@ -825,8 +876,13 @@ export class ChatClient {
 		return this.enqueueRequest('room_leave', { room_id: roomId }, { visible: true, allowBeforeAuth: false });
 	}
 
+	/**
+	 * Reports typing in a room as an `activity` notification (cap `activity`,
+	 * Appendix D.1): `typing` seconds while active, `0` to stop. Sends nothing
+	 * to a server without the cap.
+	 */
 	sendTyping(room: string, active: boolean): void {
-		if (!this.authenticated || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+		if (!this.authenticated || !this.hasCap('activity') || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
 		const previous = this.sentTypingAt.get(room);
 		const now = Date.now();
 		// Refresh well inside the advertised lifetime, not on every keypress.
@@ -838,7 +894,133 @@ export class ChatClient {
 			if (previous === undefined) return;
 			this.sentTypingAt.delete(room);
 		}
-		this.sendFrame({ method: 'typing', params: { room_id: room, active, timeout: TYPING_TIMEOUT_S } });
+		this.sendFrame({ method: 'activity', params: { room_id: room, typing: active ? TYPING_TIMEOUT_S : 0 } });
+	}
+
+	/**
+	 * Advances your read cursor in a room (cap `activity`, Appendix D.1) to a
+	 * message, if that is further than the cursor already is. The server
+	 * syncs it to your other connections.
+	 */
+	markRead(roomId: string, messageId: string): void {
+		if (!this.authenticated || !this.hasCap('activity') || !isLogId(messageId)) return;
+		const current = this.readCursor(roomId);
+		if (current !== undefined && compareLogIds(messageId, current) <= 0) return;
+		this.setReadCursor(roomId, this.you!.user_id, messageId);
+		this.sendFrame({ method: 'activity', params: { room_id: roomId, read_message_id: messageId } });
+		this.emit();
+	}
+
+	/**
+	 * Lists visible rooms (cap `rooms`, Appendix C): top-level rooms, or with
+	 * `parentRoomId` that room's threads, including ones never announced. The
+	 * result also lands in the snapshot's `directory` or `threadDirectory`, and
+	 * members become known users.
+	 */
+	listRooms(parentRoomId?: string): Promise<RoomListing[]> {
+		const params: JsonObject = parentRoomId === undefined ? {} : { parent_room_id: parentRoomId };
+		return this.enqueueRequest('room_list', params, { visible: false, allowBeforeAuth: false }).promise.then((result) => {
+			const listings: RoomListing[] = [];
+			for (const value of Array.isArray(result.rooms) ? result.rooms : []) {
+				const decoded = decodeRoom(value);
+				if (!decoded) continue;
+				const members = (isJsonObject(value) && Array.isArray(value.members) ? value.members : []).filter(isIdentity).map((member) => cloneJson(member));
+				for (const member of members) this.noteUser(member, 'profile');
+				for (const message of decoded.embedded) this.installMessage(message);
+				const record = decoded.record;
+				this.roomMembers.set(record.room_id, members);
+				listings.push({
+					id: record.room_id,
+					title: typeof record.title === 'string' && record.title ? record.title : record.room_id,
+					record,
+					...(record.parent_room_id !== undefined ? { parentRoomId: record.parent_room_id } : {}),
+					...(decoded.delivery.latest_log_id !== undefined ? { latestLogId: decoded.delivery.latest_log_id } : {}),
+					members,
+					joined: false
+				});
+			}
+			if (parentRoomId === undefined) this.directory = listings;
+			else this.threadDirectory.set(parentRoomId, listings);
+			this.emit();
+			return listings.map((listing) => this.withJoined(listing));
+		});
+	}
+
+	private withJoined(listing: RoomListing): RoomListing {
+		return { ...listing, joined: this.rooms.has(listing.id) };
+	}
+
+	/**
+	 * Updates your profile with `me` (§3.3): given fields replace the current
+	 * ones and `""` (or `{}` for `ext`) removes one. Resolves with the `you`
+	 * the server kept, which may differ from what was asked.
+	 */
+	updateProfile(patch: { name?: string; avatar?: string; ext?: JsonObject }): Promise<Identity> {
+		if (patch.name !== undefined) this.displayName = patch.name.trim();
+		return this.enqueueRequest('me', { ...patch }, { visible: true, allowBeforeAuth: false }).promise.then((result) => {
+			if (!isIdentity(result.you)) throw new Error('The server did not return your profile');
+			this.setYou(cloneJson(result.you));
+			this.emit();
+			return this.you!;
+		});
+	}
+
+	/**
+	 * Posts a message with files attached as `upload` embeds (cap
+	 * `embed:upload`, Appendix E): the message goes out with one pending embed
+	 * per file, then each file is written to the `write_url` the result lists.
+	 * `sent` settles with the message result; `uploaded` when every write has
+	 * finished. Progress and failures appear in the snapshot's `uploads`.
+	 */
+	sendFiles(room: string, text: string, files: File[], format: MessageFormat = 'plain', options: SendOptions = {}): { sent: Promise<MessageResult>; uploaded: Promise<void> } {
+		const uploads: Embed[] = files.map((file) => ({ kind: 'upload', ...(file.name ? { title: file.name } : {}) }));
+		const handle = this.send(room, text, format, { ...options, embeds: [...(options.embeds ?? []), ...uploads] });
+		const uploaded = handle.promise.then((result) => this.writeUploads(result, files));
+		return { sent: handle.promise, uploaded };
+	}
+
+	/**
+	 * Uploads an image as your avatar (Appendix J.4): a message to room
+	 * `@avatar` with one upload embed. The server sets `avatar` and sends a
+	 * `user` notification once the image is written.
+	 */
+	uploadAvatar(file: File): Promise<void> {
+		const request = this.enqueueRequest<MessageResult>('message', {
+			room_id: AVATAR_ROOM,
+			body: { embeds: [{ kind: 'upload', ...(file.name ? { title: file.name } : {}) }] }
+		}, { visible: true, allowBeforeAuth: false });
+		return request.promise.then((result) => this.writeUploads(result, [file]));
+	}
+
+	/** Writes each file to the upload embed the result lists for it, in order. */
+	private async writeUploads(result: JsonObject, files: File[]): Promise<void> {
+		const written = (Array.isArray(result.embeds) ? result.embeds : [])
+			.filter((embed): embed is JsonObject => isJsonObject(embed) && embed.kind === 'upload' && typeof embed.write_url === 'string' && typeof embed.embed_id === 'string');
+		if (written.length < files.length) throw new Error('The server did not accept the attachment');
+		const failures: string[] = [];
+		await Promise.all(files.map(async (file, index) => {
+			const embedId = written[index].embed_id as string;
+			const state: UploadState = { name: file.name || 'File', progress: 0 };
+			this.uploads.set(embedId, state);
+			this.emit();
+			try {
+				await writeEmbed(written[index].write_url as string, file, (progress) => {
+					state.progress = progress;
+					this.emit();
+				});
+				this.uploads.delete(embedId);
+			} catch (cause) {
+				state.failed = cause instanceof Error ? cause.message : 'Upload failed';
+				failures.push(state.failed);
+			}
+			this.emit();
+		}));
+		if (failures.length) throw new Error(failures[0]);
+	}
+
+	/** Forget a failed upload's state once the UI has shown it. */
+	dismissUpload(embedId: string): void {
+		if (this.uploads.delete(embedId)) this.emit();
 	}
 
 	/**
@@ -922,6 +1104,7 @@ export class ChatClient {
 		let opened = false;
 		this.status = this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting';
 		this.error = undefined;
+		this.connectionErrored = false;
 		this.emit();
 		let socket: WebSocket;
 		try {
@@ -944,7 +1127,7 @@ export class ChatClient {
 			this.handleMessage(event.data);
 		};
 		socket.onerror = () => {
-			if (this.isCurrentSocket(id, socket)) this.error = 'WebSocket connection error';
+			if (this.isCurrentSocket(id, socket) && !this.connectionErrored) this.error = 'WebSocket connection error';
 			this.emit();
 		};
 		socket.onclose = () => {
@@ -1031,13 +1214,36 @@ export class ChatClient {
 			case 'reactions':
 				this.handleReactions(frame.params);
 				return;
-			case 'typing':
-				this.handleTyping(frame.params);
+			case 'activity':
+				this.handleActivity(frame.params);
+				return;
+			case 'user':
+				this.handleUser(frame.params);
 				return;
 		}
-		if (frame.method === undefined && typeof frame.id === 'string' && (frame.result !== undefined || frame.error !== undefined)) {
+		if (frame.method !== undefined) return;
+		if (typeof frame.id === 'string' && (frame.result !== undefined || frame.error !== undefined)) {
 			this.handleResponse(frame.id, isJsonObject(frame.result) ? frame.result : {}, frame.error);
+		} else if (frame.id === undefined) {
+			// An error without `id` is not tied to a request (§1.1).
+			if (isJsonObject(frame.error)) this.handleConnectionError(frame.error);
 		}
+	}
+
+	/**
+	 * An error about the connection as a whole, or a request the server could
+	 * not identify (§1.1). The server may close the connection after it; the
+	 * client acts on the code: `retry_after` delays the next reconnect, and
+	 * `denied` stops reconnecting until the user retries.
+	 */
+	private handleConnectionError(rpcError: RpcError): void {
+		const retryAfter = retryAfterMilliseconds(rpcError);
+		if (retryAfter !== undefined) this.retryAfterUntil = Math.max(this.retryAfterUntil, Date.now() + retryAfter);
+		if (rpcError.code === -32001) this.reconnectHeld = true;
+		this.connectionErrored = true;
+		this.error = (typeof rpcError.message === 'string' && rpcError.message.trim()
+			? rpcError.message : `Connection error (${rpcError.code})`).slice(0, 300);
+		this.emit();
 	}
 
 	private handleServer(params: JsonObject | undefined): void {
@@ -1049,8 +1255,7 @@ export class ChatClient {
 			...(typeof params.name === 'string' ? { name: params.name } : {}),
 			caps: Array.isArray(params.caps) ? params.caps.filter(isString) : [],
 			auth,
-			...(typeof params.upload === 'string' ? { upload: params.upload } : {}),
-			...(isJsonObject(params.demo) ? { demo: params.demo } : {})
+			...(isJsonObject(params.ext) ? { ext: params.ext as ServerExt } : {})
 		};
 		if (this.authenticated || this.authRequested) {
 			this.emit();
@@ -1141,8 +1346,63 @@ export class ChatClient {
 	private setYou(identity: Identity): void {
 		const changed = this.you?.user_id !== identity.user_id;
 		this.you = identity;
+		this.noteUser(identity, 'profile');
 		// `mine` in every reaction summary depends on the viewer.
 		if (changed) for (const room of this.rooms.values()) room.dirty = true;
+	}
+
+	/**
+	 * A `user` notification (§3.3): `you` replaces this connection's identity;
+	 * `new` is another user's latest profile, and with `old` the old
+	 * `user_id` now stands for the new identity.
+	 */
+	private handleUser(params: JsonObject | undefined): void {
+		if (!params) return;
+		if (isIdentity(params.you)) {
+			this.setYou(cloneJson(params.you));
+		} else if (isIdentity(params.new)) {
+			const identity = cloneJson(params.new);
+			this.noteUser(identity, 'profile');
+			if (isIdentity(params.old) && params.old.user_id !== identity.user_id) {
+				this.noteUser(cloneJson(params.old), 'history');
+				this.userAliases.set(params.old.user_id, identity.user_id);
+			}
+		} else {
+			return;
+		}
+		this.emit();
+	}
+
+	/**
+	 * Keeps the latest user object per `user_id` (§3.3). Profiles (`you`,
+	 * `user`, `members`) replace it; a live `from` updates the name it
+	 * carries and keeps the rest; a `from` in history or an embedded snapshot,
+	 * which may be old, only introduces a user not seen yet.
+	 */
+	private noteUser(identity: Identity, source: 'profile' | 'live' | 'history'): void {
+		const current = this.users.get(identity.user_id);
+		if (source === 'profile') {
+			this.users.set(identity.user_id, { identity, profile: true });
+		} else if (!current) {
+			this.users.set(identity.user_id, { identity: { user_id: identity.user_id, ...(identity.name ? { name: identity.name } : {}) }, profile: false });
+		} else if (source === 'live' && identity.name && identity.name !== current.identity.name) {
+			this.users.set(identity.user_id, { identity: { ...current.identity, name: identity.name }, profile: current.profile });
+		}
+	}
+
+	private readCursor(roomId: string): string | undefined {
+		const you = this.you?.user_id;
+		return you === undefined ? undefined : this.reads.get(roomId)?.get(you);
+	}
+
+	/** Keeps a read cursor only when it moves forward. */
+	private setReadCursor(roomId: string, userId: string, messageId: string): boolean {
+		let room = this.reads.get(roomId);
+		if (!room) this.reads.set(roomId, room = new Map());
+		const current = room.get(userId);
+		if (current !== undefined && compareLogIds(messageId, current) <= 0) return false;
+		room.set(userId, messageId);
+		return true;
 	}
 
 	private hasCap(cap: Capability): boolean {
@@ -1197,15 +1457,22 @@ export class ChatClient {
 			if (rebuild || compareLogIds(head, room.checkpoint!) > 0) this.startRecovery(room, head, rebuild);
 		}
 		// Embedded snapshots install after the bound and any rebuild, so neither drops them.
-		for (const message of decoded.embedded) this.acceptLiveMessage(message, false);
+		for (const message of decoded.embedded) {
+			this.noteUser(message.from, 'history');
+			this.acceptLiveMessage(message, false);
+		}
 		this.emit();
 	}
 
 	private handleSnapshot(params: JsonObject | undefined): void {
 		const decoded = decodeMessage(params);
 		if (!decoded) return;
+		this.noteUser(decoded.record.from, 'live');
+		for (const embedded of decoded.embedded) this.noteUser(embedded.from, 'history');
 		this.acceptLiveMessage(decoded.record, true);
 		for (const embedded of decoded.embedded) this.acceptLiveMessage(embedded, false);
+		// A new message from a user ends their typing indicator in that room (Appendix D.1).
+		if (decoded.record.log_id === decoded.record.message_id) this.removeTyping(decoded.record.room_id, decoded.record.from.user_id);
 		this.emit();
 	}
 
@@ -1218,6 +1485,7 @@ export class ChatClient {
 			this.observeHead(room, sets[0].log_id);
 		}
 		for (const set of sets) {
+			this.noteUser(set.from, 'live');
 			if (room?.recovery && !this.bufferLive(room, { kind: 'reaction', record: set })) return;
 			this.store.putReaction(set);
 			if (set.from.user_id === this.you?.user_id) {
@@ -1333,6 +1601,7 @@ export class ChatClient {
 	/** Install a page's records, skipping message and reaction records below the room's bound. */
 	private applyPage(room: RoomState, result: JsonObject): void {
 		const records: DecodedRecords = decodeHistoryRecords(result);
+		for (const record of [...records.messages, ...records.embedded]) this.noteUser(record.from, 'history');
 		const retained = (logId: string) => room.floor === undefined || compareLogIds(logId, room.floor) >= 0;
 		for (const record of records.rooms) this.installRoom(record);
 		for (const record of records.messages) if (retained(record.log_id)) this.installMessage(record);
@@ -1454,6 +1723,12 @@ export class ChatClient {
 		this.activeRoomId = undefined;
 		this.server = undefined;
 		this.you = undefined;
+		this.users.clear();
+		this.userAliases.clear();
+		this.reads.clear();
+		this.roomMembers.clear();
+		this.directory = undefined;
+		this.threadDirectory.clear();
 	}
 
 	private defaultRoomId(): string | undefined {
@@ -1461,30 +1736,44 @@ export class ChatClient {
 		return this.rooms.keys().next().value;
 	}
 
-	private handleTyping(params: JsonObject | undefined): void {
-		if (!params || typeof params.room_id !== 'string' || !isJsonObject(params.from)) return;
-		if (typeof params.from.user_id !== 'string') return;
-		const key = JSON.stringify([params.room_id, params.from.user_id]);
-		const current = this.typing.get(key);
-		if (current?.timer) clearTimeout(current.timer);
-		const active = params.active !== false;
-		if (!active) {
-			this.typing.delete(key);
-			this.emit();
+	/**
+	 * An `activity` broadcast (Appendix D.1): present fields change the user's
+	 * transient state, absent ones leave it. `typing` seconds show or refresh
+	 * the indicator, `0` removes it. `read_message_id` moves that user's read
+	 * cursor forward; yours places the New divider.
+	 */
+	private handleActivity(params: JsonObject | undefined): void {
+		if (!params || typeof params.room_id !== 'string' || !isIdentity(params.from)) return;
+		const room = params.room_id;
+		const from = cloneJson(params.from);
+		this.noteUser(from, 'live');
+		const read = isLogId(params.read_message_id) && this.setReadCursor(room, from.user_id, params.read_message_id);
+		const seconds = params.typing;
+		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
+			if (read) this.emit();
 			return;
 		}
-		const timeout = typeof params.timeout === 'number' && params.timeout > 0 ? params.timeout : 10;
-		const state: TypingState = {
-			room: params.room_id,
-			from: params.from as Identity,
-			active: true,
-			timer: setTimeout(() => {
-				this.typing.delete(key);
-				this.emit();
-			}, timeout * 1000)
-		};
-		this.typing.set(key, state);
+		this.removeTyping(room, from.user_id);
+		if (seconds > 0) {
+			const key = typingKey(room, from.user_id);
+			this.typing.set(key, {
+				room,
+				from,
+				timer: setTimeout(() => {
+					this.typing.delete(key);
+					this.emit();
+				}, Math.min(seconds, MAX_TYPING_S) * 1000)
+			});
+		}
 		this.emit();
+	}
+
+	private removeTyping(room: string, userId: string): void {
+		const key = typingKey(room, userId);
+		const current = this.typing.get(key);
+		if (!current) return;
+		clearTimeout(current.timer);
+		this.typing.delete(key);
 	}
 
 	private handleResponse(id: string, result: JsonObject, rpcError?: RpcError): void {
@@ -1594,9 +1883,7 @@ export class ChatClient {
 
 	private clearTyping(): void {
 		this.sentTypingAt.clear();
-		for (const typing of this.typing.values()) {
-			if (typing.timer) clearTimeout(typing.timer);
-		}
+		for (const typing of this.typing.values()) clearTimeout(typing.timer);
 		this.typing.clear();
 	}
 
@@ -1610,7 +1897,7 @@ export class ChatClient {
 	}
 
 	private scheduleReconnect(delayOverride?: number): void {
-		if (!this.running || this.reconnectTimer) return;
+		if (!this.running || this.reconnectTimer || this.reconnectHeld) return;
 		this.reconnectAttempt += 1;
 		const retryAfter = this.retryAfterRemaining();
 		const delay = delayOverride !== undefined
@@ -1672,6 +1959,17 @@ export class ChatClient {
 }
 
 /** Messages of a room in timeline order. */
+/**
+ * The latest user object for a `user_id`, following renames (§3.3): a
+ * retired ID resolves to the identity that replaced it. Falls back to the
+ * given `from`, so a message always has someone to show.
+ */
+export function userIn(snapshot: Pick<ClientSnapshot, 'users' | 'userAliases'>, from: Identity): Identity {
+	let id = from.user_id;
+	for (let hops = 0; hops < 8 && snapshot.userAliases[id] !== undefined; hops += 1) id = snapshot.userAliases[id];
+	return snapshot.users[id] ?? snapshot.users[from.user_id] ?? from;
+}
+
 export function timelineMessages(room: RoomSnapshot | undefined): MessageRecord[] {
 	return room ? timelineEvents(room.timeline) : [];
 }
@@ -1752,6 +2050,10 @@ function rejectedHandle<T extends JsonObject>(method: string, error: Error, id =
 	return { id, promise };
 }
 
+function typingKey(room: string, userId: string): string {
+	return JSON.stringify([room, userId]);
+}
+
 function increment(id: string): string {
 	return (BigInt(id) + 1n).toString();
 }
@@ -1829,10 +2131,11 @@ export function recoveryBufferFits(
 	return entryCount < maxEntries && bufferBytes + recordBytes(record) <= maxBytes;
 }
 
+/** `retry_after` errors carry `data.retry_after`, a delay in seconds (§1.1). */
 function retryAfterMilliseconds(error: RpcError): number | undefined {
-	if (error.code !== -32002 || !isJsonObject(error.data) || typeof error.data.ms !== 'number') return undefined;
-	if (!Number.isFinite(error.data.ms) || error.data.ms < 0) return undefined;
-	return Math.min(RETRY_AFTER_MAX_MS, Math.ceil(error.data.ms));
+	if (error.code !== -32002 || !isJsonObject(error.data) || typeof error.data.retry_after !== 'number') return undefined;
+	if (!Number.isFinite(error.data.retry_after) || error.data.retry_after < 0) return undefined;
+	return Math.min(RETRY_AFTER_MAX_MS, Math.ceil(error.data.retry_after * 1000));
 }
 
 function userFacingRpcError(error: RpcError): string {
