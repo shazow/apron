@@ -457,3 +457,45 @@ describe('reconnect divider', () => {
 		expect(snapshot.showReconnectDivider).toBe(true);
 	});
 });
+
+describe('keepalive', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		FakeSocket.instances = [];
+		vi.stubGlobal('WebSocket', FakeSocket);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	const pings = (socket: FakeSocket) => socket.sent.filter((frame) => frame.method === 'ping').length;
+
+	it('pings at the interval the demo server asks for, once authenticated, until the socket goes', async () => {
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		await latest().greet([], { ext: { demo: { keepalive_seconds: 45 } } });
+		const first = latest();
+		expect(first.sent.find((frame) => frame.method === 'ping')).toEqual({ method: 'ping' });
+		expect(pings(first)).toBe(1);
+		vi.advanceTimersByTime(45_000);
+		expect(pings(first)).toBe(2);
+
+		first.drop();
+		vi.advanceTimersByTime(90_000);
+		expect(pings(first)).toBe(2);
+		client.stop();
+		vi.advanceTimersByTime(90_000);
+		expect(FakeSocket.instances.every((socket) => socket === first || pings(socket) === 0)).toBe(true);
+	});
+
+	it('sends nothing to a server that does not ask', async () => {
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		await latest().greet();
+		vi.advanceTimersByTime(300_000);
+		expect(pings(latest())).toBe(0);
+		client.stop();
+	});
+});

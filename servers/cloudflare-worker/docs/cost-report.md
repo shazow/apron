@@ -136,6 +136,15 @@ record: 12 reserved writes, at most once per user per minute. `room_list`
 reuses the room-listing reservation (444 reads, 8 writes) and adds no writes;
 its members come from connection attachments.
 
+The keepalive (`{"method":"ping"}` every 45 seconds, from clients that opt in)
+is answered by `setWebSocketAutoResponse`: it never wakes the object or reaches
+`webSocketMessage`, so it uses no duration, frame budget, or SQL. Incoming
+WebSocket messages count as Durable Object requests at 20:1, so 100 connections
+that ping all day add about 9,600 requests (under 10% of the 100,000 daily
+allowance). Pings are not rate limited by the demo; a client flooding them can
+spend that allowance, which the account-usage stop and the platform's own Free
+limits bound.
+
 The default foreground write ceiling is 60,000 rows per UTC day. At the
 current conservative floor this permits at most 227 mutations without a
 request-ID (`60,000 / 264`) or 214 full request-ID mutations

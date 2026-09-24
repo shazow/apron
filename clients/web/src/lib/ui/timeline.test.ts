@@ -183,6 +183,17 @@ describe('message helpers', () => {
 		expect(peopleIn([message(0, 'sam')], me)).toEqual([{ id: 'sam', name: 'Sam', me: true }]);
 	});
 
+	it('offers only the listed members when the room has a members list', () => {
+		const me = { user_id: 'sam', name: 'Sam' };
+		const messages = [message(0, 'alice'), message(1, 'bob'), message(2, 'carol')];
+		// Bob has disconnected; Dana is connected but has not spoken.
+		const people = peopleIn(messages, me, [{ user_id: 'alice' }, { user_id: 'carol' }, { user_id: 'dana' }]);
+		expect(people.map((p) => p.id)).toEqual(['carol', 'alice', 'dana', 'sam']);
+		expect(peopleIn(messages, me, []).map((p) => p.id)).toEqual(['sam']);
+		// Whoever posted after the listing was around since it was taken.
+		expect(peopleIn(messages, me, [{ user_id: 'alice' }], String(base + 1)).map((p) => p.id)).toEqual(['carol', 'alice', 'sam']);
+	});
+
 	it('fills ranges along the timeline order', () => {
 		const order = ['a', 'b', 'c', 'd', 'e'];
 		expect(rangeBetween(order, 'd', 'b')).toEqual(['b', 'c', 'd']);

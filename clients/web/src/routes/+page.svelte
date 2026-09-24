@@ -37,6 +37,10 @@
 
 	/** How long a jump waits for its target to render (a thread's history may still be loading). */
 	const JUMP_WAIT_MS = 4000;
+	/** How long a members listing stays current when the mention picker opens. */
+	const MEMBERS_FRESH_MS = 15_000;
+	/** The shortest gap between listings made because the pane has no members. */
+	const MEMBERS_RETRY_MS = 10_000;
 
 	const session = new SessionView();
 	const feedback = new FeedbackState();
@@ -83,8 +87,8 @@
 	 * was when the pane opened (Appendix D.1). It stays put while you read.
 	 */
 	let newDivider = $state<{ room: string; after?: string; fixed: boolean }>({ room: '', fixed: false });
-	/** Rooms whose members this pane has asked `room_list` for. */
-	const listedFor = new Set<string>();
+	/** When this pane last asked `room_list` for members, by backend and parent room. */
+	const listedAt = new Map<string, number>();
 	/** Messages a thread is being started from, for the button's "Starting…". */
 	let startingThreads = $state<Record<string, true>>({});
 	let mobilePane = $state<'rooms' | 'main'>('main');
@@ -110,7 +114,7 @@
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
 	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames }) : buildRoomTimeline({ messages, threads }));
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
-	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members ?? []));
+	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members, paneRoom?.membersAsOf));
 	let typingNames = $derived(snapshot.typing
 		.filter((entry) => entry.room === paneRoom?.id && entry.from.user_id !== session.you?.user_id)
 		.map((entry) => directory.name(entry.from)));
@@ -185,14 +189,13 @@
 		untrack(() => client?.markRead(room.id, last.message_id));
 	});
 
-	// Members for the mention picker come from `room_list` (cap `rooms`), once per room per connection.
+	// Members for the mention picker come from `room_list` (cap `rooms`): listed
+	// whenever the pane has none (a room not listed yet, or a new connection),
+	// and again when the picker opens on a stale list, since people come and go.
 	$effect(() => {
 		const room = paneRoom;
-		if (!client || !room || !session.ready || !session.canManageRooms) return;
-		const key = `${client.url}\u0000${room.parentRoomId ?? ''}`;
-		if (listedFor.has(key)) return;
-		listedFor.add(key);
-		untrack(() => client?.listRooms(room.parentRoomId).catch(() => listedFor.delete(key)));
+		if (!client || !room || !session.ready || !session.canManageRooms || room.members !== undefined) return;
+		untrack(() => listMembers(MEMBERS_RETRY_MS));
 	});
 
 	// A room joined from the directory opens once the server has announced it.
@@ -325,6 +328,18 @@
 		connectOpen = true;
 	}
 
+	/** Asks `room_list` for the pane's members, unless this pane did within `maxAge`. */
+	function listMembers(maxAge: number): void {
+		const room = paneRoom;
+		if (!client || !room || !session.ready || !session.canManageRooms) return;
+		const key = `${client.url}\u0000${room.parentRoomId ?? ''}`;
+		const now = Date.now();
+		const last = listedAt.get(key);
+		if (last !== undefined && now - last < maxAge) return;
+		listedAt.set(key, now);
+		client.listRooms(room.parentRoomId).catch(() => undefined);
+	}
+
 	/** The connect form was submitted: whatever belonged to the previous backend goes. */
 	function leaveBackend(): void {
 		saveCurrentDraft();
@@ -338,7 +353,7 @@
 		selection.cancel();
 		session.forget();
 		directory.forget();
-		listedFor.clear();
+		listedAt.clear();
 	}
 
 	function connected(): void {
@@ -957,6 +972,7 @@
 					{people}
 					replyPreview={replyId ? replyPreview(replyId) : undefined}
 					oninput={composerInput} onsend={sendMessage} onfiles={sendFiles} oncancelreply={cancelReply}
+					onmention={() => listMembers(MEMBERS_FRESH_MS)}
 				/>
 			{/if}
 		{:else}

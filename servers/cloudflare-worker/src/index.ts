@@ -67,6 +67,13 @@ const THROTTLED_TYPES: readonly ThrottledType[] = ["activity", "room_list"];
 const THROTTLE_WINDOW_MS = 60_000;
 /** The system identity for server notices (Appendix J.1). */
 const SERVER_IDENTITY = { user_id: "@server", name: "Server" } as const;
+/**
+ * The keepalive a client may send, byte for byte, and the runtime's answer.
+ * Both are notifications with unknown methods, which the other side ignores
+ * (section 1), so a client can send it to any server.
+ */
+const KEEPALIVE_REQUEST = '{"method":"ping"}';
+const KEEPALIVE_RESPONSE = '{"method":"pong"}';
 
 /**
  * A bearer session minted by a verified passkey login (protocol Appendix I,
@@ -443,6 +450,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.config = loadConfig(env);
 		this.store = new Store(ctx as unknown as ConstructorParameters<typeof Store>[0], asStoreConfig(this.config));
 		this.webAuthn = new WebAuthnService(this.config);
+		// Answered by the runtime without waking the object or reaching
+		// webSocketMessage; the time of the last answer tells a live peer from
+		// one that vanished without a close frame (see isStale).
+		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE));
 		if (this.store.requiresReset()) {
 			// Stored data from another schema version is wiped, not migrated. The
 			// input gate holds every event until the fresh schema exists.
@@ -469,7 +480,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (!isAllowedOrigin(this.config, origin)) return responseError(403, "Origin not allowed");
 		try {
 			const sockets = this.ctx.getWebSockets();
-			const peers = sockets.map(socket => connectionAttachment(socket)).filter(peer => peer?.ipKey === ipKey);
+			// A vanished peer's socket still takes a slot until the runtime lets go
+			// of it, but it must not lock its own IP out of reconnecting.
+			const now = nowMs();
+			this.closeStale(now);
+			const peers = sockets.filter(socket => !this.isStale(socket, now)).map(socket => connectionAttachment(socket)).filter(peer => peer?.ipKey === ipKey);
 			if (sockets.length >= this.config.limits.openConnections || peers.length >= this.config.limits.connectionsPerIp ||
 				peers.filter(peer => peer?.tier !== "registered").length >= this.config.limits.anonymousConnectionsPerIp) {
 				return responseError(429, "Demo capacity reached", 60_000);
@@ -643,6 +658,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 						registered_posts_per_minute: limits.registeredPostsPerMinute,
 						server_frames_per_minute: limits.globalFramesPerMinute,
 						room_list_per_minute: limits.roomListRequestsPerUserMinute,
+						// Send KEEPALIVE_REQUEST this often to stay listed as connected.
+						keepalive_seconds: limits.keepaliveSeconds,
 						// With `activity`, typing is relayed; read cursors are neither kept nor relayed.
 						...(this.config.activityEnabled ? { activity_per_minute: limits.activityBroadcastsPerUserMinute } : {}),
 					},
@@ -1272,6 +1289,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	/** Everyone authenticated and connected, one entry per user, capped. */
 	private connectedMembers(): Array<{ user_id: string; name?: string }> {
+		this.closeStale(nowMs());
 		const members = new Map<string, { user_id: string; name?: string }>();
 		for (const peer of this.ctx.getWebSockets()) {
 			const state = connectionAttachment(peer as WebSocketConnection);
@@ -1281,6 +1299,36 @@ export class ApronDemoServer extends DurableObject<Env> {
 			if (members.size >= this.config.limits.roomListMembers) break;
 		}
 		return [...members.values()];
+	}
+
+	/**
+	 * Whether a connection's peer has gone quiet: it has sent the keepalive,
+	 * but neither that nor any frame within the timeout. The runtime cannot
+	 * ping, so a peer that vanished without a close frame (sleep, a network
+	 * change) otherwise stays connected until the edge gives up on it. A
+	 * connection that never sent the keepalive is never judged stale.
+	 */
+	private isStale(socket: WebSocket, now: number): boolean {
+		const pinged = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime();
+		if (pinged === undefined) return false;
+		const frames = connectionAttachment(socket as WebSocketConnection)?.frameTimes ?? [];
+		const heard = Math.max(pinged, frames[frames.length - 1] ?? 0);
+		return heard <= now - this.config.limits.keepaliveTimeoutSeconds * 1_000;
+	}
+
+	/**
+	 * Closes stale connections. Nothing schedules this: it runs where a stale
+	 * peer would be seen, before `members` are listed and before admission.
+	 */
+	private closeStale(now: number): void {
+		for (const ws of this.ctx.getWebSockets()) {
+			const socket = ws as WebSocketConnection;
+			const attachment = connectionAttachment(socket);
+			if (!attachment || attachment.closing || !this.isStale(socket, now)) continue;
+			attachment.closing = true;
+			writeAttachment(socket, attachment);
+			try { socket.close(1001, "Connection idle; reconnect to recover"); } catch { /* already closed */ }
+		}
 	}
 
 	/** Sends a profile change (section 3.3): `you` to the user's other connections, `new` (and `old`) to the rest. */

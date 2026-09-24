@@ -106,7 +106,8 @@ row and pulses once when it arrives, and shows an `@` badge on a room you
 aren't reading (a thread's mentions badge its parent room) or a rust jump bar
 when it landed above the fold. Messages from history, including a thread's
 history loaded when it is opened, never ping. Typing `@` in the composer lists
-the room's recent senders and members; a picked person, or a finished `@name`
+the room's members (on the demo worker, the users connected now), or its recent
+senders on a server without `room_list`; a picked person, or a finished `@name`
 or `@user_id` that names exactly one of them, becomes a chip showing their
 name that is sent as `@user_id`.
 

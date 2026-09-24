@@ -27,7 +27,10 @@ within it:
   `general` is fixed. Threads always carry a title (`Thread` by default).
   `room_join` re-sends a room's record; `room_leave` is `denied`. `room_list`
   lists `general` or its threads; each room's `members` are the users
-  connected now (at most 20), since every room is visible and joined.
+  connected now (at most 20), since every room is visible and joined. A client
+  that sends the `{"method":"ping"}` keepalive every 45 seconds and then goes
+  quiet for 150 is disconnected, so a peer that vanished without closing is
+  not listed.
 - Activity (only with `ACTIVITY=true`): typing is relayed to every other
   connection and never stored, at most 10 relays per user per minute; past that, updates are dropped and the
   sender gets one `@server` message a minute saying so. Read cursors are

@@ -89,6 +89,8 @@ export interface RoomSnapshot {
 	readMessageId?: string;
 	/** The room's members from the latest `room_list` that listed it (Appendix C). */
 	members?: Identity[];
+	/** The room's `latest_log_id` in that listing: whoever posted after it was around since. */
+	membersAsOf?: string;
 }
 
 /**
@@ -322,6 +324,12 @@ const TYPING_TIMEOUT_S = 15;
 const MAX_TYPING_S = 300;
 /** How often the indicator is refreshed while typing continues: well inside the timeout, and far from one frame per keystroke. */
 const TYPING_REFRESH_MS = 12_000;
+/**
+ * The demo worker's keepalive, sent verbatim so its runtime can answer it
+ * without waking the server. Any other server ignores it as an unknown
+ * notification (§1).
+ */
+const KEEPALIVE_FRAME = '{"method":"ping"}';
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
@@ -369,11 +377,12 @@ export class ChatClient {
 	/** Read cursors per room, per user (Appendix D.1). */
 	private readonly reads = new Map<string, Map<string, string>>();
 	private readonly uploads = new Map<string, UploadState>();
-	private readonly roomMembers = new Map<string, Identity[]>();
+	private readonly roomMembers = new Map<string, { members: Identity[]; asOf?: string }>();
 	private directory?: RoomListing[];
 	private readonly threadDirectory = new Map<string, RoomListing[]>();
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
+	private keepaliveTimer?: ReturnType<typeof setInterval>;
 	private connectionId = 0;
 	private reconnectAttempt = 0;
 	private running = false;
@@ -482,6 +491,7 @@ export class ChatClient {
 		this.authenticated = false;
 		this.authRequested = false;
 		this.clearTyping();
+		this.stopKeepalive();
 		for (const request of this.requests.values()) {
 			clearTimeout(request.timer);
 			request.reject(new Error('Connection stopped'));
@@ -602,7 +612,7 @@ export class ChatClient {
 					loaded: !history || (thread ? room.loadCheckpoint !== undefined : room.checkpoint !== undefined),
 					loading: room.loading,
 					...(this.readCursor(room.id) !== undefined ? { readMessageId: this.readCursor(room.id) } : {}),
-					...(this.roomMembers.has(room.id) ? { members: this.roomMembers.get(room.id) } : {})
+					...this.membersOf(room.id)
 				};
 			}),
 			activeRoom: this.activeRoomId,
@@ -1095,6 +1105,13 @@ export class ChatClient {
 		this.emit();
 	}
 
+	/** A room's snapshot fields from its latest listing, if it has been listed. */
+	private membersOf(roomId: string): Pick<RoomSnapshot, 'members' | 'membersAsOf'> {
+		const listed = this.roomMembers.get(roomId);
+		if (!listed) return {};
+		return { members: listed.members, ...(listed.asOf !== undefined ? { membersAsOf: listed.asOf } : {}) };
+	}
+
 	/**
 	 * Lists visible rooms (cap `rooms`, Appendix C): top-level rooms, or with
 	 * `parentRoomId` that room's threads, including ones never announced. The
@@ -1112,7 +1129,7 @@ export class ChatClient {
 				for (const member of members) this.noteUser(member, 'profile');
 				for (const message of decoded.embedded) this.installMessage(message);
 				const record = decoded.record;
-				this.roomMembers.set(record.room_id, members);
+				this.roomMembers.set(record.room_id, { members, ...(decoded.delivery.latest_log_id !== undefined ? { asOf: decoded.delivery.latest_log_id } : {}) });
 				listings.push({
 					id: record.room_id,
 					title: typeof record.title === 'string' && record.title ? record.title : record.room_id,
@@ -1323,6 +1340,7 @@ export class ChatClient {
 			this.authRequested = false;
 			this.clearTransientRequests();
 			this.clearTyping();
+			this.stopKeepalive();
 			// The protocol view is rebuilt from the next connection's announcements
 			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session). The UI keeps the
 			// last authenticated view on screen meanwhile, keyed off disconnectedAt.
@@ -1534,8 +1552,39 @@ export class ChatClient {
 		// Requests queued while this connection was authenticating go out now.
 		for (const request of this.requests.values()) this.sendRequest(request);
 		this.authNameRequest = this.displayName ? this.sendName() : undefined;
+		this.startKeepalive();
 		this.emit();
 		return true;
+	}
+
+	/**
+	 * Sends the keepalive the server asks for in `ext.demo.keepalive_seconds`,
+	 * now and then at that interval, for as long as this socket is current.
+	 * The demo worker cannot ping, so this is how it tells a connection that is
+	 * still there from one whose peer vanished without closing it.
+	 */
+	private startKeepalive(): void {
+		this.stopKeepalive();
+		const seconds = this.server?.ext?.demo?.keepalive_seconds;
+		const socket = this.socket;
+		if (!socket || typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return;
+		const ping = (): boolean => {
+			if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return false;
+			socket.send(KEEPALIVE_FRAME);
+			return true;
+		};
+		if (!ping()) return;
+		const timer = setInterval(() => {
+			if (ping()) return;
+			clearInterval(timer);
+			if (this.keepaliveTimer === timer) this.keepaliveTimer = undefined;
+		}, Math.max(5, seconds) * 1_000);
+		this.keepaliveTimer = timer;
+	}
+
+	private stopKeepalive(): void {
+		if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
+		this.keepaliveTimer = undefined;
 	}
 
 	private setYou(identity: Identity): void {

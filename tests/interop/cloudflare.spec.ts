@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
-import { disablePasskeyAutofill, editMessage, reactionChip, reactTo, sendMessage, startThread, waitForMessage } from './test-helpers';
+import { composer, disablePasskeyAutofill, editMessage, reactionChip, reactTo, sendMessage, startThread, userIdOf, waitForMessage } from './test-helpers';
 
 // This exercises browser-generated credentials and the actual Workers verifier.
 // Runtime/storage policy cases live in servers/cloudflare-worker/test.
@@ -223,12 +223,14 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 	}
 });
 
-test('Worker leaves typing off, lists rooms, and colors guest avatars by user_id', async ({ browser }) => {
+test('Worker leaves typing off, lists rooms, colors guest avatars by user_id, and offers only connected users to mention', async ({ browser }) => {
 	const writer = await browser.newContext();
 	const reader = await browser.newContext();
 	try {
 		const pageA = await writer.newPage();
 		const pageB = await reader.newPage();
+		// The picker lists members again when its list is over 15 seconds old; the test skips ahead.
+		await pageA.clock.install();
 		for (const page of [pageA, pageB]) {
 			await page.goto('/');
 			await expect(page.getByTestId('connection-status')).toHaveText('Connected');
@@ -238,6 +240,18 @@ test('Worker leaves typing off, lists rooms, and colors guest avatars by user_id
 		await pageA.getByRole('textbox', { name: 'Message', exact: true }).pressSequentially('hello');
 		await pageB.waitForTimeout(500);
 		await expect(pageB.locator('.ap-roomhead-typing')).toHaveCount(0);
+		// Mentions offer the users connected now, the viewer and the reader, and
+		// none of the earlier tests' senders whose messages are still in the room.
+		// Guests keep the server's name, which ends in their user_id's last six characters.
+		const readerName = new RegExp((await userIdOf(pageB)).slice(-6));
+		const field = composer(pageA);
+		const picker = pageA.getByTestId('mention-picker');
+		await pageA.clock.fastForward(16_000);
+		await field.fill('@');
+		await expect(picker.getByRole('option', { name: readerName })).toBeVisible();
+		await expect(picker.getByRole('option')).toHaveCount(2);
+		await field.fill('');
+		await expect(picker).toHaveCount(0);
 		// room_list: every room is joined on the demo, so there is nothing to browse.
 		await expect(pageB.getByTestId('room-list').locator('[data-room="general"]')).toBeVisible();
 		await pageB.waitForTimeout(500);
@@ -247,6 +261,13 @@ test('Worker leaves typing off, lists rooms, and colors guest avatars by user_id
 		const [hueA, hueB] = [await hue(pageA), await hue(pageB)];
 		expect(hueA).toMatch(/^\d+$/);
 		expect(hueB).toMatch(/^\d+$/);
+
+		// The reader leaves; a stale members list is listed again when the picker opens.
+		await reader.close();
+		await pageA.clock.fastForward(16_000);
+		await field.fill('@');
+		await expect(picker.getByRole('option', { name: readerName })).toHaveCount(0);
+		await expect(picker.getByRole('option')).toHaveCount(1);
 	} finally {
 		await Promise.all([writer.close(), reader.close()]);
 	}

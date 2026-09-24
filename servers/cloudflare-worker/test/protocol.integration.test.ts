@@ -484,6 +484,43 @@ it('lists rooms and threads with the connected members, and throttles listing', 
 	} finally { alice.close(); bob.close(); }
 });
 
+it('drops a quiet keepalive connection from room_list members and closes it', async () => {
+	const alice = await connect();
+	const bob = await connect();
+	const carol = await connect();
+	try {
+		await authenticate(alice);
+		const bobId = await authenticate(bob);
+		const carolId = await authenticate(carol);
+		await configure((config) => { config.limits.keepaliveTimeoutSeconds = 1; });
+		const closed = new Promise<number>((resolve) => bob.socket.addEventListener('close', (event) => resolve(event.code)));
+		// The runtime answers the keepalive itself; it never reaches the handler.
+		bob.socket.send('{"method":"ping"}');
+		expect(await until(bob, (frame) => frame.method === 'pong')).toMatchObject({ frame: { method: 'pong' } });
+		carol.socket.send('{"method":"ping"}');
+		await until(carol, (frame) => frame.method === 'pong');
+		await new Promise((resolve) => setTimeout(resolve, 700));
+		// Carol keeps talking; Bob's peer has gone quiet.
+		carol.socket.send('{"method":"ping"}');
+		await until(carol, (frame) => frame.method === 'pong');
+		await new Promise((resolve) => setTimeout(resolve, 500));
+
+		alice.send({ id: 'list', method: 'room_list', params: {} });
+		const listed = (await until(alice, (frame) => frame.id === 'list')).frame.result.rooms[0].members.map((member: { user_id: string }) => member.user_id);
+		expect(listed).toContain(carolId.user_id);
+		expect(listed).not.toContain(bobId.user_id);
+		expect(await closed).toBe(1001);
+	} finally { alice.close(); bob.close(); carol.close(); await configure((config) => { config.limits.keepaliveTimeoutSeconds = 150; }); }
+});
+
+it('advertises the keepalive interval', async () => {
+	const peer = await connect();
+	try {
+		const server = await peer.next();
+		expect(server.params.ext.demo.keepalive_seconds).toBe(45);
+	} finally { peer.close(); }
+});
+
 it('links each changed record to the previous one with prev_log_id', async () => {
 	const alice = await connect();
 	try {
