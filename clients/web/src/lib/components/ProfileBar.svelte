@@ -40,6 +40,29 @@
 	let snapshot = $derived(session.snapshot);
 	let connected = $derived(snapshot.status === 'connected');
 	let canUsePasskey = $derived(!!session.server?.auth.includes('webauthn'));
+	let ready = $derived(connected && snapshot.authenticated);
+	let guest = $derived(!snapshot.passkeySession);
+	let passkeyHint = $derived(!!snapshot.passkeyHint);
+	/** What "Continue with passkey" tries first; the secondary link offers the other way. */
+	let plan = $state<'immediate' | 'login' | 'register'>('register');
+	let autofillRun = $state(0);
+
+	$effect(() => {
+		void passkeyHint;
+		let current = true;
+		void client.passkeyPlan().then((next) => {
+			if (current) plan = next;
+		});
+		return () => (current = false);
+	});
+
+	$effect(() => {
+		void autofillRun;
+		if (!open || !ready || !guest || !canUsePasskey || passkeyUnavailable) return;
+		const controller = new AbortController();
+		void autofill(controller.signal);
+		return () => controller.abort();
+	});
 
 	function toggle(): void {
 		if (open) {
@@ -91,39 +114,68 @@
 		status = 'idle';
 	}
 
+	/** A handle the user typed in the editor, as opposed to the one it opened with. */
+	function chosenName(): string | undefined {
+		const requested = draft.trim();
+		return requested && requested !== openedWith.trim() ? requested : undefined;
+	}
+
 	/**
 	 * The handle field and the passkey buttons read as one form, so a handle the
 	 * user typed (even one a guest could not save) rides along with the passkey
-	 * and is applied once the session is signed in.
+	 * and is applied once the session is signed in. `continue` signs in or
+	 * creates a passkey, whichever the browser and this device call for.
 	 */
-	async function passkey(action: 'register' | 'login' | 'logout'): Promise<void> {
+	async function passkey(action: 'continue' | 'register' | 'login' | 'logout'): Promise<void> {
 		passkeyError = '';
 		passkeyNotice = '';
-		const requested = draft.trim();
-		const chosen = action !== 'logout' && requested && requested !== openedWith.trim() ? requested : undefined;
+		const chosen = action === 'logout' ? undefined : chosenName();
 		try {
-			let named: OperationHandle | undefined;
 			if (action === 'logout') {
 				onsignout();
 				await client.signOut();
-			} else {
-				named = await client.usePasskey(action, chosen);
+				passkeyNotice = 'Signed out.';
+				resetDraft();
+				return;
 			}
-			passkeyNotice = action === 'register' ? 'Passkey saved · this backend will ask your device next time'
-				: action === 'login' ? 'Signed in with your passkey.' : 'Signed out.';
-			if (chosen) {
-				displayName = chosen;
-				saveDisplayName(chosen);
-			}
-			// Signing in re-sends the saved display name too, so show that result
-			// even when the field was left alone.
-			if (named) {
-				await track(named, chosen ?? displayName.trim(), false);
-			} else {
-				draft = you?.name || displayName;
-				openedWith = draft;
-				if (status === 'declined') status = 'idle';
-			}
+			const done = action === 'continue'
+				? await client.continueWithPasskey(chosen)
+				: { action, named: await client.usePasskey(action, chosen) };
+			await signedIn(done.action, chosen, done.named);
+		} catch (cause) {
+			passkeyError = passkeyMessage(cause);
+		} finally {
+			// An explicit ceremony stops autofill; offer it again if still a guest.
+			autofillRun += 1;
+		}
+	}
+
+	async function signedIn(action: 'register' | 'login', chosen: string | undefined, named: OperationHandle | undefined): Promise<void> {
+		passkeyNotice = action === 'register' ? 'Passkey saved · this backend will ask your device next time' : 'Signed in with your passkey.';
+		if (chosen) {
+			displayName = chosen;
+			saveDisplayName(chosen);
+		}
+		// Signing in re-sends the saved display name too, so show that result
+		// even when the field was left alone.
+		if (named) await track(named, chosen ?? displayName.trim(), false);
+		else resetDraft();
+	}
+
+	function resetDraft(): void {
+		draft = you?.name || displayName;
+		openedWith = draft;
+		if (status === 'declined') status = 'idle';
+	}
+
+	/** Offers existing passkeys in the handle field's autofill while the editor is open to a guest. */
+	async function autofill(signal: AbortSignal): Promise<void> {
+		try {
+			const result = await client.passkeyAutofill(signal, chosenName);
+			if (!result) return;
+			passkeyError = '';
+			const chosen = chosenName();
+			await signedIn('login', chosen, result.named);
 		} catch (cause) {
 			passkeyError = passkeyMessage(cause);
 		}
@@ -196,7 +248,7 @@
 					</div>
 				</div>
 				<label class="ap-fieldlabel">Handle
-					<input class="ap-field" data-testid="display-name-input" bind:value={draft} disabled={status === 'saving'} maxlength="64" autocomplete="nickname" spellcheck="false" />
+					<input class="ap-field" data-testid="display-name-input" bind:value={draft} disabled={status === 'saving'} maxlength="64" autocomplete="username webauthn" spellcheck="false" />
 				</label>
 				<p class="ap-profedit-hint">ID <code>{you?.user_id ?? '—'}</code> · set by the server, can’t be changed</p>
 				{#if status === 'altered'}
@@ -205,7 +257,7 @@
 					<p class="ap-profedit-note ap-profedit-err" role="alert">
 						The server declined this handle{declinedReason ? ` (${declinedReason})` : ''}.
 						{#if canUsePasskey && !snapshot.passkeySession}
-							Add a passkey or sign in with one and it’s applied once you’re signed in.
+							Continue with a passkey and it’s applied once you’re signed in.
 						{:else}
 							Your old one is still in use.
 						{/if}
@@ -219,11 +271,14 @@
 						{:else}
 							<span class="ap-profedit-row">
 								<span class="signin-actions">
-									<button class="ap-btn ap-btn-sm" type="button" disabled={!!passkeyUnavailable || !you || !connected || status === 'saving'} onclick={() => passkey('register')}>Add passkey</button>
 									{#if snapshot.passkeySession}
+										<button class="ap-btn ap-btn-sm" type="button" disabled={!!passkeyUnavailable || !you || !connected || status === 'saving'} onclick={() => passkey('register')}>Add passkey</button>
 										<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={!connected || status === 'saving'} onclick={() => passkey('logout')}>Sign out</button>
 									{:else}
-										<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={!!passkeyUnavailable || !connected || status === 'saving'} onclick={() => passkey('login')}>Sign in with passkey</button>
+										<button class="ap-btn ap-btn-sm" type="button" data-testid="continue-passkey" disabled={!!passkeyUnavailable || !you || !connected || status === 'saving'} onclick={() => passkey('continue')}>Continue with passkey</button>
+										<button class="ap-link" type="button" data-testid="other-passkey" disabled={!!passkeyUnavailable || !connected || status === 'saving'} onclick={() => passkey(plan === 'login' ? 'register' : 'login')}>
+											{plan === 'immediate' ? 'Use a passkey from another device' : plan === 'login' ? 'Create a new passkey' : 'Sign in with an existing passkey'}
+										</button>
 									{/if}
 								</span>
 								{#if passkeyError}
@@ -260,5 +315,7 @@
 	.ap-profile-pop { max-height: calc(100dvh - 96px); overflow-y: auto; }
 	.ap-profile-pop .ap-profedit-actions { flex-wrap: wrap; }
 	.signin-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+	.signin-actions { align-items: center; }
+	.signin-actions .ap-link { font-size: 13px; }
 	.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>
