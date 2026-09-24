@@ -1321,14 +1321,19 @@ export class ApronDemoServer extends DurableObject<Env> {
 	 * peer would be seen, before `members` are listed and before admission.
 	 */
 	private closeStale(now: number): void {
-		for (const ws of this.ctx.getWebSockets()) {
+		const sockets = this.ctx.getWebSockets();
+		let closed = 0;
+		for (const ws of sockets) {
 			const socket = ws as WebSocketConnection;
 			const attachment = connectionAttachment(socket);
 			if (!attachment || attachment.closing || !this.isStale(socket, now)) continue;
 			attachment.closing = true;
 			writeAttachment(socket, attachment);
 			try { socket.close(1001, "Connection idle; reconnect to recover"); } catch { /* already closed */ }
+			closed++;
 		}
+		// Shows in Workers Logs whether vanished peers are being found.
+		if (closed) console.log(JSON.stringify({ event: "stale_connections_closed", closed, sockets: sockets.length }));
 	}
 
 	/** Sends a profile change (section 3.3): `you` to the user's other connections, `new` (and `old`) to the rest. */

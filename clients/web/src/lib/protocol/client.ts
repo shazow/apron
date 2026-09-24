@@ -383,6 +383,10 @@ export class ChatClient {
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private keepaliveTimer?: ReturnType<typeof setInterval>;
+	/** When the current socket last got the keepalive's answer. */
+	private lastPongAt = 0;
+	/** Drops the current socket as if it had closed: for one that stopped answering. */
+	private abandonSocket?: () => void;
 	private connectionId = 0;
 	private reconnectAttempt = 0;
 	private running = false;
@@ -1331,8 +1335,9 @@ export class ChatClient {
 			if (this.isCurrentSocket(id, socket) && !this.connectionErrored) this.error = 'WebSocket connection error';
 			this.emit();
 		};
-		socket.onclose = () => {
+		const closed = (): void => {
 			if (!this.isCurrentSocket(id, socket)) return;
+			this.abandonSocket = undefined;
 			this.cancelPasskey();
 			this.showReconnectDivider = this.rooms.size > 0 || this.showReconnectDivider;
 			this.socket = undefined;
@@ -1354,6 +1359,13 @@ export class ChatClient {
 				this.status = 'offline';
 			}
 			this.emit();
+		};
+		socket.onclose = closed;
+		// A socket whose peer vanished can stay OPEN here indefinitely; close it
+		// and carry on as if the close had arrived, without waiting for it.
+		this.abandonSocket = () => {
+			try { socket.close(4000, 'keepalive unanswered'); } catch { /* already closed */ }
+			closed();
 		};
 	}
 
@@ -1421,6 +1433,9 @@ export class ChatClient {
 				return;
 			case 'user':
 				this.handleUser(frame.params);
+				return;
+			case 'pong':
+				this.lastPongAt = Date.now();
 				return;
 		}
 		if (frame.method !== undefined) return;
@@ -1561,13 +1576,17 @@ export class ChatClient {
 	 * Sends the keepalive the server asks for in `ext.demo.keepalive_seconds`,
 	 * now and then at that interval, for as long as this socket is current.
 	 * The demo worker cannot ping, so this is how it tells a connection that is
-	 * still there from one whose peer vanished without closing it.
+	 * still there from one whose peer vanished without closing it; it also
+	 * keeps Cloudflare from dropping the socket as idle. When two intervals
+	 * pass with no answer, the socket is presumed dead and replaced.
 	 */
 	private startKeepalive(): void {
 		this.stopKeepalive();
 		const seconds = this.server?.ext?.demo?.keepalive_seconds;
 		const socket = this.socket;
 		if (!socket || typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return;
+		const interval = Math.max(5, seconds) * 1_000;
+		this.lastPongAt = Date.now();
 		const ping = (): boolean => {
 			if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return false;
 			socket.send(KEEPALIVE_FRAME);
@@ -1575,10 +1594,14 @@ export class ChatClient {
 		};
 		if (!ping()) return;
 		const timer = setInterval(() => {
-			if (ping()) return;
+			if (socket === this.socket && Date.now() - this.lastPongAt > 2 * interval) {
+				this.abandonSocket?.();
+			} else if (ping()) {
+				return;
+			}
 			clearInterval(timer);
 			if (this.keepaliveTimer === timer) this.keepaliveTimer = undefined;
-		}, Math.max(5, seconds) * 1_000);
+		}, interval);
 		this.keepaliveTimer = timer;
 	}
 

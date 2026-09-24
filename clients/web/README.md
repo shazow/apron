@@ -212,7 +212,10 @@ history with `loadRoom` when opened. The UI displays a notice that the demo
 retains roughly the last day (from the worker's `server.ext.demo` hints) and honors server retry delays with jittered
 reconnect backoff. When those hints carry `keepalive_seconds`, the client sends
 `{"method":"ping"}` at that interval, which the worker's runtime answers
-without waking it; it is how the worker tells a vanished peer from a quiet one.
+without waking it; it is how the worker tells a vanished peer from a quiet one,
+and it keeps Cloudflare from dropping an idle socket. A socket that goes two
+intervals without the `{"method":"pong"}` answer is presumed dead and replaced
+through the usual reconnect.
 
 Edits, moves, and deletion use the same `message` request as creation, with an
 existing `message_id`, and resubmit every client field of the latest snapshot

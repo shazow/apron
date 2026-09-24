@@ -484,6 +484,34 @@ it('lists rooms and threads with the connected members, and throttles listing', 
 	} finally { alice.close(); bob.close(); }
 });
 
+it('lists only connected guests as members after others posted and left', async () => {
+	const alice = await connect();
+	const leavers = await Promise.all([connect(), connect(), connect()]);
+	try {
+		const aliceId = await authenticate(alice);
+		const gone: string[] = [];
+		for (const [index, peer] of leavers.entries()) {
+			gone.push((await authenticate(peer)).user_id);
+			peer.send({ id: `post-${index}`, method: 'message', params: { room_id: 'general', body: { text: `leaving ${index}` } } });
+			await until(peer, (frame) => frame.id === `post-${index}`);
+			peer.close();
+		}
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		// A fresh connection sees their messages in history, but not them as members.
+		const fresh = await connect();
+		try {
+			const freshId = await authenticate(fresh);
+			fresh.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 50 } });
+			const senders = (await until(fresh, (frame) => frame.id === 'history')).frame.result.entries.map((entry: { from?: { user_id: string } }) => entry.from?.user_id);
+			expect(senders).toEqual(expect.arrayContaining(gone));
+			fresh.send({ id: 'list', method: 'room_list', params: {} });
+			const members = (await until(fresh, (frame) => frame.id === 'list')).frame.result.rooms[0].members.map((member: { user_id: string }) => member.user_id);
+			expect(members).toEqual(expect.arrayContaining([aliceId.user_id, freshId.user_id]));
+			for (const id of gone) expect(members).not.toContain(id);
+		} finally { fresh.close(); }
+	} finally { alice.close(); }
+});
+
 it('drops a quiet keepalive connection from room_list members and closes it', async () => {
 	const alice = await connect();
 	const bob = await connect();

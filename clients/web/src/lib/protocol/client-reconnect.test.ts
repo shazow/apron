@@ -490,6 +490,33 @@ describe('keepalive', () => {
 		expect(FakeSocket.instances.every((socket) => socket === first || pings(socket) === 0)).toBe(true);
 	});
 
+	it('replaces a socket whose keepalive goes unanswered, and keeps one that answers', async () => {
+		const client = new ChatClient('ws://fake.test/');
+		let snapshot: ClientSnapshot | undefined;
+		client.subscribe((next) => (snapshot = next));
+		client.start();
+		await latest().greet([], { ext: { demo: { keepalive_seconds: 45 } } });
+		const first = latest();
+		// Answered: the connection stays.
+		for (let tick = 0; tick < 4; tick++) {
+			first.receive({ method: 'pong' });
+			vi.advanceTimersByTime(45_000);
+		}
+		expect(snapshot?.status).toBe('connected');
+		expect(FakeSocket.instances).toHaveLength(1);
+
+		// Unanswered for more than two intervals: dropped and reconnected. The
+		// last answer came at 135s; the tick at 225s is exactly two intervals on.
+		vi.advanceTimersByTime(45_000);
+		expect(snapshot?.status).toBe('connected');
+		vi.advanceTimersByTime(45_000);
+		expect(snapshot?.status).toBe('reconnecting');
+		expect(first.readyState).toBe(FakeSocket.CLOSED);
+		vi.advanceTimersByTime(5_000);
+		expect(FakeSocket.instances).toHaveLength(2);
+		client.stop();
+	});
+
 	it('sends nothing to a server that does not ask', async () => {
 		const client = new ChatClient('ws://fake.test/');
 		client.start();
