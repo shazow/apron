@@ -35,6 +35,11 @@
 	/** A thread this viewer created, opened once the server has announced it. */
 	type PendingOpen = { room: string; thread: string };
 
+	/** A thread just chosen: where it lands waits until its first load shows whether older replies remain. */
+	let openingThread = $state<string | undefined>();
+	/** How near the top of a thread reading back starts loading its older replies. */
+	const OLDER_REPLIES_MARGIN_PX = 240;
+
 	/** How long a jump waits for its target to render (a thread's history may still be loading). */
 	const JUMP_WAIT_MS = 4000;
 	/** How long a members listing stays current when the mention picker opens. */
@@ -110,7 +115,7 @@
 	let paneRoom = $derived(activeThread ? threadRoom : activeRoom);
 	let messages = $derived(timelineMessages(paneRoom));
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
-	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames }) : buildRoomTimeline({ messages, threads }));
+	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames, moreReplies: Boolean(threadRoom?.olderAvailable) }) : buildRoomTimeline({ messages, threads }));
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members, paneRoom?.membersAsOf));
 	let typingNames = $derived(snapshot.typing
@@ -219,6 +224,34 @@
 		if (!pending || !session.rooms.some((room) => room.id === pending.thread)) return;
 		pendingOpen = undefined;
 		untrack(() => openDestination(pending.room, pending.thread));
+	});
+
+	// A thread's first page may not fill the pane, leaving nothing to scroll back
+	// with: load older replies until it does or there are none.
+	$effect(() => {
+		const room = threadRoom;
+		void timeline.length;
+		if (!room?.loaded || !room.olderAvailable || room.loadingOlder || !messageScroll) return;
+		untrack(() => {
+			tick().then(() => {
+				if (messageScroll && messageScroll.scrollHeight <= messageScroll.clientHeight + OLDER_REPLIES_MARGIN_PX) void loadOlderReplies();
+			});
+		});
+	});
+
+	// A thread opens at its intro, unless only its newest replies are loaded: then it
+	// opens at those, like a room, and reading back loads the older ones.
+	$effect(() => {
+		const room = threadRoom;
+		if (!openingThread || !room?.loaded) return;
+		if (room.id !== openingThread) {
+			openingThread = undefined;
+			return;
+		}
+		openingThread = undefined;
+		if (!room.olderAvailable) return;
+		stickToBottom = true;
+		untrack(() => requestAnimationFrame(() => { if (stickToBottom) scrollToLatest(); }));
 	});
 
 	// Threads don't recover with their parent: the open one loads its own history,
@@ -413,6 +446,7 @@
 		setDestination(activeRoom.id, thread);
 		stickToBottom = false;
 		seenCount = messages.length;
+		openingThread = thread;
 		requestAnimationFrame(() => { if (messageScroll) messageScroll.scrollTop = 0; });
 		// A failed load stays failed until the thread is opened again.
 		if (session.rooms.find((room) => room.id === thread)?.recoveryError) loadThread(thread);
@@ -655,9 +689,33 @@
 			return;
 		}
 		const atBottom = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 96;
+		if (top < OLDER_REPLIES_MARGIN_PX) void loadOlderReplies();
 		if (!atBottom && stickToBottom) seenCount = messages.length;
 		stickToBottom = atBottom;
 		floatDay(atBottom);
+	}
+
+	/**
+	 * A thread opens on its newest replies; reading back near the top loads the
+	 * page before them. The reader's place is kept: whatever was on screen stays
+	 * put while the older replies land above it.
+	 */
+	async function loadOlderReplies(): Promise<void> {
+		const room = threadRoom;
+		if (!client || !room || !messageScroll || !room.olderAvailable || room.loadingOlder) return;
+		const scroller = messageScroll;
+		const height = scroller.scrollHeight;
+		const top = scroller.scrollTop;
+		try {
+			await client.loadOlder(room.id);
+		} catch {
+			return; // The next scroll back tries again.
+		}
+		await tick();
+		if (messageScroll !== scroller || stickToBottom) return;
+		// Where the browser anchored the view itself this is already the position.
+		scroller.scrollTop = top + (scroller.scrollHeight - height);
+		lastScrollTop = scroller.scrollTop;
 	}
 
 	/** While you scroll back, the day you're reading floats at the top; it fades once you stop. */
@@ -831,6 +889,7 @@
 				threadTitle={activeThread ? threadTitle(activeThread) : undefined}
 				typing={typingNames}
 				replyCount={activeThread ? threadReplyCount : undefined}
+				moreReplies={Boolean(activeThread && threadRoom?.olderAvailable)}
 				canEditThread={Boolean(activeThread && session.canManageRooms && activeThreadEntry)}
 				editorOpen={threadEditorOpen}
 				editDisabled={!canCompose}
@@ -892,7 +951,7 @@
 						{#if item.kind === 'date'}
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.label}</span></div>
 						{:else if item.kind === 'replies'}
-							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count} {item.count === 1 ? 'reply' : 'replies'}</span></div>
+							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count}{item.more ? '+' : ''} {item.count === 1 && !item.more ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
 							<ThreadCard entry={item.entry} onopen={() => chooseThread(item.entry.id)} />
 						{:else if item.kind === 'renamed'}

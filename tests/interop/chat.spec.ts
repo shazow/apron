@@ -139,6 +139,56 @@ test.describe('chat protocol interoperability', () => {
 		expect(await preview.evaluate((node) => (node as HTMLElement).innerText)).toBe(text);
 	});
 
+	test('opens a long thread on its newest replies and loads older ones on scrolling back', async ({ browser }) => {
+		const owner = await browser.newContext();
+		const reader = await browser.newContext();
+		try {
+			const pageA = await owner.newPage();
+			await openChat(pageA);
+			const token = `older-${Date.now()}`;
+			await sendMessage(pageA, token);
+			const threadId = await startThread(pageA, await waitForMessage(pageA, token));
+			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
+			// More replies than one page (50), posted before the reader opens the thread.
+			await pageA.evaluate(async ({ room, prefix }) => {
+				const socket = new WebSocket(new URL('/ws', location.href).href.replace(/^http/, 'ws'));
+				await new Promise<void>((resolve, reject) => {
+					let sent = 0;
+					const next = () => socket.send(JSON.stringify({ id: `r${sent}`, method: 'message', params: { room_id: room, body: { text: `${prefix} reply ${sent}` } } }));
+					socket.onerror = () => reject(new Error('socket failed'));
+					socket.onmessage = (event) => {
+						const frame = JSON.parse(event.data);
+						if (frame.method === 'server') socket.send(JSON.stringify({ id: 'a1', method: 'auth', params: { scheme: 'guest' } }));
+						if (frame.id === 'a1') next();
+						if (typeof frame.id === 'string' && frame.id.startsWith('r')) {
+							sent += 1;
+							if (sent < 70) next();
+							else { socket.close(); resolve(); }
+						}
+					};
+				});
+			}, { room: threadId, prefix: token });
+
+			const pageB = await reader.newPage();
+			await openChat(pageB);
+			await pageB.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`).click();
+			const header = pageB.locator('.ap-roomhead-sub');
+			const reply = (index: number) => pageB.locator('article[data-message-id]').filter({ hasText: new RegExp(`${token} reply ${index}(?!\\d)`) });
+			// Only the newest page is loaded, so the thread opens at its latest reply.
+			await expect(header).toHaveText('50+ replies');
+			await expect(reply(69)).toBeInViewport();
+			await expect(reply(0)).toHaveCount(0);
+			// Reading back to the top loads the rest; the reply in view stays in view.
+			const list = pageB.getByTestId('message-list');
+			await list.evaluate((node) => { node.scrollTop = 0; });
+			await expect(header).toHaveText('70 replies');
+			await expect(reply(0)).toHaveCount(1);
+			await expect(reply(20)).toBeInViewport();
+		} finally {
+			await Promise.all([owner.close(), reader.close()]);
+		}
+	});
+
 	test('shows the jump prompt only when the latest timeline item is outside the viewport', async ({ page }) => {
 		await page.setViewportSize({ width: 900, height: 700 });
 		await openChat(page);

@@ -189,15 +189,16 @@ client's public API.
 | `createRoom: {as, parent_room_id?, title?, intro_message_id?}` | Create a room; with `parent_room_id` it is a thread. |
 | `updateRoom: {as, room, title?, intro_message_id?}` | Patch a room's metadata: a present key sets the value (`null` clears it), an absent key keeps the current value. |
 | `loadRoom: {as, room}` | Open a thread room (a room with `parent_room_id`): load its history as its own room. |
+| `loadOlder: {as, room}` | Load the page of a thread room's history just before what `loadRoom` loaded. |
 | `disconnect: true` | Close the transport; subsequent frames go to a fresh connection. |
 | `expect: state` | Wait for the given keys of the session state (bounded deadline). |
 
-Each operation step (`send` through `loadRoom`) tracks its outcome under its
+Each operation step (`send` through `loadOlder`) tracks its outcome under its
 `as` label in `operations`: `pending` when invoked, then `fulfilled` or
 `rejected`. Mutations settle on the reply to their request: a `result`
 fulfills, an `error` rejects. They never wait for a broadcast; the broadcast
-may arrive before or after the result. `loadRoom` fulfills when its last page
-(`more: false`) is applied and rejects on an error or invalid page. Operation and capture labels are unique
+may arrive before or after the result. `loadRoom` and `loadOlder` fulfill when
+their page is applied and reject on an error or invalid page. Operation and capture labels are unique
 within a variant.
 
 ### Request matching
@@ -289,10 +290,14 @@ starts without it.
   A failure is not retried on a timer (the `retry_after` variant's
   `data.retry_after` is not waited on).
 - **Thread rooms** never recover automatically. `loadRoom` loads one with
-  H = its known head when invoked, `after` = F, or
-  `max(T + 1, F)` given the thread's own checkpoint T from an earlier
-  `loadRoom`, kept across a lost connection. Pages apply as they arrive; if F overtakes
-  `after`, continue from F. T advances to each page's `last_id` and to H at
+  H = its known head when invoked. Without a checkpoint it requests only the
+  newest page, `{room_id, before: H}` with no `after`; T becomes H, and the
+  page's `first_id` (with `more: true`) marks where older records remain.
+  `loadOlder` then requests `{room_id, before: first_id - 1}`, one page at a
+  time, until a page has `more: false` or F passes that position. With a
+  checkpoint T, kept across a lost connection, `loadRoom` pages forward from
+  `max(T + 1, F)` to H: pages apply as they arrive; if F overtakes `after`,
+  continue from F; T advances to each page's `last_id` and to H at
   `more: false`. Live records for the thread apply directly.
 
 The fixtures assert no state while a recovery has requests in flight; they
@@ -341,7 +346,7 @@ no sleeps, timers, or DOM selectors.
 | `history-boundaries.json` | inclusive bound with eviction, bound overtaking a recovery by `room` frame or by page, sparse IDs, `null` bounds (empty log, expired cache, becoming retained, page head) |
 | `history-recovery-failure.json` | a head above the checkpoint resumes from `C + 1`; an error or invalid page keeps partial and buffered state; the next `room` frame rebuilds |
 | `reconnect-history.json` | new guest identity after reconnect; recovery resumes from the kept checkpoint, across message and reaction records |
-| `thread-recovery.json` | thread room recovered only by `loadRoom`, as its own room; move in both rooms' logs; interleaved with room recovery |
+| `thread-recovery.json` | thread room loaded only by `loadRoom`, newest page first and an older page by `loadOlder`, as its own room; move in both rooms' logs; interleaved with room recovery |
 
 The Node adapter is [`tests/interop/wire.spec.ts`](../../interop/wire.spec.ts).
 Its [`wire-peer.go`](../../interop/wire-peer.go) utility only transports frames;

@@ -85,6 +85,13 @@ export interface RoomSnapshot {
 	loaded: boolean;
 	/** A `loadRoom` request is in flight. */
 	loading: boolean;
+	/**
+	 * A thread loaded newest-first has older records to fetch with
+	 * `loadOlder`; its message count is a lower bound until they are.
+	 */
+	olderAvailable?: boolean;
+	/** A `loadOlder` request is in flight. */
+	loadingOlder?: boolean;
 	/** Your read cursor in this room (Appendix D.1), as the server last reported or you advanced it. */
 	readMessageId?: string;
 	/** The room's members from the latest `room_list` that listed it (Appendix C). */
@@ -258,6 +265,13 @@ interface RoomState {
 	 * loaded yet, so it reports unloaded until the next `loadRoom` catches up.
 	 */
 	resumed?: boolean;
+	/**
+	 * A thread loaded newest-first: the `first_id` of its oldest loaded page,
+	 * below which `loadOlder` pages backward while `hasOlder`.
+	 */
+	olderBefore?: string;
+	hasOlder?: boolean;
+	loadingOlder?: boolean;
 	loadGeneration: number;
 	loading: boolean;
 	/** The published timeline; rebuilt from the store when dirty and not recovering. */
@@ -322,6 +336,8 @@ type ValidHistoryResponse = JsonObject & {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
+/** A thread opens on its newest page this size; older pages load as the reader scrolls back. */
+const THREAD_PAGE_SIZE = 50;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 /** How long a typing indicator this client sends should persist without a refresh, in the `activity` frame's `typing` seconds. */
 const TYPING_TIMEOUT_S = 15;
@@ -648,6 +664,8 @@ export class ChatClient {
 					...(room.recoveryError ? { recoveryError: room.recoveryError } : {}),
 					loaded: !history || (thread ? room.loadCheckpoint !== undefined && !room.resumed : room.checkpoint !== undefined),
 					loading: room.loading,
+					...(this.hasOlderRecords(room) ? { olderAvailable: true } : {}),
+					...(room.loadingOlder ? { loadingOlder: true } : {}),
 					...(this.readCursor(room.id) !== undefined ? { readMessageId: this.readCursor(room.id) } : {}),
 					...this.membersOf(room.id)
 				};
@@ -1332,7 +1350,23 @@ export class ChatClient {
 		room.recoveryError = undefined;
 		this.emit();
 		try {
-			let checkpoint = room.loadCheckpoint;
+			if (room.loadCheckpoint === undefined) {
+				// First load: only the newest page. Everything up to H is then
+				// covered for live delivery, and older pages load on demand.
+				const result = await this.enqueueRequest('history', { room_id: room.id, before: head, limit: THREAD_PAGE_SIZE }, {
+					visible: false, allowBeforeAuth: false
+				}).promise;
+				if (stale()) return;
+				if (!validHistoryMetadata(result)) throw new Error('Invalid history response');
+				this.observeHistoryResponse(room, result);
+				if (stale()) return;
+				this.applyPage(room, result);
+				this.noteOlderPage(room, result);
+				room.loadCheckpoint = head;
+				room.resumed = false;
+				return;
+			}
+			let checkpoint: string | undefined = room.loadCheckpoint;
 			let after: string | undefined = maxDefined(checkpoint === undefined ? undefined : increment(checkpoint), room.floor) ?? FIRST_LOG_ID;
 			while (after === undefined || compareLogIds(after, head) <= 0) {
 				const result = await this.enqueueRequest('history', historyParams(room.id, after, head), {
@@ -1370,6 +1404,47 @@ export class ChatClient {
 			if (!stale()) room.loading = false;
 			this.emit();
 		}
+	}
+
+	/**
+	 * Loads the page of a thread's history just before what is loaded, when a
+	 * newest-first load left older records (Appendix A, backward paging).
+	 */
+	async loadOlder(roomId: string): Promise<void> {
+		const room = this.rooms.get(roomId);
+		if (!room || room.loadingOlder || !this.hasOlderRecords(room) || room.olderBefore === undefined) return;
+		const generation = room.loadGeneration;
+		const stale = () => this.rooms.get(room.id) !== room || room.loadGeneration !== generation;
+		room.loadingOlder = true;
+		this.emit();
+		try {
+			const before = decrement(room.olderBefore);
+			const result = await this.enqueueRequest('history', { room_id: room.id, before, limit: THREAD_PAGE_SIZE }, {
+				visible: false, allowBeforeAuth: false
+			}).promise;
+			if (stale()) return;
+			if (!validHistoryMetadata(result)) throw new Error('Invalid history response');
+			this.observeHistoryResponse(room, result);
+			if (stale()) return;
+			this.applyPage(room, result);
+			this.noteOlderPage(room, result);
+		} finally {
+			if (!stale()) room.loadingOlder = false;
+			this.emit();
+		}
+	}
+
+	/** Records where a backward page ended: its `first_id` bounds the next one. */
+	private noteOlderPage(room: RoomState, result: ValidHistoryResponse): void {
+		const first = isLogId(result.first_id) ? result.first_id : undefined;
+		if (first !== undefined) room.olderBefore = first;
+		room.hasOlder = result.more && first !== undefined;
+	}
+
+	/** Older records remain above the room's floor. */
+	private hasOlderRecords(room: RoomState): boolean {
+		if (!room.hasOlder || room.olderBefore === undefined) return false;
+		return room.floor === undefined || compareLogIds(room.olderBefore, room.floor) > 0;
 	}
 
 	private connectNow(): void {
@@ -2091,6 +2166,7 @@ export class ChatClient {
 		this.retainedRooms.delete(roomId);
 		// Anything in flight was cancelled with the old connection.
 		room.loading = false;
+		room.loadingOlder = false;
 		room.recoveryError = undefined;
 		// A thread's checkpoint predates the gap; the next load catches up from it.
 		if (room.loadCheckpoint !== undefined) room.resumed = true;
@@ -2512,6 +2588,10 @@ function typingKey(room: string, userId: string): string {
 
 function increment(id: string): string {
 	return (BigInt(id) + 1n).toString();
+}
+
+function decrement(id: string): string {
+	return (BigInt(id) - 1n).toString();
 }
 
 function maxDefined(a: string | undefined, b: string | undefined): string | undefined {
