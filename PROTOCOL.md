@@ -71,8 +71,8 @@ the sender.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
-- There is no application-level heartbeat; on WebSocket, liveness uses
-  ping/pong.
+- Servers that need to know whether clients are still there ask them to
+  `ping` (§1.3).
 
 ### 1.1 Envelope and replies
 
@@ -152,6 +152,42 @@ Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated `user_id`
 Retention across reconnects and restarts is implementation-defined.
 Request `id`s sent before authentication are connection-scoped;
 authentication MUST execute on each connection.
+
+### 1.3 Liveness
+
+A server that wants to know whether its clients are still there puts `ping`
+in its `server` frame (§3.1): how often, in seconds, clients ping it.
+
+```jsonc
+// <- in the server frame
+"ping": 30
+// -> every 30 seconds, exactly these bytes
+{"method":"ping"}
+// <-
+{"method":"pong"}
+```
+
+- Clients that understand `ping` send it on that schedule for as long as the
+  connection is open, whatever else they send, so servers track only pings.
+  Sending exactly these bytes lets a server answer without parsing, such as
+  with a Cloudflare Durable Object's WebSocket auto-response.
+- Servers answer every `ping` with `pong`, including before authentication,
+  whatever its encoding. Clients send `ping` only to servers that advertise
+  it; others ignore it as an unknown notification.
+- A client that has received nothing since its last `ping` by the time the
+  next is due SHOULD treat the connection as dead and reconnect.
+- A connection that has pinged and then stops is **absent**: nothing is
+  running on the other end, or its page is frozen or suspended. Servers pick
+  how long a silence counts; browsers can delay a background tab's timers to
+  once a minute, so they SHOULD allow at least two intervals plus a minute. A
+  connection that has never pinged is presumed present.
+- What absence means is server policy. A server whose users come and go MAY
+  close absent connections and treat their users as departed. A server with
+  push (Appendix F) MAY keep them open and wake their users as if they had
+  no connection.
+- On WebSocket, servers MAY also send ping frames. They detect a dead
+  transport, but not an absent client: browsers can answer them for a frozen
+  page.
 
 ---
 
@@ -245,6 +281,8 @@ frame, unprompted. There is no client hello.
 - `ext`: optional extension metadata (§3.5), such as implementation limits.
 - `push`: optional object of supported push kinds; its presence enables push
   (Appendix F).
+- `ping`: optional positive integer, the seconds between client pings; its
+  presence asks clients to ping (§1.3).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
@@ -284,7 +322,8 @@ Clients MUST NOT supply `user_id`: identity is server-assigned. `client` is
 an optional free-form implementation string for debugging.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
-other requests get `denied` and other notifications are ignored.
+other requests get `denied` and other notifications except `ping` (§1.3) are
+ignored.
 
 ### 3.3 Identity
 
@@ -778,8 +817,12 @@ Discovery and membership:
         "parent_room_id": "general", "title": "Deploy",
         "intro_message": {...},
         "latest_log_id": "1724803400000",
-        "members": [{"user_id": "alice", "name": "Alice", "avatar": "https://..."}]
+        "members": [{"user_id": "alice"}, {"user_id": "bob"}]
       }
+    ],
+    "users": [
+      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
+      {"user_id": "bob", "name": "Bob"}
     ]
   }
 }
@@ -793,6 +836,11 @@ Discovery and membership:
   `members`, a list of user objects (§3.3). With `parent_room_id` it lists
   that room's threads, including ones never announced. Listing a room does
   not start deliveries. Servers MAY omit or truncate `members` by policy.
+- `users` is an optional list of user objects in the result, each user
+  once. Servers MAY send `members` bare, as `user_id` only, and put the
+  complete user objects in `users`, so a user in many rooms is sent once.
+  Clients keep them like any user object (§3.3) and fill in members from
+  them; a member with no complete object anywhere renders by `user_id`.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
   ones announced to their connection (§3.4).
 - Posting in a visible room the user has not joined MAY join them to it:
@@ -992,7 +1040,8 @@ show a placeholder. On success the server sets `url` to the file it hosts.
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
 the user's name.
 
-- Servers send `avatar` in `you`, `user`, and `members`, not in every `from`.
+- Servers send `avatar` in `you`, `user`, and `room_list`'s `members` or
+  `users` (Appendix C), not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through an
   upload (Appendix J.4).
@@ -1035,6 +1084,8 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   `log_id`, so clients render it but never install it as a snapshot. `body`
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
+- Suggested convention: wake users whose connections are all absent (§1.3),
+  not only users with none.
 
 ```json
 {
