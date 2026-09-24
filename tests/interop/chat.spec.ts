@@ -650,6 +650,10 @@ test.describe('chat protocol interoperability', () => {
 			await sendMessage(pageA, `${token}-one`);
 			await sendMessage(pageA, `${token}-two`);
 			await expect(pageB).toHaveTitle('(2) Apron');
+			// Short times carry the exact local time on hover, the grouped follower's too.
+			const exact = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+			await expect((await waitForMessage(pageB, `${token}-intro`)).locator('.ap-msg-meta time')).toHaveAttribute('title', exact);
+			await expect((await waitForMessage(pageB, `${token}-two`)).locator('time.ap-msg-hovertime')).toHaveAttribute('title', exact);
 			await pageB.getByTestId('jump-button').click();
 			await expect(pageB).toHaveTitle('Apron');
 		} finally {

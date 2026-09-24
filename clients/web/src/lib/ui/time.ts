@@ -15,7 +15,6 @@ export function eventMillis(event: MessageRecord): number | undefined {
 
 // Formats follow the browser's locale and its 12/24-hour preference.
 const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
-const fullFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' });
 const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 const dayYearFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -37,10 +36,13 @@ export function idTimeCompact(id: string): string {
 	return timeFormat.formatToParts(millis).filter((part) => part.type !== 'dayPeriod').map((part) => part.value).join('').trim();
 }
 
-/** The full local date and time, for a timestamp's tooltip. */
+/** The exact local date and time, `YYYY-MM-DD HH:MM:SS`, for a timestamp's tooltip. */
 export function idDateTime(id: string): string {
 	const millis = idMillis(id);
-	return millis ? fullFormat.format(millis) : '';
+	if (!millis) return '';
+	const date = new Date(millis);
+	const pad = (value: number) => String(value).padStart(2, '0');
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 /** A `<time datetime>` value, or undefined when the ID carries no time. */

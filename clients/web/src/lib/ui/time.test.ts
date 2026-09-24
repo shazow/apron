@@ -9,7 +9,10 @@ describe('timestamps', () => {
 		expect(idTime(id)).toBe(expected);
 		expect(idTimeCompact(id)).not.toMatch(/[AP]\.?M\.?/i);
 		expect(idTimeCompact(id)).toMatch(/\d{1,2}.\d{2}/);
-		expect(idDateTime(id)).toMatch(/2026/);
+		const local = new Date(Number(id));
+		const pad = (value: number) => String(value).padStart(2, '0');
+		expect(idDateTime(id)).toBe(`${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())} ${pad(local.getHours())}:${pad(local.getMinutes())}:00`);
+		expect(idDateTime(String(Date.UTC(2026, 0, 2, 3, 4, 5)))).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:05$/);
 		expect(idIso(id)).toBe('2026-09-14T15:04:00.000Z');
 	});
 
