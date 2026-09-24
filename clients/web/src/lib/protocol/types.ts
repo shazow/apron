@@ -138,6 +138,8 @@ export interface DemoParams extends JsonObject {
 	registered_posts_per_minute?: number;
 	/** Send `{"method":"ping"}` this often to stay listed as connected. */
 	keepalive_seconds?: number;
+	/** `false` when every room is joined for good and `room_leave` is always denied. */
+	room_leave?: boolean;
 }
 
 /** Delivery fields of a `room` frame (§3.4): this client's view, not logged. */

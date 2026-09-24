@@ -834,7 +834,7 @@
 				canEditThread={Boolean(activeThread && session.canManageRooms && activeThreadEntry)}
 				editorOpen={threadEditorOpen}
 				editDisabled={!canCompose}
-				canLeave={session.canManageRooms && Boolean(paneRoom)}
+				canLeave={session.canLeaveRooms && Boolean(paneRoom)}
 				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)} onleave={leavePane}
 			/>
 			{#if threadEditorOpen && activeThreadEntry}

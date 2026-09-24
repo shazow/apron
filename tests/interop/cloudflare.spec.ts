@@ -256,6 +256,8 @@ test('Worker leaves typing off, lists rooms, colors guest avatars by user_id, an
 		await expect(pageB.getByTestId('room-list').locator('[data-room="general"]')).toBeVisible();
 		await pageB.waitForTimeout(500);
 		await expect(pageB.getByTestId('browse-rooms')).toHaveCount(0);
+		// Rooms are joined for good on the demo, so Leave is not offered.
+		await expect(pageB.getByTestId('leave-room')).toHaveCount(0);
 		// Placeholder avatars take their hue from the user_id, so two guests differ.
 		const hue = (page: typeof pageA) => page.locator('.ap-profile-me .ap-avatar').first().evaluate((element) => (element as HTMLElement).style.getPropertyValue('--avatar-hue'));
 		const [hueA, hueB] = [await hue(pageA), await hue(pageB)];

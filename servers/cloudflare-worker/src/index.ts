@@ -674,6 +674,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 						room_list_per_minute: limits.roomListRequestsPerUserMinute,
 						// Send KEEPALIVE_REQUEST this often to stay listed as connected.
 						keepalive_seconds: limits.keepaliveSeconds,
+						// Every room is joined for good: `room_leave` is always denied.
+						room_leave: false,
 						// With `activity`, typing is relayed; read cursors are neither kept nor relayed.
 						...(this.config.activityEnabled ? { activity_per_minute: limits.activityBroadcastsPerUserMinute } : {}),
 					},
