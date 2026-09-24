@@ -435,6 +435,36 @@ func TestStreamsGrowLiveThenKeepTheirText(t *testing.T) {
 	}
 }
 
+// A finished stream write leaves its keep-alive connection usable: a live
+// stream read next on the same connection follows the stream.
+func TestStreamWriteConnectionCanReadAStream(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	a := dialTestClient(t, httpServer, "a", false)
+	result := a.result(t, "message", "streams", map[string]any{"room_id": "general", "body": map[string]any{
+		"embeds": []any{map[string]any{"kind": "stream"}, map[string]any{"kind": "stream"}},
+	}})
+	written := result["embeds"].([]any)
+	live := embedsOf(t, a.notification(t, "message"))
+	// One connection carries the finished write and then the read.
+	client := &http.Client{Transport: &http.Transport{MaxConnsPerHost: 1}}
+	response, err := client.Post(written[0].(map[string]any)["write_url"].(string), "text/plain", strings.NewReader("done"))
+	if err != nil || response.StatusCode != http.StatusNoContent {
+		t.Fatalf("first stream write: %v %v", response, err)
+	}
+	response.Body.Close()
+	reader, err := client.Get(live[1]["url"].(string))
+	if err != nil || reader.StatusCode != http.StatusOK {
+		t.Fatalf("stream reader: %v %v", reader, err)
+	}
+	defer reader.Body.Close()
+	if status, _, _ := httpDo(t, http.MethodPut, written[1].(map[string]any)["write_url"].(string), strings.NewReader("second"), "text/plain"); status != http.StatusNoContent {
+		t.Fatalf("second stream write: %d", status)
+	}
+	if got, _ := io.ReadAll(reader.Body); string(got) != "second" {
+		t.Fatalf("reader on the write's connection got %q", got)
+	}
+}
+
 func TestSavingWithoutAStreamEndsIt(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	a := dialTestClient(t, httpServer, "a", false)

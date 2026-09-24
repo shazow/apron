@@ -512,18 +512,25 @@ func (s *Server) writeStream(w http.ResponseWriter, r *http.Request, e *embedSta
 			}
 		}
 	}()
+	bodyEnded := false
 	for open := true; open; {
 		select {
 		case chunk, ok := <-chunks:
+			bodyEnded = !ok
 			open = ok && e.stream.write(chunk)
 		case <-e.stream.finished:
 			open = false
 		}
 	}
 	e.stream.end()
-	// Unblock a body read still waiting on the writer, and let it finish.
-	_ = controller.SetReadDeadline(time.Now())
-	for range chunks {
+	if !bodyEnded {
+		// Unblock a body read still waiting on the writer, and let it finish.
+		// The expired deadline also cancels the connection's context, so the
+		// connection must not serve another request.
+		w.Header().Set("Connection", "close")
+		_ = controller.SetReadDeadline(time.Now())
+		for range chunks {
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
