@@ -126,9 +126,16 @@ function asCredentialResponse(value: unknown, maxBytes: number): RegistrationRes
 	return { ...value, id } as RegistrationResponseJSON | AuthenticationResponseJSON;
 }
 
-function hasDiscoverableCredential(response: RegistrationResponseJSON | AuthenticationResponseJSON): boolean {
+/**
+ * Discoverability is enforced by `residentKey: "required"` in the creation
+ * options: a conforming client fails the ceremony rather than mint a
+ * non-discoverable credential. The `credProps` extension output is optional
+ * and many clients (Android, several password managers) omit it or leave
+ * `rk` unset, so only an explicit `rk: false` is treated as a refusal.
+ */
+function reportsNonDiscoverableCredential(response: RegistrationResponseJSON | AuthenticationResponseJSON): boolean {
 	if (!isObject(response.clientExtensionResults) || !isObject(response.clientExtensionResults.credProps)) return false;
-	return response.clientExtensionResults.credProps.rk === true;
+	return response.clientExtensionResults.credProps.rk === false;
 }
 
 function toWebAuthnCredential(record: StoredCredential): WebAuthnCredential {
@@ -223,7 +230,7 @@ export class WebAuthnService {
 			throw new AuthError("Passkey credential is invalid");
 		}
 		if (challenge.action === "register") {
-			if (!hasDiscoverableCredential(response as RegistrationResponseJSON)) throw new AuthError("Passkey registration requires a discoverable credential");
+			if (reportsNonDiscoverableCredential(response as RegistrationResponseJSON)) throw new AuthError("Passkey registration requires a discoverable credential");
 			if (!challenge.userId || !challenge.userHandle || !challenge.userName) throw new AuthError("Passkey registration challenge is incomplete");
 			let verified: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
 			try {

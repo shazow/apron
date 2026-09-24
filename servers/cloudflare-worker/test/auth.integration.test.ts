@@ -56,16 +56,21 @@ it('verifies signed ceremonies against SQLite identities and rejects challenge, 
 		const clientData = (challenge: ChallengeRecord, type: string, override: Record<string, string> = {}) => encode(JSON.stringify({
 			type, challenge: challenge.challenge, origin: challenge.origin, ...override,
 		}));
-		const registration = async (challenge: ChallengeRecord) => {
+		const registration = async (challenge: ChallengeRecord, clientExtensionResults: Record<string, unknown> = { credProps: { rk: true } }) => {
 			const authData = join(await hash(encode(challenge.rpId)), new Uint8Array([0x45, 0, 0, 0, 0]), new Uint8Array(16), new Uint8Array([0, credentialId.length]), credentialId, cose);
 			return { id: b64(credentialId), rawId: b64(credentialId), type: 'public-key', response: {
 				clientDataJSON: b64(clientData(challenge, 'webauthn.create')),
 				attestationObject: b64(cbor(new Map<string, any>([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData]]))),
-			}, clientExtensionResults: { credProps: { rk: true } } };
+			}, clientExtensionResults };
 		};
 		const begun = await service.begin('register', 'https://chat.example.test', now, { user_id: 'guest_original', name: 'Guest', tier: 'anonymous' });
 		expect(begun.publicKey.authenticatorSelection).toMatchObject({ residentKey: 'required', requireResidentKey: true, userVerification: 'required' });
-		const registered = await service.finish(begun.challenge, begun.challenge.challengeId, await registration(begun.challenge), repository, {
+		const refused = await service.begin('register', 'https://chat.example.test', now);
+		await expect(service.finish(refused.challenge, refused.challenge.challengeId, await registration(refused.challenge, { credProps: { rk: false } }), repository, {
+			now, ipKey: 'fixture-ip',
+		})).rejects.toThrow('discoverable');
+		// Many clients (Android, password managers) omit credProps; residentKey: "required" already enforces discoverability.
+		const registered = await service.finish(begun.challenge, begun.challenge.challengeId, await registration(begun.challenge, {}), repository, {
 			now, ipKey: 'fixture-ip', identity: { user_id: 'guest_original', name: 'Guest', tier: 'anonymous' },
 		});
 		expect(registered.identity.tier).toBe('registered');
