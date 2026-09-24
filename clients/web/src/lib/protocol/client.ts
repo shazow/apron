@@ -1,4 +1,4 @@
-import { requestPasskey } from './webauthn';
+import { conditionalPasskeysAvailable, immediatePasskeysAvailable, requestPasskey, type PasskeyMediation } from './webauthn';
 import { writeEmbed } from './embeds';
 import {
 	ProtocolStore,
@@ -134,6 +134,8 @@ export interface ClientSnapshot {
 	authenticated: boolean;
 	authBusy?: boolean;
 	passkeySession?: boolean;
+	/** This browser has signed in to this server with a passkey before. */
+	passkeyHint?: boolean;
 	error?: string;
 	server?: ServerParams;
 	/** Which optional features the current `server` frame advertises (§4). */
@@ -320,6 +322,11 @@ const TYPING_REFRESH_MS = 12_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
+/** Passkey autofill re-issues its login challenge this long before the server's `timeout`. */
+const AUTOFILL_REFRESH_MARGIN_MS = 10_000;
+const AUTOFILL_MIN_REFRESH_MS = 15_000;
+/** Assumed challenge lifetime when the server's options carry no `timeout`. */
+const AUTOFILL_CHALLENGE_MS = 120_000;
 /** The lowest possible log_id: the `after` bound when no lower bound is known. */
 const FIRST_LOG_ID = '1';
 const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'activity', 'embed:upload', 'embed:stream'];
@@ -367,6 +374,9 @@ export class ChatClient {
 	private authenticated = false;
 	private authRequested = false;
 	private passkeyAbort?: AbortController;
+	/** A pending autofill (conditional) login; `done` settles once it lets go of the browser. */
+	private autofill?: { controller: AbortController; done: Promise<void> };
+	private passkeyHint = false;
 	// Keep bearer credentials in memory, scoped to this server and mounted client.
 	private sessionToken?: string;
 	private passkeyRequired = false;
@@ -375,6 +385,8 @@ export class ChatClient {
 	private server?: ServerParams;
 	private you?: Identity;
 	private displayName = '';
+	/** The `me` request `handleAuth` sent for `displayName`, if any. */
+	private authNameRequest?: OperationHandle;
 	private status: ConnectionStatus = 'idle';
 	private error?: string;
 	private showReconnectDivider = false;
@@ -389,6 +401,7 @@ export class ChatClient {
 	constructor(private serverUrl: string, displayName = '') {
 		this.displayName = displayName.trim();
 		this.loadStoredSession();
+		this.passkeyHint = this.loadPasskeyHint();
 	}
 
 	static fromOptions(options: ChatClientOptions): ChatClient {
@@ -552,6 +565,7 @@ export class ChatClient {
 			authenticated: this.authenticated,
 			authBusy: Boolean(this.passkeyAbort),
 			passkeySession: Boolean(this.registeredSession && this.authenticated),
+			passkeyHint: this.passkeyHint,
 			error: this.error,
 			server: this.server,
 			capabilities: capabilitiesOf(this.server),
@@ -634,8 +648,19 @@ export class ChatClient {
 		return you === undefined ? [] : [...(this.store.reactionSet(messageId, you)?.emojis ?? [])];
 	}
 
-	async usePasskey(action: 'register' | 'login'): Promise<void> {
+	/**
+	 * Runs a passkey ceremony. A `name` becomes the display name once the
+	 * ceremony succeeds, so a handle a guest could not set is applied as soon as
+	 * the session is registered. Resolves with the `me` request sent for the
+	 * display name after authenticating, if any, so callers can show what the
+	 * server kept.
+	 */
+	async usePasskey(
+		action: 'register' | 'login', name?: string, mediation: PasskeyMediation = 'modal'
+	): Promise<OperationHandle | undefined> {
 		if (!this.server?.auth.includes('webauthn')) throw new Error('This server does not support passkeys');
+		// A pending autofill holds the browser's credential request; release it first.
+		await this.stopAutofill();
 		if (this.passkeyAbort || this.authRequested || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
 		if (this.status !== 'connected') throw new Error('Connect to the server first');
 		const controller = new AbortController();
@@ -643,23 +668,157 @@ export class ChatClient {
 		const connection = this.connectionId;
 		this.emit();
 		try {
-			const begin = { scheme: 'webauthn', action, step: 'begin' };
-			const options = await this.passkeyRequest(begin);
-			const challengeId = typeof options.challenge_id === 'string' && options.challenge_id.length > 0
-				? options.challenge_id : undefined;
-			if (!challengeId) throw new Error('Passkey challenge was missing; try again');
-			if (!isJsonObject(options.public_key)) throw new Error('Passkey options were missing; try again');
-			const credential = await requestPasskey(action, options, controller.signal);
+			const begun = await this.passkeyBegin(action);
+			const credential = await requestPasskey(action, begun.options, controller.signal, mediation);
 			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
-			const finish = { scheme: 'webauthn', action, step: 'finish', challenge_id: challengeId, credential };
-			const result = await this.passkeyRequest(finish);
-			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
-			this.cancelPasskey();
-			if (!this.handleAuth(result, true)) throw new Error('Server authentication response did not include an identity');
+			return await this.passkeyFinish(action, begun.challengeId, credential, controller, connection, name);
 		} finally {
 			if (this.passkeyAbort === controller) this.cancelPasskey();
 			this.emit();
 		}
+	}
+
+	/**
+	 * What `continueWithPasskey` tries first: an `immediate` login where the
+	 * browser supports it, otherwise a login when this browser has used a
+	 * passkey here before, and a registration when it has not.
+	 */
+	async passkeyPlan(): Promise<'immediate' | 'login' | 'register'> {
+		if (await immediatePasskeysAvailable()) return 'immediate';
+		return this.passkeyHint ? 'login' : 'register';
+	}
+
+	/**
+	 * One "sign in or create" action. Browsers deliberately don't reveal whether
+	 * a passkey exists without asking, so this signs in when `immediate`
+	 * mediation finds one on this device and registers a new passkey when it
+	 * doesn't; elsewhere it follows `passkeyPlan`. `name` is applied as with
+	 * `usePasskey`.
+	 */
+	async continueWithPasskey(name?: string): Promise<{ action: 'register' | 'login'; named?: OperationHandle }> {
+		const plan = await this.passkeyPlan();
+		const fallback = this.passkeyHint ? 'login' : 'register';
+		if (plan !== 'immediate') return { action: plan, named: await this.usePasskey(plan, name) };
+		try {
+			return { action: 'login', named: await this.usePasskey('login', name, 'immediate') };
+		} catch (cause) {
+			// The browser refused `immediate` as an option after all: sign in or
+			// register as if it were unsupported.
+			if (cause instanceof TypeError) return { action: fallback, named: await this.usePasskey(fallback, name) };
+			// No passkey for this server on this device, or the picker was dismissed.
+			if (!(cause instanceof DOMException && cause.name === 'NotAllowedError')) throw cause;
+		}
+		return { action: 'register', named: await this.usePasskey('register', name) };
+	}
+
+	/**
+	 * Offers this server's passkeys in the autofill of a field marked
+	 * `autocomplete="username webauthn"` until `signal` aborts, re-issuing the
+	 * challenge before it expires. Resolves with the `me` request (as
+	 * `usePasskey` does) once the user signs in by picking a passkey, or with
+	 * `undefined` if autofill stops first: aborted, unsupported, the connection
+	 * changed, or an explicit ceremony took over. Only failures after a passkey
+	 * was picked reject. `name` is read when a passkey is picked.
+	 */
+	async passkeyAutofill(
+		signal: AbortSignal, name?: () => string | undefined
+	): Promise<{ named?: OperationHandle } | undefined> {
+		const idle = () => !signal.aborted && !this.autofill && !this.passkeyAbort && this.authenticated &&
+			this.status === 'connected' && !!this.server?.auth.includes('webauthn');
+		if (!idle() || !(await conditionalPasskeysAvailable()) || !idle()) return undefined;
+		const controller = new AbortController();
+		const stop = () => controller.abort(signal.reason);
+		signal.addEventListener('abort', stop, { once: true });
+		let release!: () => void;
+		const run = { controller, done: new Promise<void>((resolve) => (release = resolve)) };
+		this.autofill = run;
+		try {
+			const picked = await this.awaitAutofillPick(controller.signal);
+			if (this.autofill === run) this.autofill = undefined;
+			release();
+			if (!picked || this.passkeyAbort || picked.connection !== this.connectionId) return undefined;
+			// From here it is an ordinary login ceremony.
+			const ceremony = new AbortController();
+			this.passkeyAbort = ceremony;
+			this.emit();
+			try {
+				return { named: await this.passkeyFinish('login', picked.challengeId, picked.credential, ceremony, picked.connection, name?.()) };
+			} finally {
+				if (this.passkeyAbort === ceremony) this.cancelPasskey();
+				this.emit();
+			}
+		} finally {
+			signal.removeEventListener('abort', stop);
+			if (this.autofill === run) this.autofill = undefined;
+			release();
+		}
+	}
+
+	private async awaitAutofillPick(
+		signal: AbortSignal
+	): Promise<{ challengeId: string; credential: JsonObject; connection: number } | undefined> {
+		while (!signal.aborted) {
+			const connection = this.connectionId;
+			let begun: Awaited<ReturnType<ChatClient['passkeyBegin']>>;
+			try {
+				begun = await this.passkeyBegin('login');
+			} catch {
+				return undefined;
+			}
+			if (signal.aborted || connection !== this.connectionId) return undefined;
+			const timeout = typeof begun.publicKey.timeout === 'number' ? begun.publicKey.timeout : AUTOFILL_CHALLENGE_MS;
+			const round = new AbortController();
+			const forward = () => round.abort(signal.reason);
+			signal.addEventListener('abort', forward, { once: true });
+			// Browsers may keep a conditional request open past `timeout`; the
+			// server's challenge would not survive that, so re-issue it first.
+			const timer = setTimeout(
+				() => round.abort(new DOMException('Passkey challenge expired', 'TimeoutError')),
+				Math.max(AUTOFILL_MIN_REFRESH_MS, timeout - AUTOFILL_REFRESH_MARGIN_MS)
+			);
+			try {
+				const credential = await requestPasskey('login', begun.options, round.signal, 'conditional');
+				if (signal.aborted || connection !== this.connectionId) return undefined;
+				return { challengeId: begun.challengeId, credential, connection };
+			} catch {
+				// Stopped, or the browser refused: give up. Only an expired challenge retries.
+				if (signal.aborted || !round.signal.aborted) return undefined;
+			} finally {
+				clearTimeout(timer);
+				signal.removeEventListener('abort', forward);
+			}
+		}
+		return undefined;
+	}
+
+	/** Stops a pending autofill and waits until the browser has let go of its request. */
+	private async stopAutofill(): Promise<void> {
+		const run = this.autofill;
+		if (!run) return;
+		run.controller.abort(new DOMException('Passkey autofill stopped', 'AbortError'));
+		await run.done;
+	}
+
+	private async passkeyBegin(action: 'register' | 'login'): Promise<{ challengeId: string; options: JsonObject; publicKey: JsonObject }> {
+		const options = await this.passkeyRequest({ scheme: 'webauthn', action, step: 'begin' });
+		const challengeId = typeof options.challenge_id === 'string' && options.challenge_id.length > 0
+			? options.challenge_id : undefined;
+		if (!challengeId) throw new Error('Passkey challenge was missing; try again');
+		if (!isJsonObject(options.public_key)) throw new Error('Passkey options were missing; try again');
+		return { challengeId, options, publicKey: options.public_key };
+	}
+
+	private async passkeyFinish(
+		action: 'register' | 'login', challengeId: string, credential: JsonObject,
+		controller: AbortController, connection: number, name: string | undefined
+	): Promise<OperationHandle | undefined> {
+		const finish = { scheme: 'webauthn', action, step: 'finish', challenge_id: challengeId, credential };
+		const result = await this.passkeyRequest(finish);
+		if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
+		this.cancelPasskey();
+		if (name?.trim()) this.displayName = name.trim();
+		if (!this.handleAuth(result, true)) throw new Error('Server authentication response did not include an identity');
+		return this.authNameRequest;
 	}
 
 	async signOut(): Promise<void> {
@@ -681,6 +840,7 @@ export class ChatClient {
 	private cancelPasskey(): void {
 		this.passkeyAbort?.abort(new DOMException('Connection changed; try again', 'AbortError'));
 		this.passkeyAbort = undefined;
+		this.autofill?.controller.abort(new DOMException('Connection changed', 'AbortError'));
 	}
 
 	/**
@@ -1319,6 +1479,7 @@ export class ChatClient {
 		if (passkey) {
 			this.passkeyRequired = true;
 			this.registeredSession = true;
+			this.rememberPasskey();
 		}
 		if (typeof result.token === 'string') {
 			this.sessionToken = result.token;
@@ -1341,7 +1502,7 @@ export class ChatClient {
 		this.showReconnectDivider = (this.showReconnectDivider || this.rooms.size > 0) && !this.hasCap('history');
 		// Requests queued while this connection was authenticating go out now.
 		for (const request of this.requests.values()) this.sendRequest(request);
-		if (this.displayName) this.sendName();
+		this.authNameRequest = this.displayName ? this.sendName() : undefined;
 		this.emit();
 		return true;
 	}
@@ -1920,6 +2081,29 @@ export class ChatClient {
 	 */
 	private sessionStorageKey(): string {
 		return `apron.session:${this.serverUrl}`;
+	}
+
+	/** Remembers that this browser has a passkey for this server, for `passkeyPlan`. */
+	private passkeyHintKey(): string {
+		return `apron.passkey:${this.serverUrl}`;
+	}
+
+	private loadPasskeyHint(): boolean {
+		try {
+			return this.sessionToken !== undefined || globalThis.localStorage?.getItem(this.passkeyHintKey()) === '1';
+		} catch {
+			return this.sessionToken !== undefined;
+		}
+	}
+
+	/** Kept across sign-out: the passkey itself stays on the device. */
+	private rememberPasskey(): void {
+		this.passkeyHint = true;
+		try {
+			globalThis.localStorage?.setItem(this.passkeyHintKey(), '1');
+		} catch {
+			// Best effort; `passkeyPlan` then falls back to registering.
+		}
 	}
 
 	private loadStoredSession(): void {
