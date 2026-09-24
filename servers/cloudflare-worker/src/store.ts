@@ -408,6 +408,10 @@ export interface StoreCleanupResult {
   did_work: boolean;
 }
 
+/** What crediting back a reservation's unused part costs: one indexed row update. */
+const REFUND_READS = 1;
+const REFUND_WRITES = 1;
+
 export interface BudgetCost {
   reads: number;
   writes: number;
@@ -415,6 +419,9 @@ export interface BudgetCost {
   admissions: number;
   posts: number;
   registrations: number;
+  /** Set on a reservation charged to a day's budget row, so its unused part can be refunded. */
+  day?: string;
+  maintenance?: boolean;
 }
 
 export interface BudgetSnapshot extends BudgetCost {
@@ -816,6 +823,7 @@ export class Store {
   private budgetCache: RawBudgetRow | null = null;
   private budgetStopLoggedDay: string | null = null;
   private budgetHandoverPending = false;
+
   /** UTC day for which this object has already attempted bounded row pruning. */
   private budgetPruneDay: string | null = null;
   private accountingUnsafe = false;
@@ -1360,7 +1368,7 @@ export class Store {
     this.observed.operations += 1;
     this.observed.reservedReads += cost.reads;
     this.observed.reservedWrites += cost.writes;
-    return cost;
+    return { ...cost, day: candidateDay, maintenance };
     } catch (error) {
       // A reservation SQL failure is itself an accounting uncertainty. Do not
       // leave a stale cache that could grant the same allowance on retry.
@@ -1440,7 +1448,7 @@ export class Store {
       // A platform cursor can reveal more rows than a static estimate
       // predicted. Keep accepted state durable, latch accounting unsafe, and
       // fail closed so an underestimated operation cannot continue.
-      this.assertReservation(reserved, beforeReads, beforeWrites);
+      this.settleReservation(reserved, beforeReads, beforeWrites);
     }
   }
 
@@ -1478,6 +1486,58 @@ export class Store {
     }
   }
 
+  /** The final check on a finished operation: assert it stayed within its reservation, then refund the rest. */
+  private settleReservation(reserved: BudgetCost, beforeReads: number, beforeWrites: number): void {
+    this.assertReservation(reserved, beforeReads, beforeWrites);
+    this.refundUnused(reserved, this.observed.reads - beforeReads, this.observed.writes - beforeWrites);
+  }
+
+  /**
+   * Credits back what a finished reservation did not use, so the day's budget
+   * counts the SQL actually done. The reservation still gated the work up
+   * front, so no request can exceed what the ceiling allowed it. The credit is
+   * one row update, paid from the reservation it returns: an operation is
+   * charged its observed rows plus that one.
+   */
+  private refundUnused(reserved: BudgetCost, actualReads: number, actualWrites: number): void {
+    const row = this.budgetCache;
+    if (!reserved.day || !row || this.budgetCacheDay !== reserved.day) return;
+    const reads = reserved.reads - actualReads - REFUND_READS;
+    const writes = reserved.writes - actualWrites - REFUND_WRITES;
+    if (reads <= 0 && writes <= 0) return;
+    const creditReads = Math.max(0, reads);
+    const creditWrites = Math.max(0, writes);
+    const maintenance = reserved.maintenance === true;
+    try {
+      this.rawExec(
+        `UPDATE resource_budgets SET
+          reads_reserved = reads_reserved - ?, writes_reserved = writes_reserved - ?,
+          foreground_reads = foreground_reads - ?, foreground_writes = foreground_writes - ?,
+          maintenance_reads = maintenance_reads - ?, maintenance_writes = maintenance_writes - ?
+         WHERE day = ?`,
+        creditReads,
+        creditWrites,
+        maintenance ? 0 : creditReads,
+        maintenance ? 0 : creditWrites,
+        maintenance ? creditReads : 0,
+        maintenance ? creditWrites : 0,
+        reserved.day,
+      );
+    } catch {
+      // A failed credit only leaves the day over-charged, which is safe.
+      return;
+    }
+    this.installBudgetCache(reserved.day, {
+      ...row,
+      reads_reserved: row.reads_reserved - creditReads,
+      writes_reserved: row.writes_reserved - creditWrites,
+      foreground_reads: row.foreground_reads - (maintenance ? 0 : creditReads),
+      foreground_writes: row.foreground_writes - (maintenance ? 0 : creditWrites),
+      maintenance_reads: row.maintenance_reads - (maintenance ? creditReads : 0),
+      maintenance_writes: row.maintenance_writes - (maintenance ? creditWrites : 0),
+    });
+  }
+
   private reserved<T>(cost: CostEstimate, maintenance: boolean, now: number, fn: () => T): T {
     const beforeReads = this.observed.reads;
     const beforeWrites = this.observed.writes;
@@ -1485,7 +1545,7 @@ export class Store {
     try {
       return fn();
     } finally {
-      this.assertReservation(reservation, beforeReads, beforeWrites);
+      this.settleReservation(reservation, beforeReads, beforeWrites);
     }
   }
 
@@ -2073,7 +2133,7 @@ export class Store {
         });
       });
     } finally {
-      this.assertReservation(reservation, beforeReads, beforeWrites);
+      this.settleReservation(reservation, beforeReads, beforeWrites);
     }
   }
 
@@ -2630,7 +2690,7 @@ export class Store {
         return beforeCommit(committed);
       });
     } finally {
-      this.assertReservation(reserved, beforeReads, beforeWrites);
+      this.settleReservation(reserved, beforeReads, beforeWrites);
     }
   }
 
@@ -2856,7 +2916,7 @@ export class Store {
       this.rawExec("UPDATE maintenance SET cleanup_cutoff_ms = ?, cleanup_cursor = ?, next_cleanup_ms = ? WHERE id = 1", cutoff, floor, effective + 1000);
       this.assertReservation(reserved, beforeReads, beforeWrites);
     });
-    return this.transaction(() => {
+    const result = this.transaction(() => {
       let remaining = batch;
       const records = this.rawRows<{ room_id: string; log_id: number }>(
         "SELECT room_id, log_id FROM records INDEXED BY records_log_idx WHERE log_id < ? ORDER BY log_id LIMIT ?", floor, remaining,
@@ -2910,6 +2970,9 @@ export class Store {
         did_work: floor !== previousFloor || deleted > 0,
       };
     });
+    // Refunded after the transaction commits, so a rollback cannot leave a credit behind.
+    this.refundUnused(reserved, this.observed.reads - beforeReads, this.observed.writes - beforeWrites);
+    return result;
   }
 
   cleanup(now: number): DomainCleanupResult {
@@ -2966,7 +3029,7 @@ export class Store {
       await setAlarm.call(this.durableStorage, dueAt);
       this.scheduledAlarmAt = dueAt;
     } finally {
-      this.assertReservation(reserved, this.observed.reads - actualReads, this.observed.writes - actualWrites);
+      this.settleReservation(reserved, this.observed.reads - actualReads, this.observed.writes - actualWrites);
     }
   }
 }

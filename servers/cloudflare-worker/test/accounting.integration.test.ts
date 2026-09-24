@@ -66,6 +66,22 @@ function diffAccounting(after: ReturnType<Store['storageAccounting']>, before: R
 	};
 }
 
+/**
+ * What an operation reserved. Unused reservations are refunded into later
+ * budget-row updates, so the rows and columns counted per operation come from
+ * the store's reservation tally; quota counters still come from the day row.
+ */
+function reservedBetween(
+	after: ReturnType<Store['budget']>, before: ReturnType<Store['budget']>,
+	afterAccounting: ReturnType<Store['storageAccounting']>, beforeAccounting: ReturnType<Store['storageAccounting']>,
+) {
+	return {
+		...diffBudget(after, before),
+		reads: afterAccounting.reservedReads - beforeAccounting.reservedReads,
+		writes: afterAccounting.reservedWrites - beforeAccounting.reservedWrites,
+	};
+}
+
 function diffBudget(after: ReturnType<Store['budget']>, before: ReturnType<Store['budget']>) {
 	return {
 		reads: after.reads - before.reads,
@@ -105,7 +121,7 @@ describe('measured storage accounting', () => {
 				const afterAccounting = store.storageAccounting();
 				const afterBudget = store.budget();
 				const observed = diffAccounting(afterAccounting, beforeAccounting);
-				const reserved = diffBudget(afterBudget, beforeBudget);
+				const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
 				operationCosts.push({ label, observed, reserved, withinReserve: observed.reads <= reserved.reads && observed.writes <= reserved.writes });
 				return value;
 			};
@@ -158,6 +174,34 @@ describe('measured storage accounting', () => {
 		}
 	});
 
+	it('credits back the unused part of a finished reservation', async () => {
+		const stub = env.DEMO.getByName('accounting-refund-v1');
+		const result = await runInDurableObject(stub, async (_instance, state) => {
+			const clock = new FakeClock(futureUtcNoon());
+			const store = new Store(state, accountingConfig(), clock);
+			store.initialize();
+			store.commitMutation(messageInput(clock, 'refund-user', 'warm up', 'warm'));
+			const beforeBudget = store.budget();
+			const beforeAccounting = store.storageAccounting();
+			store.commitMutation(messageInput(clock, 'refund-user', 'refunded', 'refund'));
+			const afterAccounting = store.storageAccounting();
+			const afterBudget = store.budget();
+			return {
+				reserved: afterAccounting.reservedWrites - beforeAccounting.reservedWrites,
+				observed: afterAccounting.writes - beforeAccounting.writes,
+				charged: afterBudget.foreground_writes - beforeBudget.foreground_writes,
+				chargedReads: afterBudget.foreground_reads - beforeBudget.foreground_reads,
+				observedReads: afterAccounting.reads - beforeAccounting.reads,
+			};
+		});
+		// The mutation reserved far more than it wrote; the day is charged what it
+		// wrote, and the credit's own row update is paid from the reservation.
+		expect(result.reserved).toBeGreaterThan(200);
+		expect(result.charged).toBeGreaterThanOrEqual(result.observed - 1);
+		expect(result.charged).toBeLessThanOrEqual(result.observed + 1);
+		expect(result.chargedReads).toBeLessThanOrEqual(result.observedReads + 1);
+	});
+
 	it('charges rejected quota work and stops repeated denial before more SQL work', async () => {
 		const stub = env.DEMO.getByName('accounting-rejections-v1');
 		const config = accountingConfig({
@@ -191,7 +235,7 @@ describe('measured storage accounting', () => {
 			const afterRejectedAccounting = store.storageAccounting();
 			const afterRejectedBudget = store.budget();
 			const rejectedObserved = diffAccounting(afterRejectedAccounting, afterAcceptedAccounting);
-			const rejectedReserved = diffBudget(afterRejectedBudget, afterAcceptedBudget);
+			const rejectedReserved = reservedBetween(afterRejectedBudget, afterAcceptedBudget, afterRejectedAccounting, afterAcceptedAccounting);
 			// Depending on which bounded admission check rejects the request, the
 			// request may have paid either the duplicate lookup or the full
 			// mutation reservation. In both cases the charged work stays bounded.
@@ -203,7 +247,9 @@ describe('measured storage accounting', () => {
 
 			let previousCapacityAccounting = store.storageAccounting();
 			let reachedStableDenial = false;
-			for (let attempt = 0; attempt < 16; attempt += 1) {
+			// Rejected attempts are charged only what they read and wrote, so
+			// draining the small ceiling takes more of them.
+			for (let attempt = 0; attempt < 400; attempt += 1) {
 				let capacityError: unknown;
 				try {
 					store.commitMutation(messageInput(clock, 'reject-user', 'capacity stop', `capacity-${attempt}`));
@@ -309,7 +355,7 @@ describe('measured storage accounting', () => {
 			const afterAccounting = store.storageAccounting();
 			const afterBudget = store.budget();
 			const observed = diffAccounting(afterAccounting, beforeAccounting);
-			const reserved = diffBudget(afterBudget, beforeBudget);
+			const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
 			expect(rooms).toHaveLength(101);
 			expect(rooms[0].room_id).toBe('general');
 			expect(rooms[1].intro_message).toMatchObject({ message_id: '1', body: { text: 'intro 1' } });
@@ -352,7 +398,7 @@ describe('measured storage accounting', () => {
 			const afterAccounting = store.storageAccounting();
 			const afterBudget = store.budget();
 			const observed = diffAccounting(afterAccounting, beforeAccounting);
-			const reserved = diffBudget(afterBudget, beforeBudget);
+			const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
 			expect((page.rooms?.length ?? 0) + page.entries.length + (page.reactions?.length ?? 0)).toBe(50);
 			expect(page.rooms).toHaveLength(17);
 			expect(page.reactions).toHaveLength(17);
@@ -397,8 +443,9 @@ describe('measured storage accounting', () => {
 					userId: `reactor-${index}`, ipKey: `react-ip-${index}`, requestId: `react-${index}`, method: 'reactions', now: clock.now(),
 					params: { message_id: messageId, emojis }, identity: identity(`reactor-${index}`),
 				});
-				const observed = diffAccounting(store.storageAccounting(), beforeAccounting);
-				const reserved = diffBudget(store.budget(), beforeBudget);
+				const afterAccounting = store.storageAccounting();
+				const observed = diffAccounting(afterAccounting, beforeAccounting);
+				const reserved = reservedBetween(store.budget(), beforeBudget, afterAccounting, beforeAccounting);
 				expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
 				expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
 				if (observed.writes >= reactionCost.observed.writes) reactionCost = { observed, reserved };
@@ -413,8 +460,9 @@ describe('measured storage accounting', () => {
 				userId: 'mover', ipKey: 'move-ip', requestId: 'move', method: 'message', now: clock.now(),
 				params: { message_id: messageId, room_id: thread.result.room_id, body: { text: 'moved' } }, identity: identity('mover'),
 			});
-			const observed = diffAccounting(store.storageAccounting(), beforeAccounting);
-			const reserved = diffBudget(store.budget(), beforeBudget);
+			const afterAccounting = store.storageAccounting();
+			const observed = diffAccounting(afterAccounting, beforeAccounting);
+			const reserved = reservedBetween(store.budget(), beforeBudget, afterAccounting, beforeAccounting);
 			expect(moved.broadcasts.map((record) => record.method)).toEqual(['message', 'reactions']);
 			expect((moved.broadcasts[1].params.reactions as unknown[]).length).toBe(64);
 			const recordBytes = new TextEncoder().encode(JSON.stringify(moved.broadcasts[1].params)).byteLength;
@@ -445,7 +493,7 @@ describe('measured storage accounting', () => {
 				const afterAccounting = store.storageAccounting();
 				const afterBudget = store.budget();
 				const observed = diffAccounting(afterAccounting, beforeAccounting);
-				const reserved = diffBudget(afterBudget, beforeBudget);
+				const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
 				costs.push({ label, observed, reserved, withinReserve: observed.reads <= reserved.reads && observed.writes <= reserved.writes });
 				return value;
 			};
@@ -457,7 +505,7 @@ describe('measured storage accounting', () => {
 				const afterAccounting = store.storageAccounting();
 				const afterBudget = store.budget();
 				const observed = diffAccounting(afterAccounting, beforeAccounting);
-				const reserved = diffBudget(afterBudget, beforeBudget);
+				const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
 				costs.push({ label, observed, reserved, error: error instanceof StoreError ? error.code : 'none', withinReserve: observed.reads <= reserved.reads && observed.writes <= reserved.writes });
 				return error;
 			};
@@ -544,7 +592,8 @@ describe('measured storage accounting', () => {
 			store.initialize();
 			const foregroundDay = new Date(clock.now()).toISOString().slice(0, 10);
 			let acceptedMutations = 0;
-			for (let index = 0; index < 16; index += 1) {
+			// Mutations are charged what they actually wrote, so more fit.
+			for (let index = 0; index < 200; index += 1) {
 				try {
 					store.commitMutation(messageInput(clock, 'maintenance-user', `accepted-${index}`, `maintenance-${index}`));
 					acceptedMutations += 1;
@@ -601,7 +650,7 @@ describe('measured storage accounting', () => {
 				const afterAccounting = store.storageAccounting();
 				const afterBudget = store.budget();
 				const observed = diffAccounting(afterAccounting, beforeAccounting);
-				const reserved = diffBudget(afterBudget, beforeBudget);
+				const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
 				costs.push({ label, observed, reserved, withinReserve: observed.reads <= reserved.reads && observed.writes <= reserved.writes });
 				return value;
 			};
@@ -612,7 +661,7 @@ describe('measured storage accounting', () => {
 				const afterAccounting = store.storageAccounting();
 				const afterBudget = store.budget();
 				const observed = diffAccounting(afterAccounting, beforeAccounting);
-				const reserved = diffBudget(afterBudget, beforeBudget);
+				const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
 				costs.push({ label, observed, reserved, withinReserve: observed.reads <= reserved.reads && observed.writes <= reserved.writes });
 				return value;
 			};

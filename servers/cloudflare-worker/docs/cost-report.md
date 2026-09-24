@@ -21,6 +21,14 @@ object to check persisted limiter state.
 
 ## Reservation accounting
 
+The reservations below gate work before it runs. Since 2026-09-24 the unused
+part of each finished SQL reservation, measured from its cursors, is credited
+back in one budget-row update, so the daily counters are charged about the rows
+actually used plus one. A guest reconnect (admission, auth, one history page,
+room listing) is charged about 61 writes instead of 176, a post about 39 instead
+of 280, and an idle alarm run about 14 instead of 30. The reservation sizes still
+matter: they decide whether an operation is admitted near the ceiling.
+
 `reserveCost` adds eight read and eight write rows for its bounded control
 work. The first reservation after a wake or UTC-day handover also carries an
 eight-row handover allowance. A normal mutation has a conservative 256/256
