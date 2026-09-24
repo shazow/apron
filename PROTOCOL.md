@@ -966,8 +966,8 @@ embed an opaque `embed_id`; other servers MAY store embeds as given.
   embed is removed or the message is deleted or redacted, servers SHOULD
   delete the content.
 - Anyone with a URL the server hosts can fetch it, so servers SHOULD make
-  these URLs unguessable, such as a random path, and never derive them
-  from `embed_id`.
+  these URLs unguessable, such as with a random path segment, not just the
+  `embed_id`.
 - Suggested convention: `embed_` plus a server-wide counter, such as
   `embed_1234`.
 
