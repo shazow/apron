@@ -264,6 +264,8 @@ test('Worker leaves typing off, lists rooms, colors guest avatars by user_id, an
 
 		// The reader leaves; a stale members list is listed again when the picker opens.
 		await reader.close();
+		// Its close frame reaches the server on its own connection; let it land first.
+		await pageA.waitForTimeout(1_000);
 		await pageA.clock.fastForward(16_000);
 		await field.fill('@');
 		await expect(picker.getByRole('option', { name: readerName })).toHaveCount(0);

@@ -87,8 +87,6 @@
 	 * was when the pane opened (Appendix D.1). It stays put while you read.
 	 */
 	let newDivider = $state<{ room: string; after?: string; fixed: boolean }>({ room: '', fixed: false });
-	/** When this pane last asked `room_list` for members, by backend and parent room. */
-	const listedAt = new Map<string, number>();
 	/** Messages a thread is being started from, for the button's "Starting…". */
 	let startingThreads = $state<Record<string, true>>({});
 	let mobilePane = $state<'rooms' | 'main'>('main');
@@ -328,16 +326,11 @@
 		connectOpen = true;
 	}
 
-	/** Asks `room_list` for the pane's members, unless this pane did within `maxAge`. */
+	/** Asks `room_list` for the pane's members, unless a listing was answered within `maxAge`. */
 	function listMembers(maxAge: number): void {
 		const room = paneRoom;
 		if (!client || !room || !session.ready || !session.canManageRooms) return;
-		const key = `${client.url}\u0000${room.parentRoomId ?? ''}`;
-		const now = Date.now();
-		const last = listedAt.get(key);
-		if (last !== undefined && now - last < maxAge) return;
-		listedAt.set(key, now);
-		client.listRooms(room.parentRoomId).catch(() => undefined);
+		client.listRooms(room.parentRoomId, maxAge).catch(() => undefined);
 	}
 
 	/** The connect form was submitted: whatever belonged to the previous backend goes. */
@@ -353,7 +346,6 @@
 		selection.cancel();
 		session.forget();
 		directory.forget();
-		listedAt.clear();
 	}
 
 	function connected(): void {

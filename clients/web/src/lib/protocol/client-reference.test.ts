@@ -91,6 +91,40 @@ describe('ChatClient reference features', () => {
 		expect(snapshot.threadDirectory.general.map((room) => room.id)).toEqual(['t1']);
 	});
 
+	it('shares a room_list in flight and reuses a recent one', async () => {
+		await connect();
+		const listings = () => socket.sent.filter((frame) => frame.method === 'room_list').length;
+		const first = client.listRooms();
+		const second = client.listRooms();
+		expect(listings()).toBe(1);
+		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }] });
+		expect((await first).map((room) => room.id)).toEqual(['general']);
+		expect((await second).map((room) => room.id)).toEqual(['general']);
+		quiet(client.listRooms());
+		expect(listings()).toBe(1);
+		// A caller that wants fresher, or any caller once it is stale, lists again.
+		vi.advanceTimersByTime(5_000);
+		quiet(client.listRooms(undefined, 1_000));
+		expect(listings()).toBe(2);
+		await socket.reply('room_list', { rooms: [] });
+		vi.advanceTimersByTime(10_000);
+		quiet(client.listRooms());
+		expect(listings()).toBe(3);
+		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }] });
+		// A room the listing already showed changes nothing; a new one makes it stale.
+		socket.receive({ method: 'room', params: { room_id: 'general', log_id: '10', title: 'General' } });
+		quiet(client.listRooms());
+		expect(listings()).toBe(3);
+		socket.receive({ method: 'room', params: { room_id: 'ops', log_id: '11', title: 'Ops' } });
+		quiet(client.listRooms());
+		expect(listings()).toBe(4);
+		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }, { room_id: 'ops', log_id: '11', members: [] }] });
+		// So does removing one it showed.
+		socket.receive({ method: 'room', params: { room_id: 'ops', removed: true } });
+		quiet(client.listRooms());
+		expect(listings()).toBe(5);
+	});
+
 	it('updates the profile with me and adopts what the server kept', async () => {
 		await connect();
 		const saved = client.updateProfile({ avatar: '' });

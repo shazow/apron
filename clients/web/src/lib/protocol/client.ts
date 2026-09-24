@@ -330,6 +330,8 @@ const TYPING_REFRESH_MS = 12_000;
  * notification (§1).
  */
 const KEEPALIVE_FRAME = '{"method":"ping"}';
+/** How long a `room_list` result is reused for the same parent unless the caller asks for fresher. */
+const ROOM_LIST_REUSE_MS = 10_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
@@ -380,6 +382,8 @@ export class ChatClient {
 	private readonly roomMembers = new Map<string, { members: Identity[]; asOf?: string }>();
 	private directory?: RoomListing[];
 	private readonly threadDirectory = new Map<string, RoomListing[]>();
+	/** The latest `room_list` per parent (`''` for top-level), shared while in flight and reused while recent. */
+	private readonly listings = new Map<string, { at: number; promise: Promise<RoomListing[]>; rooms?: Set<string> }>();
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private keepaliveTimer?: ReturnType<typeof setInterval>;
@@ -1122,7 +1126,25 @@ export class ChatClient {
 	 * result also lands in the snapshot's `directory` or `threadDirectory`, and
 	 * members become known users.
 	 */
-	listRooms(parentRoomId?: string): Promise<RoomListing[]> {
+	listRooms(parentRoomId?: string, maxAgeMs = ROOM_LIST_REUSE_MS): Promise<RoomListing[]> {
+		// Listing is costly on some servers and rate limited on most, and several
+		// parts of the UI want it at once: a request in flight, or one answered
+		// within `maxAgeMs`, serves them all.
+		const key = parentRoomId ?? '';
+		const recent = this.listings.get(key);
+		if (recent && Date.now() - recent.at < maxAgeMs) return recent.promise.then((listings) => listings.map((listing) => this.withJoined(listing)));
+		const promise = this.fetchRooms(parentRoomId);
+		const entry: { at: number; promise: Promise<RoomListing[]>; rooms?: Set<string> } = { at: Date.now(), promise };
+		this.listings.set(key, entry);
+		promise.then((listings) => {
+			entry.rooms = new Set(listings.map((listing) => listing.id));
+		}, () => {
+			if (this.listings.get(key) === entry) this.listings.delete(key);
+		});
+		return promise.then((listings) => listings.map((listing) => this.withJoined(listing)));
+	}
+
+	private fetchRooms(parentRoomId?: string): Promise<RoomListing[]> {
 		const params: JsonObject = parentRoomId === undefined ? {} : { parent_room_id: parentRoomId };
 		return this.enqueueRequest('room_list', params, { visible: false, allowBeforeAuth: false }).promise.then((result) => {
 			const listings: RoomListing[] = [];
@@ -1147,8 +1169,19 @@ export class ChatClient {
 			if (parentRoomId === undefined) this.directory = listings;
 			else this.threadDirectory.set(parentRoomId, listings);
 			this.emit();
-			return listings.map((listing) => this.withJoined(listing));
+			return listings;
 		});
+	}
+
+	/** A room was removed: listings that showed it are stale. */
+	private forgetListingsWith(roomId: string): void {
+		for (const [key, entry] of this.listings) if (entry.rooms?.has(roomId)) this.listings.delete(key);
+	}
+
+	/** A room was announced: a finished listing of its parent that lacks it predates it. */
+	private forgetListingMissing(parentKey: string, roomId: string): void {
+		const entry = this.listings.get(parentKey);
+		if (entry?.rooms && !entry.rooms.has(roomId)) this.listings.delete(parentKey);
 	}
 
 	private withJoined(listing: RoomListing): RoomListing {
@@ -1695,6 +1728,7 @@ export class ChatClient {
 			const room = this.rooms.get(roomId);
 			if (room) this.discardRoom(room, 'Room removed');
 			this.rooms.delete(roomId);
+			this.forgetListingsWith(roomId);
 			if (this.activeRoomId === roomId) this.activeRoomId = this.defaultRoomId();
 			this.emit();
 			return;
@@ -1703,6 +1737,7 @@ export class ChatClient {
 		if (!decoded) return;
 		this.installRoom(decoded.record);
 		const existing = this.rooms.get(roomId);
+		if (!existing) this.forgetListingMissing(decoded.record.parent_room_id ?? '', roomId);
 		const room: RoomState = existing ?? {
 			id: roomId,
 			recoveryGeneration: 0,
@@ -1997,6 +2032,7 @@ export class ChatClient {
 		this.userAliases.clear();
 		this.reads.clear();
 		this.roomMembers.clear();
+		this.listings.clear();
 		this.directory = undefined;
 		this.threadDirectory.clear();
 	}
