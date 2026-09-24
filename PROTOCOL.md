@@ -310,13 +310,13 @@ every message with the kept object. Whether history carries a user's name
 from posting time or their current one is server policy; the protocol
 guarantees neither.
 
-A result MAY carry `users`, user objects for the identities elsewhere in it,
-each user once, so those can be sent as `user_id` only. Clients keep them
-like any other user object.
+Servers SHOULD include `name` in `from`, so clients can render any message
+without looking its author up.
 
-- Suggested convention: servers include `name` in `from`, or in the
-  result's `users`, so clients can render messages from users who are no
-  longer members.
+A result MAY carry `users`, complete user objects, each user once, for the
+identities elsewhere in it, such as a history page's authors. Clients merge
+them like any other user object; clients that ignore them lose only what
+`from` leaves out, such as avatars.
 
 A `me` request updates the user's own profile after authentication, by the
 same rule: fields given replace their current values, fields omitted stay
@@ -586,6 +586,10 @@ Stateless window query over a room's **log**. `rooms` holds room records
         "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
       }
     ],
+    "users": [
+      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
+      {"user_id": "carol", "name": "Carol"}
+    ],
     "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
     "latest_log_id": "1724806800000", "history_log_id": "1724800000000"
   }
@@ -791,12 +795,8 @@ Discovery and membership:
         "parent_room_id": "general", "title": "Deploy",
         "intro_message": {...},
         "latest_log_id": "1724803400000",
-        "member_ids": ["alice", "bob"]
+        "member_count": 2
       }
-    ],
-    "users": [
-      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
-      {"user_id": "bob", "name": "Bob"}
     ]
   }
 }
@@ -806,12 +806,13 @@ Discovery and membership:
 {"method": "room_leave", "id": "c23", "params": {"room_id": "1724803312001"}}
 ```
 
-- `room_list` returns room records (§3.4) for the visible rooms, each with
-  `member_ids`, a list of `user_id`s. The result's `users` (§3.3) is
-  required and holds a user object for every member listed. With
-  `parent_room_id` it lists that room's threads, including ones never
-  announced. Listing a room does not start deliveries. Servers MAY omit or
-  truncate `member_ids` by policy.
+- `room_list` returns room records (§3.4) for the visible rooms, most
+  recently active first, each with `member_count`, how many users have
+  joined it. With `parent_room_id` it lists that room's threads, including
+  ones never announced. Listing a room does not start deliveries. Servers
+  MAY omit `member_count` by policy.
+- Servers MAY list only the most recently active rooms. A room left out is
+  still visible and can be joined by its `room_id`.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
   ones announced to their connection (§3.4).
 - Posting in a visible room the user has not joined MAY join them to it:
@@ -1275,8 +1276,8 @@ servers interpret by this convention. A mention is `@` followed by a
   such as a chip, and MAY highlight mentions of `you`. A room mention links
   to the room. When an ID names both a user and a room, clients treat it as
   a user. Unknown IDs render as written.
-- Composers insert `@user_id` when the user picks a person, for example from
-  a room's `member_ids` (Appendix C).
+- Composers insert `@user_id` when the user picks a person, for example
+  from the room's recent authors.
 - Servers MAY apply the same rule to wake mentioned users (Appendix F).
 - Mentions that notify a whole room are not defined.
 
