@@ -71,8 +71,11 @@ the sender.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
-- Servers that need to know whether clients are still there ask them to
-  `ping` (§1.3).
+- Liveness: a server MAY advertise `ping` (§3.1). Clients that support it
+  then send exactly `{"method":"ping"}` at that interval, fixed bytes so
+  servers can answer without parsing, and the server answers
+  `{"method":"pong"}`. A server MAY close a connection that pinged and then
+  stopped. On WebSocket, servers MAY also use protocol ping frames.
 
 ### 1.1 Envelope and replies
 
@@ -152,42 +155,6 @@ Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated `user_id`
 Retention across reconnects and restarts is implementation-defined.
 Request `id`s sent before authentication are connection-scoped;
 authentication MUST execute on each connection.
-
-### 1.3 Liveness
-
-A server that wants to know whether its clients are still there puts `ping`
-in its `server` frame (§3.1): how often, in seconds, clients ping it.
-
-```jsonc
-// <- in the server frame
-"ping": 30
-// -> every 30 seconds, exactly these bytes
-{"method":"ping"}
-// <-
-{"method":"pong"}
-```
-
-- Clients that understand `ping` send it on that schedule for as long as the
-  connection is open, whatever else they send, so servers track only pings.
-  Sending exactly these bytes lets a server answer without parsing, such as
-  with a Cloudflare Durable Object's WebSocket auto-response.
-- Servers answer every `ping` with `pong`, including before authentication,
-  whatever its encoding. Clients send `ping` only to servers that advertise
-  it; others ignore it as an unknown notification.
-- A client that has received nothing since its last `ping` by the time the
-  next is due SHOULD treat the connection as dead and reconnect.
-- A connection that has pinged and then stops is **absent**: nothing is
-  running on the other end, or its page is frozen or suspended. Servers pick
-  how long a silence counts; browsers can delay a background tab's timers to
-  once a minute, so they SHOULD allow at least two intervals plus a minute. A
-  connection that has never pinged is presumed present.
-- What absence means is server policy. A server whose users come and go MAY
-  close absent connections and treat their users as departed. A server with
-  push (Appendix F) MAY keep them open and wake their users as if they had
-  no connection.
-- On WebSocket, servers MAY also send ping frames. They detect a dead
-  transport, but not an absent client: browsers can answer them for a frozen
-  page.
 
 ---
 
@@ -281,8 +248,7 @@ frame, unprompted. There is no client hello.
 - `ext`: optional extension metadata (§3.5), such as implementation limits.
 - `push`: optional object of supported push kinds; its presence enables push
   (Appendix F).
-- `ping`: optional positive integer, the seconds between client pings; its
-  presence asks clients to ping (§1.3).
+- `ping`: optional positive integer, the seconds between client pings (§1).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
@@ -322,8 +288,7 @@ Clients MUST NOT supply `user_id`: identity is server-assigned. `client` is
 an optional free-form implementation string for debugging.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
-other requests get `denied` and other notifications except `ping` (§1.3) are
-ignored.
+other requests get `denied` and other notifications are ignored.
 
 ### 3.3 Identity
 
@@ -1084,8 +1049,6 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   `log_id`, so clients render it but never install it as a snapshot. `body`
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
-- Suggested convention: wake users whose connections are all absent (§1.3),
-  not only users with none.
 
 ```json
 {
