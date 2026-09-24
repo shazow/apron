@@ -47,8 +47,12 @@ starts with `@` render as quiet system lines.
 
 Mentions follow the `@user_id` convention (Appendix J.3). Typing `@` in the
 composer opens the mention picker over the room's recent senders and its
-`room_list` members, filtered by name or ID: arrows move, Tab or Enter inserts
-`@user_id`, Escape dismisses. A rendered body (plain or Markdown, never inside
+`room_list` members, filtered by name or ID: arrows move, Tab or Enter picks,
+Escape dismisses. A picked person becomes a chip showing their name, and a
+typed `@name` (case-insensitive, spaces allowed) or `@user_id` collapses into
+the same chip once finished, when exactly one person in the room goes by it;
+one ending the draft collapses on send. Chips are always sent as `@user_id`, so
+the field reads by name while the wire stays ID-based. A rendered body (plain or Markdown, never inside
 code) shows a known user's mention as a chip with their current name, a room's
 as a link that opens it (or joins it), and unknown IDs as written. A message
 that names you tints its row with a rust rule, pulses once as it arrives (never

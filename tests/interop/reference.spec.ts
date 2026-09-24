@@ -78,7 +78,7 @@ test.describe('reference features against the Go server', () => {
 				await expect.poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(48);
 				await expect(embedOf(page, `${token} chart`).locator('figcaption')).toHaveText('chart.png');
 			}
-			await expect(composer(pageA)).toHaveValue('');
+			await expect(composer(pageA)).toHaveText('');
 
 			// A file without a preview is a file card linking to the download.
 			await pageA.getByTestId('attach-input').setInputFiles({ name: `${token}.txt`, mimeType: 'text/plain', buffer: Buffer.from('notes') });
