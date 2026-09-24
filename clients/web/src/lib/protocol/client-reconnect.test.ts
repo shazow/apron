@@ -584,3 +584,72 @@ describe('display name on connect', () => {
 		client.stop();
 	});
 });
+
+describe('reconnect damping', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		FakeSocket.instances = [];
+		vi.stubGlobal('WebSocket', FakeSocket);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it('keeps backing off when connections close right after auth', async () => {
+		// No jitter: the delays are exactly 0.5 s, 1 s, 2 s.
+		vi.spyOn(Math, 'random').mockReturnValue(0.5);
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		await latest().greet();
+		// Each connection authenticates, then drops at once: the delay keeps growing.
+		for (const delay of [500, 1_000, 2_000]) {
+			latest().drop();
+			const before = FakeSocket.instances.length;
+			vi.advanceTimersByTime(delay - 1);
+			expect(FakeSocket.instances).toHaveLength(before);
+			vi.advanceTimersByTime(1);
+			expect(FakeSocket.instances).toHaveLength(before + 1);
+			await latest().greet();
+		}
+		// A connection that stays up resets it.
+		vi.advanceTimersByTime(30_000);
+		latest().drop();
+		const before = FakeSocket.instances.length;
+		vi.advanceTimersByTime(500);
+		expect(FakeSocket.instances).toHaveLength(before + 1);
+		client.stop();
+		vi.restoreAllMocks();
+	});
+
+	it('waits for the page to be shown before connecting again', async () => {
+		const listeners = new Map<string, () => void>();
+		const page = { visibilityState: 'visible', addEventListener: (type: string, fn: () => void) => listeners.set(type, fn), removeEventListener: (type: string) => listeners.delete(type) };
+		vi.stubGlobal('document', page);
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		await latest().greet();
+		page.visibilityState = 'hidden';
+		latest().drop();
+		vi.advanceTimersByTime(120_000);
+		expect(FakeSocket.instances).toHaveLength(1);
+		page.visibilityState = 'visible';
+		listeners.get('visibilitychange')?.();
+		expect(FakeSocket.instances).toHaveLength(2);
+		expect(listeners.has('visibilitychange')).toBe(false);
+		client.stop();
+	});
+
+	it('does not open a first connection from a hidden page until it is shown', () => {
+		const listeners = new Map<string, () => void>();
+		vi.stubGlobal('document', { visibilityState: 'hidden', addEventListener: (type: string, fn: () => void) => listeners.set(type, fn), removeEventListener: (type: string) => listeners.delete(type) });
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		expect(FakeSocket.instances).toHaveLength(0);
+		(globalThis.document as unknown as { visibilityState: string }).visibilityState = 'visible';
+		listeners.get('visibilitychange')?.();
+		expect(FakeSocket.instances).toHaveLength(1);
+		client.stop();
+	});
+});

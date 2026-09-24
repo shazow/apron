@@ -330,6 +330,12 @@ const TYPING_REFRESH_MS = 12_000;
  * notification (§1).
  */
 const KEEPALIVE_FRAME = '{"method":"ping"}';
+/**
+ * How long a connection must stay authenticated before the reconnect backoff
+ * starts over. Resetting on auth alone let a server that closes right after
+ * auth be reconnected to every half second, each time paying for a new session.
+ */
+const STABLE_CONNECTION_MS = 30_000;
 /** How long a `room_list` result is reused for the same parent unless the caller asks for fresher. */
 const ROOM_LIST_REUSE_MS = 10_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
@@ -387,6 +393,10 @@ export class ChatClient {
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private keepaliveTimer?: ReturnType<typeof setInterval>;
+	/** Resets the reconnect backoff once the current connection has stayed up. */
+	private stableTimer?: ReturnType<typeof setTimeout>;
+	/** Resumes connecting when the page is shown or the network returns; set while waiting for either. */
+	private presenceWaiter?: () => void;
 	/** Keepalives sent on the current socket since its last answer. */
 	private unansweredPings = 0;
 	/** Drops the current socket as if it had closed: for one that stopped answering. */
@@ -490,6 +500,7 @@ export class ChatClient {
 		this.running = true;
 		this.reconnectHeld = false;
 		this.showReconnectDivider = this.reconnectAttempt > 0;
+		if (this.waitForPresence()) return;
 		this.connectNow();
 	}
 
@@ -499,6 +510,8 @@ export class ChatClient {
 		this.running = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
+		this.stopWaitingForPresence();
+		this.clearStableTimer();
 		const socket = this.socket;
 		this.socket = undefined;
 		this.authenticated = false;
@@ -1342,6 +1355,7 @@ export class ChatClient {
 
 	private connectNow(): void {
 		if (!this.running || this.socket) return;
+		this.stopWaitingForPresence();
 		this.connectionProbe?.abort();
 		const id = ++this.connectionId;
 		let opened = false;
@@ -1384,6 +1398,7 @@ export class ChatClient {
 			this.clearTransientRequests();
 			this.clearTyping();
 			this.stopKeepalive();
+			this.clearStableTimer();
 			// The protocol view is rebuilt from the next connection's announcements
 			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session). The UI keeps the
 			// last authenticated view on screen meanwhile, keyed off disconnectedAt.
@@ -1596,7 +1611,13 @@ export class ChatClient {
 		this.retryAfterUntil = 0;
 		this.authenticated = true;
 		this.authRequested = false;
-		this.reconnectAttempt = 0;
+		// The backoff starts over only once this connection has stayed up.
+		this.clearStableTimer();
+		const stableSocket = this.socket;
+		this.stableTimer = setTimeout(() => {
+			this.stableTimer = undefined;
+			if (this.socket === stableSocket && this.authenticated) this.reconnectAttempt = 0;
+		}, STABLE_CONNECTION_MS);
 		this.disconnectedAt = undefined;
 		// A reconnect drops the store, and a server with cap `history` gives it all
 		// back through recovery; only a session-only scrollback (§4 fallback) has a
@@ -2222,8 +2243,42 @@ export class ChatClient {
 			: reconnectDelay(this.reconnectAttempt, Math.random(), retryAfter);
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = undefined;
+			if (this.waitForPresence()) return;
 			this.connectNow();
 		}, delay);
+	}
+
+	/**
+	 * Connecting waits while the page is hidden or the browser is offline: a
+	 * background tab needs no socket until it is looked at, and every new
+	 * connection costs the server a session and its history. An open socket is
+	 * kept. Returns whether it is waiting; it connects once both clear.
+	 */
+	private waitForPresence(): boolean {
+		if (!absent()) return false;
+		if (this.presenceWaiter) return true;
+		const resume = (): void => {
+			if (absent()) return;
+			this.stopWaitingForPresence();
+			if (this.running && !this.socket && !this.reconnectTimer) this.connectNow();
+		};
+		this.presenceWaiter = resume;
+		globalThis.document?.addEventListener('visibilitychange', resume);
+		globalThis.addEventListener?.('online', resume);
+		return true;
+	}
+
+	private stopWaitingForPresence(): void {
+		const resume = this.presenceWaiter;
+		if (!resume) return;
+		this.presenceWaiter = undefined;
+		globalThis.document?.removeEventListener('visibilitychange', resume);
+		globalThis.removeEventListener?.('online', resume);
+	}
+
+	private clearStableTimer(): void {
+		if (this.stableTimer) clearTimeout(this.stableTimer);
+		this.stableTimer = undefined;
 	}
 
 	/**
@@ -2489,6 +2544,11 @@ function userFacingRpcError(error: RpcError): string {
 }
 
 /** Exposed for deterministic UI/client tests without relying on timer scheduling. */
+/** Whether the page is hidden or the browser reports no network; false outside a browser. */
+function absent(): boolean {
+	return globalThis.document?.visibilityState === 'hidden' || globalThis.navigator?.onLine === false;
+}
+
 export function reconnectDelay(attempt: number, random = 0.5, retryAfterMs?: number): number {
 	const boundedAttempt = Math.max(1, Math.floor(attempt));
 	const base = Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(7, boundedAttempt - 1));
