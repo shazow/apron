@@ -3,6 +3,7 @@
 	import { renderMarkdown } from '$lib/protocol/markdown';
 	import type { Embed } from '$lib/protocol/types';
 	import { directory } from '$lib/ui/directory.svelte';
+	import { renderTerminal } from '$lib/ui/terminal';
 
 	const RECONNECT_MS = 2000;
 
@@ -10,7 +11,8 @@
 	 * Live text (cap `embed:stream`, Appendix K): while the embed carries `url`
 	 * the text grows as `GET url` streams it, and a reconnect replaces what was
 	 * shown; once a snapshot carries `text` instead, it is finished. Streams
-	 * load only from the chat server's origin.
+	 * load only from the chat server's origin. `terminal` text is shown as a
+	 * terminal would: colors, and progress lines that overwrite themselves.
 	 */
 	let { embed }: { embed: Embed } = $props();
 	let url = $derived(sameOriginMedia(embed.url, directory.origin));
@@ -19,6 +21,7 @@
 	let ended = $state(false);
 	let live = $derived(Boolean(url) && !ended && embed.text === undefined);
 	let text = $derived(embed.text !== undefined ? String(embed.text) : streamed);
+	let terminal = $derived(format === 'terminal' ? renderTerminal(text) : []);
 
 	$effect(() => {
 		const source = url;
@@ -55,6 +58,8 @@
 	</div>
 	{#if format === 'markdown'}
 		<div class="ap-embed-streambody ap-msg-text">{@html renderMarkdown(text)}{#if live}<span class="ap-embed-caret" aria-hidden="true"></span>{/if}</div>
+	{:else if format === 'terminal'}
+		<pre class="ap-embed-streambody" aria-live={live ? 'polite' : undefined}>{#each terminal as span, index (index)}{#if span.className || span.style}<span class={span.className || undefined} style={span.style || undefined}>{span.text}</span>{:else}{span.text}{/if}{/each}{#if live}<span class="ap-embed-caret" aria-hidden="true"></span>{/if}</pre>
 	{:else}
 		<pre class="ap-embed-streambody" aria-live={live ? 'polite' : undefined}>{text}{#if live}<span class="ap-embed-caret" aria-hidden="true"></span>{/if}</pre>
 	{/if}

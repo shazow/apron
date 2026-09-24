@@ -110,7 +110,9 @@ Embeds render by kind, in the design system's components (Appendix E):
 - **Streams** (cap `embed:stream`): while the embed has a `url` the client reads
   it with a streaming `GET` and shows the text growing under a Live badge;
   when a snapshot carries `text` instead it shows the kept text as Finished.
-  `terminal` output is monospace, `markdown` renders, the rest is plain.
+  `terminal` output is monospace with ANSI colors and emphasis, carriage
+  returns overwrite the line (progress bars), and other escape sequences are
+  dropped; `markdown` renders, the rest is plain.
 - **`iframe`** embeds stay a paused placeholder until **Load live view**, then
   load sandboxed (`allow-scripts`, never same-origin, no referrer), clamped to
   480px. **`html`** embeds are sanitized with DOMPurify before insertion.

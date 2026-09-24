@@ -115,11 +115,17 @@ test.describe('reference features against the Go server', () => {
 			await expect(stream.locator('.ap-embed-livebadge')).toHaveText('Live');
 			push('pushing image… ok\n');
 			await expect(stream.locator('pre')).toContainText('pushing image… ok');
+			// Terminal output shows colors without their escapes, and a carriage return overwrites the line.
+			push('\u001b[32mupload  40%');
+			await expect(stream.locator('pre .ap-term-fg2')).toHaveText('upload  40%');
+			push('\rupload 100%\u001b[0m\n');
+			await expect(stream.locator('pre .ap-term-fg2')).toHaveText('upload 100%');
 			finish();
 			expect((await writing).status).toBe(204);
 			// The finishing snapshot carries the kept text in place of the url.
 			await expect(stream.locator('.ap-embed-streamhead')).toContainText('Finished');
-			await expect(stream.locator('pre')).toHaveText('$ make deploy\npushing image… ok\n');
+			await expect(stream.locator('pre')).toHaveText('$ make deploy\npushing image… ok\nupload 100%\n');
+			await expect(stream.locator('pre .ap-term-fg2')).toHaveText('upload 100%');
 		} finally {
 			bot.close();
 		}
