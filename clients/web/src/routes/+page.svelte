@@ -92,8 +92,8 @@
 	let latestVisible = $state(true);
 	let seenCount = $state(0);
 	let typingTimer: ReturnType<typeof setTimeout> | undefined;
-	/** Where the last automatic scroll to the latest item left the list. */
-	let autoScrollTop: number | undefined;
+	/** Where the last scroll event, or automatic scroll to the latest item, left the list. */
+	let lastScrollTop: number | undefined;
 	let highlightTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let snapshot = $derived(session.snapshot);
@@ -618,7 +618,7 @@
 	function scrollToLatest(): void {
 		if (!messageScroll) return;
 		messageScroll.scrollTop = messageScroll.scrollHeight;
-		autoScrollTop = messageScroll.scrollTop;
+		lastScrollTop = messageScroll.scrollTop;
 	}
 
 	/** Takes you to the oldest mention that arrived while you were reading back. */
@@ -630,11 +630,18 @@
 
 	function trackScroll(): void {
 		if (!messageScroll) return;
-		// The event for our own scroll to the latest item can arrive after the pane grew again
-		// (a room's history and its threads' cards land over several snapshots): the reader
-		// hasn't scrolled up, so stay pinned and let the next update scroll down again.
-		if (stickToBottom && autoScrollTop !== undefined && Math.abs(messageScroll.scrollTop - autoScrollTop) < 2) return;
-		autoScrollTop = undefined;
+		const top = messageScroll.scrollTop;
+		const scrolledUp = lastScrollTop === undefined || top < lastScrollTop - 1;
+		lastScrollTop = top;
+		// While pinned, only the reader scrolling up lets go. The pane grows under us as a room's
+		// history, its threads' cards and long messages lay out; our own scroll's event can land
+		// after that, and scroll anchoring moves the list down, before the next frame catches up.
+		if (stickToBottom && !scrolledUp) {
+			requestAnimationFrame(() => {
+				if (stickToBottom) scrollToLatest();
+			});
+			return;
+		}
 		const atBottom = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 96;
 		if (!atBottom && stickToBottom) seenCount = messages.length;
 		stickToBottom = atBottom;
