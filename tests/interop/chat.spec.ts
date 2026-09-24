@@ -141,7 +141,7 @@ test.describe('chat protocol interoperability', () => {
 		await sendMessage(page, `${token}-reply`);
 		await waitForMessage(page, `${token}-reply`);
 		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
-		const jump = page.getByRole('button', { name: /^Jump to (latest|new)$/ });
+		const jump = page.getByRole('button', { name: /jump to latest$/i });
 		const list = page.getByTestId('message-list');
 		await expect(jump).toHaveCount(0);
 		// Opening a thread starts at its long intro, with the latest reply below the fold.
@@ -638,7 +638,8 @@ test.describe('chat protocol interoperability', () => {
 			await pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
 			await waitForMessage(pageB, `${handle}-first-reply`);
 			await pageB.getByTestId('message-list').evaluate((node) => { node.scrollTop = 0; });
-			await expect(pageB.getByTestId('jump-button')).toHaveText('Jump to latest');
+			await expect(pageB.getByTestId('jump-button')).toHaveAccessibleName('Jump to latest');
+			await expect(pageB.locator('.ap-jumpfab')).toBeVisible();
 
 			// The mention arrives out of sight: the bar turns rust and offers the mention itself.
 			await sendMessage(pageA, `@${id} can you check the migration logs?`);
