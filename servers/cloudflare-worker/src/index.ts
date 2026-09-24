@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { AuthError, AuthTooLargeError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
 import { isAllowedOrigin, loadConfig, type RuntimeConfig } from "./config";
-import { ACCOUNT_USAGE_POLICY, ADMISSION_BUDGET, MAX_ACTIVITY_FRAME_LEASE, MAX_TYPE_THROTTLE_PER_MINUTE } from "./budget";
+import { ACCOUNT_USAGE_POLICY, ADMISSION_BUDGET, MAX_FRAME_LEASE, MAX_TYPE_THROTTLE_PER_MINUTE } from "./budget";
 import { fetchAccountUsage, type AccountUsageSnapshot } from "./account-usage";
 import { extractClientIp, hashIpKey, stripForwardingHeaders } from "./ip";
 import {
@@ -56,8 +56,8 @@ interface ConnectionAttachment {
 	throttles?: Partial<Record<ThrottledType, number[]>>;
 	/** When this connection last got a `@server` throttle notice, per type. */
 	notices?: Partial<Record<ThrottledType, number>>;
-	/** Activity frames this connection has already reserved, for one UTC day. */
-	activityLease?: { day: string; remaining: number };
+	/** Frames this connection has already reserved and not yet spent, for one UTC day. */
+	frameLease?: { day: string; remaining: number };
 	closing?: boolean;
 }
 
@@ -222,8 +222,8 @@ function connectionAttachment(socket: WebSocketConnection): ConnectionAttachment
 }
 
 /** The throttle fields of a stored attachment, bounded and type-checked. */
-function throttleState(attachment: Partial<ConnectionAttachment>): Pick<ConnectionAttachment, "throttles" | "notices" | "activityLease"> {
-	const out: Pick<ConnectionAttachment, "throttles" | "notices" | "activityLease"> = {};
+function throttleState(attachment: Partial<ConnectionAttachment>): Pick<ConnectionAttachment, "throttles" | "notices" | "frameLease"> {
+	const out: Pick<ConnectionAttachment, "throttles" | "notices" | "frameLease"> = {};
 	const throttles: Partial<Record<ThrottledType, number[]>> = {};
 	const notices: Partial<Record<ThrottledType, number>> = {};
 	for (const type of THROTTLED_TYPES) {
@@ -234,9 +234,9 @@ function throttleState(attachment: Partial<ConnectionAttachment>): Pick<Connecti
 	}
 	if (Object.keys(throttles).length) out.throttles = throttles;
 	if (Object.keys(notices).length) out.notices = notices;
-	const lease = attachment.activityLease;
+	const lease = attachment.frameLease;
 	if (lease && typeof lease.day === "string" && Number.isSafeInteger(lease.remaining) && lease.remaining > 0) {
-		out.activityLease = { day: lease.day, remaining: Math.min(lease.remaining, MAX_ACTIVITY_FRAME_LEASE) };
+		out.frameLease = { day: lease.day, remaining: Math.min(lease.remaining, MAX_FRAME_LEASE) };
 	}
 	return out;
 }
@@ -264,7 +264,7 @@ function writeSessionAttachment(socket: WebSocketConnection, attachment: Connect
 		attachment.policyViolations = current.policyViolations;
 		attachment.throttles = current.throttles;
 		attachment.notices = current.notices;
-		attachment.activityLease = current.activityLease;
+		attachment.frameLease = current.frameLease;
 		attachment.closing = current.closing;
 	}
 	writeAttachment(socket, attachment);
@@ -716,8 +716,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 			}
 			return;
 		}
-		const leased = this.config.activityEnabled && parsed?.request.method === "activity" && parsed.request.id === undefined;
-		if (!this.chargeFrame(socket, attachment, leased)) return;
+		if (!this.chargeFrame(socket, attachment)) return;
+		// The charge updated the attachment; handlers must not write back the copy read before it.
+		const current = connectionAttachment(socket) ?? attachment;
 		if (!parsed) {
 			const error = parseFailure;
 			if (error instanceof FrameError) {
@@ -734,7 +735,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		const request = parsed.request;
 		try {
-			await this.dispatch(socket, attachment, request);
+			await this.dispatch(socket, current, request);
 		} catch (error) {
 			const failure = errorToProtocol(error);
 			this.fail(socket, request, failure);
@@ -753,29 +754,27 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Charges one incoming frame to the IP and daily frame budgets. Activity
-	 * notifications reserve `activityFrameLease` frames at once and spend them
-	 * from the connection's attachment, so each costs a fraction of the SQL
-	 * bookkeeping; an unspent lease is burned at the UTC day's end.
+	 * Charges one incoming frame to the IP and daily frame budgets. A
+	 * connection reserves `frameLease` frames at once and spends them from its
+	 * attachment, so each frame carries a fraction of the reservation's SQL
+	 * bookkeeping (SPEC section 7, durable block reservation). A block is never
+	 * granted twice: it lives only in this connection's attachment, and an
+	 * unspent one is burned when the connection closes or the UTC day ends.
 	 */
-	private chargeFrame(socket: WebSocketConnection, attachment: ConnectionAttachment, leased: boolean): boolean {
+	private chargeFrame(socket: WebSocketConnection, attachment: ConnectionAttachment): boolean {
 		const now = nowMs();
 		try {
-			if (!leased) {
-				this.store.reserveFrames({ ipKey: attachment.ipKey, now, count: 1 });
-				return true;
-			}
 			const latest = connectionAttachment(socket) ?? attachment;
 			const day = new Date(now).toISOString().slice(0, 10);
-			const lease = latest.activityLease?.day === day ? latest.activityLease.remaining : 0;
+			const lease = latest.frameLease?.day === day ? latest.frameLease.remaining : 0;
 			if (lease > 0) {
-				latest.activityLease = { day, remaining: lease - 1 };
+				latest.frameLease = { day, remaining: lease - 1 };
 			} else {
-				const count = this.config.limits.activityFrameLease;
+				const count = this.config.limits.frameLease;
 				this.store.reserveFrames({ ipKey: attachment.ipKey, now, count });
-				latest.activityLease = { day, remaining: count - 1 };
+				latest.frameLease = { day, remaining: count - 1 };
 			}
-			if (latest.activityLease.remaining === 0) delete latest.activityLease;
+			if (latest.frameLease.remaining === 0) delete latest.frameLease;
 			writeAttachment(socket, latest);
 			return true;
 		} catch (error) {

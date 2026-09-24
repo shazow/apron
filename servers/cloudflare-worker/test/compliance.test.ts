@@ -119,6 +119,9 @@ describe('configuration policy boundaries', () => {
 		expect(config().limits.globalFramesPerMinute).toBe(300);
 		expect(() => config({}, { globalFramesPerMinute: DEFAULT_LIMITS.framesPerIpMinute - 1 })).toThrow(ConfigError);
 		expect(() => config({}, { globalFramesPerMinute: 1_001 })).toThrow(ConfigError);
+		expect(config().limits.frameLease).toBe(10);
+		expect(() => config({}, { frameLease: 21 })).toThrow(ConfigError);
+		expect(() => config({}, { frameLease: 20, framesPerIpMinute: 39 })).toThrow(ConfigError);
 	});
 
 	it('allows arbitrary guest origins with an explicit passkey allowlist', () => {

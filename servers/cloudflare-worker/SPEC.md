@@ -153,7 +153,7 @@ Some message types have their own per-user rate, counted across the user's conne
 
 The `@server` notice goes to the throttled connection only and is never logged. Its `message_id` and `log_id` still come from the server-wide sequence (one metered `log_state` write), so no logged record can reuse it. Posting quotas continue to cover every logged mutation (`message`, `room`, `reactions`, `me`).
 
-Every frame is charged to the IP and daily frame budgets before any other work (section 6). An `activity` notification draws on a per-connection block of 10 frames, reserved at once and spent from the attachment; an unspent block is burned at the UTC day's end. This keeps typing at a tenth of the per-frame SQL bookkeeping. The frame is parsed before it is charged so its method is known; parsing is bounded CPU work with no storage.
+Every frame is charged to the IP and daily frame budgets before any other work (section 6). Each connection reserves frames in blocks of `frameLease` (10) and spends them from its attachment, so a frame carries a tenth of a reservation's SQL bookkeeping (section 7 allows durable block reservation). A block counts against the IP's frame minute and the daily frame budget when it is reserved, lives only in that connection's attachment so it is never granted twice, and is burned when the connection closes or the UTC day ends. A connection that sends a single frame costs what it did before blocks. Operations that do SQL work still reserve their own cost. Handlers read the attachment after the charge, so none writes back a copy with the block unspent. The frame is parsed before it is charged; parsing is bounded CPU work with no storage.
 
 ### 4.1 Internal names
 
@@ -261,7 +261,7 @@ The smaller frame limit is a documented demo exception to the protocol's advisor
 | frames_per_connection_minute | 60 |
 | frames_per_ip_minute | 120 |
 | global_frames_per_minute | 300 server-wide, in memory, before SQL |
-| activity_frame_lease | 10 activity frames reserved per block, per connection |
+| frame_lease | 10 frames reserved per block, per connection |
 | activity_broadcasts_per_user_minute | 10 relayed typing updates |
 | room_list_requests_per_user_minute | 6 |
 | room_list_members | 20 connected users listed per room |

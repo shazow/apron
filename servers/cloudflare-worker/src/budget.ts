@@ -64,11 +64,12 @@ export interface Limits {
 	/** The longest typing indicator a relayed `activity` may ask for, in seconds. */
 	activityMaxTypingSeconds: number;
 	/**
-	 * Activity frames reserved at once by one connection. Every other frame
-	 * reserves its own frame and SQL bookkeeping; activity does no SQL work of
-	 * its own, so a block keeps typing from dominating the write budget.
+	 * Frames one connection reserves at once. Each reservation's SQL
+	 * bookkeeping (about 24 reserved writes) is then shared by the block;
+	 * operations that do SQL work still reserve their own cost. An unspent
+	 * block is burned when the connection closes or the UTC day ends.
 	 */
-	activityFrameLease: number;
+	frameLease: number;
 	/** Users listed as `members` of each room in a `room_list` result: those connected now. */
 	roomListMembers: number;
 	sqlWritesPerDay: number;
@@ -142,7 +143,7 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	activityBroadcastsPerUserMinute: 10,
 	roomListRequestsPerUserMinute: 6,
 	activityMaxTypingSeconds: 30,
-	activityFrameLease: 10,
+	frameLease: 10,
 	roomListMembers: 20,
 	sqlWritesPerDay: 80_000,
 	sqlReadsPerDay: 3_000_000,
@@ -203,7 +204,8 @@ export const MAX_CONNECTION_FRAME_RATE = 120;
 export const MAX_GLOBAL_FRAMES_PER_MINUTE = 1_000;
 // Throttle windows live in connection attachments, one timestamp per event.
 export const MAX_TYPE_THROTTLE_PER_MINUTE = 60;
-export const MAX_ACTIVITY_FRAME_LEASE = 20;
+// A block counts against the IP's frame minute all at once.
+export const MAX_FRAME_LEASE = 20;
 // Every room in a listing carries the members list, so it multiplies the
 // response by the thread ceiling.
 export const MAX_ROOM_LIST_MEMBERS = 50;

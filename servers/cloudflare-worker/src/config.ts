@@ -127,8 +127,8 @@ function validateLimits(limits: Limits): void {
 	if (limits.activityBroadcastsPerUserMinute > budget.MAX_TYPE_THROTTLE_PER_MINUTE || limits.roomListRequestsPerUserMinute > budget.MAX_TYPE_THROTTLE_PER_MINUTE) {
 		fail("per-type throttles exceed their attachment bound");
 	}
-	if (limits.activityFrameLease > budget.MAX_ACTIVITY_FRAME_LEASE || limits.activityFrameLease > limits.framesPerConnectionMinute) {
-		fail("activity frame lease exceeds the per-connection frame policy");
+	if (limits.frameLease > budget.MAX_FRAME_LEASE || limits.frameLease > limits.framesPerConnectionMinute || limits.frameLease * limits.anonymousConnectionsPerIp > limits.framesPerIpMinute) {
+		fail("frame blocks exceed the per-connection or per-IP frame policy");
 	}
 	if (limits.roomListMembers > budget.MAX_ROOM_LIST_MEMBERS || limits.roomListMembers > limits.openConnections) {
 		fail("room_list members exceed the calibrated bound");

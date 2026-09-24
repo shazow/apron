@@ -111,8 +111,9 @@ bytes, names 80 Unicode code points/320 UTF-8 bytes, embeds 4, history limit
 registered identities and limiter records 10,000 each, processed frames
 100,000/day, global posts 60/minute and 5,000/day, registrations 100/day,
 connection frame rate 120/minute, server-wide frames 1,000/minute (at least one
-IP's minute), per-type throttles 60/minute, activity frame
-blocks 20 frames, `room_list` members 50, SQL writes 80,000/day, SQL reads 3,000,000/day,
+IP's minute), per-type throttles 60/minute, frame blocks
+20 frames (and one block per anonymous connection must fit the IP's frame
+minute), `room_list` members 50, SQL writes 80,000/day, SQL reads 3,000,000/day,
 database high-water 96 MiB and hard target 128 MiB, cleanup 100 records,
 thread rooms 100 with 2 KiB of client fields, reactions 64 users per message
 and 16 emoji per user, and credentials/challenges 16 KiB. Operators
@@ -161,7 +162,7 @@ The numeric rows are grouped by their unit and enforcement scope:
   `registeredConnectionsPerUser`, `connectionsPerIp`,
   `pendingFramesPerConnection`, `repeatedPolicyViolations`, `cleanupBatch`,
   `threadLimit`, `reactionUsersPerMessage`, `reactionEmojisPerUser`,
-  `limiterRecordCap`, `activityFrameLease`, `roomListMembers`,
+  `limiterRecordCap`, `frameLease`, `roomListMembers`,
   `activityMaxTypingSeconds` (seconds).
 - Rolling minute budgets: `historyRequestsPerUserMinute`,
   `historyRequestsPerIpMinute`, `anonymousPostsPerMinute`,
@@ -227,7 +228,7 @@ The numeric rows are grouped by their unit and enforcement scope:
 | `activityBroadcastsPerUserMinute` | 10 |
 | `roomListRequestsPerUserMinute` | 6 |
 | `activityMaxTypingSeconds` | 30 |
-| `activityFrameLease` | 10 |
+| `frameLease` | 10 |
 | `roomListMembers` | 20 |
 | `sqlWritesPerDay` | 80000 |
 | `sqlReadsPerDay` | 3000000 |

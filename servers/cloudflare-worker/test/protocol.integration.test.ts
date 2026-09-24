@@ -503,3 +503,26 @@ it('links each changed record to the previous one with prev_log_id', async () =>
 		expect(again.frame.params.prev_log_id).toBe(reacted.frame.params.log_id);
 	} finally { alice.close(); }
 });
+
+it('reserves frames in blocks per connection, never granting a block twice', async () => {
+	const budget = () => runInDurableObject(env.DEMO.getByName('public-demo-v1'), (instance) =>
+		(instance as unknown as { store: { budget(): { frames: number; writes: number } } }).store.budget());
+	const peer = await connect();
+	try {
+		await peer.next(); // server announcement
+		const before = await budget();
+		// The first frame reserves a block of ten; the next nine spend it without SQL.
+		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
+		await until(peer, (frame) => frame.id === 'auth');
+		for (let index = 0; index < 9; index += 1) {
+			peer.send({ id: `join-${index}`, method: 'room_join', params: { room_id: 'general' } });
+			await until(peer, (frame) => frame.id === `join-${index}`);
+		}
+		const spent = await budget();
+		expect(spent.frames - before.frames).toBe(10);
+		// The eleventh frame needs a new block.
+		peer.send({ id: 'join-last', method: 'room_join', params: { room_id: 'general' } });
+		await until(peer, (frame) => frame.id === 'join-last');
+		expect((await budget()).frames - before.frames).toBe(20);
+	} finally { peer.close(); }
+});
