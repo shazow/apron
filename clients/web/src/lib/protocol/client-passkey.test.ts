@@ -238,3 +238,88 @@ describe('passkey autofill', () => {
 		client.stop();
 	});
 });
+
+describe('a failed session resume never prompts on its own', () => {
+	const key = 'apron.session:ws://fake.test/';
+	const server = { method: 'server', params: { protocol: 4, auth: ['webauthn', 'token', 'guest'], caps: [] } };
+
+	async function resuming(): Promise<{ client: ChatClient; socket: FakeSocket; auth: { id: string } }> {
+		vi.useFakeTimers();
+		storage.set(key, 'session-1');
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		const socket = FakeSocket.latest();
+		socket.open();
+		socket.receive(server);
+		const auth = socket.request('auth');
+		expect(auth.params).toEqual(expect.objectContaining({ scheme: 'token', token: 'session-1' }));
+		return { client, socket, auth };
+	}
+
+	it('keeps the token through retry_after and resumes after the window', async () => {
+		const { client, socket, auth } = await resuming();
+		socket.receive({ id: auth.id, error: { code: -32002, message: 'Demo capacity reached', data: { retry_after: 60 } } });
+		await settle();
+		expect(storage.get(key)).toBe('session-1');
+		expect(socket.readyState).toBe(FakeSocket.CLOSED);
+		socket.drop();
+		await vi.advanceTimersByTimeAsync(59_000);
+		expect(FakeSocket.instances).toHaveLength(1);
+		await vi.advanceTimersByTimeAsync(1_000);
+		const next = FakeSocket.latest();
+		expect(next).not.toBe(socket);
+		next.open();
+		next.receive(server);
+		expect(next.request('auth').params).toEqual(expect.objectContaining({ scheme: 'token', token: 'session-1' }));
+		expect(requestPasskey).not.toHaveBeenCalled();
+		client.stop();
+	});
+
+	it('waits for Sign in after the server denies the token', async () => {
+		const { client, socket, auth } = await resuming();
+		let snapshot = client.snapshot();
+		client.subscribe((next) => (snapshot = next));
+		socket.receive({ id: auth.id, error: { code: -32001, message: 'Session expired; sign in with your passkey' } });
+		await settle();
+		expect(storage.has(key)).toBe(false);
+		socket.drop();
+		expect(snapshot.held).toBe(true);
+		await vi.advanceTimersByTimeAsync(10 * 60_000);
+		expect(FakeSocket.instances).toHaveLength(1);
+		expect(requestPasskey).not.toHaveBeenCalled();
+
+		// The user's tap reconnects and asks for the passkey.
+		vi.mocked(requestPasskey).mockReturnValue(new Promise(() => {}));
+		client.retryNow();
+		const next = FakeSocket.latest();
+		next.open();
+		next.receive(server);
+		await settle();
+		expect(next.request('auth').params).toEqual(expect.objectContaining({ scheme: 'webauthn', action: 'login', step: 'begin' }));
+		await next.reply('auth', { challenge_id: 'challenge-1', public_key: { challenge: 'x' } });
+		expect(requestPasskey).toHaveBeenCalledTimes(1);
+		client.stop();
+	});
+
+	it('does not prompt again on later reconnects when that sign-in is dismissed', async () => {
+		const { client, socket, auth } = await resuming();
+		socket.receive({ id: auth.id, error: { code: -32001, message: 'Session expired; sign in with your passkey' } });
+		await settle();
+		socket.drop();
+		vi.mocked(requestPasskey).mockRejectedValue(new DOMException('Dismissed', 'NotAllowedError'));
+		client.retryNow();
+		const next = FakeSocket.latest();
+		next.open();
+		next.receive(server);
+		await settle();
+		await next.reply('auth', { challenge_id: 'challenge-1', public_key: { challenge: 'x' } });
+		await settle();
+		expect(requestPasskey).toHaveBeenCalledTimes(1);
+		// The server closes the unauthenticated socket; nothing reconnects or prompts until the next tap.
+		next.drop();
+		await vi.advanceTimersByTimeAsync(10 * 60_000);
+		expect(FakeSocket.instances).toHaveLength(2);
+		expect(requestPasskey).toHaveBeenCalledTimes(1);
+		client.stop();
+	});
+});

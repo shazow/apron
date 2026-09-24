@@ -301,3 +301,35 @@ it('sends user notifications for renames and for a guest signing in on its conne
 		expect((await until(watcher, (frame) => frame.method === 'user')).params).toEqual({ new: { user_id: 'user_session_notify', name: 'Notified' } });
 	} finally { watcher.close(); tab.close(); second.close(); }
 });
+
+it('does not count a closing connection against the per-user limit on resume', async () => {
+	const userId = 'user_session_capacity';
+	await registerIdentity(userId, 'session-capacity-ip');
+	const token = await issueSession(userId, 'http://localhost:5173');
+	const resume = async (id: string) => {
+		const peer = await connect();
+		await peer.next();
+		peer.send({ id, method: 'auth', params: { scheme: 'token', token } });
+		return { peer, reply: await peer.next() };
+	};
+	const open = [];
+	for (const id of ['one', 'two', 'three']) {
+		const { peer, reply } = await resume(id);
+		expect(reply.result.you.user_id).toBe(userId);
+		open.push(peer);
+	}
+	const refused = await resume('four');
+	expect(refused.reply.error).toEqual(expect.objectContaining({ code: -32002, message: 'Demo capacity reached' }));
+	refused.peer.close();
+
+	// One of them dropped and its close is on the way: its replacement resumes.
+	await runInDurableObject(stub(), async (instance) => {
+		const sockets = (instance as unknown as { ctx: DurableObjectState }).ctx.getWebSockets();
+		const dropped = sockets.find((socket) => (socket.deserializeAttachment() as { userId?: string } | null)?.userId === userId)!;
+		dropped.serializeAttachment({ ...(dropped.deserializeAttachment() as object), closing: true });
+	});
+	const replacement = await resume('replacement');
+	expect(replacement.reply.result.you.user_id).toBe(userId);
+	replacement.peer.close();
+	for (const peer of open) peer.close();
+});
