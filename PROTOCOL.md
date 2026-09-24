@@ -1265,8 +1265,8 @@ keeps its name. Extensions and future methods should follow the same pattern.
 
 ### J.3 Mentions
 
-A message lists the users it mentions in `body.mentions`, and shows each
-one in `body.text` as `@` followed by the `user_id`:
+A message lists the users it mentions in `body.mentions`, and usually
+shows each one in `body.text` as `@` followed by the `user_id`:
 
 ```json
 "body": {
@@ -1279,8 +1279,6 @@ one in `body.text` as `@` followed by the `user_id`:
 - `mentions` alone decides who is mentioned: servers wake (Appendix F) and
   clients highlight only the users it lists, whatever `text` contains.
   Servers never parse `text` to find mentions.
-- Servers MAY drop an ID from `mentions` that `text` does not contain as
-  `@` plus the ID, so no one is mentioned invisibly.
 - An edit (Appendix B) mentions only the users it adds to `mentions`; users
   already listed are not mentioned again.
 - Composers add a user to `mentions` when the user picks them, and insert
