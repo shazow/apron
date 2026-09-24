@@ -379,6 +379,28 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 pre.ap-embed-streambody { font-family: var(--font-mono); }
 .ap-embed-stream-terminal { background: var(--bg-rail); }
 .ap-embed-stream-terminal .ap-embed-streambody { color: var(--ink); }
+/* Terminal colors: the 16 ANSI colors from the theme, bright variants sharing their hue. */
+.ap-term-bold { font-weight: 700; }
+.ap-term-dim { opacity: .65; }
+.ap-term-italic { font-style: italic; }
+.ap-term-underline { text-decoration: underline; }
+.ap-term-fg0 { color: var(--line-strong); }
+.ap-term-fg1, .ap-term-fg9 { color: var(--danger); }
+.ap-term-fg2, .ap-term-fg10 { color: var(--ok); }
+.ap-term-fg3, .ap-term-fg11 { color: var(--warn); }
+.ap-term-fg4, .ap-term-fg12 { color: var(--denim); }
+.ap-term-fg5, .ap-term-fg13 { color: var(--term-magenta); }
+.ap-term-fg6, .ap-term-fg14 { color: var(--term-cyan); }
+.ap-term-fg7, .ap-term-fg15 { color: var(--ink); }
+.ap-term-fg8 { color: var(--ink-muted); }
+.ap-term-bg0, .ap-term-bg8 { background-color: var(--bg-300); }
+.ap-term-bg1, .ap-term-bg9 { background-color: var(--danger); color: var(--bg-rail); }
+.ap-term-bg2, .ap-term-bg10 { background-color: var(--ok); color: var(--bg-rail); }
+.ap-term-bg3, .ap-term-bg11 { background-color: var(--warn); color: var(--bg-rail); }
+.ap-term-bg4, .ap-term-bg12 { background-color: var(--denim); color: var(--bg-rail); }
+.ap-term-bg5, .ap-term-bg13 { background-color: var(--term-magenta); color: var(--bg-rail); }
+.ap-term-bg6, .ap-term-bg14 { background-color: var(--term-cyan); color: var(--bg-rail); }
+.ap-term-bg7, .ap-term-bg15 { background-color: var(--ink); color: var(--bg-rail); }
 .ap-embed-caret { display: inline-block; width: .55em; height: 1.1em; margin-left: 1px; vertical-align: text-bottom; background: var(--ink-muted); animation: ap-blink 1s steps(1) infinite; }
 .ap-embed-ogcard { display: flex; flex-direction: column; overflow: hidden; width: min(100%, 420px); border: 1px solid var(--line); background: var(--bg-200); color: var(--ink); text-decoration: none; }
 a.ap-embed-ogcard:hover { background: var(--bg-300); }
