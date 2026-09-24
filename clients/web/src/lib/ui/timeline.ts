@@ -1,4 +1,4 @@
-import { childRooms, timelineMessages, type RoomSnapshot } from '$lib/protocol/client';
+import { childRooms, timelineMessages, type RoomRename, type RoomSnapshot } from '$lib/protocol/client';
 import { compareLogIds } from '$lib/protocol/reducer';
 import { isLogId, type Identity, type MessageRecord } from '$lib/protocol/types';
 import { embedsOf, senderName, textOf } from './messages';
@@ -37,7 +37,8 @@ export type TimelineItem =
 	| { kind: 'date'; key: string; label: string }
 	| { kind: 'message'; key: string; event: MessageRecord; grouped: boolean; intro?: boolean }
 	| { kind: 'thread'; key: string; entry: ThreadEntry }
-	| { kind: 'replies'; key: string; count: number };
+	| { kind: 'replies'; key: string; count: number }
+	| { kind: 'renamed'; key: string; logId: string; title: string };
 
 /**
  * The rooms the sidebar lists at the top level: rooms without a parent, and
@@ -175,15 +176,18 @@ export interface ThreadTimelineInput {
 	messages: MessageRecord[];
 	/** The thread's intro message, wherever it lives, when known. */
 	intro?: MessageRecord;
+	/** The thread room's title changes, ascending. */
+	renames?: readonly RoomRename[];
 	now?: Date;
 }
 
 /**
  * The thread view: the intro message leads, then an "N replies" divider and
- * the thread's other messages. Without an intro it is just the messages, with
- * date dividers.
+ * the thread's other messages, with a "Thread renamed" line where each title
+ * change was logged. Without an intro it is just the messages, with date
+ * dividers.
  */
-export function buildThreadTimeline({ messages, intro, now = new Date() }: ThreadTimelineInput): TimelineItem[] {
+export function buildThreadTimeline({ messages, intro, renames = [], now = new Date() }: ThreadTimelineInput): TimelineItem[] {
 	const items: TimelineItem[] = [];
 	let lastDay = '';
 	let previous: MessageRecord | undefined;
@@ -193,15 +197,28 @@ export function buildThreadTimeline({ messages, intro, now = new Date() }: Threa
 		lastDay = dayKey(intro);
 		if (rest.length > 0) items.push({ kind: 'replies', key: 'replies', count: rest.length });
 	}
-	for (const event of rest) {
-		const day = dayKey(event);
-		if (day && day !== lastDay) {
-			items.push({ kind: 'date', key: `date:${day}`, label: dayLabel(event, now) });
-			lastDay = day;
+	const pushDay = (id: string) => {
+		const day = dayKeyOf(id);
+		if (!day || day === lastDay) return;
+		items.push({ kind: 'date', key: `date:${day}`, label: dayLabelOf(id, now) });
+		lastDay = day;
+		previous = undefined;
+	};
+	let next = 0;
+	const pushRenames = (before?: string) => {
+		for (; next < renames.length && (before === undefined || compareLogIds(renames[next].log_id, before) < 0); next++) {
+			const rename = renames[next];
+			pushDay(rename.log_id);
+			items.push({ kind: 'renamed', key: `renamed:${rename.log_id}`, logId: rename.log_id, title: rename.title });
 			previous = undefined;
 		}
+	};
+	for (const event of rest) {
+		pushRenames(event.message_id);
+		pushDay(event.message_id);
 		items.push({ kind: 'message', key: event.message_id, event, grouped: isGrouped(previous, event) });
 		previous = event;
 	}
+	pushRenames();
 	return items;
 }

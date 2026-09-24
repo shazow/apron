@@ -77,11 +77,18 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageB.getByRole('region', { name: 'Edit thread', exact: true })).toHaveCount(0);
 			await expect(pageB.getByRole('heading', { level: 1 })).toContainText(`${token}-renamed`);
 			await expect(cardA).toContainText(`${token}-renamed`);
+			// The rename shows in the thread as a system line, live and when its history loads again.
+			const renamed = `Thread renamed to “${token}-renamed”`;
+			await expect(pageB.getByTestId('thread-renamed')).toContainText(renamed);
+			await pageB.reload();
+			await cardB.click();
+			await expect(pageB.getByTestId('thread-renamed')).toContainText(renamed);
 			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
 			await expect(cardB).toContainText(`${token}-renamed`);
 
 			// Editing the intro message edits the preview; without it, the card previews the latest message.
 			await cardA.click();
+			await expect(pageA.getByTestId('thread-renamed')).toContainText(renamed);
 			await editMessage(pinnedA, `${token} edited intro`);
 			await expect(cardB.getByTestId('thread-preview')).toHaveText(`${token} edited intro`);
 			await deleteMessage(pageA, pinnedA);

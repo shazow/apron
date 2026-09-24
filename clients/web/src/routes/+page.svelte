@@ -29,6 +29,7 @@
 	import { SidebarLayout } from '$lib/ui/sidebar.svelte';
 	import { loadDisplayName, loadRecentServers, loadServerUrl, rememberServer, type RecentServer } from '$lib/ui/storage';
 	import { buildRoomTimeline, buildThreadTimeline, threadEntries, threadTitleFor } from '$lib/ui/timeline';
+	import { idTime } from '$lib/ui/time';
 
 	/** A thread this viewer created, opened once the server has announced it. */
 	type PendingOpen = { room: string; thread: string };
@@ -94,7 +95,7 @@
 	let paneRoom = $derived(activeThread ? threadRoom : activeRoom);
 	let messages = $derived(timelineMessages(paneRoom));
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
-	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro }) : buildRoomTimeline({ messages, threads }));
+	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames }) : buildRoomTimeline({ messages, threads }));
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members ?? []));
 	let typingNames = $derived(snapshot.typing
@@ -812,6 +813,11 @@
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count} {item.count === 1 ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
 							<ThreadCard entry={item.entry} onopen={() => chooseThread(item.entry.id)} />
+						{:else if item.kind === 'renamed'}
+							<div data-timeline-item class="ap-msg ap-msg-system" data-testid="thread-renamed">
+								<div class="ap-msg-system-body">{#if item.title}Thread renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}Thread name cleared{/if}</div>
+								{#if idTime(item.logId)}<time class="ap-msg-system-time">{idTime(item.logId)}</time>{/if}
+							</div>
 						{:else}
 							{@const event = item.event}
 							{#if event.message_id === newDividerBefore}

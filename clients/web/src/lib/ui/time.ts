@@ -15,7 +15,12 @@ export function eventMillis(event: MessageRecord): number | undefined {
 
 /** Local 24h `14:02`, or empty when the ID carries no time. */
 export function eventTime(event: MessageRecord): string {
-	const millis = eventMillis(event);
+	return idTime(event.message_id);
+}
+
+/** The local 24h time a log ID falls at, or empty when it carries no time. */
+export function idTime(id: string): string {
+	const millis = idMillis(id);
 	return millis ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(millis) : '';
 }
 

@@ -8,6 +8,7 @@ import {
 	timelineEvents,
 	type DecodedRecords,
 	type ReactionSummary,
+	type RoomRename,
 	type TimelineState
 } from './reducer';
 import {
@@ -34,7 +35,7 @@ import {
 	type WireFrame
 } from './types';
 
-export type { ReactionSummary, TimelineState } from './reducer';
+export type { ReactionSummary, RoomRename, TimelineState } from './reducer';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'offline';
 export type MessageFormat = 'plain' | 'markdown';
@@ -60,6 +61,8 @@ export interface RoomSnapshot {
 	introMessage?: MessageRecord;
 	/** Opaque extension data from the room record. */
 	ext?: JsonObject;
+	/** Title changes seen in the room's log, ascending (absent when none). */
+	renames?: RoomRename[];
 	/** Greatest `log_id` known in the room's log. */
 	latestLogId?: string;
 	/** Advertised lower bound of retrievable history, `null` when none. */
@@ -578,6 +581,7 @@ export class ChatClient {
 				const record = this.store.room(room.id);
 				const thread = typeof record?.parent_room_id === 'string';
 				const intro = record?.intro_message ? this.store.message(record.intro_message.message_id) : undefined;
+				const renames = this.store.roomRenames(room.id);
 				return {
 					id: room.id,
 					title: typeof record?.title === 'string' && record.title ? record.title : room.id,
@@ -586,6 +590,7 @@ export class ChatClient {
 					...(record?.intro_message ? { introMessageId: record.intro_message.message_id } : {}),
 					...(intro ? { introMessage: intro } : {}),
 					...(record && isJsonObject(record.ext) ? { ext: record.ext } : {}),
+					...(renames.length ? { renames } : {}),
 					...(room.latestLogId !== undefined ? { latestLogId: room.latestLogId } : {}),
 					...(room.historyLogId !== undefined ? { historyLogId: room.historyLogId } : {}),
 					timeline: room.timeline,

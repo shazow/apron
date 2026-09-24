@@ -140,6 +140,18 @@ describe('thread view', () => {
 		expect(items[2]).toMatchObject({ grouped: false });
 	});
 
+	it('places each rename by its log position and breaks grouping around it', () => {
+		const intro = message(0, 'alice');
+		const first = message(1000, 'bob', { room_id: 't1' });
+		const second = message(3000, 'bob', { room_id: 't1' });
+		const renames = [{ log_id: String(base + 2000), title: 'Deploy', previous: '' }, { log_id: String(base + 4000), title: 'Deploy v2', previous: 'Deploy' }];
+		const items = buildThreadTimeline({ messages: [first, second], intro, renames });
+		expect(kinds(items)).toEqual(['message', 'replies', 'message', 'renamed', 'message', 'renamed']);
+		expect(items[3]).toMatchObject({ title: 'Deploy' });
+		expect(items[4]).toMatchObject({ grouped: false });
+		expect(items[5]).toMatchObject({ title: 'Deploy v2' });
+	});
+
 	it('shows an intro that lives in the thread once, and no divider without replies', () => {
 		const intro = message(0, 'alice', { room_id: 't1' });
 		expect(kinds(buildThreadTimeline({ messages: [intro], intro }))).toEqual(['message']);

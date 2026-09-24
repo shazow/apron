@@ -125,6 +125,16 @@ describe('wire decoding', () => {
 		store.putRoom(decodeRoom({ room_id: 'general', title: 'No history cap' })!.record);
 		expect(store.room('general')?.title).toBe('No history cap');
 	});
+
+	it('reads title changes from every logged room record, whatever order they arrive in', () => {
+		const store = new ProtocolStore();
+		store.putRoom(decodeRoom({ room_id: 't1', log_id: '30', title: 'Deploy v2' })!.record);
+		// History arrives after the live record: older records still count as renames.
+		store.putRoom(decodeRoom({ room_id: 't1', log_id: '10', title: 'Deploy' })!.record);
+		store.putRoom(decodeRoom({ room_id: 't1', log_id: '20', title: 'Deploy', ext: { a: 1 } })!.record);
+		expect(store.roomRenames('t1')).toEqual([{ log_id: '30', title: 'Deploy v2', previous: 'Deploy' }]);
+		expect(store.room('t1')?.title).toBe('Deploy v2');
+	});
 });
 
 describe('reactions', () => {
