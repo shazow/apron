@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { ChatClient, RoomSnapshot } from '$lib/protocol/client';
 	import type { SessionView } from '$lib/ui/session.svelte';
 	import { sidebarRooms, type ThreadEntry } from '$lib/ui/timeline';
@@ -33,7 +34,23 @@
 	let listError = $state('');
 	/** Visible rooms this user hasn't joined (or has left), from the latest `room_list`. */
 	let unjoined = $derived((session.snapshot.directory ?? []).filter((listing) => !listing.joined));
-	let moreThreads = $derived(moreThreadsFor ? (session.snapshot.threadDirectory[moreThreadsFor] ?? []).filter((listing) => !listing.joined) : []);
+	/** Threads of the active room this user hasn't joined, once `room_list` has listed them. */
+	let unjoinedThreads = $derived(session.activeRoomId ? (session.snapshot.threadDirectory[session.activeRoomId] ?? []).filter((listing) => !listing.joined) : []);
+
+	/** Changes whenever a room or thread is joined or left. */
+	let joinedKey = $derived(session.rooms.map((room) => room.id).join('\u0000'));
+
+	// Browse rooms and More threads… show only when there is something to join, so list both in the background
+	// (the rooms, and the active room's threads) whenever the active room or what you've joined changes.
+	$effect(() => {
+		const roomId = session.activeRoomId;
+		void joinedKey;
+		if (!canBrowse) return;
+		untrack(() => {
+			client.listRooms().catch(() => {});
+			if (roomId) client.listRooms(roomId).catch(() => {});
+		});
+	});
 
 	function list(parentRoomId?: string): void {
 		listError = '';
@@ -85,22 +102,24 @@
 									{@const open = activeThread === entry.id}
 									<button class="ap-room ap-room-nested" class:ap-room-active={open} type="button" data-thread={entry.id} aria-current={open ? 'page' : undefined} onclick={() => onthread(entry.id)}>
 										<span class="ap-room-text"><span class="ap-room-name">{entry.title}</span></span>
+										{#if mentions[entry.id] && !open}
+											{@const count = mentions[entry.id]}
+											<span class="ap-count ap-count-at" data-testid="thread-mentions" aria-label={`${count} ${count === 1 ? 'mention' : 'mentions'}`}>@{count > 1 ? count : ''}</span>
+										{/if}
 										{#if entry.count !== undefined}
 											<small class="room-meta" aria-label={`${entry.count} ${entry.count === 1 ? 'message' : 'messages'}`}>{entry.count}</small>
 										{/if}
 									</button>
 								{/each}
-								{#if canBrowse}
+								{#if canBrowse && unjoinedThreads.length > 0}
 									<button class="ap-room ap-room-nested more" type="button" data-testid="more-threads" aria-expanded={moreThreadsFor === room.id} onclick={() => showMoreThreads(room.id)}>
 										<span class="ap-room-text"><span class="ap-room-topic">More threads…</span></span>
 									</button>
 									{#if moreThreadsFor === room.id}
-										{#each moreThreads as listing (listing.id)}
+										{#each unjoinedThreads as listing (listing.id)}
 											<button class="ap-room ap-room-nested" type="button" data-join={listing.id} onclick={() => onjoin(listing.id)}>
 												<span class="ap-room-text"><span class="ap-room-name">{listing.title}</span><span class="ap-room-topic">Join</span></span>
 											</button>
-										{:else}
-											<p class="muted">No other threads.</p>
 										{/each}
 									{/if}
 								{/if}
@@ -110,7 +129,7 @@
 				{/if}
 			</div>
 		</section>
-		{#if canBrowse}
+		{#if canBrowse && unjoined.length > 0}
 			<section class="ap-sect" class:ap-sect-closed={!browseOpen}>
 				<div class="ap-sect-head">
 					<button class="ap-sect-toggle" type="button" aria-expanded={browseOpen} data-testid="browse-rooms" onclick={toggleBrowse}><span class="ap-sect-caret" aria-hidden="true">▾</span>Browse rooms</button>
@@ -124,8 +143,6 @@
 									<span class="ap-room-topic">{listing.members.length} {listing.members.length === 1 ? 'member' : 'members'} · Join</span>
 								</span>
 							</button>
-						{:else}
-							<p class="muted">{session.snapshot.directory ? 'You’ve joined every room.' : 'Loading rooms…'}</p>
 						{/each}
 						{#if listError}<p class="muted" role="alert">{listError}</p>{/if}
 					</div>

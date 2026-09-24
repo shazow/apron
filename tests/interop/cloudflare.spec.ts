@@ -238,9 +238,10 @@ test('Worker leaves typing off, lists rooms, and colors guest avatars by user_id
 		await pageA.getByRole('textbox', { name: 'Message', exact: true }).pressSequentially('hello');
 		await pageB.waitForTimeout(500);
 		await expect(pageB.locator('.ap-roomhead-typing')).toHaveCount(0);
-		// room_list: every room is joined on the demo.
-		await pageB.getByTestId('browse-rooms').click();
-		await expect(pageB.getByTestId('room-directory')).toContainText('You’ve joined every room.');
+		// room_list: every room is joined on the demo, so there is nothing to browse.
+		await expect(pageB.getByTestId('room-list').locator('[data-room="general"]')).toBeVisible();
+		await pageB.waitForTimeout(500);
+		await expect(pageB.getByTestId('browse-rooms')).toHaveCount(0);
 		// Placeholder avatars take their hue from the user_id, so two guests differ.
 		const hue = (page: typeof pageA) => page.locator('.ap-profile-me .ap-avatar').first().evaluate((element) => (element as HTMLElement).style.getPropertyValue('--avatar-hue'));
 		const [hueA, hueB] = [await hue(pageA), await hue(pageB)];

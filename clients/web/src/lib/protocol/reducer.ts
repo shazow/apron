@@ -67,6 +67,13 @@ function compareStrings(a: string, b: string): number {
 	return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** A room record that changed the room's title (`''` when cleared), at that record's `log_id`. */
+export interface RoomRename {
+	log_id: string;
+	title: string;
+	previous: string;
+}
+
 /**
  * The client-side record stores (PROTOCOL.md §2): one room record per
  * `room_id`, one message snapshot per `message_id`, one reaction set per
@@ -81,6 +88,8 @@ function compareStrings(a: string, b: string): number {
  */
 export class ProtocolStore {
 	private readonly roomRecords = new Map<string, RoomRecord>();
+	/** Every logged room record's title by `log_id`, per room, superseded or not: what renames are read from. */
+	private readonly roomTitles = new Map<string, Map<string, string>>();
 	private readonly messageRecords = new Map<string, MessageRecord>();
 	private readonly reactionSets = new Map<string, Map<string, ReactionSet>>();
 	private readonly homes = new Map<string, Set<string>>();
@@ -149,6 +158,14 @@ export class ProtocolStore {
 
 	/** Install a room record by the replay rule. Returns whether it replaced the stored one. */
 	putRoom(record: RoomRecord): boolean {
+		if (record.log_id !== undefined) {
+			let titles = this.roomTitles.get(record.room_id);
+			if (!titles) this.roomTitles.set(record.room_id, (titles = new Map()));
+			if (!titles.has(record.log_id)) {
+				titles.set(record.log_id, record.title ?? '');
+				this.touched.add(record.room_id);
+			}
+		}
 		const current = this.roomRecords.get(record.room_id);
 		if (current && record.log_id !== undefined && current.log_id !== undefined && compareLogIds(record.log_id, current.log_id) <= 0) {
 			return false;
@@ -156,6 +173,21 @@ export class ProtocolStore {
 		this.roomRecords.set(record.room_id, record);
 		this.touched.add(record.room_id);
 		return true;
+	}
+
+	/**
+	 * The room's title changes, ascending: each logged room record whose title
+	 * differs from the record just before it among those seen. History
+	 * compaction may drop records, so a rename between two unseen ones is missed.
+	 */
+	roomRenames(roomId: string): RoomRename[] {
+		const titles = [...(this.roomTitles.get(roomId) ?? [])].sort(([a], [b]) => compareLogIds(a, b));
+		const renames: RoomRename[] = [];
+		for (let index = 1; index < titles.length; index++) {
+			const [logId, title] = titles[index];
+			if (title !== titles[index - 1][1]) renames.push({ log_id: logId, title, previous: titles[index - 1][1] });
+		}
+		return renames;
 	}
 
 	/** Install a message snapshot by the replay rule, re-homing it on a move. */
@@ -213,6 +245,7 @@ export class ProtocolStore {
 	clear(): void {
 		for (const roomId of this.roomIds()) this.touched.add(roomId);
 		this.roomRecords.clear();
+		this.roomTitles.clear();
 		this.messageRecords.clear();
 		this.reactionSets.clear();
 		this.homes.clear();

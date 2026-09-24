@@ -77,11 +77,18 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageB.getByRole('region', { name: 'Edit thread', exact: true })).toHaveCount(0);
 			await expect(pageB.getByRole('heading', { level: 1 })).toContainText(`${token}-renamed`);
 			await expect(cardA).toContainText(`${token}-renamed`);
+			// The rename shows in the thread as a system line, live and when its history loads again.
+			const renamed = `Thread renamed to “${token}-renamed”`;
+			await expect(pageB.getByTestId('thread-renamed')).toContainText(renamed);
+			await pageB.reload();
+			await cardB.click();
+			await expect(pageB.getByTestId('thread-renamed')).toContainText(renamed);
 			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
 			await expect(cardB).toContainText(`${token}-renamed`);
 
 			// Editing the intro message edits the preview; without it, the card previews the latest message.
 			await cardA.click();
+			await expect(pageA.getByTestId('thread-renamed')).toContainText(renamed);
 			await editMessage(pinnedA, `${token} edited intro`);
 			await expect(cardB.getByTestId('thread-preview')).toHaveText(`${token} edited intro`);
 			await deleteMessage(pageA, pinnedA);
@@ -141,7 +148,7 @@ test.describe('chat protocol interoperability', () => {
 		await sendMessage(page, `${token}-reply`);
 		await waitForMessage(page, `${token}-reply`);
 		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
-		const jump = page.getByRole('button', { name: /^Jump to (latest|new)$/ });
+		const jump = page.getByRole('button', { name: /jump to latest$/i });
 		const list = page.getByTestId('message-list');
 		await expect(jump).toHaveCount(0);
 		// Opening a thread starts at its long intro, with the latest reply below the fold.
@@ -149,8 +156,14 @@ test.describe('chat protocol interoperability', () => {
 		await expect(jump).toBeVisible();
 		await jump.click();
 		await expect(jump).toHaveCount(0);
+		const day = page.getByTestId('floating-day');
+		await expect(day).not.toHaveClass(/day-float-shown/);
 		await list.evaluate((node) => { node.scrollTop = 0; });
 		await expect(jump).toBeVisible();
+		// Scrolling back floats the day at the top, only while you're scrolling.
+		await expect(day).toHaveClass(/day-float-shown/);
+		await expect(day).toHaveText('Today');
+		await expect(day).not.toHaveClass(/day-float-shown/, { timeout: 3000 });
 		await page.setViewportSize({ width: 900, height: 1800 });
 		await expect(jump).toHaveCount(0);
 		await page.setViewportSize({ width: 900, height: 700 });
@@ -618,6 +631,106 @@ test.describe('chat protocol interoperability', () => {
 		}
 	});
 
+	test('counts unread arrivals in the tab title until you read them', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const reader = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await reader.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			await pageB.setViewportSize({ width: 900, height: 700 });
+			const token = `unread-${Date.now().toString(36)}`;
+			await sendMessage(pageA, [`${token}-intro`, ...Array.from({ length: 40 }, (_, line) => `Intro line ${line}`)].join('\n\n'));
+			await sendMessage(pageA, `${token}-latest`);
+			await waitForMessage(pageB, `${token}-latest`);
+			await expect(pageB).toHaveTitle('Apron');
+
+			await pageB.getByTestId('message-list').evaluate((node) => { node.scrollTop = 0; });
+			await expect(pageB.getByTestId('jump-button')).toBeVisible();
+			await sendMessage(pageA, `${token}-one`);
+			await sendMessage(pageA, `${token}-two`);
+			await expect(pageB).toHaveTitle('(2) Apron');
+			// Short times carry the exact local time on hover, the grouped follower's too.
+			const exact = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+			await expect((await waitForMessage(pageB, `${token}-intro`)).locator('.ap-msg-meta time')).toHaveAttribute('title', exact);
+			await expect((await waitForMessage(pageB, `${token}-two`)).locator('time.ap-msg-hovertime')).toHaveAttribute('title', exact);
+			await pageB.getByTestId('jump-button').click();
+			await expect(pageB).toHaveTitle('Apron');
+		} finally {
+			await Promise.all([writer.close(), reader.close()]);
+		}
+	});
+
+	test('chimes and flashes the tab title for a mention while the window is in the background', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const named = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await named.newPage();
+			// Count the chime's tones instead of playing them.
+			await pageB.addInitScript(() => {
+				(window as any).tones = 0;
+				class FakeAudio {
+					state = 'running';
+					currentTime = 0;
+					destination = {};
+					resume() { return Promise.resolve(); }
+					createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: (node: unknown) => node }; }
+					createOscillator() {
+						(window as any).tones++;
+						return { type: '', frequency: { value: 0 }, connect: (node: unknown) => node, start() {}, stop() {} };
+					}
+				}
+				(window as any).AudioContext = FakeAudio;
+			});
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const id = await userIdOf(pageB);
+			const token = `attention-${Date.now().toString(36)}`;
+
+			// While focused, a mention neither chimes nor flashes.
+			await sendMessage(pageA, `@${id} ${token} focused`);
+			await waitForMessage(pageB, `${token} focused`);
+			await pageB.waitForTimeout(300);
+			expect(await pageB.evaluate(() => (window as any).tones)).toBe(0);
+			await expect(pageB).toHaveTitle('Apron');
+
+			await pageB.evaluate(() => window.dispatchEvent(new Event('blur')));
+			await sendMessage(pageA, `@${id} ${token} away`);
+			await expect(pageB).toHaveTitle('@ You were mentioned');
+			expect(await pageB.evaluate(() => (window as any).tones)).toBeGreaterThan(0);
+			await pageB.evaluate(() => window.dispatchEvent(new Event('focus')));
+			await expect(pageB).toHaveTitle('Apron');
+		} finally {
+			await Promise.all([writer.close(), named.close()]);
+		}
+	});
+
+	test('badges a thread in the sidebar when you are mentioned in it elsewhere', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const named = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await named.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const id = await userIdOf(pageB);
+			const token = `threadping-${Date.now().toString(36)}`;
+			await sendMessage(pageA, `${token}-root`);
+			const threadId = await startThread(pageA, await waitForMessage(pageA, `${token}-root`));
+			const row = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+			await expect(row).toBeVisible();
+			await expect(row.getByTestId('thread-mentions')).toHaveCount(0);
+
+			// B stays in the room; the mention lands in the thread.
+			await sendMessage(pageA, `@${id} ${token} please look`);
+			await expect(row.getByTestId('thread-mentions')).toHaveText('@');
+			await row.click();
+			await waitForMessage(pageB, `${token} please look`);
+			await expect(row.getByTestId('thread-mentions')).toHaveCount(0);
+		} finally {
+			await Promise.all([writer.close(), named.close()]);
+		}
+	});
+
 	test('turns the jump bar rust when a mention lands above the fold', async ({ browser }) => {
 		const writer = await browser.newContext();
 		const named = await browser.newContext();
@@ -638,7 +751,8 @@ test.describe('chat protocol interoperability', () => {
 			await pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
 			await waitForMessage(pageB, `${handle}-first-reply`);
 			await pageB.getByTestId('message-list').evaluate((node) => { node.scrollTop = 0; });
-			await expect(pageB.getByTestId('jump-button')).toHaveText('Jump to latest');
+			await expect(pageB.getByTestId('jump-button')).toHaveAccessibleName('Jump to latest');
+			await expect(pageB.locator('.ap-jumpfab')).toBeVisible();
 
 			// The mention arrives out of sight: the bar turns rust and offers the mention itself.
 			await sendMessage(pageA, `@${id} can you check the migration logs?`);

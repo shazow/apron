@@ -21,6 +21,7 @@
 	import { directory } from '$lib/ui/directory.svelte';
 	import { FeedbackState } from '$lib/ui/feedback.svelte';
 	import { MentionTracker } from '$lib/ui/mentions.svelte';
+	import { UnreadTracker } from '$lib/ui/unread.svelte';
 	import { isOwn, mentionsMe, peopleIn, replySnippet, senderName } from '$lib/ui/messages';
 	import { reactionChips, type ReactionChip } from '$lib/ui/reactions';
 	import { MessageSelection } from '$lib/ui/selection.svelte';
@@ -28,6 +29,8 @@
 	import { SidebarLayout } from '$lib/ui/sidebar.svelte';
 	import { loadDisplayName, loadRecentServers, loadServerUrl, rememberServer, type RecentServer } from '$lib/ui/storage';
 	import { buildRoomTimeline, buildThreadTimeline, threadEntries, threadTitleFor } from '$lib/ui/timeline';
+	import { dayLabelOf, idDateTime, idIso, idTime } from '$lib/ui/time';
+	import { playPing, tabTitle } from '$lib/ui/attention';
 
 	/** A thread this viewer created, opened once the server has announced it. */
 	type PendingOpen = { room: string; thread: string };
@@ -38,6 +41,19 @@
 	const session = new SessionView();
 	const feedback = new FeedbackState();
 	const mentions = new MentionTracker();
+	const unread = new UnreadTracker();
+	/** Whether this tab is in front: a hidden tab doesn't read what arrives. */
+	let pageVisible = $state(typeof document === 'undefined' || document.visibilityState === 'visible');
+	/** Whether this window has focus: a mention while it doesn't alerts the tab. */
+	let pageFocused = $state(typeof document === 'undefined' || document.hasFocus());
+	/** A mention arrived while you were away; the title flashes until you're back. */
+	let attention = $state(false);
+	let titleFlash = $state(false);
+	let alertedMentions = 0;
+	/** The day at the top of the timeline, floated there only while you scroll back. */
+	let floatingDay = $state('');
+	let floatingDayShown = $state(false);
+	let floatingDayTimer: ReturnType<typeof setTimeout> | undefined;
 	const selection = new MessageSelection();
 	const sidebar = new SidebarLayout();
 
@@ -78,8 +94,8 @@
 	let latestVisible = $state(true);
 	let seenCount = $state(0);
 	let typingTimer: ReturnType<typeof setTimeout> | undefined;
-	/** Where the last automatic scroll to the latest item left the list. */
-	let autoScrollTop: number | undefined;
+	/** Where the last scroll event, or automatic scroll to the latest item, left the list. */
+	let lastScrollTop: number | undefined;
 	let highlightTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let snapshot = $derived(session.snapshot);
@@ -92,7 +108,7 @@
 	let paneRoom = $derived(activeThread ? threadRoom : activeRoom);
 	let messages = $derived(timelineMessages(paneRoom));
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
-	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro }) : buildRoomTimeline({ messages, threads }));
+	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames }) : buildRoomTimeline({ messages, threads }));
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members ?? []));
 	let typingNames = $derived(snapshot.typing
@@ -128,6 +144,30 @@
 		mentions.observe(session.rooms, session.you, paneRoom?.id, latestVisible);
 	});
 
+	$effect(() => {
+		unread.observe(session.rooms, session.you, paneRoom?.id, latestVisible && pageVisible);
+	});
+
+	// Each mention that lands while you're in another window or tab chimes once and flags the tab.
+	$effect(() => {
+		const arrived = mentions.arrived;
+		if (arrived === alertedMentions) return;
+		alertedMentions = arrived;
+		if (untrack(() => pageFocused && pageVisible)) return;
+		attention = true;
+		playPing();
+	});
+
+	$effect(() => {
+		if (!attention) {
+			titleFlash = false;
+			return;
+		}
+		titleFlash = true;
+		const timer = setInterval(() => (titleFlash = !titleFlash), 1000);
+		return () => clearInterval(timer);
+	});
+
 	// The New divider is placed once per visit, from the read cursor the server kept.
 	$effect(() => {
 		const room = paneRoom;
@@ -141,7 +181,7 @@
 		const room = paneRoom;
 		const last = messages[messages.length - 1];
 		// Only once this pane's divider is in place: advancing first would hide what was new.
-		if (!client || !room || !last || !latestVisible || !room.loaded || !session.ready || newDivider.room !== room.id || !newDivider.fixed) return;
+		if (!client || !room || !last || !latestVisible || !pageVisible || !room.loaded || !session.ready || newDivider.room !== room.id || !newDivider.fixed) return;
 		untrack(() => client?.markRead(room.id, last.message_id));
 	});
 
@@ -267,6 +307,7 @@
 		return () => {
 			if (typingTimer) clearTimeout(typingTimer);
 			if (highlightTimer) clearTimeout(highlightTimer);
+			if (floatingDayTimer) clearTimeout(floatingDayTimer);
 			feedback.dispose();
 			mentions.dispose();
 			session.dispose();
@@ -348,6 +389,7 @@
 		composer?.reset();
 		mentions.clearUnseen();
 		mentions.clearRoom(roomId);
+		if (thread) mentions.clearRoom(thread);
 		stickToBottom = true;
 	}
 
@@ -581,7 +623,7 @@
 	function scrollToLatest(): void {
 		if (!messageScroll) return;
 		messageScroll.scrollTop = messageScroll.scrollHeight;
-		autoScrollTop = messageScroll.scrollTop;
+		lastScrollTop = messageScroll.scrollTop;
 	}
 
 	/** Takes you to the oldest mention that arrived while you were reading back. */
@@ -593,14 +635,45 @@
 
 	function trackScroll(): void {
 		if (!messageScroll) return;
-		// The event for our own scroll to the latest item can arrive after the pane grew again
-		// (a room's history and its threads' cards land over several snapshots): the reader
-		// hasn't scrolled up, so stay pinned and let the next update scroll down again.
-		if (stickToBottom && autoScrollTop !== undefined && Math.abs(messageScroll.scrollTop - autoScrollTop) < 2) return;
-		autoScrollTop = undefined;
+		const top = messageScroll.scrollTop;
+		const scrolledUp = lastScrollTop === undefined || top < lastScrollTop - 1;
+		lastScrollTop = top;
+		// While pinned, only the reader scrolling up lets go. The pane grows under us as a room's
+		// history, its threads' cards and long messages lay out; our own scroll's event can land
+		// after that, and scroll anchoring moves the list down, before the next frame catches up.
+		if (stickToBottom && !scrolledUp) {
+			requestAnimationFrame(() => {
+				if (stickToBottom) scrollToLatest();
+			});
+			return;
+		}
 		const atBottom = messageScroll.scrollHeight - messageScroll.scrollTop - messageScroll.clientHeight < 96;
 		if (!atBottom && stickToBottom) seenCount = messages.length;
 		stickToBottom = atBottom;
+		floatDay(atBottom);
+	}
+
+	/** While you scroll back, the day you're reading floats at the top; it fades once you stop. */
+	function floatDay(atBottom: boolean): void {
+		if (floatingDayTimer) clearTimeout(floatingDayTimer);
+		if (!messageScroll || atBottom) {
+			floatingDayShown = false;
+			return;
+		}
+		// The first message still showing below the top edge; rows are in order, so bisect.
+		const top = messageScroll.getBoundingClientRect().top;
+		const rows = messageScroll.querySelectorAll<HTMLElement>('article[data-message-id]');
+		let low = 0;
+		let high = rows.length - 1;
+		while (low < high) {
+			const middle = (low + high) >> 1;
+			if (rows[middle].getBoundingClientRect().bottom <= top) low = middle + 1;
+			else high = middle;
+		}
+		const label = rows.length ? dayLabelOf(rows[low].dataset.messageId ?? '') : '';
+		floatingDay = label;
+		floatingDayShown = Boolean(label);
+		floatingDayTimer = setTimeout(() => (floatingDayShown = false), 1200);
 	}
 
 	// --- Editing ---
@@ -708,10 +781,15 @@
 	}
 </script>
 
-<svelte:window onkeydown={windowKeydown} />
+<svelte:window onkeydown={windowKeydown} onfocus={() => { pageFocused = true; attention = false; }} onblur={() => (pageFocused = false)} />
+<svelte:document onvisibilitychange={() => {
+	pageVisible = document.visibilityState === 'visible';
+	pageFocused = document.hasFocus();
+	if (pageVisible && pageFocused) attention = false;
+}} />
 
 <svelte:head>
-	<title>Apron</title>
+	<title>{tabTitle(unread.total, titleFlash)}</title>
 	<meta name="description" content="Apron, a chat frontend for the Bottomless Chat protocol." />
 </svelte:head>
 
@@ -793,6 +871,7 @@
 			{/if}
 
 			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.title} messages`}>
+				<div class="day-float" class:day-float-shown={floatingDayShown} aria-hidden="true" data-testid="floating-day"><span>{floatingDay}</span></div>
 				{#if snapshot.showReconnectDivider}
 					<div class="ap-divider ap-divider-gap" role="separator" data-testid="reconnect-divider"><span>Reconnected · earlier messages aren’t available</span></div>
 				{/if}
@@ -804,11 +883,16 @@
 				{:else}
 					{#each timeline as item (item.key)}
 						{#if item.kind === 'date'}
-							<div class="ap-divider ap-divider-date ap-divider-sticky" role="separator"><span>{item.label}</span></div>
+							<div class="ap-divider ap-divider-date" role="separator"><span>{item.label}</span></div>
 						{:else if item.kind === 'replies'}
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count} {item.count === 1 ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
 							<ThreadCard entry={item.entry} onopen={() => chooseThread(item.entry.id)} />
+						{:else if item.kind === 'renamed'}
+							<div data-timeline-item class="ap-msg ap-msg-system" data-testid="thread-renamed">
+								<div class="ap-msg-system-body">{#if item.title}Thread renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}Thread name cleared{/if}</div>
+								{#if idTime(item.logId)}<time class="ap-msg-system-time" datetime={idIso(item.logId)} title={idDateTime(item.logId)}>{idTime(item.logId)}</time>{/if}
+							</div>
 						{:else}
 							{@const event = item.event}
 							{#if event.message_id === newDividerBefore}
@@ -920,6 +1004,11 @@
 	.empty p { margin: 0; }
 	.empty .ap-btn { margin-top: var(--space-2); }
 	.typing-row { min-height: 20px; padding-top: var(--space-1); }
+	/* A zero-height sticky row, so the pill floats over the timeline without taking space. */
+	.day-float { position: sticky; top: var(--space-2); z-index: 2; height: 0; display: flex; justify-content: center; pointer-events: none; }
+	.day-float span { padding: 3px var(--space-3); border-radius: var(--radius-full); background: var(--bg-200); border: 1px solid var(--line); box-shadow: var(--shadow-float); color: var(--ink); font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; opacity: 0; transform: translateY(-4px); transition: opacity .2s, transform .2s; }
+	.day-float-shown span { opacity: 1; transform: none; }
+	@media (prefers-reduced-motion: reduce) { .day-float span { transition: none; transform: none; } }
 	.toast { position: fixed; z-index: 10; left: 50%; bottom: calc(var(--space-4) + 64px); transform: translateX(-50%); max-width: min(480px, calc(100% - var(--space-8))); }
 	.toast :global(.ap-status) { box-shadow: var(--shadow-float); }
 	.toast-right { left: auto; right: var(--space-4); transform: none; }

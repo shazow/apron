@@ -8,7 +8,8 @@ const PING_MS = 1200;
 
 /**
  * Mentions of you as they arrive: the row pulses once, a room you aren't
- * reading gets an `@` badge (a thread's mentions badge its parent room), and
+ * reading gets an `@` badge (a thread's mentions badge both the thread and its
+ * parent room), and
  * one that lands above the fold joins the jump bar's list. The first time a
  * room is seen its newest known log position becomes its watermark: messages
  * created at or below it are history (a thread's history loads only when it
@@ -17,10 +18,12 @@ const PING_MS = 1200;
 export class MentionTracker {
 	/** Message IDs pulsing because a mention of you just arrived. */
 	pinged = $state<string[]>([]);
-	/** Mentions that landed in a room you weren't reading, cleared when you open it. */
+	/** Mentions that landed in a room or thread you weren't reading, cleared when you open it. */
 	byRoom = $state<Record<string, number>>({});
 	/** Mentions that arrived in the open pane while you were scrolled up, oldest first. */
 	unseen = $state<string[]>([]);
+	/** How many mentions of you have arrived so far: it ticks up once per new one. */
+	arrived = $state(0);
 	private readonly shown = new Map<string, Set<string>>();
 	private readonly watermarks = new Map<string, string>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -52,7 +55,12 @@ export class MentionTracker {
 				const event = room.timeline.events[id];
 				if (!event || !mentionsMe(event, me)) continue;
 				this.ping(id);
-				if (room.id !== pane) this.byRoom = { ...this.byRoom, [badge]: (this.byRoom[badge] ?? 0) + 1 };
+				this.arrived++;
+				if (room.id !== pane) {
+					const next = { ...this.byRoom, [badge]: (this.byRoom[badge] ?? 0) + 1 };
+					if (badge !== room.id) next[room.id] = (next[room.id] ?? 0) + 1;
+					this.byRoom = next;
+				}
 				else if (!latestVisible) this.unseen = [...this.unseen, id];
 			}
 		}

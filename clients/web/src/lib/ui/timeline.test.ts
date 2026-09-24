@@ -43,6 +43,9 @@ describe('grouping', () => {
 		expect(dayLabel(message(-DAY, 'alice'), now)).toBe('Yesterday');
 		expect(dayLabel(message(-3 * DAY, 'alice'), now)).not.toMatch(/Today|Yesterday/);
 		expect(dayLabel(message(0, 'alice', { message_id: 'opaque' }), now)).toBe('');
+		// Another year spells the year out.
+		expect(dayLabel(message(-400 * DAY, 'alice'), now)).toMatch(/\d{4}/);
+		expect(dayLabel(message(-3 * DAY, 'alice'), now)).not.toMatch(/\d{4}/);
 	});
 });
 
@@ -138,6 +141,18 @@ describe('thread view', () => {
 		expect(items[0]).toMatchObject({ event: intro, intro: true });
 		expect(items[1]).toMatchObject({ count: 2 });
 		expect(items[2]).toMatchObject({ grouped: false });
+	});
+
+	it('places each rename by its log position and breaks grouping around it', () => {
+		const intro = message(0, 'alice');
+		const first = message(1000, 'bob', { room_id: 't1' });
+		const second = message(3000, 'bob', { room_id: 't1' });
+		const renames = [{ log_id: String(base + 2000), title: 'Deploy', previous: '' }, { log_id: String(base + 4000), title: 'Deploy v2', previous: 'Deploy' }];
+		const items = buildThreadTimeline({ messages: [first, second], intro, renames });
+		expect(kinds(items)).toEqual(['message', 'replies', 'message', 'renamed', 'message', 'renamed']);
+		expect(items[3]).toMatchObject({ title: 'Deploy' });
+		expect(items[4]).toMatchObject({ grouped: false });
+		expect(items[5]).toMatchObject({ title: 'Deploy v2' });
 	});
 
 	it('shows an intro that lives in the thread once, and no divider without replies', () => {

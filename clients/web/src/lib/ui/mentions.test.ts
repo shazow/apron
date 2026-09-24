@@ -35,10 +35,13 @@ describe('mention tracking', () => {
 		tracker.observe([general, thread], me, 'general', true);
 		tracker.observe([general, room('t1', [mention(30, 't1')], { parentRoomId: 'general' })], me, 'general', true);
 		expect(tracker.pinged).toEqual(['30']);
-		expect(tracker.byRoom).toEqual({ general: 1 });
+		expect(tracker.byRoom).toEqual({ general: 1, t1: 1 });
 		// In the open pane, above the fold: it joins the jump bar instead.
 		tracker.observe([room('general', [mention(40, 'general')]), room('t1', [mention(30, 't1')], { parentRoomId: 'general' })], me, 'general', false);
 		expect(tracker.unseen).toEqual(['40']);
+		expect(tracker.byRoom).toEqual({ general: 1, t1: 1 });
+		// Opening the thread clears its badge; the parent keeps its own until it is opened.
+		tracker.clearRoom('t1');
 		expect(tracker.byRoom).toEqual({ general: 1 });
 		tracker.dispose();
 	});
