@@ -23,7 +23,7 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 - `edit`: owner-authorized replacement, deletion, restoration, and moves between rooms of retained messages.
 - `rooms`: thread rooms (rooms with `parent_room_id`) created and edited by participants; `room_join`/`room_leave`. The permanent `general` room is the only top-level room.
 - `reactions`: per-user emoji sets on messages.
-- `activity`: typing only, relayed and never stored, at most 10 relays per user per minute (section 4.2). Read cursors are neither kept nor relayed.
+- `activity`: implemented but off by default (`ACTIVITY=true` advertises it): typing only, relayed and never stored, at most 10 relays per user per minute (section 4.2). Read cursors are neither kept nor relayed.
 - `room_list`: the top-level room or one room's threads, each with the users connected now as `members`.
 - Guest authentication (`guest`) and verified WebAuthn registration/login.
 - Persistent request deduplication for mutating operations.
@@ -87,7 +87,7 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions","activity"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"activity_per_minute":10,"room_list_per_minute":6}}}}
+{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6}}}}
 ```
 
 `ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol Appendix I, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
@@ -138,9 +138,11 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 - Message snapshots and single-set reaction records carry `prev_log_id` when an earlier record for the same key is still stored. Room records and the reaction record a move re-logs do not. The link is added after the snapshot size check. Deleted messages are not redacted.
 - `room_list` (cap `rooms`) returns room records with delivery fields: without `parent_room_id`, the top-level `general`; with it, that room's threads; an unknown parent is `invalid_params`. Every room is visible and joined, so each room's `members` is the same list: the users connected now, one entry each, at most 20. It reads the capped room table under the room-listing reservation and writes nothing.
 
-### 4.2 Activity and per-type throttles
+### 4.2 Server-wide minute, activity, and per-type throttles
 
-`activity` is a notification. Typing (`typing`, seconds, capped at 30) in a known room is relayed to every other authenticated connection as `{room_id, from, typing}` and never stored. `read_message_id` is dropped: the demo keeps no read cursors. A missing or unknown room drops the update; room existence comes from an in-memory cache refilled by listings, record broadcasts, and one bounded lookup per unknown ID.
+The whole server processes at most `globalFramesPerMinute` (300) frames in a rolling minute, counted in memory after the per-connection gates and parsing but before any SQL. Over it, a request gets `retry_after` with the seconds until the oldest counted frame leaves the window, and a notification or malformed frame is dropped; the socket stays open and nothing is charged. The default is sized for a spike from 50 connected users, 10 of them active: about 20 frames a minute per active user (posts, reactions, edits, history pages, room lookups), about one per quiet user, and a reconnect wave of one auth and one history page each. It is at least one IP's frame minute, so a single client cannot be starved by its own limits. The window is lost on hibernation, when the object has received nothing to count. It shapes spikes; the daily frame and SQL budgets still bound the day.
+
+`activity` is off by default and not advertised; typing then gets the unsupported-method path (notifications are ignored, requests get `unsupported`). With `ACTIVITY=true`: `activity` is a notification. Typing (`typing`, seconds, capped at 30) in a known room is relayed to every other authenticated connection as `{room_id, from, typing}` and never stored. `read_message_id` is dropped: the demo keeps no read cursors. A missing or unknown room drops the update; room existence comes from an in-memory cache refilled by listings, record broadcasts, and one bounded lookup per unknown ID.
 
 Some message types have their own per-user rate, counted across the user's connections in a rolling 60-second window whose events live in connection attachments (so they survive hibernation and need no SQL):
 
@@ -258,6 +260,7 @@ The smaller frame limit is a documented demo exception to the protocol's advisor
 | pending_frames_per_connection | 8, additionally bounded to 128 KiB |
 | frames_per_connection_minute | 60 |
 | frames_per_ip_minute | 120 |
+| global_frames_per_minute | 300 server-wide, in memory, before SQL |
 | activity_frame_lease | 10 activity frames reserved per block, per connection |
 | activity_broadcasts_per_user_minute | 10 relayed typing updates |
 | room_list_requests_per_user_minute | 6 |

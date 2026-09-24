@@ -110,7 +110,8 @@ small schema/data sample and are not a per-message capacity estimate.
 
 ## Activity and throttle notices
 
-Measured on 2026-09-24 with the operation matrix above. Every incoming frame
+`activity` is off by default (`ACTIVITY=true` enables it); these costs apply
+when it is on. Measured on 2026-09-24 with the operation matrix above. Every incoming frame
 reserves 24 writes on its own; an `activity` notification instead spends one
 frame from a per-connection block of 10, reserved together for 24 writes, so
 relayed typing costs 2.4 reserved writes per frame. The web client sends a

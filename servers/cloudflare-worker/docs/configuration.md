@@ -110,7 +110,8 @@ bytes, names 80 Unicode code points/320 UTF-8 bytes, embeds 4, history limit
 50, history response 256 KiB, pending work 8 frames/128 KiB, open sockets 100,
 registered identities and limiter records 10,000 each, processed frames
 100,000/day, global posts 60/minute and 5,000/day, registrations 100/day,
-connection frame rate 120/minute, per-type throttles 60/minute, activity frame
+connection frame rate 120/minute, server-wide frames 1,000/minute (at least one
+IP's minute), per-type throttles 60/minute, activity frame
 blocks 20 frames, `room_list` members 50, SQL writes 80,000/day, SQL reads 3,000,000/day,
 database high-water 96 MiB and hard target 128 MiB, cleanup 100 records,
 thread rooms 100 with 2 KiB of client fields, reactions 64 users per message
@@ -124,6 +125,7 @@ and recalibrating its resource model.
 | `RP_ORIGINS` | Comma-separated exact WebAuthn origins; required explicitly with wildcard guest admission; never accepts wildcards |
 | `ALLOWED_ORIGINS` | Exact browser-origin allowlist, or standalone `*` to admit every guest origin (including opaque/missing Origin); cannot mix `*` with explicit origins; all clients remain subject to quotas |
 | `RP_NAME` | Bounded display name for browser passkey prompts |
+| `ACTIVITY` | `true` advertises and relays typing (cap `activity`, section 4.2 of the spec); default off. Read cursors are never kept |
 | `ADMISSION_OFF` | Operator admission switch; `true` rejects new sockets in the entry Worker before the limiter or DO call; existing sockets remain subject to DO budgets |
 | `ENVIRONMENT` | Set to `development` to enable local origin defaults when `ALLOWED_ORIGINS` and `RP_ORIGINS` are omitted |
 | `NODE_ENV` | Set to `test` to enable the same local origin defaults for tests; production-like deployments must configure origins explicitly |
@@ -159,12 +161,16 @@ The numeric rows are grouped by their unit and enforcement scope:
   `registeredConnectionsPerUser`, `connectionsPerIp`,
   `pendingFramesPerConnection`, `repeatedPolicyViolations`, `cleanupBatch`,
   `threadLimit`, `reactionUsersPerMessage`, `reactionEmojisPerUser`,
-  `limiterRecordCap`.
+  `limiterRecordCap`, `activityFrameLease`, `roomListMembers`,
+  `activityMaxTypingSeconds` (seconds).
 - Rolling minute budgets: `historyRequestsPerUserMinute`,
   `historyRequestsPerIpMinute`, `anonymousPostsPerMinute`,
   `registeredPostsPerMinute`, `ipPostsPerMinute`, `globalPostsPerMinute`,
   `authAttemptsPerIpMinute`, `framesPerConnectionMinute`,
-  `framesPerIpMinute`, `connectionAdmissionsPerIpMinute`.
+  `framesPerIpMinute`, `connectionAdmissionsPerIpMinute`,
+  `globalFramesPerMinute` (server-wide, in memory),
+  `roomListRequestsPerUserMinute` and `activityBroadcastsPerUserMinute` (per
+  user across their connections).
 - UTC-day budgets: `anonymousPostsPerDay`, `registeredPostsPerDay`,
   `ipPostsPerDay`, `globalPostsPerDay`, `registrationsPerIpDay`,
   `registrationsPerDay`, `connectionAdmissionsPerDay`,
@@ -217,6 +223,12 @@ The numeric rows are grouped by their unit and enforcement scope:
 | `framesPerIpMinute` | 120 |
 | `processedFramesPerDay` | 100000 |
 | `repeatedPolicyViolations` | 3 |
+| `globalFramesPerMinute` | 300 |
+| `activityBroadcastsPerUserMinute` | 10 |
+| `roomListRequestsPerUserMinute` | 6 |
+| `activityMaxTypingSeconds` | 30 |
+| `activityFrameLease` | 10 |
+| `roomListMembers` | 20 |
 | `sqlWritesPerDay` | 80000 |
 | `sqlReadsPerDay` | 3000000 |
 | `foregroundWritesPerDay` | 60000 |

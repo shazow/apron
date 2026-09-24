@@ -429,6 +429,12 @@ export class ApronDemoServer extends DurableObject<Env> {
 	 * broadcasts, and one lookup per unknown ID; bounded like the rooms table.
 	 */
 	private readonly knownRooms = new Map<string, boolean>();
+	/**
+	 * When each frame the server processed in the last minute arrived, oldest
+	 * first, for `globalFramesPerMinute`. In memory: a hibernating object has
+	 * received nothing, so a reset window loses no spike.
+	 */
+	private readonly recentFrames: number[] = [];
 	private sessionWorkTail: Promise<void> = Promise.resolve();
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -624,7 +630,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 			params: {
 				protocol: 4,
 				name: "apron-cloudflare-demo/3",
-				caps: ["history", "edit", "rooms", "reactions", "activity"],
+				caps: ["history", "edit", "rooms", "reactions", ...(this.config.activityEnabled ? ["activity"] : [])],
 				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["guest"],
 				ext: {
 					demo: {
@@ -635,9 +641,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 						max_snapshot_bytes: limits.maxSnapshotBytes,
 						guest_posts_per_minute: limits.anonymousPostsPerMinute,
 						registered_posts_per_minute: limits.registeredPostsPerMinute,
-						// Typing is relayed; read cursors are neither kept nor relayed.
-						activity_per_minute: limits.activityBroadcastsPerUserMinute,
+						server_frames_per_minute: limits.globalFramesPerMinute,
 						room_list_per_minute: limits.roomListRequestsPerUserMinute,
+						// With `activity`, typing is relayed; read cursors are neither kept nor relayed.
+						...(this.config.activityEnabled ? { activity_per_minute: limits.activityBroadcastsPerUserMinute } : {}),
 					},
 				},
 			},
@@ -700,7 +707,16 @@ export class ApronDemoServer extends DurableObject<Env> {
 		} catch (error) {
 			parseFailure = error;
 		}
-		const leased = parsed?.request.method === "activity" && parsed.request.id === undefined;
+		// A server-wide spike limit, checked before any SQL. Over it, a request
+		// gets retry_after and a notification is dropped; the socket stays open.
+		const busy = this.takeServerFrame(nowMs());
+		if (busy !== undefined) {
+			if (parsed && parsed.request.id !== undefined) {
+				this.fail(socket, parsed.request, { name: "retry_after", message: "Demo is busy; try again shortly", data: { retry_after: busy } });
+			}
+			return;
+		}
+		const leased = this.config.activityEnabled && parsed?.request.method === "activity" && parsed.request.id === undefined;
 		if (!this.chargeFrame(socket, attachment, leased)) return;
 		if (!parsed) {
 			const error = parseFailure;
@@ -725,6 +741,15 @@ export class ApronDemoServer extends DurableObject<Env> {
 			this.recordViolation(socket, failure);
 		}
 		if (!this.alarmKnown) await this.rescheduleAlarm();
+	}
+
+	/** Counts one frame against the server-wide minute; the seconds to wait when it is full. */
+	private takeServerFrame(now: number): number | undefined {
+		const frames = this.recentFrames;
+		while (frames.length > 0 && frames[0] <= now - 60_000) frames.shift();
+		if (frames.length >= this.config.limits.globalFramesPerMinute) return Math.max(1, Math.ceil((frames[0] + 60_000 - now) / 1_000));
+		frames.push(now);
+		return undefined;
 	}
 
 	/**
@@ -792,16 +817,17 @@ export class ApronDemoServer extends DurableObject<Env> {
 				await this.handleMe(socket, attachment, request);
 				return;
 			case "activity":
+				// Off by default (`ACTIVITY`): typing then gets the unsupported-method path.
+				if (!this.config.activityEnabled) break;
 				await this.handleActivity(socket, request);
 				return;
 			case "room_list":
 				await this.handleRoomList(socket, attachment, request);
 				return;
-			default:
-				if (request.id === undefined) return;
-				if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
-				throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 		}
+		if (request.id === undefined) return;
+		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
+		throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 	}
 
 	private async handleAuth(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {

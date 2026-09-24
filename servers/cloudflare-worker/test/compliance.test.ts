@@ -112,6 +112,15 @@ describe('configuration policy boundaries', () => {
 		expect(() => config({}, { registrationsPerDay: 101 })).toThrow(ConfigError);
 	});
 
+	it('keeps activity off unless ACTIVITY is true, and bounds the server-wide frame minute', () => {
+		expect(config().activityEnabled).toBe(false);
+		expect(config({ ACTIVITY: 'true' }).activityEnabled).toBe(true);
+		expect(() => config({ ACTIVITY: 'maybe' })).toThrow(ConfigError);
+		expect(config().limits.globalFramesPerMinute).toBe(300);
+		expect(() => config({}, { globalFramesPerMinute: DEFAULT_LIMITS.framesPerIpMinute - 1 })).toThrow(ConfigError);
+		expect(() => config({}, { globalFramesPerMinute: 1_001 })).toThrow(ConfigError);
+	});
+
 	it('allows arbitrary guest origins with an explicit passkey allowlist', () => {
 		const open = config({ ALLOWED_ORIGINS: '*', RP_ORIGINS: 'https://web.apron.chat', RP_ID: 'apron.chat' });
 		for (const origin of ['http://localhost:1234', 'http://127.0.0.1:9876', 'http://[::1]:3000', 'http://192.168.1.2:8080', 'https://custom.example', 'null', null]) {

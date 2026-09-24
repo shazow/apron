@@ -214,7 +214,7 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 	}
 });
 
-test('Worker relays typing between browsers, lists rooms, and colors guest avatars by user_id', async ({ browser }) => {
+test('Worker leaves typing off, lists rooms, and colors guest avatars by user_id', async ({ browser }) => {
 	const writer = await browser.newContext();
 	const reader = await browser.newContext();
 	try {
@@ -224,9 +224,11 @@ test('Worker relays typing between browsers, lists rooms, and colors guest avata
 			await page.goto('/');
 			await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 		}
-		// Typing is relayed (cap `activity`); nothing is posted, so posting quotas are untouched.
+		// The demo does not advertise `activity`, so typing is never sent or shown.
+		// Nothing is posted, so posting quotas are untouched.
 		await pageA.getByRole('textbox', { name: 'Message', exact: true }).pressSequentially('hello');
-		await expect(pageB.locator('.ap-roomhead-typing')).toHaveText(/is typing…$/);
+		await pageB.waitForTimeout(500);
+		await expect(pageB.locator('.ap-roomhead-typing')).toHaveCount(0);
 		// room_list: every room is joined on the demo.
 		await pageB.getByTestId('browse-rooms').click();
 		await expect(pageB.getByTestId('room-directory')).toContainText('You’ve joined every room.');

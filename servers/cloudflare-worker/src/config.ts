@@ -9,6 +9,8 @@ export interface RuntimeConfig {
 	rpOrigins: readonly string[];
 	rpName: string;
 	admissionOff: boolean;
+	/** Advertise and relay typing (cap `activity`); off unless `ACTIVITY=true`. */
+	activityEnabled: boolean;
 }
 
 export class ConfigError extends Error {
@@ -24,6 +26,7 @@ type EnvLike = {
 	RP_ORIGINS?: string;
 	RP_NAME?: string;
 	ADMISSION_OFF?: string;
+	ACTIVITY?: string;
 	ENVIRONMENT?: string;
 	NODE_ENV?: string;
 };
@@ -118,6 +121,9 @@ function validateLimits(limits: Limits): void {
 	if (limits.framesPerConnectionMinute > budget.MAX_CONNECTION_FRAME_RATE || limits.framesPerConnectionMinute > limits.framesPerIpMinute || limits.framesPerIpMinute > limits.processedFramesPerDay || limits.processedFramesPerDay > budget.MAX_PROCESSED_FRAMES || limits.repeatedPolicyViolations > limits.framesPerConnectionMinute) {
 		fail("connection attachment counters exceed bounded policy");
 	}
+	if (limits.framesPerIpMinute > limits.globalFramesPerMinute || limits.globalFramesPerMinute > budget.MAX_GLOBAL_FRAMES_PER_MINUTE || limits.globalFramesPerMinute > limits.processedFramesPerDay) {
+		fail("the server-wide frame minute limit must hold one IP's allowance and fit the daily frame budget");
+	}
 	if (limits.activityBroadcastsPerUserMinute > budget.MAX_TYPE_THROTTLE_PER_MINUTE || limits.roomListRequestsPerUserMinute > budget.MAX_TYPE_THROTTLE_PER_MINUTE) {
 		fail("per-type throttles exceed their attachment bound");
 	}
@@ -203,6 +209,8 @@ export function loadConfig(env: EnvLike, overrides: Partial<Limits> = {}): Runti
 	}
 	if (env.ADMISSION_OFF !== undefined && !["true", "false"].includes(String(env.ADMISSION_OFF).toLowerCase())) throw new ConfigError("ADMISSION_OFF must be true or false");
 	const admissionOff = String(env.ADMISSION_OFF ?? "").toLowerCase() === "true";
+	if (env.ACTIVITY !== undefined && !["true", "false"].includes(String(env.ACTIVITY).toLowerCase())) throw new ConfigError("ACTIVITY must be true or false");
+	const activityEnabled = String(env.ACTIVITY ?? "").toLowerCase() === "true";
 	const rpName = String(env.RP_NAME ?? "Apron Demo");
 	if (!rpName.trim() || [...rpName].length > limits.maxNameCodePoints || new TextEncoder().encode(rpName).byteLength > limits.maxNameBytes) {
 		throw new ConfigError("RP_NAME exceeds the configured display-name policy");
@@ -214,6 +222,7 @@ export function loadConfig(env: EnvLike, overrides: Partial<Limits> = {}): Runti
 		rpOrigins,
 		rpName,
 		admissionOff,
+		activityEnabled,
 	};
 }
 

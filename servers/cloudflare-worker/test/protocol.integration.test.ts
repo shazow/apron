@@ -1,4 +1,4 @@
-import { SELF } from 'cloudflare:test';
+import { env, runInDurableObject, SELF } from 'cloudflare:test';
 import { expect, it } from 'vitest';
 import { canonicalizeIp, hashIpKey } from '../src/ip';
 
@@ -74,11 +74,11 @@ async function until(peer: Awaited<ReturnType<typeof connect>>, match: (frame: F
 	}
 }
 
-async function authenticate(peer: Awaited<ReturnType<typeof connect>>, scheme = 'guest') {
+async function authenticate(peer: Awaited<ReturnType<typeof connect>>, scheme = 'guest', extraCaps: string[] = []) {
 	const server = await peer.next();
 	expect(server.method).toBe('server');
 	expect(server.params.protocol).toBe(4);
-	expect(server.params.caps).toEqual(['history', 'edit', 'rooms', 'reactions', 'activity']);
+	expect(server.params.caps).toEqual(['history', 'edit', 'rooms', 'reactions', ...extraCaps]);
 	expect(server.params.auth).toContain('webauthn');
 	expect(server.params.extensions).toBeUndefined();
 	// Demo hints live under the standard ext object, not a top-level key.
@@ -95,6 +95,18 @@ async function authenticate(peer: Awaited<ReturnType<typeof connect>>, scheme = 
 	expect(room.params.latest_log_id).toMatch(/^[1-9][0-9]*$/);
 	expect(room.params.history_log_id).toMatch(/^[1-9][0-9]*$/);
 	return auth.result.you;
+}
+
+type ServerInternals = { config: { limits: Record<string, number>; activityEnabled: boolean }; recentFrames: number[] };
+
+/** Changes the running demo object's policy for one test; the next test restores it. */
+async function configure(update: (config: ServerInternals['config']) => void): Promise<void> {
+	await runInDurableObject(env.DEMO.getByName('public-demo-v1'), (instance) => {
+		const server = instance as unknown as ServerInternals;
+		server.config = { ...server.config, limits: { ...server.config.limits } };
+		update(server.config);
+		server.recentFrames.length = 0;
+	});
 }
 
 /** Skip further room announcements that precede the next request's reply. */
@@ -368,12 +380,48 @@ it('creates threads, moves messages into them, and delivers reactions to every c
 	} finally { late.close(); }
 });
 
-it('relays typing without read cursors, throttles it per user, and tells only the sender once', async () => {
+it('leaves activity off by default: not advertised, and typing is not relayed', async () => {
 	const alice = await connect();
 	const bob = await connect();
 	try {
-		const aliceId = await authenticate(alice);
+		await authenticate(alice);
 		await authenticate(bob);
+		alice.send({ method: 'activity', params: { room_id: 'general', typing: 5 } });
+		alice.send({ id: 'typing-request', method: 'activity', params: { room_id: 'general', typing: 5 } });
+		expect((await until(alice, (frame) => frame.id === 'typing-request')).frame.error.code).toBe(-32601);
+		alice.send({ id: 'after', method: 'message', params: { room_id: 'general', body: { text: 'no typing relayed' } } });
+		const done = await until(bob, (frame) => frame.method === 'message' && frame.params.body?.text === 'no typing relayed');
+		expect(done.skipped.filter((frame) => frame.method === 'activity')).toEqual([]);
+	} finally { alice.close(); bob.close(); }
+});
+
+it('limits the frames the whole server processes in a minute without closing sockets', async () => {
+	await configure((config) => { config.limits.globalFramesPerMinute = 4; });
+	const peer = await connect();
+	try {
+		await authenticate(peer);
+		for (let index = 0; index < 3; index += 1) {
+			peer.send({ id: `list-${index}`, method: 'room_list', params: {} });
+			expect((await until(peer, (frame) => frame.id === `list-${index}`)).frame.result.rooms).toHaveLength(1);
+		}
+		peer.send({ id: 'busy', method: 'room_list', params: {} });
+		const busy = (await until(peer, (frame) => frame.id === 'busy')).frame.error;
+		expect(busy.code).toBe(-32002);
+		expect(busy.data.retry_after).toBeGreaterThan(0);
+		// The socket stays open and a later minute is served again.
+		await configure((config) => { config.limits.globalFramesPerMinute = 300; });
+		peer.send({ id: 'again', method: 'room_list', params: {} });
+		expect((await until(peer, (frame) => frame.id === 'again')).frame.result.rooms).toHaveLength(1);
+	} finally { peer.close(); await configure((config) => { config.limits.globalFramesPerMinute = 300; }); }
+});
+
+it('with ACTIVITY on, relays typing without read cursors, throttles it per user, and tells only the sender once', async () => {
+	await configure((config) => { config.activityEnabled = true; });
+	const alice = await connect();
+	const bob = await connect();
+	try {
+		const aliceId = await authenticate(alice, 'guest', ['activity']);
+		await authenticate(bob, 'guest', ['activity']);
 		alice.send({ method: 'activity', params: { room_id: 'general', typing: 99 } });
 		const first = await until(bob, (frame) => frame.method === 'activity');
 		// Typing is capped by policy; the sender's own connection is not echoed.
@@ -399,7 +447,7 @@ it('relays typing without read cursors, throttles it per user, and tells only th
 		alice.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 50 } });
 		const history = await until(alice, (frame) => frame.id === 'history');
 		expect(history.frame.result.entries.some((entry: Frame) => entry.params?.from?.user_id === '@server')).toBe(false);
-	} finally { alice.close(); bob.close(); }
+	} finally { alice.close(); bob.close(); await configure((config) => { config.activityEnabled = false; }); }
 });
 
 it('lists rooms and threads with the connected members, and throttles listing', async () => {

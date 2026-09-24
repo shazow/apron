@@ -46,6 +46,15 @@ export interface Limits {
 	processedFramesPerDay: number;
 	repeatedPolicyViolations: number;
 	/**
+	 * Frames the whole server processes in a rolling minute, counted in memory
+	 * before any SQL. Past it, requests get `retry_after` and notifications are
+	 * dropped; the socket stays open. Sized for a spike from 50 connected users,
+	 * 10 of them active: about 20 frames a minute per active user (posts,
+	 * reactions, edits, history pages, room lookups), one per quiet user, and a
+	 * reconnect wave of auth plus a history page each.
+	 */
+	globalFramesPerMinute: number;
+	/**
 	 * Per-type throttles, counted per user across their connections. Activity
 	 * over its limit is dropped and the sender gets one `@server` notice per
 	 * window; other requests over theirs are answered with `retry_after`.
@@ -129,6 +138,7 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	framesPerIpMinute: 120,
 	processedFramesPerDay: 100_000,
 	repeatedPolicyViolations: 3,
+	globalFramesPerMinute: 300,
 	activityBroadcastsPerUserMinute: 10,
 	roomListRequestsPerUserMinute: 6,
 	activityMaxTypingSeconds: 30,
@@ -189,6 +199,8 @@ export const MAX_REACTION_USERS_PER_MESSAGE = 64;
 export const MAX_REACTION_EMOJIS_PER_USER = 16;
 export const MAX_EMOJI_BYTES = 64;
 export const MAX_CONNECTION_FRAME_RATE = 120;
+// The server-wide frame window is one in-memory timestamp per frame.
+export const MAX_GLOBAL_FRAMES_PER_MINUTE = 1_000;
 // Throttle windows live in connection attachments, one timestamp per event.
 export const MAX_TYPE_THROTTLE_PER_MINUTE = 60;
 export const MAX_ACTIVITY_FRAME_LEASE = 20;

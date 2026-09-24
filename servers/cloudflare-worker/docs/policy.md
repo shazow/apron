@@ -1,7 +1,8 @@
 # Public demo authentication and policy
 
 The demo speaks Apron protocol **4**, advertising `history`, `edit`, `rooms`,
-`reactions`, and `activity`. History availability uses each room's `latest_log_id` and
+and `reactions`. `activity` (typing) is implemented but off unless the
+deployment sets `ACTIVITY=true`. History availability uses each room's `latest_log_id` and
 nullable `history_log_id`, without extension negotiation. See
 [history and recovery](../../../PROTOCOL.md#appendix-a--history) and the
 [retention implementation specification](../SPEC.md#9-rolling-history-and-base-protocol-availability).
@@ -27,8 +28,8 @@ within it:
   `room_join` re-sends a room's record; `room_leave` is `denied`. `room_list`
   lists `general` or its threads; each room's `members` are the users
   connected now (at most 20), since every room is visible and joined.
-- Activity: typing is relayed to every other connection and never stored, at
-  most 10 relays per user per minute; past that, updates are dropped and the
+- Activity (only with `ACTIVITY=true`): typing is relayed to every other
+  connection and never stored, at most 10 relays per user per minute; past that, updates are dropped and the
   sender gets one `@server` message a minute saying so. Read cursors are
   neither kept nor relayed.
 - Messages: author-only edit, delete, restore, and move. `reply_to` and
@@ -39,6 +40,8 @@ within it:
   characters) per user per message and 32 reacting users per message. New
   reactions on a deleted message are rejected; clearing is allowed. An
   unchanged set is accepted without a new record.
+- Load: the whole server processes at most 300 frames a minute. Past that,
+  requests get `retry_after` and notifications are dropped; sockets stay open.
 - `me` renames registered users only; `name: ""` removes the name. `avatar`
   and `ext` are ignored. A rename sends `user` notifications, as does signing
   in on a guest's connection (`new` with the retired guest as `old`).
