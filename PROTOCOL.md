@@ -300,12 +300,15 @@ Identity is server-authoritative: every message carries its author in `from`.
 
 `user_id` is required and stable. `name` is an optional display string;
 absent `name` falls back to `user_id`. `avatar` (Appendix E) and `ext` (§3.5)
-are optional. Every identity on the wire (`you`, `from`, `members`, RTC
+are optional. Every identity on the wire (`you`, `from`, `users`, RTC
 members) uses this shape, and servers MAY send only `user_id`. Clients keep
-the latest user object they receive for each `user_id`, whichever frame
-carried it, and render every message with it. Whether history carries a
-user's name from posting time or their current one is server policy; the
-protocol guarantees neither.
+one user object per `user_id` and merge into it every one they receive,
+whichever frame carried it: a present field replaces the kept value, an
+empty value (`""`, `{}`) removes it, and a missing field leaves it
+unchanged, so an object with only `user_id` changes nothing. Clients render
+every message with the kept object. Whether history carries a user's name
+from posting time or their current one is server policy; the protocol
+guarantees neither.
 
 A result MAY carry `users`, user objects for the identities elsewhere in it,
 each user once, so those can be sent as `user_id` only. Clients keep them
@@ -315,16 +318,17 @@ like any other user object.
   result's `users`, so clients can render messages from users who are no
   longer members.
 
-A `me` request updates the user's own profile after authentication. Fields
-given replace their current values, fields omitted stay unchanged, and an
-empty value (`""`, `{}`) removes the field. `name`, `avatar`, and `ext` are
-settable; the server MAY comply, decline, or alter any of them:
+A `me` request updates the user's own profile after authentication, by the
+same rule: fields given replace their current values, fields omitted stay
+unchanged, and an empty value removes the field. `name`, `avatar`, and
+`ext` are settable; the server MAY comply, decline, or alter any of them.
+Servers announce a removed field as its empty value:
 
 ```jsonc
 // -> rename and remove the avatar; ext is untouched
 {"method": "me", "id": "c2", "params": {"name": "Alice ⚙", "avatar": ""}}
 // <-
-{"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
+{"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙", "avatar": ""}}}
 ```
 
 After authentication, the server MAY send a `user` notification at any time,
@@ -787,7 +791,7 @@ Discovery and membership:
         "parent_room_id": "general", "title": "Deploy",
         "intro_message": {...},
         "latest_log_id": "1724803400000",
-        "members": [{"user_id": "alice"}, {"user_id": "bob"}]
+        "member_ids": ["alice", "bob"]
       }
     ],
     "users": [
@@ -803,10 +807,11 @@ Discovery and membership:
 ```
 
 - `room_list` returns room records (§3.4) for the visible rooms, each with
-  `members`, a list of user objects (§3.3), which may be `user_id` only with
-  the complete objects in the result's `users`. With `parent_room_id` it lists
-  that room's threads, including ones never announced. Listing a room does
-  not start deliveries. Servers MAY omit or truncate `members` by policy.
+  `member_ids`, a list of `user_id`s. The result's `users` (§3.3) is
+  required and holds a user object for every member listed. With
+  `parent_room_id` it lists that room's threads, including ones never
+  announced. Listing a room does not start deliveries. Servers MAY omit or
+  truncate `member_ids` by policy.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
   ones announced to their connection (§3.4).
 - Posting in a visible room the user has not joined MAY join them to it:
@@ -1006,8 +1011,8 @@ show a placeholder. On success the server sets `url` to the file it hosts.
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
 the user's name.
 
-- Servers send `avatar` in `you`, `user`, `members`, and `users` (§3.3),
-  not in every `from`.
+- Servers send `avatar` in `you`, `user`, and `users` (§3.3), not in every
+  `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through an
   upload (Appendix J.4).
@@ -1271,7 +1276,7 @@ servers interpret by this convention. A mention is `@` followed by a
   to the room. When an ID names both a user and a room, clients treat it as
   a user. Unknown IDs render as written.
 - Composers insert `@user_id` when the user picks a person, for example from
-  `members` (Appendix C).
+  a room's `member_ids` (Appendix C).
 - Servers MAY apply the same rule to wake mentioned users (Appendix F).
 - Mentions that notify a whole room are not defined.
 
