@@ -307,8 +307,13 @@ carried it, and render every message with it. Whether history carries a
 user's name from posting time or their current one is server policy; the
 protocol guarantees neither.
 
-- Suggested convention: servers include `name` in `from`, so clients can
-  render messages from users who are no longer members.
+A result MAY carry `users`, user objects for the identities elsewhere in it,
+each user once, so those can be sent as `user_id` only. Clients keep them
+like any other user object.
+
+- Suggested convention: servers include `name` in `from`, or in the
+  result's `users`, so clients can render messages from users who are no
+  longer members.
 
 A `me` request updates the user's own profile after authentication. Fields
 given replace their current values, fields omitted stay unchanged, and an
@@ -798,14 +803,10 @@ Discovery and membership:
 ```
 
 - `room_list` returns room records (§3.4) for the visible rooms, each with
-  `members`, a list of user objects (§3.3). With `parent_room_id` it lists
+  `members`, a list of user objects (§3.3), which may be `user_id` only with
+  the complete objects in the result's `users`. With `parent_room_id` it lists
   that room's threads, including ones never announced. Listing a room does
   not start deliveries. Servers MAY omit or truncate `members` by policy.
-- `users` is an optional list of user objects in the result, each user
-  once. Servers MAY send `members` bare, as `user_id` only, and put the
-  complete user objects in `users`, so a user in many rooms is sent once.
-  Clients keep them like any user object (§3.3) and fill in members from
-  them; a member with no complete object anywhere renders by `user_id`.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
   ones announced to their connection (§3.4).
 - Posting in a visible room the user has not joined MAY join them to it:
@@ -1005,8 +1006,8 @@ show a placeholder. On success the server sets `url` to the file it hosts.
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
 the user's name.
 
-- Servers send `avatar` in `you`, `user`, and `room_list`'s `members` or
-  `users` (Appendix C), not in every `from`.
+- Servers send `avatar` in `you`, `user`, `members`, and `users` (§3.3),
+  not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through an
   upload (Appendix J.4).
