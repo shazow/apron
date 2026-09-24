@@ -98,18 +98,18 @@ func (s *Server) checkPushURL(endpoint string) string {
 // wakeLocked wakes users who have no connection when a new message mentions
 // them (Appendix J.3) or replies to one of their messages. Wake policy is
 // server-defined (Appendix F).
-func (s *Server) wakeLocked(m *messageState) {
+func (s *Server) wakeLocked(m *messageState, snapshot map[string]any) {
 	if len(s.pushes) == 0 {
 		return
 	}
 	targets := make(map[string]bool)
-	body, _ := m.snapshot["body"].(map[string]any)
+	body, _ := snapshot["body"].(map[string]any)
 	text, _ := body["text"].(string)
 	format, _ := body["format"].(string)
 	for _, id := range mentionedIDs(text, format == "markdown") {
 		targets[id] = true
 	}
-	if ref, ok := m.snapshot["reply_to"].(map[string]any); ok {
+	if ref, ok := snapshot["reply_to"].(map[string]any); ok {
 		if target := s.messages[ref["message_id"].(string)]; target != nil {
 			targets[target.owner] = true
 		}
@@ -122,7 +122,7 @@ func (s *Server) wakeLocked(m *messageState) {
 			continue
 		}
 		if payload == nil {
-			payload = pushPayload(m.snapshot)
+			payload = pushPayload(snapshot)
 		}
 		s.push.deliver(*registration, payload, func(gone bool) {
 			if gone {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -49,7 +50,7 @@ func (r *roomState) deliveryFields() map[string]any {
 // cursors kept for it, which the server re-sends after announcing the room
 // (Appendix D.1).
 func (s *Server) announcementFramesLocked(r *roomState) []any {
-	frames := []any{roomFrame(s.embedIntroLocked(r.record), r)}
+	frames := []any{map[string]any{"method": "room", "params": s.roomParamsLocked(r)}}
 	for _, userID := range slices.Sorted(maps.Keys(r.reads)) {
 		cursor := r.reads[userID]
 		frames = append(frames, map[string]any{"method": "activity", "params": map[string]any{
@@ -59,29 +60,46 @@ func (s *Server) announcementFramesLocked(r *roomState) []any {
 	return frames
 }
 
-func roomFrame(record map[string]any, r *roomState) map[string]any {
-	params := cloneObject(record)
+// roomParamsLocked renders a room's current record with delivery fields, its
+// bare intro_message replaced by the message's current snapshot. Only the
+// top level is new: nested values are shared with records that are replaced
+// rather than modified, so the result may be encoded after s.mu is released.
+func (s *Server) roomParamsLocked(r *roomState) map[string]any {
+	params := maps.Clone(r.record)
+	if intro, ok := params["intro_message"].(map[string]any); ok {
+		if m := s.messages[intro["message_id"].(string)]; m != nil {
+			params["intro_message"] = m.currentRaw()
+		}
+	}
 	maps.Copy(params, r.deliveryFields())
-	return map[string]any{"method": "room", "params": params}
+	return params
 }
 
-// embedIntroLocked returns a copy of a room record whose bare intro_message
-// reference is replaced by the referenced message's current snapshot.
+// embedIntroLocked returns a shallow copy of a room record whose bare
+// intro_message reference is replaced by the JSON of the referenced message's
+// current snapshot.
 func (s *Server) embedIntroLocked(record map[string]any) map[string]any {
-	value := cloneObject(record)
+	value := maps.Clone(record)
 	if intro, ok := value["intro_message"].(map[string]any); ok {
 		if id, ok := intro["message_id"].(string); ok {
 			if m := s.messages[id]; m != nil {
-				value["intro_message"] = cloneObject(m.snapshot)
+				value["intro_message"] = m.currentRaw()
 			}
 		}
 	}
 	return value
 }
 
-// deliverLocked sends frames to every connection of every member of the
-// given rooms, once per connection.
+// deliverLocked sends a frame to every connection of every member of the
+// given rooms, once per connection. The frame is encoded once for all of them.
 func (s *Server) deliverLocked(frame any, rooms ...*roomState) {
+	if _, rendered := frame.(json.RawMessage); !rendered {
+		payload, err := json.Marshal(frame)
+		if err != nil {
+			return
+		}
+		frame = json.RawMessage(payload)
+	}
 	seen := make(map[string]bool)
 	for _, r := range rooms {
 		for id, member := range r.members {
@@ -147,9 +165,9 @@ func (s *Server) leaveLocked(u *userState, r *roomState) {
 
 // commitRoomLocked logs a room record holding fields, the client fields other
 // than parent_room_id. An unknown roomID creates the room; an empty one names
-// it by its creation log_id. It returns the logged record, whose
-// intro_message embeds the snapshot current at commit time.
-func (s *Server) commitRoomLocked(roomID string, parent *roomState, fields map[string]any) (*roomState, map[string]any) {
+// it by its creation log_id. The logged record's intro_message embeds the
+// snapshot current at commit time.
+func (s *Server) commitRoomLocked(roomID string, parent *roomState, fields map[string]any) *roomState {
 	logID := s.nextIDLocked()
 	r := s.rooms[roomID]
 	if r == nil {
@@ -173,9 +191,14 @@ func (s *Server) commitRoomLocked(roomID string, parent *roomState, fields map[s
 	maps.Copy(record, fields)
 	r.record = record
 	r.recordLogID = logID
-	logged := s.embedIntroLocked(record)
-	s.appendLocked(&logRecord{id: logID, kind: kindRoom, value: logged}, r)
-	return r, logged
+	logged := newLogRecord(logID, kindRoom, s.embedIntroLocked(record))
+	s.appendLocked(logged, r)
+	if intro, ok := fields["intro_message"].(map[string]any); ok {
+		// Deleting the intro message redacts the copy embedded here.
+		m := s.messages[intro["message_id"].(string)]
+		m.introRecords = append(m.introRecords, logged)
+	}
+	return r
 }
 
 // saveRoom creates a room (no room_id) or replaces an existing room's client
@@ -245,13 +268,13 @@ func (s *Server) saveRoom(c *client, req request) (any, bool, *rpcError) {
 	if ext != nil {
 		fields["ext"] = ext
 	}
-	r, record := s.commitRoomLocked(roomID, parent, fields)
+	r := s.commitRoomLocked(roomID, parent, fields)
 	result := map[string]any{"room_id": r.id}
 	if req.hasID {
 		c.sendResult(req, result)
 	}
 	if updating {
-		s.deliverLocked(roomFrame(record, r), r)
+		s.deliverLocked(map[string]any{"method": "room", "params": s.roomParamsLocked(r)}, r)
 		return result, true, nil
 	}
 	joining := map[string]*userState{c.user.id: c.user}
@@ -272,7 +295,7 @@ const maxThreadTitleRunes = 60
 // first line of text.
 func (s *Server) threadTitleLocked(introID string) string {
 	if m := s.messages[introID]; m != nil {
-		if body, ok := m.snapshot["body"].(map[string]any); ok {
+		if body, ok := m.snapshot()["body"].(map[string]any); ok {
 			text, _ := body["text"].(string)
 			line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
 			line = strings.TrimSpace(line)
@@ -302,6 +325,8 @@ func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, invalidParams("Unknown parent room %q", parentID)
 	}
 	rooms := make([]any, 0)
+	// Members of many rooms share one profile, encoded once.
+	profiles := make(map[string]json.RawMessage)
 	for _, roomID := range s.roomOrder {
 		r := s.rooms[roomID]
 		listedParent := ""
@@ -311,14 +336,19 @@ func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 		if listedParent != parentID || (hasParent && r.parent == nil) {
 			continue
 		}
-		entry := roomFrame(s.embedIntroLocked(r.record), r)["params"].(map[string]any)
+		entry := s.roomParamsLocked(r)
 		ids := slices.Sorted(maps.Keys(r.members))
 		if len(ids) > maxListedMembers {
 			ids = ids[:maxListedMembers]
 		}
 		members := make([]any, len(ids))
 		for i, id := range ids {
-			members[i] = r.members[id].profile()
+			profile := profiles[id]
+			if profile == nil {
+				profile, _ = json.Marshal(r.members[id].profile())
+				profiles[id] = profile
+			}
+			members[i] = profile
 		}
 		entry["members"] = members
 		rooms = append(rooms, entry)
@@ -399,12 +429,18 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 	if r == nil {
 		return nil, false, invalidParams("Unknown room %q", roomID)
 	}
-	matching := make([]*logRecord, 0)
-	for _, record := range r.log {
-		if (hasAfter && record.id < after) || (hasBefore && record.id > before) {
-			continue
+	// A room's log is in log_id order, so the bounds are binary searches.
+	matching := r.log
+	if hasAfter {
+		start, _ := slices.BinarySearchFunc(matching, after, compareLogID)
+		matching = matching[start:]
+	}
+	if hasBefore {
+		end, found := slices.BinarySearchFunc(matching, before, compareLogID)
+		if found {
+			end++
 		}
-		matching = append(matching, record)
+		matching = matching[:end]
 	}
 	more := len(matching) > limit
 	if more {
@@ -418,14 +454,13 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 	entries := make([]any, 0, len(matching))
 	reactions := make([]any, 0)
 	for _, record := range matching {
-		value := cloneObject(record.value)
 		switch record.kind {
 		case kindRoom:
-			rooms = append(rooms, value)
+			rooms = append(rooms, record.raw)
 		case kindMessage:
-			entries = append(entries, value)
+			entries = append(entries, record.raw)
 		case kindReactions:
-			reactions = append(reactions, value)
+			reactions = append(reactions, record.raw)
 		}
 	}
 	result := map[string]any{"rooms": rooms, "entries": entries, "reactions": reactions, "more": more}
@@ -435,6 +470,10 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 		result["last_id"] = formatID(matching[len(matching)-1].id)
 	}
 	return result, false, nil
+}
+
+func compareLogID(record *logRecord, id int64) int {
+	return cmp.Compare(record.id, id)
 }
 
 func parseBound(params map[string]json.RawMessage, name string) (int64, bool, *rpcError) {

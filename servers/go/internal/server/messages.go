@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"maps"
 	"slices"
 	"sort"
 	"time"
@@ -21,8 +20,9 @@ type reactionSet struct {
 // messageState is the current state of one message. Only non-empty reaction
 // sets are kept; clearing removes the user's entry.
 type messageState struct {
-	id        string
-	snapshot  map[string]any
+	id string
+	// from is the author identity of every snapshot.
+	from      map[string]any
 	logID     int64
 	owner     string
 	roomID    string
@@ -30,8 +30,21 @@ type messageState struct {
 	// reactionLogIDs maps each user to the last reactions record that set
 	// their emoji on this message, for prev_log_id.
 	reactionLogIDs map[string]int64
-	// records are every logged snapshot, for redaction.
+	// records are every logged snapshot, for redaction; the last is current.
 	records []*logRecord
+	// introRecords are the room records embedding a snapshot of this message
+	// as intro_message, for redaction.
+	introRecords []*logRecord
+}
+
+// currentRaw is the JSON of the message's current snapshot.
+func (m *messageState) currentRaw() json.RawMessage {
+	return m.records[len(m.records)-1].raw
+}
+
+// snapshot decodes the message's current snapshot, a copy the caller owns.
+func (m *messageState) snapshot() map[string]any {
+	return m.records[len(m.records)-1].value()
 }
 
 // saveMessage creates a message (no message_id) or saves an existing one
@@ -99,7 +112,7 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 		if current.owner != u.id {
 			return nil, false, &rpcError{Code: codeDenied, Message: "Only the author may edit, move, or delete this message"}
 		}
-		from = cloneObject(current.snapshot["from"].(map[string]any))
+		from = current.from
 	} else if err := s.admitPostLocked(u); err != nil {
 		return nil, false, err
 	}
@@ -113,22 +126,26 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 	if !replacing {
 		messageID = formatID(logID)
 	}
+	var previous map[string]any
+	if current != nil {
+		previous = current.snapshot()
+	}
 	// Embeds are resolved last: a new upload or stream embed reserves a write.
 	var written []any
 	if body != nil {
 		var embeds []any
-		embeds, written, err = s.resolveEmbedsLocked(c, messageID, current, body)
+		embeds, written, err = s.resolveEmbedsLocked(c, messageID, previous, body)
 		if err != nil {
 			return nil, false, err
 		}
-		body = maps.Clone(body)
+		// body was decoded for this request, so it is the snapshot's own.
 		if len(embeds) > 0 {
 			body["embeds"] = embeds
 		} else {
 			delete(body, "embeds")
 		}
 	}
-	s.releaseEmbedsLocked(current, body)
+	s.releaseEmbedsLocked(previous, body)
 
 	snapshot := map[string]any{
 		"message_id": messageID,
@@ -159,7 +176,7 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 		s.joinLocked(u, destination)
 	}
 	if current == nil {
-		current = &messageState{id: messageID, owner: u.id, reactions: make(map[string]reactionSet), reactionLogIDs: make(map[string]int64)}
+		current = &messageState{id: messageID, from: from, owner: u.id, reactions: make(map[string]reactionSet), reactionLogIDs: make(map[string]int64)}
 		s.messages[messageID] = current
 	}
 	moved := s.commitSnapshotLocked(current, snapshot, logID)
@@ -170,7 +187,7 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 		s.commitReactionsLocked(current, current.reactionElements())
 	}
 	if !replacing {
-		s.wakeLocked(current)
+		s.wakeLocked(current, snapshot)
 	}
 	return result, true, nil
 }
@@ -188,13 +205,12 @@ func (s *Server) commitSnapshotLocked(m *messageState, snapshot map[string]any, 
 	if moved {
 		rooms = []*roomState{s.rooms[m.roomID], destination}
 	}
-	m.snapshot = snapshot
 	m.logID = logID
 	m.roomID = destination.id
-	record := &logRecord{id: logID, kind: kindMessage, value: snapshot}
+	record := newLogRecord(logID, kindMessage, snapshot)
 	m.records = append(m.records, record)
 	s.appendLocked(record, rooms...)
-	s.deliverLocked(map[string]any{"method": "message", "params": snapshot}, rooms...)
+	s.deliverLocked(rawNotification("message", record.raw), rooms...)
 	return moved
 }
 
@@ -202,18 +218,13 @@ func (s *Server) commitSnapshotLocked(m *messageState, snapshot map[string]any, 
 // finished upload or stream (Appendix E): edit rewrites a copy of the
 // current body, and nothing is published when it reports no change.
 func (s *Server) republishLocked(m *messageState, edit func(body map[string]any) bool) {
-	body, _ := m.snapshot["body"].(map[string]any)
-	if body == nil || m.snapshot["deleted"] == true {
-		return
-	}
-	body = cloneObject(body)
-	if !edit(body) {
+	snapshot := m.snapshot()
+	body, _ := snapshot["body"].(map[string]any)
+	if body == nil || snapshot["deleted"] == true || !edit(body) {
 		return
 	}
 	logID := s.nextIDLocked()
-	snapshot := cloneObject(m.snapshot)
 	snapshot["log_id"] = formatID(logID)
-	snapshot["body"] = body
 	s.commitSnapshotLocked(m, snapshot, logID)
 }
 
@@ -222,17 +233,14 @@ func (s *Server) republishLocked(m *messageState, edit func(body map[string]any)
 // original log_ids (Appendix B).
 func (s *Server) redactLocked(m *messageState) {
 	for _, record := range m.records {
-		tombstone(record.value)
+		record.rewrite(tombstone)
 	}
-	for _, r := range s.rooms {
-		for _, record := range r.log {
-			if record.kind != kindRoom {
-				continue
-			}
-			if intro, ok := record.value["intro_message"].(map[string]any); ok && intro["message_id"] == m.id {
+	for _, record := range m.introRecords {
+		record.rewrite(func(value map[string]any) {
+			if intro, ok := value["intro_message"].(map[string]any); ok {
 				tombstone(intro)
 			}
-		}
+		})
 	}
 }
 
@@ -396,8 +404,9 @@ func (s *Server) commitReactionsLocked(m *messageState, elements []any) {
 		m.reactionLogIDs[userID] = logID
 	}
 	r := s.rooms[m.roomID]
-	s.appendLocked(&logRecord{id: logID, kind: kindReactions, value: value}, r)
-	s.deliverLocked(map[string]any{"method": "reactions", "params": value}, r)
+	record := newLogRecord(logID, kindReactions, value)
+	s.appendLocked(record, r)
+	s.deliverLocked(rawNotification("reactions", record.raw), r)
 }
 
 func parseEmojis(params map[string]json.RawMessage) ([]string, *rpcError) {

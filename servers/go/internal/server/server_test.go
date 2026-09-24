@@ -613,6 +613,32 @@ func TestRoomCreateUpdateAndThreads(t *testing.T) {
 	observer.expectQuiet(t)
 }
 
+// Deleting a thread's intro message redacts the copies embedded in the
+// thread's room records, both logged ones and the current announcement.
+func TestDeletingAnIntroMessageRedactsRoomRecords(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	c := dialTestClient(t, httpServer, "a", false)
+	id, _ := save(t, c, "intro", map[string]any{"body": map[string]any{"text": "secret"}})
+	thread, _ := saveRoom(t, c, "thread", map[string]any{"parent_room_id": "general", "intro_message": map[string]any{"message_id": id}})
+	_, _ = saveRoom(t, c, "rename", map[string]any{"room_id": thread, "title": "Renamed", "intro_message": map[string]any{"message_id": id}})
+	_, _ = save(t, c, "delete", map[string]any{"message_id": id, "deleted": true})
+
+	tombstone := map[string]any{"message_id": id, "log_id": id, "room_id": "general", "from": map[string]any{"user_id": "guest_1"}, "deleted": true}
+	rooms := historyPage(t, c, thread, map[string]any{})["rooms"].([]any)
+	if len(rooms) != 2 {
+		t.Fatalf("thread room records: %#v", rooms)
+	}
+	for _, record := range rooms {
+		if intro := record.(map[string]any)["intro_message"]; !reflect.DeepEqual(intro, tombstone) {
+			t.Fatalf("logged intro_message = %#v, want %#v", intro, tombstone)
+		}
+	}
+	listed := c.result(t, "room_list", "list", map[string]any{"parent_room_id": "general"})["rooms"].([]any)
+	if intro := listed[0].(map[string]any)["intro_message"].(map[string]any); intro["deleted"] != true || intro["body"] != nil {
+		t.Fatalf("listed intro_message: %#v", intro)
+	}
+}
+
 func TestMoveAppearsInBothRoomsAndCarriesReactions(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	author := dialTestClient(t, httpServer, "a", false)

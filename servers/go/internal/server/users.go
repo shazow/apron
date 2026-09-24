@@ -30,6 +30,9 @@ type userState struct {
 	// avatarEmbed is the hosted @avatar upload behind avatar, if any.
 	avatarEmbed *embedState
 
+	// fromValue caches from(); it is cleared when the name changes.
+	fromValue map[string]any
+
 	clients map[*client]struct{}
 	joined  map[string]*roomState
 	dedup   dedupCache
@@ -48,18 +51,22 @@ func newUserState(id, name string) *userState {
 }
 
 // from is the author identity carried in logged records: user_id and name.
-// Avatars and ext travel only in you, user, and members (Appendix E).
+// Avatars and ext travel only in you, user, and members (Appendix E). Every
+// record by the user shares the returned map until the name changes, so it
+// must not be modified.
 func (u *userState) from() map[string]any {
-	value := map[string]any{"user_id": u.id}
-	if u.name != "" {
-		value["name"] = u.name
+	if u.fromValue == nil {
+		u.fromValue = map[string]any{"user_id": u.id}
+		if u.name != "" {
+			u.fromValue["name"] = u.name
+		}
 	}
-	return value
+	return u.fromValue
 }
 
 // profile is the complete user object for you, user, and members.
 func (u *userState) profile() map[string]any {
-	value := u.from()
+	value := maps.Clone(u.from())
 	if u.avatar != "" {
 		value["avatar"] = u.avatar
 	}
@@ -282,7 +289,7 @@ func (s *Server) notifyProfileLocked(u *userState, except *client) {
 			c.enqueue(you)
 		}
 	}
-	others := map[string]any{"method": "user", "params": map[string]any{"new": u.profile()}}
+	others := notification("user", map[string]any{"new": u.profile()})
 	for _, other := range s.sharersLocked(u) {
 		other.send(others)
 	}
@@ -317,6 +324,7 @@ func (s *Server) updateProfile(c *client, req request) (any, bool, *rpcError) {
 	before := u.profile()
 	if hasName {
 		u.name = normalizeName(name)
+		u.fromValue = nil
 	}
 	if hasAvatar && avatar != u.avatar {
 		s.setAvatarEmbedLocked(u, nil)
