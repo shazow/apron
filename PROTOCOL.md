@@ -797,7 +797,8 @@ Discovery and membership:
         "latest_log_id": "1724803400000",
         "member_count": 2
       }
-    ]
+    ],
+    "room_count": 1
   }
 }
 // ->
@@ -811,8 +812,10 @@ Discovery and membership:
   joined it. With `parent_room_id` it lists that room's threads, including
   ones never announced. Listing a room does not start deliveries. Servers
   MAY omit `member_count` by policy.
-- Servers MAY list only the most recently active rooms. A room left out is
-  still visible and can be joined by its `room_id`.
+- `room_count` is how many rooms match, listed or not. Servers MAY list
+  only the most recently active ones; fewer `rooms` than `room_count` means
+  some were left out. A room left out is still visible and can be joined by
+  its `room_id`.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
   ones announced to their connection (§3.4).
 - Posting in a visible room the user has not joined MAY join them to it:
