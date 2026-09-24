@@ -135,7 +135,7 @@
 		<div class="ap-profile-pop" role="dialog" aria-label="Edit profile">
 			<form class="ap-profedit" onsubmit={save}>
 				<div class="ap-profedit-top">
-					<Avatar name={draft || you?.user_id || '?'} src={avatar} size="lg" />
+					<Avatar name={draft || you?.user_id || '?'} id={you?.user_id} src={avatar} size="lg" />
 					<div class="ap-profedit-av">
 						{#if canUploadAvatar}
 							<span class="ap-profedit-avbtns">
@@ -200,7 +200,7 @@
 		</div>
 	{/if}
 	<button class="ap-profile-me" class:ap-profile-open={open} type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={`Your profile on ${backendLabel}: ${you?.name || you?.user_id || 'not signed in'}. Edit`} onclick={toggle}>
-		<Avatar name={you?.name || you?.user_id || '?'} src={avatar} />
+		<Avatar name={you?.name || you?.user_id || '?'} id={you?.user_id} src={avatar} />
 		<span class="ap-profile-text">
 			<span class="ap-profile-name">{you?.name || you?.user_id || 'Not signed in'}</span>
 			<span class="ap-profile-sub">on {backendLabel}</span>

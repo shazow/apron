@@ -33,8 +33,9 @@ seconds); after such a `denied` error the client stops reconnecting, shows
 **Signed out** with the server's message, and waits for **Sign in**.
 With the `activity` cap, typing is reported as `activity` notifications that ask
 for a 15-second indicator (`typing: 15`) and refresh it at most once every 12
-seconds per room, with one `typing: 0` when typing ends, to avoid charging a
-frame per keystroke. Other people's indicators last as long as their `typing`
+seconds per room, with one `typing: 0` when typing pauses, to avoid charging a
+frame per keystroke. Sending a message sends no `typing: 0`: the message itself
+ends the indicator. Other people's indicators last as long as their `typing`
 asks, or until their next message arrives in that room.
 Explicit server URLs keep their path: a bare hostname connects at `/`, while
 servers that require `/ws` should be entered with that suffix.
@@ -42,7 +43,9 @@ servers that require `/ws` should be entered with that suffix.
 Names and avatars are the latest the server sent for each `user_id` (from
 `you`, `user` notifications, `room_list` members, then live messages), so a
 rename or a new avatar shows on earlier messages too; a `user` notification
-with `old` maps the retired ID to the new identity. Senders whose `user_id`
+with `old` maps the retired ID to the new identity. Without an avatar, a
+person's initials sit on a muted tint whose hue is hashed from their `user_id`,
+so the same person has the same color on every client. Senders whose `user_id`
 starts with `@` render as quiet system lines.
 
 Mentions follow the `@user_id` convention (Appendix J.3). Typing `@` in the

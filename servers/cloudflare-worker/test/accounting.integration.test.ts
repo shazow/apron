@@ -1,6 +1,7 @@
 import { env, evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { Store, StoreError, defaultStoreConfig, type StoreConfig } from '../src/store';
+import { DEFAULT_LIMITS } from '../src/budget';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -619,6 +620,8 @@ describe('measured storage accounting', () => {
 			measure('auth attempt reservation', () => store.reserveAuthAttempt({ ipKey: 'matrix-auth', now: clock.now() }));
 			measure('history quota reservation', () => store.reserveHistory({ userId: 'matrix-history-user', ipKey: 'matrix-history-ip', now: clock.now() }));
 			measure('frame reservation', () => store.reserveFrames({ ipKey: 'matrix-frame-ip', now: clock.now(), count: 1 }));
+			measure('activity frame lease', () => store.reserveFrames({ ipKey: 'matrix-activity-ip', now: clock.now(), count: DEFAULT_LIMITS.activityFrameLease }));
+			measure('unlogged notice log id', () => store.allocateUnloggedLogId(clock.now()));
 			measure('connection admission reservation', () => store.reserveConnection({ ipKey: 'matrix-connection-ip', tier: 'pending', now: clock.now() }));
 			measure('identity registration', () => store.registerIdentity({
 				userId: 'matrix-user',
@@ -674,7 +677,7 @@ describe('measured storage accounting', () => {
 			await measureAsync('alarm scheduling', () => store.scheduleAlarm(clock.now() + 1_000, clock.now()));
 
 			expect((create as { result: { message_id?: string } }).result.message_id).toBeTruthy();
-			expect(costs).toHaveLength(24);
+			expect(costs).toHaveLength(26);
 			return { costs };
 		});
 		console.info('accounting-operation-matrix', JSON.stringify(result));

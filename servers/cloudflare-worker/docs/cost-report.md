@@ -46,6 +46,8 @@ upper bounds can be compared with the measured worst case.
 | Auth attempt reservation | 10 | 8 | 48 | 32 | accepted |
 | History quota reservation | 15 | 15 | 72 | 24 | accepted |
 | Frame reservation (one frame) | 15 | 15 | 28 | 24 | accepted |
+| Activity frame block (10 frames) | 11 | 10 | 64 | 24 | accepted |
+| Unlogged `@server` notice log ID | 5 | 2 | 12 | 12 | accepted |
 | Connection admission reservation | 16 | 15 | 72 | 40 | accepted |
 | Identity registration | 24 | 23 | 136 | 72 | accepted |
 | Credential lookup | 3 | 1 | 16 | 8 | accepted |
@@ -105,6 +107,24 @@ The final counters for that sample were 202 observed reads and 130 observed
 writes, against 2,516 reserved reads and 2,266 reserved writes. The native
 SQLite file reported `databaseSize = 135,168` bytes. These values are a
 small schema/data sample and are not a per-message capacity estimate.
+
+## Activity and throttle notices
+
+Measured on 2026-09-24 with the operation matrix above. Every incoming frame
+reserves 24 writes on its own; an `activity` notification instead spends one
+frame from a per-connection block of 10, reserved together for 24 writes, so
+relayed typing costs 2.4 reserved writes per frame. The web client sends a
+typing update when typing starts, every 12 seconds while it continues, and when
+it stops: about 5 frames, or 12 reserved writes, per typing minute. Read-cursor
+updates, which the demo drops, cost the same per frame. The 60,000-row
+foreground ceiling therefore covers about 5,000 typing minutes a day before
+posts and history, and the per-user relay limit (10 a minute) and the frame
+limits (60 per connection and 120 per IP a minute) bound a single sender.
+
+A throttled sender's `@server` notice advances the log sequence without a
+record: 12 reserved writes, at most once per user per minute. `room_list`
+reuses the room-listing reservation (444 reads, 8 writes) and adds no writes;
+its members come from connection attachments.
 
 The default foreground write ceiling is 60,000 rows per UTC day. At the
 current conservative floor this permits at most 227 mutations without a

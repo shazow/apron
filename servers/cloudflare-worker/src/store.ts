@@ -307,6 +307,8 @@ export interface MessageSnapshot {
   reply_to?: { message_id: string };
   deleted?: boolean;
   ext?: Record<string, unknown>;
+  /** The previous snapshot's log_id (section 2); absent on creation. */
+  prev_log_id?: string;
 }
 
 /** A room record plus this server's delivery fields (protocol v4 section 3.4). */
@@ -327,6 +329,7 @@ export interface ReactionsRecord {
   message_id: string;
   room_id: string;
   reactions: Array<{ from: Identity; emojis: string[] }>;
+  prev_log_id?: string;
 }
 
 export type RecordKind = "room" | "message" | "reactions";
@@ -1667,6 +1670,22 @@ export class Store {
     return room;
   }
 
+  /**
+   * A log_id for a message delivered to one connection and never logged, such
+   * as a `@server` notice (Appendix J.1). It advances the server-wide
+   * sequence, so no logged record can reuse it (section 2).
+   */
+  allocateUnloggedLogId(now = this.clock.now()): string {
+    this.ensureReady();
+    return this.reserved({ reads: 4, writes: 4 }, false, now, () => this.transaction(() => {
+      const state = this.logState();
+      const logId = Math.max(Math.trunc(this.effectiveNow(now)), state.last_log_id + 1, state.history_floor);
+      if (!Number.isSafeInteger(logId) || logId <= 0 || logId > MAX_SAFE_ID) throw new StoreError("internal_error", "log identifier range exhausted");
+      this.rawExec("UPDATE log_state SET last_log_id = ? WHERE id = 1", logId);
+      return idString(logId);
+    }));
+  }
+
   /** The server-wide log head and retention floor. */
   logBounds(): { latest_log_id: string; history_floor: string } {
     this.ensureReady();
@@ -2297,8 +2316,10 @@ export class Store {
     if (replyId !== undefined) snapshot.reply_to = { message_id: replyId };
     if (deleted) snapshot.deleted = true;
     if (ext) snapshot.ext = ext;
+    // The size policy bounds client content; the server's prev_log_id link is added after it.
+    if (utf8Bytes(JSON.stringify(snapshot)) > this.config.maxSnapshotBytes) throw new StoreError("too_large", "message snapshot is too large");
+    if (current) snapshot.prev_log_id = idString(current.latest_log_id);
     const json = JSON.stringify(snapshot);
-    if (utf8Bytes(json) > this.config.maxSnapshotBytes) throw new StoreError("too_large", "message snapshot is too large");
 
     const moved = current !== null && current.room_id !== roomId;
     // A move belongs to the source and destination logs (Appendix A).
@@ -2390,6 +2411,8 @@ export class Store {
       message_id: message.message_id,
       room_id: message.room_id,
       reactions: [{ from, emojis }],
+      // The set's previous record, when one is still stored; a cleared set keeps no row.
+      ...(existing ? { prev_log_id: idString(existing.log_id) } : {}),
     };
     this.appendRecord(context, [message.room_id], "reactions", logId, JSON.stringify(record));
     if (emojis.length) {

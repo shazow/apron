@@ -5,7 +5,7 @@ thread rooms over hibernating WebSockets. The backend supports guest access,
 discoverable passkeys, complete-snapshot history, message
 replacement/deletion/restoration/moves, thread rooms, emoji reactions, and a
 rolling retention floor. It speaks protocol 4 with `history`, `edit`, `rooms`,
-and `reactions`; see [authentication and policy](docs/policy.md) and [the
+`reactions`, and `activity` (typing only); see [authentication and policy](docs/policy.md) and [the
 implementation specification](SPEC.md).
 
 See the [configuration reference](docs/configuration.md) for all policy variables
@@ -86,7 +86,10 @@ socket.onmessage = ({ data }) => {
 ```
 
 Use the protocol's `message`, `room`, and `reactions` requests to exercise
-posting, editing, deletion/restoration, moves, threads, and reactions. The demo
+posting, editing, deletion/restoration, moves, threads, and reactions;
+`room_list` lists rooms and threads with the users connected now, and
+`activity` relays typing (read cursors are dropped). Each user may send 10
+relayed typing updates and 6 listings a minute. The demo
 only creates thread rooms: `room` requests need `parent_room_id: "general"`,
 and `general` itself cannot be edited or left. This is a shared public room, not
 an isolated sandbox: test messages are visible to others, guest ownership lasts

@@ -118,6 +118,15 @@ function validateLimits(limits: Limits): void {
 	if (limits.framesPerConnectionMinute > budget.MAX_CONNECTION_FRAME_RATE || limits.framesPerConnectionMinute > limits.framesPerIpMinute || limits.framesPerIpMinute > limits.processedFramesPerDay || limits.processedFramesPerDay > budget.MAX_PROCESSED_FRAMES || limits.repeatedPolicyViolations > limits.framesPerConnectionMinute) {
 		fail("connection attachment counters exceed bounded policy");
 	}
+	if (limits.activityBroadcastsPerUserMinute > budget.MAX_TYPE_THROTTLE_PER_MINUTE || limits.roomListRequestsPerUserMinute > budget.MAX_TYPE_THROTTLE_PER_MINUTE) {
+		fail("per-type throttles exceed their attachment bound");
+	}
+	if (limits.activityFrameLease > budget.MAX_ACTIVITY_FRAME_LEASE || limits.activityFrameLease > limits.framesPerConnectionMinute) {
+		fail("activity frame lease exceeds the per-connection frame policy");
+	}
+	if (limits.roomListMembers > budget.MAX_ROOM_LIST_MEMBERS || limits.roomListMembers > limits.openConnections) {
+		fail("room_list members exceed the calibrated bound");
+	}
 	if (limits.globalPostsPerMinute > budget.MAX_GLOBAL_POSTS_PER_MINUTE || limits.globalPostsPerDay > budget.MAX_GLOBAL_POSTS_PER_DAY || limits.globalPostsPerMinute > limits.globalPostsPerDay) {
 		fail("global posting policy exceeds the demo ceiling");
 	}

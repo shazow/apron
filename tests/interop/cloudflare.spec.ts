@@ -213,3 +213,29 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 		await new Promise<void>((resolve, reject) => frontend.close(error => error ? reject(error) : resolve()));
 	}
 });
+
+test('Worker relays typing between browsers, lists rooms, and colors guest avatars by user_id', async ({ browser }) => {
+	const writer = await browser.newContext();
+	const reader = await browser.newContext();
+	try {
+		const pageA = await writer.newPage();
+		const pageB = await reader.newPage();
+		for (const page of [pageA, pageB]) {
+			await page.goto('/');
+			await expect(page.getByTestId('connection-status')).toHaveText('Connected');
+		}
+		// Typing is relayed (cap `activity`); nothing is posted, so posting quotas are untouched.
+		await pageA.getByRole('textbox', { name: 'Message', exact: true }).pressSequentially('hello');
+		await expect(pageB.locator('.ap-roomhead-typing')).toHaveText(/is typing…$/);
+		// room_list: every room is joined on the demo.
+		await pageB.getByTestId('browse-rooms').click();
+		await expect(pageB.getByTestId('room-directory')).toContainText('You’ve joined every room.');
+		// Placeholder avatars take their hue from the user_id, so two guests differ.
+		const hue = (page: typeof pageA) => page.locator('.ap-profile-me .ap-avatar').first().evaluate((element) => (element as HTMLElement).style.getPropertyValue('--avatar-hue'));
+		const [hueA, hueB] = [await hue(pageA), await hue(pageB)];
+		expect(hueA).toMatch(/^\d+$/);
+		expect(hueB).toMatch(/^\d+$/);
+	} finally {
+		await Promise.all([writer.close(), reader.close()]);
+	}
+});

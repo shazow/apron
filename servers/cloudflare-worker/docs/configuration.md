@@ -110,7 +110,8 @@ bytes, names 80 Unicode code points/320 UTF-8 bytes, embeds 4, history limit
 50, history response 256 KiB, pending work 8 frames/128 KiB, open sockets 100,
 registered identities and limiter records 10,000 each, processed frames
 100,000/day, global posts 60/minute and 5,000/day, registrations 100/day,
-connection frame rate 120/minute, SQL writes 80,000/day, SQL reads 3,000,000/day,
+connection frame rate 120/minute, per-type throttles 60/minute, activity frame
+blocks 20 frames, `room_list` members 50, SQL writes 80,000/day, SQL reads 3,000,000/day,
 database high-water 96 MiB and hard target 128 MiB, cleanup 100 records,
 thread rooms 100 with 2 KiB of client fields, reactions 64 users per message
 and 16 emoji per user, and credentials/challenges 16 KiB. Operators

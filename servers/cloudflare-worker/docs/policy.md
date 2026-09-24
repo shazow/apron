@@ -1,7 +1,7 @@
 # Public demo authentication and policy
 
-The demo speaks Apron protocol **3**, advertising `history`, `edit`, `rooms`,
-and `reactions`. History availability uses each room's `latest_log_id` and
+The demo speaks Apron protocol **4**, advertising `history`, `edit`, `rooms`,
+`reactions`, and `activity`. History availability uses each room's `latest_log_id` and
 nullable `history_log_id`, without extension negotiation. See
 [history and recovery](../../../PROTOCOL.md#appendix-a--history) and the
 [retention implementation specification](../SPEC.md#9-rolling-history-and-base-protocol-availability).
@@ -24,7 +24,13 @@ within it:
   `general` may be created (top-level rooms and nested threads are `denied`);
   any participant may save a thread's `title`, `intro_message`, and `ext`, while
   `general` is fixed. Threads always carry a title (`Thread` by default).
-  `room_join` re-sends a room's record; `room_leave` is `denied`.
+  `room_join` re-sends a room's record; `room_leave` is `denied`. `room_list`
+  lists `general` or its threads; each room's `members` are the users
+  connected now (at most 20), since every room is visible and joined.
+- Activity: typing is relayed to every other connection and never stored, at
+  most 10 relays per user per minute; past that, updates are dropped and the
+  sender gets one `@server` message a minute saying so. Read cursors are
+  neither kept nor relayed.
 - Messages: author-only edit, delete, restore, and move. `reply_to` and
   `intro_message` must name a retained message when set or changed; resubmitting
   an unchanged reference stays valid after its target expires, and expiration
@@ -34,7 +40,11 @@ within it:
   reactions on a deleted message are rejected; clearing is allowed. An
   unchanged set is accepted without a new record.
 - `me` renames registered users only; `name: ""` removes the name. `avatar`
-  and `ext` are ignored.
+  and `ext` are ignored. A rename sends `user` notifications, as does signing
+  in on a guest's connection (`new` with the retired guest as `old`).
+- Records: message snapshots and reaction sets carry `prev_log_id` when the
+  previous record for the same key is still stored. Deletion does not redact
+  earlier snapshots; they expire with the retention window.
 
 ## Authentication policy
 

@@ -45,6 +45,23 @@ export interface Limits {
 	framesPerIpMinute: number;
 	processedFramesPerDay: number;
 	repeatedPolicyViolations: number;
+	/**
+	 * Per-type throttles, counted per user across their connections. Activity
+	 * over its limit is dropped and the sender gets one `@server` notice per
+	 * window; other requests over theirs are answered with `retry_after`.
+	 */
+	activityBroadcastsPerUserMinute: number;
+	roomListRequestsPerUserMinute: number;
+	/** The longest typing indicator a relayed `activity` may ask for, in seconds. */
+	activityMaxTypingSeconds: number;
+	/**
+	 * Activity frames reserved at once by one connection. Every other frame
+	 * reserves its own frame and SQL bookkeeping; activity does no SQL work of
+	 * its own, so a block keeps typing from dominating the write budget.
+	 */
+	activityFrameLease: number;
+	/** Users listed as `members` of each room in a `room_list` result: those connected now. */
+	roomListMembers: number;
 	sqlWritesPerDay: number;
 	sqlReadsPerDay: number;
 	foregroundWritesPerDay: number;
@@ -112,6 +129,11 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	framesPerIpMinute: 120,
 	processedFramesPerDay: 100_000,
 	repeatedPolicyViolations: 3,
+	activityBroadcastsPerUserMinute: 10,
+	roomListRequestsPerUserMinute: 6,
+	activityMaxTypingSeconds: 30,
+	activityFrameLease: 10,
+	roomListMembers: 20,
 	sqlWritesPerDay: 80_000,
 	sqlReadsPerDay: 3_000_000,
 	foregroundWritesPerDay: 60_000,
@@ -167,6 +189,12 @@ export const MAX_REACTION_USERS_PER_MESSAGE = 64;
 export const MAX_REACTION_EMOJIS_PER_USER = 16;
 export const MAX_EMOJI_BYTES = 64;
 export const MAX_CONNECTION_FRAME_RATE = 120;
+// Throttle windows live in connection attachments, one timestamp per event.
+export const MAX_TYPE_THROTTLE_PER_MINUTE = 60;
+export const MAX_ACTIVITY_FRAME_LEASE = 20;
+// Every room in a listing carries the members list, so it multiplies the
+// response by the thread ceiling.
+export const MAX_ROOM_LIST_MEMBERS = 50;
 export const MAX_SQL_WRITES = DEFAULT_LIMITS.sqlWritesPerDay;
 export const MAX_SQL_READS = DEFAULT_LIMITS.sqlReadsPerDay;
 export const MAX_DATABASE_HIGH_WATER_BYTES = DEFAULT_LIMITS.databaseHighWaterBytes;
