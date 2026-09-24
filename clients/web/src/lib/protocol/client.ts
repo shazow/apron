@@ -2171,14 +2171,19 @@ export class ChatClient {
 		if (!request) return;
 		this.requests.delete(id);
 		clearTimeout(request.timer);
-		if (rpcError) request.reject(this.errorFromRpc(isJsonObject(rpcError) ? rpcError : { code: -32603, message: 'Invalid error' }));
+		if (rpcError) request.reject(this.errorFromRpc(isJsonObject(rpcError) ? rpcError : { code: -32603, message: 'Invalid error' }, request.method === 'auth'));
 		else request.resolve(result);
 		this.emit();
 	}
 
-	private errorFromRpc(rpcError: RpcError): Error {
+	/**
+	 * `connection`: a refused `auth`, whose `retry_after` holds back reconnecting.
+	 * Any other request's `retry_after` is that request's limit (a throttled
+	 * listing or history page) and stays on its error for the caller.
+	 */
+	private errorFromRpc(rpcError: RpcError, connection = false): Error {
 		const retryAfter = retryAfterMilliseconds(rpcError);
-		if (retryAfter !== undefined) {
+		if (retryAfter !== undefined && connection) {
 			this.retryAfterUntil = Math.max(this.retryAfterUntil, Date.now() + retryAfter);
 		}
 		const error = new Error(userFacingRpcError(rpcError));

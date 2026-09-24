@@ -294,7 +294,8 @@ describe('ChatClient history per room', () => {
 		socket.receive({ id: socket.request('history').id, error: { code: -32002, message: 'Busy', data: { retry_after: 2 } } });
 		await settle();
 		expect(room('general').recoveryError).toBe('Busy Try again in 2s.');
-		expect(snapshot.retryAfterMs).toBe(2000);
+		// A request's limit is not the connection's: reconnecting is not held back.
+		expect(snapshot.retryAfterMs).toBeUndefined();
 		const retried = client.loadRoom('general');
 		expect(socket.request('history').params).toMatchObject({ after: '10', before: '12' });
 		await socket.reply('history', { entries: [message('11')], more: false, latest_log_id: '12', history_log_id: '10' });
