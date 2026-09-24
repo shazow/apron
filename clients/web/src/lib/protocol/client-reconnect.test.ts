@@ -505,8 +505,8 @@ describe('keepalive', () => {
 		expect(snapshot?.status).toBe('connected');
 		expect(FakeSocket.instances).toHaveLength(1);
 
-		// Unanswered for more than two intervals: dropped and reconnected. The
-		// last answer came at 135s; the tick at 225s is exactly two intervals on.
+		// Two keepalives in a row unanswered: dropped and reconnected. The ping
+		// at 180s went unanswered, the one at 225s too, and the tick at 270s drops it.
 		vi.advanceTimersByTime(45_000);
 		expect(snapshot?.status).toBe('connected');
 		vi.advanceTimersByTime(45_000);
@@ -514,6 +514,21 @@ describe('keepalive', () => {
 		expect(first.readyState).toBe(FakeSocket.CLOSED);
 		vi.advanceTimersByTime(5_000);
 		expect(FakeSocket.instances).toHaveLength(2);
+		client.stop();
+	});
+
+	it('probes again after its timers were frozen instead of dropping the socket', async () => {
+		const client = new ChatClient('ws://fake.test/');
+		let snapshot: ClientSnapshot | undefined;
+		client.subscribe((next) => (snapshot = next));
+		client.start();
+		await latest().greet([], { ext: { demo: { keepalive_seconds: 45 } } });
+		latest().receive({ method: 'pong' });
+		// A frozen tab's clock jumps without its interval firing in between.
+		vi.setSystemTime(Date.now() + 10 * 60_000);
+		vi.advanceTimersByTime(45_000);
+		expect(snapshot?.status).toBe('connected');
+		expect(latest().sent.filter((frame) => frame.method === 'ping')).toHaveLength(2);
 		client.stop();
 	});
 

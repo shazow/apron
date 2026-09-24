@@ -383,8 +383,8 @@ export class ChatClient {
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private keepaliveTimer?: ReturnType<typeof setInterval>;
-	/** When the current socket last got the keepalive's answer. */
-	private lastPongAt = 0;
+	/** Keepalives sent on the current socket since its last answer. */
+	private unansweredPings = 0;
 	/** Drops the current socket as if it had closed: for one that stopped answering. */
 	private abandonSocket?: () => void;
 	private connectionId = 0;
@@ -1435,7 +1435,7 @@ export class ChatClient {
 				this.handleUser(frame.params);
 				return;
 			case 'pong':
-				this.lastPongAt = Date.now();
+				this.unansweredPings = 0;
 				return;
 		}
 		if (frame.method !== undefined) return;
@@ -1577,8 +1577,10 @@ export class ChatClient {
 	 * now and then at that interval, for as long as this socket is current.
 	 * The demo worker cannot ping, so this is how it tells a connection that is
 	 * still there from one whose peer vanished without closing it; it also
-	 * keeps Cloudflare from dropping the socket as idle. When two intervals
-	 * pass with no answer, the socket is presumed dead and replaced.
+	 * keeps Cloudflare from dropping the socket as idle. When two keepalives
+	 * in a row go unanswered, the socket is presumed dead and replaced. Counting
+	 * keepalives rather than time means a tab whose timers were frozen probes
+	 * again after it wakes instead of dropping a socket that may still work.
 	 */
 	private startKeepalive(): void {
 		this.stopKeepalive();
@@ -1586,15 +1588,16 @@ export class ChatClient {
 		const socket = this.socket;
 		if (!socket || typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return;
 		const interval = Math.max(5, seconds) * 1_000;
-		this.lastPongAt = Date.now();
+		this.unansweredPings = 0;
 		const ping = (): boolean => {
 			if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return false;
 			socket.send(KEEPALIVE_FRAME);
+			this.unansweredPings += 1;
 			return true;
 		};
 		if (!ping()) return;
 		const timer = setInterval(() => {
-			if (socket === this.socket && Date.now() - this.lastPongAt > 2 * interval) {
+			if (socket === this.socket && this.unansweredPings >= 2) {
 				this.abandonSocket?.();
 			} else if (ping()) {
 				return;
