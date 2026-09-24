@@ -375,6 +375,8 @@ export class ChatClient {
 	private server?: ServerParams;
 	private you?: Identity;
 	private displayName = '';
+	/** The `me` request `handleAuth` sent for `displayName`, if any. */
+	private authNameRequest?: OperationHandle;
 	private status: ConnectionStatus = 'idle';
 	private error?: string;
 	private showReconnectDivider = false;
@@ -634,7 +636,14 @@ export class ChatClient {
 		return you === undefined ? [] : [...(this.store.reactionSet(messageId, you)?.emojis ?? [])];
 	}
 
-	async usePasskey(action: 'register' | 'login'): Promise<void> {
+	/**
+	 * Runs a passkey ceremony. A `name` becomes the display name once the
+	 * ceremony succeeds, so a handle a guest could not set is applied as soon as
+	 * the session is registered. Resolves with the `me` request sent for the
+	 * display name after authenticating, if any, so callers can show what the
+	 * server kept.
+	 */
+	async usePasskey(action: 'register' | 'login', name?: string): Promise<OperationHandle | undefined> {
 		if (!this.server?.auth.includes('webauthn')) throw new Error('This server does not support passkeys');
 		if (this.passkeyAbort || this.authRequested || this.requests.size) throw new Error('Wait for pending requests to finish, then try again');
 		if (this.status !== 'connected') throw new Error('Connect to the server first');
@@ -655,7 +664,9 @@ export class ChatClient {
 			const result = await this.passkeyRequest(finish);
 			if (controller.signal.aborted || connection !== this.connectionId) throw new Error('Connection changed; try again');
 			this.cancelPasskey();
+			if (name?.trim()) this.displayName = name.trim();
 			if (!this.handleAuth(result, true)) throw new Error('Server authentication response did not include an identity');
+			return this.authNameRequest;
 		} finally {
 			if (this.passkeyAbort === controller) this.cancelPasskey();
 			this.emit();
@@ -1341,7 +1352,7 @@ export class ChatClient {
 		this.showReconnectDivider = (this.showReconnectDivider || this.rooms.size > 0) && !this.hasCap('history');
 		// Requests queued while this connection was authenticating go out now.
 		for (const request of this.requests.values()) this.sendRequest(request);
-		if (this.displayName) this.sendName();
+		this.authNameRequest = this.displayName ? this.sendName() : undefined;
 		this.emit();
 		return true;
 	}

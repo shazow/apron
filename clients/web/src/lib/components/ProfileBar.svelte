@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { isJsonObject } from '$lib/protocol/types';
-	import type { ChatClient } from '$lib/protocol/client';
+	import type { ChatClient, OperationHandle } from '$lib/protocol/client';
 	import { passkeyMessage } from '$lib/ui/connection';
 	import { directory } from '$lib/ui/directory.svelte';
 	import type { SessionView } from '$lib/ui/session.svelte';
@@ -25,6 +25,9 @@
 	let draft = $state('');
 	let status = $state<Status>('idle');
 	let serverName = $state('');
+	let declinedReason = $state('');
+	/** The handle the editor opened with; a different draft is one the user chose. */
+	let openedWith = $state('');
 	let passkeyError = $state('');
 	let passkeyNotice = $state('');
 	let avatarStatus = $state<'idle' | 'uploading' | 'removing'>('idle');
@@ -36,6 +39,7 @@
 	let canUploadAvatar = $derived(session.snapshot.capabilities['embed:upload']);
 	let snapshot = $derived(session.snapshot);
 	let connected = $derived(snapshot.status === 'connected');
+	let canUsePasskey = $derived(!!session.server?.auth.includes('webauthn'));
 
 	function toggle(): void {
 		if (open) {
@@ -43,8 +47,10 @@
 			return;
 		}
 		draft = you?.name || displayName;
+		openedWith = draft;
 		status = 'idle';
 		serverName = '';
+		declinedReason = '';
 		passkeyError = '';
 		passkeyNotice = '';
 		avatarError = '';
@@ -85,21 +91,66 @@
 		status = 'idle';
 	}
 
+	/**
+	 * The handle field and the passkey buttons read as one form, so a handle the
+	 * user typed (even one a guest could not save) rides along with the passkey
+	 * and is applied once the session is signed in.
+	 */
 	async function passkey(action: 'register' | 'login' | 'logout'): Promise<void> {
 		passkeyError = '';
 		passkeyNotice = '';
+		const requested = draft.trim();
+		const chosen = action !== 'logout' && requested && requested !== openedWith.trim() ? requested : undefined;
 		try {
+			let named: OperationHandle | undefined;
 			if (action === 'logout') {
 				onsignout();
 				await client.signOut();
 			} else {
-				await client.usePasskey(action);
+				named = await client.usePasskey(action, chosen);
 			}
-			draft = you?.name || displayName;
 			passkeyNotice = action === 'register' ? 'Passkey saved · this backend will ask your device next time'
 				: action === 'login' ? 'Signed in with your passkey.' : 'Signed out.';
+			if (chosen) {
+				displayName = chosen;
+				saveDisplayName(chosen);
+			}
+			// Signing in re-sends the saved display name too, so show that result
+			// even when the field was left alone.
+			if (named) {
+				await track(named, chosen ?? displayName.trim(), false);
+			} else {
+				draft = you?.name || displayName;
+				openedWith = draft;
+				if (status === 'declined') status = 'idle';
+			}
 		} catch (cause) {
 			passkeyError = passkeyMessage(cause);
+		}
+	}
+
+	/** Shows what the server kept for a `me` request carrying `requested`. */
+	async function track(handle: OperationHandle, requested: string, closeWhenKept: boolean): Promise<void> {
+		status = 'saving';
+		declinedReason = '';
+		try {
+			const result = await handle.promise;
+			const kept = isJsonObject(result.you) && typeof result.you.name === 'string' ? result.you.name : requested;
+			if (kept === requested) {
+				if (closeWhenKept) {
+					close();
+					return;
+				}
+				status = 'idle';
+			} else {
+				serverName = kept;
+				status = 'altered';
+			}
+			draft = kept;
+			openedWith = kept;
+		} catch (cause) {
+			declinedReason = cause instanceof Error ? cause.message : '';
+			status = 'declined';
 		}
 	}
 
@@ -115,18 +166,7 @@
 			close();
 			return;
 		}
-		status = 'saving';
-		handle.promise
-			.then((result) => {
-				const kept = isJsonObject(result.you) && typeof result.you.name === 'string' ? result.you.name : requested;
-				if (kept === requested) {
-					close();
-				} else {
-					serverName = kept;
-					status = 'altered';
-				}
-			})
-			.catch(() => (status = 'declined'));
+		void track(handle, requested, true);
 	}
 </script>
 
@@ -162,9 +202,16 @@
 				{#if status === 'altered'}
 					<p class="ap-profedit-note" role="status">The server saved your handle as “{serverName}”.</p>
 				{:else if status === 'declined'}
-					<p class="ap-profedit-note ap-profedit-err" role="alert">The server declined this handle. Your old one is still in use.</p>
+					<p class="ap-profedit-note ap-profedit-err" role="alert">
+						The server declined this handle{declinedReason ? ` (${declinedReason})` : ''}.
+						{#if canUsePasskey && !snapshot.passkeySession}
+							Add a passkey or sign in with one and it’s applied once you’re signed in.
+						{:else}
+							Your old one is still in use.
+						{/if}
+					</p>
 				{/if}
-				{#if session.server?.auth.includes('webauthn')}
+				{#if canUsePasskey}
 					<div class="ap-profedit-signin" role="group" aria-label="Sign-in">
 						<span class="ap-fieldlabel">Sign-in</span>
 						{#if snapshot.authBusy}
