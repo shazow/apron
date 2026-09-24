@@ -651,6 +651,32 @@ test.describe('chat protocol interoperability', () => {
 		}
 	});
 
+	test('badges a thread in the sidebar when you are mentioned in it elsewhere', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const named = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await named.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const id = await userIdOf(pageB);
+			const token = `threadping-${Date.now().toString(36)}`;
+			await sendMessage(pageA, `${token}-root`);
+			const threadId = await startThread(pageA, await waitForMessage(pageA, `${token}-root`));
+			const row = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+			await expect(row).toBeVisible();
+			await expect(row.getByTestId('thread-mentions')).toHaveCount(0);
+
+			// B stays in the room; the mention lands in the thread.
+			await sendMessage(pageA, `@${id} ${token} please look`);
+			await expect(row.getByTestId('thread-mentions')).toHaveText('@');
+			await row.click();
+			await waitForMessage(pageB, `${token} please look`);
+			await expect(row.getByTestId('thread-mentions')).toHaveCount(0);
+		} finally {
+			await Promise.all([writer.close(), named.close()]);
+		}
+	});
+
 	test('turns the jump bar rust when a mention lands above the fold', async ({ browser }) => {
 		const writer = await browser.newContext();
 		const named = await browser.newContext();

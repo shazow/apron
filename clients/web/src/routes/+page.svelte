@@ -352,6 +352,7 @@
 		composer?.reset();
 		mentions.clearUnseen();
 		mentions.clearRoom(roomId);
+		if (thread) mentions.clearRoom(thread);
 		stickToBottom = true;
 	}
 

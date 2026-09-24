@@ -100,6 +100,10 @@
 									{@const open = activeThread === entry.id}
 									<button class="ap-room ap-room-nested" class:ap-room-active={open} type="button" data-thread={entry.id} aria-current={open ? 'page' : undefined} onclick={() => onthread(entry.id)}>
 										<span class="ap-room-text"><span class="ap-room-name">{entry.title}</span></span>
+										{#if mentions[entry.id] && !open}
+											{@const count = mentions[entry.id]}
+											<span class="ap-count ap-count-at" data-testid="thread-mentions" aria-label={`${count} ${count === 1 ? 'mention' : 'mentions'}`}>@{count > 1 ? count : ''}</span>
+										{/if}
 										{#if entry.count !== undefined}
 											<small class="room-meta" aria-label={`${entry.count} ${entry.count === 1 ? 'message' : 'messages'}`}>{entry.count}</small>
 										{/if}
