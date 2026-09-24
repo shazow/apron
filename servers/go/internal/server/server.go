@@ -151,15 +151,55 @@ const (
 	kindReactions
 )
 
-// logRecord is one committed change. value is the complete wire object
-// (including log_id) as it was at commit time; it is cloned on output and
-// rewritten only by redaction (Appendix B). A record is referenced from the
-// log of every room it belongs to, so a move snapshot appears in both the
-// source and destination room logs.
+// logRecord is one committed change: raw is the complete wire object
+// (including log_id) as it was at commit time, kept as JSON, which history
+// and broadcasts send as is and which costs far less memory than decoded
+// maps. Only redaction (Appendix B) rewrites a record; raw is replaced, never
+// modified, so a reader may hold it after releasing s.mu. A record is
+// referenced from the log of every room it belongs to, so a move snapshot
+// appears in both the source and destination room logs.
 type logRecord struct {
-	id    int64
-	kind  recordKind
-	value map[string]any
+	id   int64
+	kind recordKind
+	raw  json.RawMessage
+}
+
+// newLogRecord encodes value. Values hold only JSON-decoded data and
+// server-built strings, maps, and slices, so encoding cannot fail.
+func newLogRecord(id int64, kind recordKind, value map[string]any) *logRecord {
+	raw, _ := json.Marshal(value)
+	return &logRecord{id: id, kind: kind, raw: raw}
+}
+
+// value decodes the record.
+func (r *logRecord) value() map[string]any {
+	var value map[string]any
+	_ = json.Unmarshal(r.raw, &value)
+	return value
+}
+
+// rewrite replaces the record with edit applied to its decoded value.
+func (r *logRecord) rewrite(edit func(value map[string]any)) {
+	value := r.value()
+	edit(value)
+	r.raw, _ = json.Marshal(value)
+}
+
+// notification renders a frame once, for sending to many connections.
+func notification(method string, params any) json.RawMessage {
+	payload, _ := json.Marshal(map[string]any{"method": method, "params": params})
+	return payload
+}
+
+// rawNotification renders a frame around params that are already JSON, as
+// notification would with the decoded params ("method" sorts first).
+func rawNotification(method string, params json.RawMessage) json.RawMessage {
+	payload := make([]byte, 0, len(method)+len(params)+24)
+	payload = append(payload, `{"method":`...)
+	payload = strconv.AppendQuote(payload, method)
+	payload = append(payload, `,"params":`...)
+	payload = append(payload, params...)
+	return append(payload, '}')
 }
 
 func formatID(id int64) string {
@@ -514,10 +554,15 @@ func (c *client) enqueueBatch(values ...any) bool {
 	}
 	batch := outboundBatch{frames: make([][]byte, 0, len(values))}
 	for _, value := range values {
-		payload, err := json.Marshal(value)
-		if err != nil {
-			c.stopConnection()
-			return false
+		// A frame rendered once for many connections is shared as is; the
+		// writer never modifies it.
+		payload, rendered := value.(json.RawMessage)
+		if !rendered {
+			var err error
+			if payload, err = json.Marshal(value); err != nil {
+				c.stopConnection()
+				return false
+			}
 		}
 		batch.frames = append(batch.frames, payload)
 	}

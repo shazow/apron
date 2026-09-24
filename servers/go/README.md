@@ -42,6 +42,10 @@ Flags:
   `retry_after` with `data.retry_after` in seconds.
 - `-disable-push` removes push; `-allow-insecure-push` accepts `http` and
   internal push endpoints (development only).
+- `-debug-addr 127.0.0.1:6060` serves `net/http/pprof` and `expvar` under
+  `/debug/` on a separate listener; keep it off public interfaces.
+  [`cmd/apron-hammer`](cmd/apron-hammer/README.md) load-tests the server and
+  reads it to report heap and goroutines.
 
 ## Log and history
 

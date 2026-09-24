@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"expvar"
 	"flag"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -27,6 +29,7 @@ func main() {
 	messagesPerMinute := flag.Int("messages-per-minute", 0, "maximum new messages per user per minute; 0 is unlimited")
 	disablePush := flag.Bool("disable-push", false, "do not offer push registration")
 	allowInsecurePush := flag.Bool("allow-insecure-push", false, "accept http and internal push endpoints (development only)")
+	debugAddr := flag.String("debug-addr", "", "listen address for pprof and expvar under /debug/, such as 127.0.0.1:6060; empty disables")
 	flag.Parse()
 
 	config := server.DefaultConfig()
@@ -59,6 +62,9 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if *debugAddr != "" {
+		go serveDebug(logger, *debugAddr)
+	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(stop)
@@ -94,4 +100,20 @@ func splitNonEmpty(value string) []string {
 		}
 	}
 	return result
+}
+
+// serveDebug serves pprof and expvar on their own listener, so profiling is
+// never reachable through the public address.
+func serveDebug(logger *slog.Logger, addr string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.Handle("/debug/vars", expvar.Handler())
+	logger.Info("debug server listening", "addr", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		logger.Error("debug server stopped", "error", err)
+	}
 }

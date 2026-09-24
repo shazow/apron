@@ -80,11 +80,11 @@ func (e *embedState) streamURL() string {
 // without is new and gets an embed_id, and a new upload or stream embed gets
 // a write URL, listed in written. Senders' og is dropped: the server only
 // describes media it hosts.
-func (s *Server) resolveEmbedsLocked(c *client, messageID string, current *messageState, body map[string]any) ([]any, []any, *rpcError) {
+func (s *Server) resolveEmbedsLocked(c *client, messageID string, current map[string]any, body map[string]any) ([]any, []any, *rpcError) {
 	submitted, _ := body["embeds"].([]any)
 	previous := make(map[string]map[string]any)
 	if current != nil {
-		if currentBody, ok := current.snapshot["body"].(map[string]any); ok {
+		if currentBody, ok := current["body"].(map[string]any); ok {
 			for _, value := range asList(currentBody["embeds"]) {
 				if embed, ok := value.(map[string]any); ok {
 					if id, ok := embed["embed_id"].(string); ok {
@@ -188,12 +188,13 @@ func (s *Server) newWriteLocked(c *client, id, kind, messageID string) *embedSta
 }
 
 // releaseEmbedsLocked deletes the hosted content of embeds a save removed
-// (Appendix E); a nil body, as for a tombstone, removes every embed.
-func (s *Server) releaseEmbedsLocked(current *messageState, body map[string]any) {
+// from the current snapshot (Appendix E); a nil body, as for a tombstone,
+// removes every embed.
+func (s *Server) releaseEmbedsLocked(current map[string]any, body map[string]any) {
 	if current == nil {
 		return
 	}
-	currentBody, _ := current.snapshot["body"].(map[string]any)
+	currentBody, _ := current["body"].(map[string]any)
 	remaining := make(map[string]bool)
 	for _, value := range asList(body["embeds"]) {
 		if id, ok := value.(map[string]any)["embed_id"].(string); ok {
@@ -512,18 +513,25 @@ func (s *Server) writeStream(w http.ResponseWriter, r *http.Request, e *embedSta
 			}
 		}
 	}()
+	bodyEnded := false
 	for open := true; open; {
 		select {
 		case chunk, ok := <-chunks:
+			bodyEnded = !ok
 			open = ok && e.stream.write(chunk)
 		case <-e.stream.finished:
 			open = false
 		}
 	}
 	e.stream.end()
-	// Unblock a body read still waiting on the writer, and let it finish.
-	_ = controller.SetReadDeadline(time.Now())
-	for range chunks {
+	if !bodyEnded {
+		// Unblock a body read still waiting on the writer, and let it finish.
+		// The expired deadline also cancels the connection's context, so the
+		// connection must not serve another request.
+		w.Header().Set("Connection", "close")
+		_ = controller.SetReadDeadline(time.Now())
+		for range chunks {
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
