@@ -21,6 +21,7 @@
 	import { directory } from '$lib/ui/directory.svelte';
 	import { FeedbackState } from '$lib/ui/feedback.svelte';
 	import { MentionTracker } from '$lib/ui/mentions.svelte';
+	import { UnreadTracker } from '$lib/ui/unread.svelte';
 	import { isOwn, mentionsMe, peopleIn, replySnippet, senderName } from '$lib/ui/messages';
 	import { reactionChips, type ReactionChip } from '$lib/ui/reactions';
 	import { MessageSelection } from '$lib/ui/selection.svelte';
@@ -38,6 +39,9 @@
 	const session = new SessionView();
 	const feedback = new FeedbackState();
 	const mentions = new MentionTracker();
+	const unread = new UnreadTracker();
+	/** Whether this tab is in front: a hidden tab doesn't read what arrives. */
+	let pageVisible = $state(typeof document === 'undefined' || document.visibilityState === 'visible');
 	const selection = new MessageSelection();
 	const sidebar = new SidebarLayout();
 
@@ -126,6 +130,10 @@
 		mentions.observe(session.rooms, session.you, paneRoom?.id, latestVisible);
 	});
 
+	$effect(() => {
+		unread.observe(session.rooms, session.you, paneRoom?.id, latestVisible && pageVisible);
+	});
+
 	// The New divider is placed once per visit, from the read cursor the server kept.
 	$effect(() => {
 		const room = paneRoom;
@@ -139,7 +147,7 @@
 		const room = paneRoom;
 		const last = messages[messages.length - 1];
 		// Only once this pane's divider is in place: advancing first would hide what was new.
-		if (!client || !room || !last || !latestVisible || !room.loaded || !session.ready || newDivider.room !== room.id || !newDivider.fixed) return;
+		if (!client || !room || !last || !latestVisible || !pageVisible || !room.loaded || !session.ready || newDivider.room !== room.id || !newDivider.fixed) return;
 		untrack(() => client?.markRead(room.id, last.message_id));
 	});
 
@@ -704,9 +712,10 @@
 </script>
 
 <svelte:window onkeydown={windowKeydown} />
+<svelte:document onvisibilitychange={() => (pageVisible = document.visibilityState === 'visible')} />
 
 <svelte:head>
-	<title>Apron</title>
+	<title>{unread.total > 0 ? `Apron (${unread.total})` : 'Apron'}</title>
 	<meta name="description" content="Apron, a chat frontend for the Bottomless Chat protocol." />
 </svelte:head>
 

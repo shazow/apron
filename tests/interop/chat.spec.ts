@@ -618,6 +618,32 @@ test.describe('chat protocol interoperability', () => {
 		}
 	});
 
+	test('counts unread arrivals in the tab title until you read them', async ({ browser }) => {
+		const writer = await browser.newContext();
+		const reader = await browser.newContext();
+		try {
+			const pageA = await writer.newPage();
+			const pageB = await reader.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			await pageB.setViewportSize({ width: 900, height: 700 });
+			const token = `unread-${Date.now().toString(36)}`;
+			await sendMessage(pageA, [`${token}-intro`, ...Array.from({ length: 40 }, (_, line) => `Intro line ${line}`)].join('\n\n'));
+			await sendMessage(pageA, `${token}-latest`);
+			await waitForMessage(pageB, `${token}-latest`);
+			await expect(pageB).toHaveTitle('Apron');
+
+			await pageB.getByTestId('message-list').evaluate((node) => { node.scrollTop = 0; });
+			await expect(pageB.getByTestId('jump-button')).toBeVisible();
+			await sendMessage(pageA, `${token}-one`);
+			await sendMessage(pageA, `${token}-two`);
+			await expect(pageB).toHaveTitle('Apron (2)');
+			await pageB.getByTestId('jump-button').click();
+			await expect(pageB).toHaveTitle('Apron');
+		} finally {
+			await Promise.all([writer.close(), reader.close()]);
+		}
+	});
+
 	test('turns the jump bar rust when a mention lands above the fold', async ({ browser }) => {
 		const writer = await browser.newContext();
 		const named = await browser.newContext();
