@@ -19,9 +19,11 @@ The entry Worker rejects excessive connection attempts before calling the DO.
 See [edge admission operations](docs/edge-admission.md) for applying WAF rules,
 their Free-plan limitations, and the quota-exhaustion runbook.
 
-Passkey session cleanup uses an ordered expiry index. Each alarm processes at
-most 16 expired index entries; alarms with no expired entries perform only a
-small metered probe. Session issuance,
+Passkey session cleanup uses an ordered expiry index. An alarm sweeps it at most
+once an hour (every connection wakes the alarm at its auth deadline), processing
+at most 16 expired entries and sweeping again on the next alarm after a full
+batch; a sweep with no expired entries performs only a small metered probe. A
+token resume rejects an expired session whether or not it has been swept. Session issuance,
 renewal, and cleanup share a queue so cleanup cannot delete a concurrent renewal.
 KV operations reserve conservative row allowances before running; an exhausted
 maintenance budget leaves unfinished cleanup for a later alarm.

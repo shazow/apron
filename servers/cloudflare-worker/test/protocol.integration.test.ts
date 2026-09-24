@@ -484,6 +484,18 @@ it('lists rooms and threads with the connected members, and throttles listing', 
 	} finally { alice.close(); bob.close(); }
 });
 
+it('answers a guest re-auth on an authenticated connection without charging an attempt', async () => {
+	const peer = await connect();
+	try {
+		const you = await authenticate(peer);
+		// More than the per-IP attempt limit (10 a minute): none is charged.
+		for (let index = 0; index < 12; index += 1) {
+			peer.send({ id: `again-${index}`, method: 'auth', params: { scheme: 'guest' } });
+			expect((await until(peer, (frame) => frame.id === `again-${index}`)).frame.result.you.user_id).toBe(you.user_id);
+		}
+	} finally { peer.close(); }
+});
+
 it('lists only connected guests as members after others posted and left', async () => {
 	const alice = await connect();
 	const leavers = await Promise.all([connect(), connect(), connect()]);

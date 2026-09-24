@@ -30,6 +30,12 @@ const SESSION_KEY_PREFIX = "session:";
 /** Ordered, advisory expiry entries. The session record remains authoritative. */
 const SESSION_EXPIRY_PREFIX = "session-expiry:";
 const SESSION_CLEANUP_BATCH = 16;
+/**
+ * How often an alarm sweeps expired sessions. Every connection wakes the alarm
+ * at its auth deadline, and the probe is KV work charged at its full bound, so
+ * it runs at most this often; a resume rejects an expired session on its own.
+ */
+const SESSION_SWEEP_INTERVAL_MS = 60 * 60_000;
 const MAX_SESSION_TOKEN_CHARS = 256;
 
 type WebSocketConnection = WebSocket & {
@@ -423,6 +429,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private alarmTail: Promise<void> = Promise.resolve();
 	private alarmFailures = 0;
 	private alarmKnown = false;
+	/** When the next alarm may sweep sessions; in memory, so a wake sweeps once. */
+	private nextSessionSweepAt = 0;
 	private accountUsageEvents = 0;
 	private accountUsageRetryAt = 0;
 	private accountUsageFailureCount = 0;
@@ -602,7 +610,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 				writeAttachment(socket, attachment);
 			}
 		}
-		try { await this.sweepSessions(now); } catch { /* retried on the next alarm */ }
+		if (now >= this.nextSessionSweepAt) {
+			try {
+				// A full batch may have left more behind; sweep again on the next alarm.
+				const full = await this.sweepSessions(now);
+				this.nextSessionSweepAt = full ? 0 : now + SESSION_SWEEP_INTERVAL_MS;
+			} catch { /* retried on the next alarm */ }
+		}
 		let result: ReturnType<Store["runCleanup"]> | undefined;
 		try {
 			result = this.store.runCleanup(now);
@@ -850,14 +864,16 @@ export class ApronDemoServer extends DurableObject<Env> {
 		// Authentication ceremonies are request/response exchanges. Ignore auth
 		// notifications before reserving any attempt or changing attachment state.
 		if (request.id === undefined && request.params.scheme === "webauthn") return;
+		// A guest auth on an authenticated connection changes nothing: answer it
+		// without charging an attempt.
+		if (request.params.scheme === "guest" && (attachment.tier === "anonymous" || attachment.tier === "registered")) {
+			this.reply(socket, request, { you: publicIdentity(attachment) });
+			return;
+		}
 		this.store.reserveAuthAttempt({ ipKey: attachment.ipKey, now: nowMs() });
 		const params = request.params;
 		const scheme = requiredString(params, "scheme");
 		if (scheme === "guest") {
-			if (attachment.tier === "anonymous" || attachment.tier === "registered") {
-				this.reply(socket, request, { you: publicIdentity(attachment) });
-				return;
-			}
 			const userId = randomId("guest");
 			attachment.tier = "anonymous";
 			attachment.userId = userId;
@@ -1020,11 +1036,12 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/** Drops expired session records from a bounded, ordered expiry index. */
-	private async sweepSessions(now: number): Promise<void> {
+	/** Whether it processed a full batch, so more may be due. */
+	private async sweepSessions(now: number): Promise<boolean> {
 		return this.withSessionLock(() => this.sweepSessionsLocked(now));
 	}
 
-	private async sweepSessionsLocked(now: number): Promise<void> {
+	private async sweepSessionsLocked(now: number): Promise<boolean> {
 		// Socket deadline alarms can be frequent. Probe the bounded expiry index
 		// before reserving a full batch; this is the only maintenance work
 		// performed until an expiry is actually due.
@@ -1033,9 +1050,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 			end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
 			limit: 1,
 		}), now);
-		if (dueProbe.size === 0) return;
+		if (dueProbe.size === 0) return false;
 		// Up to B index rows + B session reads; writes cover 2B expiry deletes.
-		await this.store.withMeterAsync("maintenance", {
+		return await this.store.withMeterAsync("maintenance", {
 			reads: 2 * SESSION_CLEANUP_BATCH + 2,
 			writes: 2 * SESSION_CLEANUP_BATCH,
 		}, async () => {
@@ -1066,7 +1083,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 				// preserve the live session and discard its obsolete index row.
 				await this.ctx.storage.delete(indexKey);
 			}
-
+			return indexed.size >= SESSION_CLEANUP_BATCH;
 		});
 	}
 
