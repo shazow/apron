@@ -45,10 +45,25 @@ export function immediatePasskeysAvailable(): Promise<boolean> {
 		const capabilities = (PublicKeyCredential as unknown as {
 			getClientCapabilities?: () => Promise<Record<string, boolean | undefined>>;
 		}).getClientCapabilities;
-		if (!capabilities) return false;
-		return (await capabilities.call(PublicKeyCredential)).immediateGet === true;
+		if (!capabilities || (await capabilities.call(PublicKeyCredential)).immediateGet !== true) return false;
+		return acceptsImmediateMediation();
 	})().catch(() => false);
 	return immediateSupport;
+}
+
+/**
+ * Chrome can report `immediateGet` while rejecting `mediation: 'immediate'`
+ * itself, so ask with an already-aborted signal: an unknown mediation fails
+ * as a TypeError while the options are read, before any UI, and a known one
+ * as an AbortError.
+ */
+async function acceptsImmediateMediation(): Promise<boolean> {
+	try {
+		await navigator.credentials.get({ mediation: 'immediate' as CredentialMediationRequirement, signal: AbortSignal.abort() });
+		return false;
+	} catch (cause) {
+		return !(cause instanceof TypeError);
+	}
 }
 
 /** The wire uses WebAuthn JSON encodings (base64url for binary fields). */

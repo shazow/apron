@@ -697,10 +697,14 @@ export class ChatClient {
 	 */
 	async continueWithPasskey(name?: string): Promise<{ action: 'register' | 'login'; named?: OperationHandle }> {
 		const plan = await this.passkeyPlan();
+		const fallback = this.passkeyHint ? 'login' : 'register';
 		if (plan !== 'immediate') return { action: plan, named: await this.usePasskey(plan, name) };
 		try {
 			return { action: 'login', named: await this.usePasskey('login', name, 'immediate') };
 		} catch (cause) {
+			// The browser refused `immediate` as an option after all: sign in or
+			// register as if it were unsupported.
+			if (cause instanceof TypeError) return { action: fallback, named: await this.usePasskey(fallback, name) };
 			// No passkey for this server on this device, or the picker was dismissed.
 			if (!(cause instanceof DOMException && cause.name === 'NotAllowedError')) throw cause;
 		}

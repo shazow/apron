@@ -124,6 +124,21 @@ describe('continue with passkey', () => {
 		client.stop();
 	});
 
+	it('falls back to registering when the browser rejects immediate mediation as an option', async () => {
+		vi.mocked(immediatePasskeysAvailable).mockResolvedValue(true);
+		vi.mocked(requestPasskey)
+			.mockRejectedValueOnce(new TypeError("Failed to read the 'mediation' property"))
+			.mockResolvedValueOnce({ id: 'credential' });
+		const { client, socket } = await connected();
+		const pending = client.continueWithPasskey();
+		await settle();
+		await socket.reply('auth', { challenge_id: 'challenge-1', public_key: { challenge: 'x' } });
+		await ceremony(socket, { user_id: 'u_1', name: 'Guest' });
+		await expect(pending).resolves.toEqual(expect.objectContaining({ action: 'register' }));
+		expect(vi.mocked(requestPasskey).mock.calls.map((call) => [call[0], call[3]])).toEqual([['login', 'immediate'], ['register', 'modal']]);
+		client.stop();
+	});
+
 	it('without immediate mediation, registers until this browser has used a passkey here, then signs in', async () => {
 		vi.mocked(requestPasskey).mockResolvedValue({ id: 'credential' });
 		const { client, socket } = await connected();
