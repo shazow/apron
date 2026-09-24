@@ -21,6 +21,8 @@ const (
 	defaultOutgoingQueue            = 128
 	defaultHistoryPageSize          = 100
 	maxHistoryPageSize              = 1000
+	defaultRoomListLimit            = 100
+	maxRoomListLimit                = 1000
 	defaultPingInterval             = 30 * time.Second
 	defaultPingTimeout              = 10 * time.Second
 	defaultWriteTimeout             = 10 * time.Second
@@ -415,6 +417,7 @@ func (s *Server) serverParams() map[string]any {
 		"ext": map[string]any{"apron-go": map[string]any{
 			"max_frame_bytes":           s.config.ReadLimit,
 			"max_history_limit":         maxHistoryPageSize,
+			"max_room_list_limit":       maxRoomListLimit,
 			"max_upload_bytes":          s.config.MaxUploadBytes,
 			"max_avatar_bytes":          s.config.MaxAvatarBytes,
 			"stream_keep_bytes":         s.config.StreamKeepBytes,

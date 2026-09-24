@@ -767,8 +767,8 @@ cleared. Both return `{"room_id": "..."}` and broadcast the new room record
 Discovery and membership:
 
 ```jsonc
-// -> list a room's threads; omit parent_room_id for top-level rooms
-{"method": "room_list", "id": "c21", "params": {"parent_room_id": "general"}}
+// -> list a room's newest threads; omit parent_room_id for top-level rooms
+{"method": "room_list", "id": "c21", "params": {"parent_room_id": "general", "limit": 50}}
 // <-
 {
   "id": "c21", "result": {
@@ -780,19 +780,38 @@ Discovery and membership:
         "latest_log_id": "1724803400000",
         "members": [{"user_id": "alice", "name": "Alice", "avatar": "https://..."}]
       }
-    ]
+    ],
+    "first_id": "1724803312001", "last_id": "1724803312001", "more": true
   }
 }
+// -> the next older page
+{"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "before": "1724803312000", "limit": 50}}
+// -> one room, for its members
+{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001"}}
 // ->
-{"method": "room_join", "id": "c22", "params": {"room_id": "1724803312001"}}
+{"method": "room_join", "id": "c24", "params": {"room_id": "1724803312001"}}
 // ->
-{"method": "room_leave", "id": "c23", "params": {"room_id": "1724803312001"}}
+{"method": "room_leave", "id": "c25", "params": {"room_id": "1724803312001"}}
 ```
 
 - `room_list` returns room records (§3.4) for the visible rooms, each with
   `members`, a list of user objects (§3.3). With `parent_room_id` it lists
-  that room's threads, including ones never announced. Listing a room does
-  not start deliveries. Servers MAY omit or truncate `members` by policy.
+  that room's threads, including ones never announced. With `room_id` it
+  lists just that visible room, thread or not, as a way to learn its
+  members; it cannot be combined with `parent_room_id` or the page
+  parameters below. Listing a room does not start deliveries. Servers MAY
+  omit or truncate `members` by policy.
+- Listings are paged like history (Appendix A), over each room's creation
+  position: the `log_id` of the record that created it. `after`/`before`
+  are inclusive bounds on it; `limit` is a positive count of rooms, which
+  servers MAY clamp and default. With `after`, select the oldest matches;
+  otherwise the newest. `rooms` is ascending by creation. `first_id`/
+  `last_id` are the creation positions of the first and last listed rooms,
+  both or neither, and `more` indicates further matching rooms in the
+  selected direction. Continue backward with `before = first_id - 1` or
+  forward with `after = last_id + 1`, computed numerically and encoded as
+  strings. A server that returns every match MAY omit `more`, which then
+  means `false`, and the positions.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
   ones announced to their connection (§3.4).
 - Posting in a visible room the user has not joined MAY join them to it:

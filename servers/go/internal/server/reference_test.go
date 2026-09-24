@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -361,6 +363,69 @@ func TestFailedAndExpiredWritesDropTheEmbed(t *testing.T) {
 	}
 	if status, _, _ := httpDo(t, http.MethodPut, written[1].(map[string]any)["write_url"].(string), strings.NewReader("late"), ""); status != http.StatusNotFound {
 		t.Fatalf("expired write URL: %d", status)
+	}
+}
+
+// room_list pages over creation order like history: newest first without
+// after, continued with before = first_id - 1; room_id lists one room.
+func TestRoomListPages(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	c := dialTestClient(t, httpServer, "a", false)
+	var threads []string
+	for i := range 5 {
+		id, _ := saveRoom(t, c, fmt.Sprintf("thread-%d", i), map[string]any{"parent_room_id": "general", "title": fmt.Sprintf("T%d", i)})
+		threads = append(threads, id)
+	}
+	page := func(requestID string, params map[string]any) ([]string, map[string]any) {
+		t.Helper()
+		result := c.result(t, "room_list", requestID, params)
+		var ids []string
+		for _, room := range result["rooms"].([]any) {
+			ids = append(ids, room.(map[string]any)["room_id"].(string))
+		}
+		return ids, result
+	}
+	// A created room's ID is its creation log_id on this server.
+	previous := func(id string) string { return strconv.FormatInt(parseID(t, id)-1, 10) }
+
+	ids, result := page("newest", map[string]any{"parent_room_id": "general", "limit": 2})
+	if !reflect.DeepEqual(ids, threads[3:]) || result["more"] != true || result["first_id"] != threads[3] || result["last_id"] != threads[4] {
+		t.Fatalf("newest page: %v %#v", ids, result)
+	}
+	ids, result = page("older", map[string]any{"parent_room_id": "general", "limit": 2, "before": previous(threads[3])})
+	if !reflect.DeepEqual(ids, threads[1:3]) || result["more"] != true {
+		t.Fatalf("older page: %v %#v", ids, result)
+	}
+	ids, result = page("oldest", map[string]any{"parent_room_id": "general", "limit": 2, "before": previous(threads[1])})
+	if !reflect.DeepEqual(ids, threads[:1]) || result["more"] != false {
+		t.Fatalf("oldest page: %v %#v", ids, result)
+	}
+	// With after the page starts at the oldest match; bounds are inclusive.
+	ids, result = page("forward", map[string]any{"parent_room_id": "general", "limit": 2, "after": threads[2], "before": threads[3]})
+	if !reflect.DeepEqual(ids, threads[2:4]) || result["more"] != false {
+		t.Fatalf("forward page: %v %#v", ids, result)
+	}
+	ids, result = page("all", map[string]any{"parent_room_id": "general"})
+	if !reflect.DeepEqual(ids, threads) || result["more"] != false {
+		t.Fatalf("default page: %v %#v", ids, result)
+	}
+	ids, result = page("none", map[string]any{"parent_room_id": "general", "after": previous(threads[0]), "before": previous(threads[0])})
+	if len(ids) != 0 || result["more"] != false || result["first_id"] != nil {
+		t.Fatalf("empty page: %v %#v", ids, result)
+	}
+
+	ids, result = page("one", map[string]any{"room_id": threads[2]})
+	if !reflect.DeepEqual(ids, threads[2:3]) || !reflect.DeepEqual(memberIDs(result["rooms"].([]any)[0].(map[string]any)), []string{"guest_1"}) {
+		t.Fatalf("room_id listing: %v %#v", ids, result)
+	}
+	for _, params := range []map[string]any{
+		{"room_id": "missing"},
+		{"room_id": threads[2], "parent_room_id": "general"},
+		{"room_id": threads[2], "limit": 1},
+		{"parent_room_id": "general", "limit": 0},
+		{"parent_room_id": "general", "before": 5},
+	} {
+		c.expectError(t, "room_list", "invalid", params, codeInvalidParams)
 	}
 }
 

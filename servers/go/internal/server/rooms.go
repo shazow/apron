@@ -287,30 +287,75 @@ func (s *Server) threadTitleLocked(introID string) string {
 	return "Thread"
 }
 
-// listRooms returns the visible top-level rooms, or one room's threads, each
-// as a room record with delivery fields and members (Appendix C). Listing a
-// room does not join it.
+// listRooms returns a page of the visible top-level rooms or of one room's
+// threads, or with room_id that one room, each as a room record with delivery
+// fields and members (Appendix C). Pages run over creation order, the
+// creation log_ids bounded and limited as in history. Listing a room does not
+// join it.
 func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 	parentID, err := parseString(req.params, "parent_room_id", false)
 	if err != nil {
 		return nil, false, err
 	}
 	_, hasParent := req.params["parent_room_id"]
+	roomID, err := parseString(req.params, "room_id", false)
+	if err != nil {
+		return nil, false, err
+	}
+	_, hasRoom := req.params["room_id"]
+	after, hasAfter, err := parseBound(req.params, "after")
+	if err != nil {
+		return nil, false, err
+	}
+	before, hasBefore, err := parseBound(req.params, "before")
+	if err != nil {
+		return nil, false, err
+	}
+	limit, err := parseLimit(req.params, defaultRoomListLimit, maxRoomListLimit)
+	if err != nil {
+		return nil, false, err
+	}
+	_, hasLimit := req.params["limit"]
+	if hasRoom && (hasParent || hasAfter || hasBefore || hasLimit) {
+		return nil, false, invalidParams("room_id lists one room and takes no other parameters")
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if hasParent && s.rooms[parentID] == nil {
 		return nil, false, invalidParams("Unknown parent room %q", parentID)
 	}
-	rooms := make([]any, 0)
-	for _, roomID := range s.roomOrder {
+	var matching []*roomState
+	if hasRoom {
 		r := s.rooms[roomID]
-		listedParent := ""
-		if r.parent != nil {
-			listedParent = r.parent.id
+		if r == nil {
+			return nil, false, invalidParams("Unknown room %q", roomID)
 		}
-		if listedParent != parentID || (hasParent && r.parent == nil) {
-			continue
+		matching = []*roomState{r}
+	} else {
+		// roomOrder is creation order, so matching is too.
+		for _, id := range s.roomOrder {
+			r := s.rooms[id]
+			listedParent := ""
+			if r.parent != nil {
+				listedParent = r.parent.id
+			}
+			if listedParent != parentID || (hasParent && r.parent == nil) ||
+				(hasAfter && r.createdID < after) || (hasBefore && r.createdID > before) {
+				continue
+			}
+			matching = append(matching, r)
 		}
+	}
+	more := len(matching) > limit
+	if more {
+		if hasAfter {
+			matching = matching[:limit]
+		} else {
+			matching = matching[len(matching)-limit:]
+		}
+	}
+	rooms := make([]any, 0, len(matching))
+	for _, r := range matching {
 		entry := roomFrame(s.embedIntroLocked(r.record), r)["params"].(map[string]any)
 		ids := slices.Sorted(maps.Keys(r.members))
 		if len(ids) > maxListedMembers {
@@ -323,7 +368,12 @@ func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 		entry["members"] = members
 		rooms = append(rooms, entry)
 	}
-	return map[string]any{"rooms": rooms}, false, nil
+	result := map[string]any{"rooms": rooms, "more": more}
+	if len(matching) > 0 {
+		result["first_id"] = formatID(matching[0].createdID)
+		result["last_id"] = formatID(matching[len(matching)-1].createdID)
+	}
+	return result, false, nil
 }
 
 // joinRoom joins a visible room and its threads and announces them; joining
@@ -388,7 +438,7 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 	if err != nil {
 		return nil, false, err
 	}
-	limit, err := parseLimit(req.params, s.config.HistoryPageSize)
+	limit, err := parseLimit(req.params, s.config.HistoryPageSize, maxHistoryPageSize)
 	if err != nil {
 		return nil, false, err
 	}
@@ -453,7 +503,7 @@ func parseBound(params map[string]json.RawMessage, name string) (int64, bool, *r
 	return number, true, nil
 }
 
-func parseLimit(params map[string]json.RawMessage, defaultLimit int) (int, *rpcError) {
+func parseLimit(params map[string]json.RawMessage, defaultLimit, maxLimit int) (int, *rpcError) {
 	raw, ok := params["limit"]
 	if !ok {
 		return defaultLimit, nil
@@ -462,7 +512,7 @@ func parseLimit(params map[string]json.RawMessage, defaultLimit int) (int, *rpcE
 	if json.Unmarshal(raw, &value) != nil || value <= 0 {
 		return 0, invalidParams("limit must be a positive integer")
 	}
-	return min(value, maxHistoryPageSize), nil
+	return min(value, maxLimit), nil
 }
 
 // activity relays a user's typing and read cursor in a room to its members

@@ -18,7 +18,8 @@ Defaults:
 - WebSocket origins: `localhost`, `127.0.0.1`, and `::1` during development
 - capabilities: `history`, `edit`, `rooms`, `reactions`, `activity`,
   `embed:upload`, `embed:stream`; push kind `relay` (`server.push`)
-- `server.ext["apron-go"]`: frame, history, upload, avatar, and stream limits
+- `server.ext["apron-go"]`: frame, history, room list, upload, avatar, and
+  stream limits
 - seeded room: `general` (title `General`)
 - authentication: WebAuthn passkeys, bearer-token resume, and `guest`; guest
   user IDs are `guest_<n>` from a server-wide counter and honor an optional
@@ -105,7 +106,11 @@ announced to their connections, and records are delivered only to members:
   the message is delivered.
 - `room_list` returns the top-level rooms, or with `parent_room_id` that
   room's threads, as room records with delivery fields and `members` (at most
-  100 profiles), whether joined or not.
+  100 profiles), whether joined or not. It pages over creation order: `limit`
+  defaults to 100 and is clamped to 1000 (`max_room_list_limit`), `after` and
+  `before` bound creation `log_id`s, and the result carries `first_id`,
+  `last_id`, and `more`. A created room's `room_id` is its creation `log_id`.
+  With `room_id` alone it lists that one room.
 
 Rooms are announced in creation order, so parents precede their threads.
 
