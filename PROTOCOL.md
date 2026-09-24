@@ -282,13 +282,10 @@ Except for `webauthn`, servers MAY accept `auth` regardless of `scheme` and
 ignore credentials under guest-access policies. Token validation,
 identity assignment, and privilege policy are implementation-defined.
 
-`name` is an optional requested display name and `user_id` an optional
-requested ID, both valid with any scheme. The server MAY comply, decline,
-or assign something else, and `you` is the answer: identity is
-server-assigned. Servers SHOULD NOT grant a `user_id` used before unless the
-request authenticates as its owner, since past records and mentions refer
-to it. `client` is an optional free-form implementation string for
-debugging.
+`name` and `user_id` are optional requests, valid with any scheme; `you`
+is what the server assigned. Servers SHOULD NOT give out a previously used
+`user_id` without authenticating its owner. `client` is an optional
+free-form implementation string for debugging.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
 other requests get `denied` and other notifications are ignored.
