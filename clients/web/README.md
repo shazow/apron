@@ -76,8 +76,11 @@ that previews its intro message (or, without one, its latest loaded message).
 With the `rooms` cap, **Start thread** on a message creates a thread under the
 room with that message as its intro; the message stays in the room, where its
 card stands in for it, and leads the thread's timeline, pinned under the header.
-A thread's header offers **Edit** for its title. Threads load their history when
-opened; drafts are kept per room, threads included.
+A thread's header offers **Edit** for its title. Threads load their newest page of
+history when opened (50 records); one with older replies opens at its latest
+reply, shows "N+ replies", and loads the page before whenever the reader nears
+the top, keeping what is on screen in place. Drafts are kept per room, threads
+included.
 
 With the `rooms` cap the header also offers **Leave**, which leaves the room (and
 its threads) or the thread. **Browse rooms** in the sidebar lists, via
@@ -208,7 +211,9 @@ then. If retention overtakes the next uncovered position the client rebuilds
 from the new bound and ignores obsolete replies. `history_log_id: null` means
 the effective bound is `latest_log_id + 1`. Sparse timestamp log IDs are
 expected. Threads are rooms with a `parent_room_id`; they load their own
-history with `loadRoom` when opened. A lost connection keeps each room's
+history with `loadRoom` when opened: the newest page (`before` the head, no
+`after`), then older pages with `loadOlder` (`before` the oldest loaded
+`first_id`) until one reports `more: false` or the bound passes it. A lost connection keeps each room's
 records, bound and checkpoint: a room announced again resumes from its
 checkpoint (or rebuilds if retention passed it), and a thread reopened after a
 reconnect loads only what came after its own checkpoint. Signing out or

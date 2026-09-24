@@ -143,6 +143,13 @@ describe('thread view', () => {
 		expect(items[2]).toMatchObject({ grouped: false });
 	});
 
+	it('marks the reply count as a lower bound while older replies are not loaded', () => {
+		const intro = message(0, 'alice');
+		const reply = message(1000, 'bob', { room_id: 't1' });
+		expect(buildThreadTimeline({ messages: [reply], intro, moreReplies: true })[1]).toEqual({ kind: 'replies', key: 'replies', count: 1, more: true });
+		expect(buildThreadTimeline({ messages: [reply], intro })[1]).toEqual({ kind: 'replies', key: 'replies', count: 1 });
+	});
+
 	it('places each rename by its log position and breaks grouping around it', () => {
 		const intro = message(0, 'alice');
 		const first = message(1000, 'bob', { room_id: 't1' });

@@ -37,7 +37,7 @@ export type TimelineItem =
 	| { kind: 'date'; key: string; label: string }
 	| { kind: 'message'; key: string; event: MessageRecord; grouped: boolean; intro?: boolean }
 	| { kind: 'thread'; key: string; entry: ThreadEntry }
-	| { kind: 'replies'; key: string; count: number }
+	| { kind: 'replies'; key: string; count: number; more?: boolean }
 	| { kind: 'renamed'; key: string; logId: string; title: string };
 
 /**
@@ -179,6 +179,8 @@ export interface ThreadTimelineInput {
 	/** The thread room's title changes, ascending. */
 	renames?: readonly RoomRename[];
 	now?: Date;
+	/** Older replies are not loaded yet: the count is a lower bound. */
+	moreReplies?: boolean;
 }
 
 /**
@@ -187,7 +189,7 @@ export interface ThreadTimelineInput {
  * change was logged. Without an intro it is just the messages, with date
  * dividers.
  */
-export function buildThreadTimeline({ messages, intro, renames = [], now = new Date() }: ThreadTimelineInput): TimelineItem[] {
+export function buildThreadTimeline({ messages, intro, renames = [], now = new Date(), moreReplies = false }: ThreadTimelineInput): TimelineItem[] {
 	const items: TimelineItem[] = [];
 	let lastDay = '';
 	let previous: MessageRecord | undefined;
@@ -195,7 +197,7 @@ export function buildThreadTimeline({ messages, intro, renames = [], now = new D
 	if (intro) {
 		items.push({ kind: 'message', key: intro.message_id, event: intro, grouped: false, intro: true });
 		lastDay = dayKey(intro);
-		if (rest.length > 0) items.push({ kind: 'replies', key: 'replies', count: rest.length });
+		if (rest.length > 0) items.push({ kind: 'replies', key: 'replies', count: rest.length, ...(moreReplies ? { more: true } : {}) });
 	}
 	const pushDay = (id: string) => {
 		const day = dayKeyOf(id);

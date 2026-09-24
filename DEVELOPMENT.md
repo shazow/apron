@@ -79,8 +79,10 @@ for each room, and a thread is a room of its own.
 Thread cards preview up to three lines of the intro message, with its author,
 when it is available (not deleted and not empty), and otherwise the latest
 loaded message on one line. Threads load their own history (`history` on the
-thread's `room_id`) when opened, so message counts in the sidebar and on cards
-appear once a thread has loaded. The Edit button in a thread's header (cap
+thread's `room_id`) when opened, newest page first, so message counts in the
+sidebar and on cards appear once a thread has loaded. A thread with more than a
+page of replies opens at its latest ones with "N+ replies"; scrolling back
+loads older pages until its intro, and the count becomes exact. The Edit button in a thread's header (cap
 `rooms`) opens a popover for its title; the save is a `room` request with the
 thread's `room_id` that resubmits `intro_message` and `ext` unchanged. Any
 authenticated user may create threads and edit their titles on the Go example;
