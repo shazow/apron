@@ -446,7 +446,11 @@ it('with ACTIVITY on, relays typing without read cursors, throttles it per user,
 		expect(BigInt(mine.frame.result.message_id)).toBeGreaterThan(BigInt(notices[0].params.log_id));
 		alice.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 50 } });
 		const history = await until(alice, (frame) => frame.id === 'history');
-		expect(history.frame.result.entries.some((entry: Frame) => entry.params?.from?.user_id === '@server')).toBe(false);
+		// History entries are flat message snapshots. The page holds Alice's post, so
+		// the check below is not passing on an empty or misread page.
+		const entries: Array<{ message_id: string; from?: { user_id: string } }> = history.frame.result.entries;
+		expect(entries.some((entry) => entry.message_id === mine.frame.result.message_id)).toBe(true);
+		expect(entries.some((entry) => entry.from?.user_id === '@server' || entry.message_id === notices[0].params.message_id)).toBe(false);
 	} finally { alice.close(); bob.close(); await configure((config) => { config.activityEnabled = false; }); }
 });
 
