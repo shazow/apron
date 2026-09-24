@@ -463,7 +463,7 @@ object as an authoritative **snapshot** at one log position.
 | `prev_log_id` | server | optional; this message's previous snapshot (§2)       |
 | `from`        | server | author identity (§3.3), preserved across changes      |
 | `room_id`     | client | the room the message is in; required on requests      |
-| `body`        | client | `text`, `format`, `embeds`                            |
+| `body`        | client | `text`, `format`, `embeds`, `mentions`                |
 | `reply_to`    | client | optional message object naming the message replied to |
 | `deleted`     | client | tombstone marker, default false (Appendix B)          |
 | `ext`         | client | optional object of namespaced, opaque extension data  |
@@ -482,15 +482,15 @@ top-level keys. Servers MAY limit `ext` or normalize or reject any field by
 local policy.
 
 - `body` is required on creation. `text` defaults to `""`; `format` ∈
-  `"plain" | "markdown"`, default `"plain"`; `embeds` defaults to `[]`.
+  `"plain" | "markdown"`, default `"plain"`; `embeds` and `mentions`
+  default to `[]`.
   Both formats are mandatory to render. Markdown is CommonMark with fenced
   code blocks as the baseline rich-content path. Clients MUST disable raw
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
   (Appendix E). Clients MUST render embeds of unknown `kind` from `og` if
   present, otherwise as a labeled fallback card (kind name, plus `url` or
   plain `text` if present).
-- Suggested convention: mention users as `@user_id` in `body.text`
-  (Appendix J.3).
+- `mentions` lists the `user_id`s the message mentions (Appendix J.3).
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
   confirmation; the broadcast MAY arrive before or after it, and a
   deduplicated retry (§1.2) produces no broadcast.
@@ -1265,28 +1265,36 @@ keeps its name. Extensions and future methods should follow the same pattern.
 
 ### J.3 Mentions
 
-Mentions need no protocol support: they are plain text that clients and
-servers interpret by this convention. A mention is `@` followed by a
-`user_id` or `room_id` in `body.text`:
+A message lists the users it mentions in `body.mentions`, and shows each
+one in `body.text` as `@` followed by the `user_id`:
 
 ```json
-"body": {"text": "@guest_1234 can you check the deploy?"}
+"body": {
+  "text": "@guest_1234 can you check `@property` in https://example.com/@bob?",
+  "format": "markdown",
+  "mentions": ["guest_1234"]
+}
 ```
 
-- The ID is an optional `@` then a run of `[A-Za-z0-9_.-]`, not
-  preceded by a letter or digit, so `foo@bar.com` is not a mention. Trailing
-  `.` and `-` are not part of it. In Markdown, code spans and code blocks
-  contain no mentions.
-- Servers that want users and rooms to be mentionable mint IDs from that
-  set, such as `guest_1234`. System identities (J.1) take a second `@`, as in
-  `@@server`.
-- Clients render a user mention with the user's latest display name (§3.3),
-  such as a chip, and MAY highlight mentions of `you`. A room mention links
-  to the room. When an ID names both a user and a room, clients treat it as
-  a user. Unknown IDs render as written.
-- Composers insert `@user_id` when the user picks a person, for example
-  from the room's recent authors.
-- Servers MAY apply the same rule to wake mentioned users (Appendix F).
+- `mentions` alone decides who is mentioned: servers wake (Appendix F) and
+  clients highlight only the users it lists, whatever `text` contains.
+  Servers never parse `text` to find mentions.
+- Servers MAY drop an ID from `mentions` that `text` does not contain as
+  `@` plus the ID, so no one is mentioned invisibly.
+- An edit (Appendix B) mentions only the users it adds to `mentions`; users
+  already listed are not mentioned again.
+- Composers add a user to `mentions` when the user picks them, and insert
+  `@user_id` in `text`.
+- In `text`, an ID is an optional `@` then a run of `[A-Za-z0-9_.-]`, not
+  preceded by a letter or digit, so `foo@bar.com` is not one. Trailing `.`
+  and `-` are not part of it. Servers that want users and rooms to be
+  mentionable mint IDs from that set, such as `guest_1234`. System
+  identities (J.1) take a second `@`, as in `@@server`.
+- How `text` renders is up to the client. Clients MAY show an `@id` naming
+  a known user with the user's latest display name (§3.3), such as a chip,
+  and one naming a room as a link to the room, wherever their formatting
+  allows. When an ID names both a user and a room, clients treat it as a
+  user. Unknown IDs render as written.
 - Mentions that notify a whole room are not defined.
 
 ### J.4 Avatar uploads
