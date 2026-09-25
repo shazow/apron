@@ -65,6 +65,12 @@
 	}: Props = $props();
 
 	let moreOpen = $state(false);
+	/**
+	 * The hover toolbar is built the first time a pointer or focus reaches the
+	 * row: it shows only then, and building it for every row made opening a
+	 * room noticeably slower.
+	 */
+	let engaged = $state(false);
 	let paletteOpen = $state(false);
 	let draft = $state('');
 	let longPress: ReturnType<typeof setTimeout> | undefined;
@@ -182,6 +188,8 @@
 	tabindex="-1"
 	onclick={click}
 	onkeydown={keydown}
+	onpointerenter={() => (engaged = true)}
+	onfocusin={() => (engaged = true)}
 	onpointerdown={pointerdown}
 	onpointerup={cancelLongPress}
 	onpointermove={cancelLongPress}
@@ -251,7 +259,7 @@
 			<ReactionBar {chips} enabled={caps.react} {paletteOpen} ontoggle={onreact} onclosepalette={() => (paletteOpen = false)} />
 		{/if}
 	</div>
-	{#if hasActions}
+	{#if hasActions && engaged}
 		<div class="ap-msg-actions">
 			<div class="ap-actions" role="toolbar" aria-label="Message actions">
 				{#if event.deleted && caps.removeReply}
