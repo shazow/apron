@@ -1,4 +1,4 @@
-.PHONY: install dev-web dev-server dev-worker deploy-worker deploy-web check test test-web test-go test-worker test-wire test-interop test-worker-browser build build-web serve run
+.PHONY: install dev-web dev-server dev-worker deploy-worker deploy-web check test test-web test-go test-worker test-wire test-interop test-worker-browser test-perf build build-web serve run
 
 install:
 	npm --prefix clients/web ci
@@ -40,6 +40,10 @@ test-worker: build-web
 
 test-worker-browser: build-web
 	cd tests/interop && npx playwright test --config=cloudflare.config.ts
+
+# Rendering benchmarks on the production build; fails when a count rises above perf-ceilings.json.
+test-perf: build-web
+	cd tests/interop && npx playwright test --config=perf.config.ts
 
 test-interop:
 	npm --prefix tests/interop test
