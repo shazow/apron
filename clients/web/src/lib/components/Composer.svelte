@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { MentionPerson } from '$lib/protocol/markdown';
-	import { collapseMentions, draftMentions, draftText, insertMention, mentionQuery, normalizeDraft, type DraftPart } from '$lib/ui/draft';
+	import { collapseMentions, draftMentions, draftText, insertMention, insertText, mentionQuery, normalizeDraft, type DraftPart } from '$lib/ui/draft';
+	import { emojiAnchor, emojiPicker } from '$lib/ui/emoji-picker.svelte';
 	import { isCommand } from '$lib/ui/commands';
 	import { directory } from '$lib/ui/directory.svelte';
 	import { clockLabel } from '$lib/ui/time';
@@ -43,6 +44,9 @@
 
 	let field = $state<HTMLDivElement | undefined>();
 	let attachInput = $state<HTMLInputElement | undefined>();
+	let emojiButton = $state<HTMLButtonElement | undefined>();
+	/** The selection in the draft text when the field last lost focus: where a picked emoji goes. */
+	let lastSelection: { start: number; end: number } | undefined;
 	/** The text after `@` at the caret, or undefined when the picker is closed. */
 	let query = $state<string | undefined>();
 	let active = $state(0);
@@ -62,6 +66,7 @@
 	let activeIndex = $derived(Math.min(active, Math.max(0, matches.length - 1)));
 	let empty = $state(true);
 	let command = $derived(canCommand && isCommand(value));
+	let emojiOpen = $derived(emojiPicker.isOpenFor(emojiButton));
 
 	/** People whose name or ID starts with the query; someone it names exactly comes first. */
 	function matching(text: string): MentionPerson[] {
@@ -91,6 +96,8 @@
 	/** Closes the picker and stops any recording without sending: the pane is changing under it. */
 	export function reset(): void {
 		query = undefined;
+		lastSelection = undefined;
+		emojiPicker.release(emojiButton);
 		stopRecording(false);
 	}
 
@@ -102,6 +109,7 @@
 		const text = value;
 		if (!current || (shown?.field === current && shown.text === text)) return;
 		untrack(() => {
+			lastSelection = undefined;
 			const collapsed = collapseMentions([text], people, { caret: text.length, isUser });
 			draw(current, collapsed.parts, document.activeElement === current ? collapsed.caret : undefined);
 			commit(current, collapsed.parts, false);
@@ -114,14 +122,21 @@
 		return draftText(parts).length;
 	}
 
-	/** Reads the field back into draft parts, and the caret as a position in the draft text. */
-	function readDraft(root: HTMLElement): { parts: DraftPart[]; caret: number | undefined } {
+	/**
+	 * Reads the field back into draft parts, and the caret (the selection's
+	 * focus) and the selection's other end as positions in the draft text.
+	 */
+	function readDraft(root: HTMLElement): { parts: DraftPart[]; caret: number | undefined; anchor: number | undefined } {
 		const selection = document.getSelection();
-		const focusNode = selection && selection.rangeCount > 0 ? selection.focusNode : null;
+		const selected = selection !== null && selection.rangeCount > 0;
+		const focusNode = selected ? selection.focusNode : null;
 		const focusOffset = selection?.focusOffset ?? 0;
+		const anchorNode = selected ? selection.anchorNode : null;
+		const anchorOffset = selection?.anchorOffset ?? 0;
 		const parts: DraftPart[] = [];
 		let length = 0;
 		let caret: number | undefined;
+		let anchor: number | undefined;
 		const text = (chunk: string) => {
 			parts.push(chunk);
 			length += chunk.length;
@@ -129,8 +144,10 @@
 		const walk = (node: Node) => {
 			node.childNodes.forEach((child, index) => {
 				if (node === focusNode && index === focusOffset) caret = length;
+				if (node === anchorNode && index === anchorOffset) anchor = length;
 				if (child.nodeType === Node.TEXT_NODE) {
 					if (child === focusNode) caret = length + focusOffset;
+					if (child === anchorNode) anchor = length + anchorOffset;
 					text(child.textContent ?? '');
 				} else if (child instanceof HTMLElement) {
 					if (child.dataset.userId) {
@@ -146,9 +163,10 @@
 				}
 			});
 			if (node === focusNode && focusOffset >= node.childNodes.length && caret === undefined) caret = length;
+			if (node === anchorNode && anchorOffset >= node.childNodes.length && anchor === undefined) anchor = length;
 		};
 		walk(root);
-		return { parts: normalizeDraft(parts), caret };
+		return { parts: normalizeDraft(parts), caret, anchor };
 	}
 
 	function chip(id: string): HTMLSpanElement {
@@ -301,6 +319,32 @@
 		refreshQuery();
 	}
 
+	/** Leaving the field (for the emoji button, say) remembers the selection, since the picker takes focus. */
+	function blur(): void {
+		query = undefined;
+		if (!field) return;
+		const { caret, anchor } = readDraft(field);
+		lastSelection = caret === undefined ? undefined : { start: Math.min(caret, anchor ?? caret), end: Math.max(caret, anchor ?? caret) };
+	}
+
+	/** The emoji button: the full picker, whose pick lands where the caret was. Emoji are text, so no cap gates it. */
+	function openEmoji(): void {
+		if (emojiButton) emojiPicker.toggle({ anchor: emojiButton, onpick: insertEmoji });
+	}
+
+	/** Puts a picked emoji at the caret, over any selection, and the caret after it, as typing it would. */
+	function insertEmoji(emoji: string): void {
+		if (!field || disabled) return;
+		const { parts } = readDraft(field);
+		const end = draftLength(parts);
+		const inserted = insertText(parts, lastSelection?.start ?? end, lastSelection?.end ?? end, emoji);
+		lastSelection = undefined;
+		field.focus();
+		draw(field, inserted.parts, inserted.caret);
+		collapse(false);
+		refreshQuery();
+	}
+
 	function attach(input: HTMLInputElement): void {
 		const files = [...(input.files ?? [])];
 		input.value = '';
@@ -402,9 +446,26 @@
 				onkeydown={keydown}
 				onkeyup={refreshQuery}
 				onclick={refreshQuery}
-				onblur={() => (query = undefined)}
+				onblur={blur}
 			></div>
 		{/if}
+		<span class="ap-composer-tools">
+			<button
+				class="ap-iconbtn emoji"
+				type="button"
+				data-testid="emoji-button"
+				aria-label="Insert emoji"
+				title="Insert emoji"
+				aria-haspopup="dialog"
+				aria-expanded={emojiOpen}
+				disabled={disabled || recording}
+				bind:this={emojiButton}
+				use:emojiAnchor
+				onclick={openEmoji}
+			>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" /></svg>
+			</button>
+		</span>
 		<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label={command ? 'Run command' : 'Send message'} disabled={disabled || recording || !value.trim()}>{command ? 'Run' : 'Send'}</button>
 	</form>
 </div>
@@ -418,5 +479,7 @@
 	.field { height: auto; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
 	.field-empty::before { content: attr(data-placeholder); color: var(--ink-muted); pointer-events: none; }
 	.field :global(.ap-mention) { white-space: nowrap; cursor: default; user-select: all; }
+	/* The emoji button reads as pressed while its picker is open. */
+	.emoji[aria-expanded='true'] { background: var(--bg-300); color: var(--ink); }
 	.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>

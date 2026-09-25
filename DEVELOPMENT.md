@@ -143,7 +143,11 @@ references; More → Remove reply removes one. Deleted targets display as
 unavailable”.
 
 With cap `reactions`, a message's React action opens a small palette of emoji
-(👍 ❤️ 😂 🎉 😮 😢 👀 ✅). Reactions show as chips under the message with a
+(👍 ❤️ 😂 🎉 😮 😢 👀 ✅); its More emoji button opens the full emoji picker
+([emoji-mart](https://github.com/missive/emoji-mart)) for any other. The
+composer's emoji button opens the same picker and inserts the emoji at the
+caret. The picker and its data are bundled and load on first open; they make
+no requests beyond the app's own origin. Reactions show as chips under the message with a
 count, highlighted when one of them is yours; a chip's tooltip lists who
 reacted, and clicking it adds or removes your reaction. Each change sends your
 complete emoji set for that message with `reactions`. Tombstones hide their

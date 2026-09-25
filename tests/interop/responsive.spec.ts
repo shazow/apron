@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { composer, deleteMessage, messageAction, moreAction, openChat, reactionChip, reactTo, sendMessage, startThread, waitForMessage } from './test-helpers';
+import { composer, deleteMessage, emojiPicker, messageAction, moreAction, openChat, pickFromEmojiPicker, reactionChip, reactTo, sendMessage, startThread, waitForMessage } from './test-helpers';
 
 test('chat remains usable without horizontal overflow on a phone viewport', async ({ page }) => {
 	await openChat(page);
@@ -135,4 +135,21 @@ test('room reply controls fit a narrow screen and deleted replies can be detache
 	await expect(stableReply.getByText('Message deleted', { exact: true })).toBeVisible();
 	await (await messageAction(stableReply, 'Remove reply reference')).click();
 	await expect(stableReply.getByRole('button', { name: 'Remove reply reference', exact: true })).toHaveCount(0);
+});
+
+test('the full emoji picker is a bottom sheet on a phone', async ({ page }) => {
+	await page.setViewportSize({ width: 320, height: 740 });
+	await openChat(page);
+	await composer(page).click();
+	await page.getByRole('button', { name: 'Insert emoji', exact: true }).click();
+	const picker = emojiPicker(page);
+	await expect(picker).toHaveAttribute('data-state', 'ready');
+	const bounds = (await picker.boundingBox())!;
+	expect(bounds.x).toBe(0);
+	expect(bounds.width).toBe(320);
+	expect(Math.round(bounds.y + bounds.height)).toBe(740);
+	await pickFromEmojiPicker(page, 'tada', '🎉');
+	await expect(composer(page)).toHaveText('🎉');
+	const width = await page.evaluate(() => document.documentElement.scrollWidth);
+	expect(width).toBeLessThanOrEqual(321);
 });

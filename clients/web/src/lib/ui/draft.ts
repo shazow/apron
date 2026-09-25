@@ -189,3 +189,55 @@ export function insertMention(parts: DraftPart[], start: number, end: number, id
 	if (!placed) out.push({ id }, ' ');
 	return { parts: normalizeDraft(out), caret: (placed ? start : offset) + id.length + 2 };
 }
+
+/**
+ * Replaces the draft text from `start` to `end` (a selection, either way
+ * round) with `text`, as typing it would, and puts the caret after it. A
+ * chip the selection cuts into goes whole; a bare caret inside a chip lands
+ * after it. Positions are clamped to the draft.
+ */
+export function insertText(parts: DraftPart[], start: number, end: number, text: string): { parts: DraftPart[]; caret: number } {
+	const length = (part: DraftPart) => (typeof part === 'string' ? part.length : part.id.length + 1);
+	const total = parts.reduce((sum, part) => sum + length(part), 0);
+	let from = Math.max(0, Math.min(start, end, total));
+	let to = Math.max(0, Math.min(Math.max(start, end), total));
+	let offset = 0;
+	for (const part of parts) {
+		const partEnd = offset + length(part);
+		if (typeof part !== 'string') {
+			if (from === to && from > offset && from < partEnd) from = to = partEnd;
+			else {
+				if (from > offset && from < partEnd) from = offset;
+				if (to > offset && to < partEnd) to = partEnd;
+			}
+		}
+		offset = partEnd;
+	}
+	const out: DraftPart[] = [];
+	let placed = false;
+	offset = 0;
+	for (const part of parts) {
+		const partStart = offset;
+		const partEnd = offset + length(part);
+		offset = partEnd;
+		if (!placed && from <= partStart) {
+			out.push(text);
+			placed = true;
+		}
+		if (typeof part !== 'string') {
+			// Chips outside the selection stay.
+			if (partEnd <= from || partStart >= to) out.push(part);
+			continue;
+		}
+		const before = part.slice(0, Math.max(0, Math.min(from - partStart, part.length)));
+		const after = part.slice(Math.max(0, Math.min(to - partStart, part.length)));
+		if (!placed && from < partEnd) {
+			out.push(before, text, after);
+			placed = true;
+		} else {
+			out.push(before + after);
+		}
+	}
+	if (!placed) out.push(text);
+	return { parts: normalizeDraft(out), caret: from + text.length };
+}
