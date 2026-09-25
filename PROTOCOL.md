@@ -29,8 +29,13 @@ Contents:
   - [4.3 `rooms`](#43-rooms)
   - [4.4 `activity`](#44-activity)
   - [4.5 `reactions`](#45-reactions)
-  - [4.6 Embeds, uploads, and avatars](#46-embeds-uploads-and-avatars)
-    - [4.6.1 `embed:stream`](#461-embedstream)
+  - [4.6 Embeds and avatars](#46-embeds-and-avatars)
+    - [4.6.1 OpenGraph metadata (`og`)](#461-opengraph-metadata-og)
+    - [4.6.2 Embed identity](#462-embed-identity)
+    - [4.6.3 Writes](#463-writes)
+    - [4.6.4 `embed:upload`](#464-embedupload)
+    - [4.6.5 `embed:stream`](#465-embedstream)
+    - [4.6.6 Avatars](#466-avatars)
   - [4.7 Push](#47-push)
   - [4.8 `command`](#48-command)
   - [4.9 WebAuthn authentication](#49-webauthn-authentication)
@@ -335,7 +340,7 @@ Identity is server-authoritative: every message carries its author in `from`.
 ```
 
 `user_id` is required and stable. `name` is an optional display string; absent
-`name` falls back to `user_id`. `avatar` ([§4.6](#46-embeds-uploads-and-avatars)) and `ext` ([§3.5](#35-messages)) are
+`name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)) and `ext` ([§3.5](#35-messages)) are
 optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
 `users`, RTC members) uses this shape, and servers MAY send only `user_id`.
 Clients keep one user object per `user_id` and merge into it every one they
@@ -519,7 +524,7 @@ local policy.
   Both formats are mandatory to render. Markdown is CommonMark with fenced
   code blocks as the baseline rich-content path. Clients MUST disable raw
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
-  ([§4.6](#46-embeds-uploads-and-avatars)). Clients MUST render embeds of unknown `kind` from `og` if
+  ([§4.6](#46-embeds-and-avatars)). Clients MUST render embeds of unknown `kind` from `og` if
   present, otherwise as a labeled fallback card (kind name, plus `url` or
   plain `text` if present).
 - `mentions` lists the `user_id`s the message mentions; see **Mentions**
@@ -610,18 +615,18 @@ clients ignore caps they do not recognize, unknown methods get
 `unsupported` and unknown keys are ignored ([§1](#1-transport--framing)), and a client whose server
 lacks a cap falls back as below:
 
-| cap            | adds                                                         | fallback                     | spec                                   |
-|----------------|--------------------------------------------------------------|------------------------------|----------------------------------------|
-| `history`      | page and recover a room's log                                | session-only scrollback      | [§4.1](#41-history)                    |
-| `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | [§4.2](#42-edit)                       |
-| `rooms`        | `room_list`, `room_join`, `room_leave`, `room_set`, updates  | one default room, no threads | [§4.3](#43-rooms)                      |
-| `activity`     | typing, read markers, away, and mute                         | no typing or read indicators | [§4.4](#44-activity)                   |
-| `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | [§4.5](#45-reactions)                  |
-| `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | [§4.6](#46-embeds-uploads-and-avatars) |
-| `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.1](#461-embedstream)             |
-| `command`      | commands from client to server, such as `/kick`              | no commands                  | [§4.8](#48-command)                    |
+| cap            | adds                                                         | fallback                     | spec                       |
+|----------------|--------------------------------------------------------------|------------------------------|----------------------------|
+| `history`      | page and recover a room's log                                | session-only scrollback      | [§4.1](#41-history)        |
+| `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | [§4.2](#42-edit)           |
+| `rooms`        | `room_list`, `room_join`, `room_leave`, `room_set`, updates  | one default room, no threads | [§4.3](#43-rooms)          |
+| `activity`     | typing, read markers, away, and mute                         | no typing or read indicators | [§4.4](#44-activity)       |
+| `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | [§4.5](#45-reactions)      |
+| `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | [§4.6.4](#464-embedupload) |
+| `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.5](#465-embedstream) |
+| `command`      | commands from client to server, such as `/kick`              | no commands                  | [§4.8](#48-command)        |
 
-Features without a cap: other embeds are body content ([§4.6](#46-embeds-uploads-and-avatars)); push
+Features without a cap: other embeds are body content ([§4.6](#46-embeds-and-avatars)); push
 follows `server.push` ([§4.7](#47-push)), passkeys `server.auth` ([§4.9](#49-webauthn-authentication)), and liveness
 `server.ping` ([§1](#1-transport--framing)).
 
@@ -1077,9 +1082,9 @@ broadcast carries the state.
   change.
 - Retries follow [§1.2](#12-retries-and-deduplication). Push wake-ups for reactions are server policy.
 
-### 4.6 Embeds, uploads, and avatars
+### 4.6 Embeds and avatars
 
-**Embeds.** `body.embeds` holds rich content in display order; `kind` selects
+`body.embeds` holds rich content in display order; `kind` selects
 the renderer. Unknown kinds render from `og`, or else the fallback card
 ([§3.5](#35-messages)).
 
@@ -1097,9 +1102,11 @@ the renderer. Unknown kinds render from `og`, or else the fallback card
 - `html`: sanitize with an allowlist sanitizer (e.g. DOMPurify) before
   insertion, regardless of source. Servers make no safety promises about
   content flowing through them.
-- `upload` is below; `stream` is [§4.6.1](#461-embedstream).
+- `upload` is [§4.6.4](#464-embedupload), and `stream` is [§4.6.5](#465-embedstream).
 
-**`og`.** Any embed MAY carry `og`, an [OpenGraph](https://ogp.me/)
+#### 4.6.1 OpenGraph metadata (`og`)
+
+Any embed MAY carry `og`, an [OpenGraph](https://ogp.me/)
 description of its content as JSON: property names without the `og:`
 prefix, with structured properties nested (`og:image:width` becomes
 `image.width`).
@@ -1122,7 +1129,9 @@ prefix, with structured properties nested (`og:image:width` becomes
   host or proxy the media it references and set its dimensions. Clients
   SHOULD NOT load `og` media from other origins.
 
-**Embed identity.** Servers that advertise any `embed:*` cap assign each
+#### 4.6.2 Embed identity
+
+Servers that advertise any `embed:*` cap assign each
 embed an opaque `embed_id`; other servers MAY store embeds as given.
 
 - A save keeps an embed by sending it back with its `embed_id`. An embed
@@ -1140,7 +1149,9 @@ embed an opaque `embed_id`; other servers MAY store embeds as given.
 - Suggested convention: `embed_` plus a server-wide counter, such as
   `embed_1234`.
 
-**Writes.** New `upload` and `stream` embeds take their content over HTTP.
+#### 4.6.3 Writes
+
+New `upload` and `stream` embeds take their content over HTTP.
 The `message` result lists them, in request order:
 
 ```jsonc
@@ -1177,7 +1188,9 @@ The `message` result lists them, in request order:
   snapshot with the embed completed; if the write never starts in time or
   fails, it publishes a snapshot without the embed.
 
-**`upload`** (cap `embed:upload`). The sender gives an optional `title`, such
+#### 4.6.4 `embed:upload`
+
+Cap `embed:upload`. The sender gives an optional `title`, such
 as the file name. While `url` is absent the upload is pending, and clients
 show a placeholder. On success the server sets `url` to the file it hosts.
 
@@ -1186,30 +1199,14 @@ show a placeholder. On success the server sets `url` to the file it hosts.
   gave, such as `og.image.alt`.
 - Without `og`, clients show a file card: `title` linking to `url`.
 
-**Avatars.** A user object ([§3.3](#33-identity)) MAY carry `avatar`, an image shown beside
-the user's name.
-
-- Servers send `avatar` in `you`, `user`, `members`, and `users` ([§3.3](#33-identity)),
-  not in every `from`.
-- Servers SHOULD return only `https:` URLs or small
-  `data:image/{png,jpeg,gif,webp};base64,` URLs. A larger image goes through
-  an upload (caps `command` and `embed:upload`): a `/avatar` command ([§4.8](#48-command))
-  with one `upload` embed asks the server to use that file as the sender's
-  avatar. The result carries the write URL, and the server sets `avatar` and
-  sends `user` ([§3.3](#33-identity)) when the upload completes.
-- Clients own their security boundary and choose which sources to load; they
-  MAY ignore any avatar. Load values only as images, never as documents, and
-  bind or escape them rather than interpolating them into HTML.
-- Without a usable avatar, clients draw a placeholder such as initials.
-
-#### 4.6.1 `embed:stream`
+#### 4.6.5 `embed:stream`
 
 Cap `embed:stream`. A message can carry live text that the sender writes over
-HTTP while readers watch it grow. Stream embeds follow [§4.6](#46-embeds-uploads-and-avatars)'s embed
-identity and write rules.
+HTTP while readers watch it grow. Stream embeds follow the embed identity
+([§4.6.2](#462-embed-identity)) and write ([§4.6.3](#463-writes)) rules.
 
 ```jsonc
-// -> the embed in a message request; the result and write follow §4.6
+// -> the embed in a message request; the result and write follow §4.6.3
 {"kind": "stream", "format": "terminal"}
 // sender: foo 2>&1 | curl -T - <write_url>
 // <- the embed as broadcast: live at its url, then finished with the kept text
@@ -1235,6 +1232,24 @@ identity and write rules.
   the stream and keeps the trailing text.
 - `url` is served by the chat server; clients SHOULD NOT connect to stream
   URLs on other origins.
+
+#### 4.6.6 Avatars
+
+A user object ([§3.3](#33-identity)) MAY carry `avatar`, an image shown beside
+the user's name.
+
+- Servers send `avatar` in `you`, `user`, `members`, and `users` ([§3.3](#33-identity)),
+  not in every `from`.
+- Servers SHOULD return only `https:` URLs or small
+  `data:image/{png,jpeg,gif,webp};base64,` URLs. A larger image goes through
+  an upload (caps `command` and `embed:upload`): a `/avatar` command ([§4.8](#48-command))
+  with one `upload` embed asks the server to use that file as the sender's
+  avatar. The result carries the write URL, and the server sets `avatar` and
+  sends `user` ([§3.3](#33-identity)) when the upload completes.
+- Clients own their security boundary and choose which sources to load; they
+  MAY ignore any avatar. Load values only as images, never as documents, and
+  bind or escape them rather than interpolating them into HTML.
+- Without a usable avatar, clients draw a placeholder such as initials.
 
 ### 4.7 Push
 
@@ -1299,7 +1314,7 @@ happens to it:
 - `mentions`, `reply_to`, and `embeds` are arguments. Mentioned users are
   not notified.
 - The result is `{}`, or `{"embeds": [...]}` with write URLs for new
-  `upload` embeds ([§4.6](#46-embeds-uploads-and-avatars)). A failure is an ordinary error whose
+  `upload` embeds ([§4.6.3](#463-writes)). A failure is an ordinary error whose
   `message` the client shows.
 - The server replies, when it needs to, with system notices ([Appendix A.1](#a1-system-identities-and-scoped-notices)):
   `@private` to the sender, `@room` to the room, `@server` to everyone.
@@ -1362,7 +1377,7 @@ happens to it:
   }
 }
 
-// -> set an avatar from an upload (§4.6)
+// -> set an avatar from an upload (§4.6.6)
 {
   "method": "command", "id": "c33", "params": {
     "body": {"text": "/avatar", "embeds": [{"kind": "upload", "title": "me.png"}]}
