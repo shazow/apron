@@ -1524,9 +1524,10 @@ happens to it:
   Effects arrive as the frames they cause, such as `room_update`.
 - Retries follow §1.2, so a retried command does not run twice.
 - Commands are for what a server provides beyond this spec. Which exist,
-  their arguments, and who may use them are server policy. Suggested
-  convention: `/help` replies with the available commands as a `@private`
-  notice.
+  their arguments, and who may use them are server policy.
+- Servers that support commands SHOULD provide `/help`, replying with a
+  `@private` notice that lists the commands available to the sender, with
+  their arguments and what they do.
 - Clients MAY handle commands that match a request themselves, such as
   `/nick` as `me`, `/topic` as `room_set`, `/join` as `room_join`, `/leave`
   as `room_leave`, and `/mute` as `activity`, and send the rest as
@@ -1562,6 +1563,22 @@ happens to it:
 }
 // <- or, from a user without the right
 {"id": "c31", "error": {"code": -32001, "message": "Only the session owner can approve"}}
+
+// -> list the available commands
+{"method": "command", "id": "c33", "params": {"room_id": "general", "body": {"text": "/help"}}}
+// <-
+{"id": "c33", "result": {}}
+// <- to the sender only
+{
+  "method": "message", "params": {
+    "room_id": "general",
+    "from": {"user_id": "@private", "name": "Only you"},
+    "body": {
+      "text": "- `/kick @user [reason]`: remove someone from this room\n- `/avatar` with an image: set your avatar",
+      "format": "markdown"
+    }
+  }
+}
 
 // -> set an avatar from an upload (J.4)
 {
