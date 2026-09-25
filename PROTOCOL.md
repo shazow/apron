@@ -570,6 +570,7 @@ the fallback:
 | `activity`     | typing, read markers, away, and mute                         | no typing or read indicators | Appendix D |
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | Appendix E |
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | Appendix K |
+| `command`      | commands from client to server, such as `/kick`              | no commands                  | Appendix L |
 
 Features without a cap: other embeds are body content (Appendix E); push
 follows `server.push` (Appendix F), and liveness `server.ping` (§1).
@@ -1384,7 +1385,7 @@ Three of them tell the receiver who else got the message:
 - `room_id` is where the message is shown. A notice about no room in
   particular goes in room `@server`, which every user receives without
   joining; clients unaware of it show it as a room of its own. Room IDs
-  beginning with `@` are reserved for such server-defined rooms (J.4).
+  beginning with `@` are reserved for such server-defined rooms.
 - `@private` messages are not logged and carry neither `log_id` nor
   `message_id`. Like push payloads (Appendix F), clients render them but
   never install them as snapshots, and they are not in history. A private
@@ -1458,13 +1459,11 @@ shows each one in `body.text` as `@` followed by the `user_id`:
 
 ### J.4 Avatar uploads
 
-Avatar uploads need no protocol support beyond `embed:upload`: they are an
-ordinary message that servers interpret by this convention. A message sent
-to room `@avatar` with one `upload` embed asks the server to use that file
-as the sender's avatar. The server returns the write URL as usual, sets
-`avatar` and sends `user` (§3.3) when the upload completes, and neither
-delivers nor logs the message. Servers without the convention reject the
-unknown room as `invalid_params`.
+An avatar too large for a `data:` URL goes through an upload (caps
+`command` and `embed:upload`): a `/avatar` command (Appendix L) with one
+`upload` embed asks the server to use that file as the sender's avatar. The
+result carries the write URL, and the server sets `avatar` and sends `user`
+(§3.3) when the upload completes.
 
 ---
 
@@ -1501,3 +1500,74 @@ identity and write rules.
   the stream and keeps the trailing text.
 - `url` is served by the chat server; clients SHOULD NOT connect to stream
   URLs on other origins.
+
+---
+
+## Appendix L — `command`
+
+Cap `command`. A `command` request sends an instruction to the server. It
+takes the same params as creating a message (§3.5) and differs only in what
+happens to it:
+
+- `body.text` is the command line as the user typed it, slash included; the
+  server parses it. Clients send composer text that starts with `/` as a
+  `command`, and text that starts with `//` as a message starting with `/`.
+- A command is never logged, broadcast, or saved, and has no `message_id`.
+  `message_id` and `deleted` are `invalid_params`.
+- `mentions`, `reply_to`, and `embeds` are arguments. Mentioned users are
+  not notified.
+- The result is `{}`, or `{"embeds": [...]}` with write URLs for new
+  `upload` embeds (Appendix E). A failure is an ordinary error whose
+  `message` the client shows.
+- The server replies, when it needs to, with system notices (J.1):
+  `@private` to the sender, `@room` to the room, `@server` to everyone.
+  Effects arrive as the frames they cause, such as `room_update`.
+- Retries follow §1.2, so a retried command does not run twice.
+- Which commands exist, their arguments, and who may use them are server
+  policy. Suggested convention: `/help` replies with the available commands
+  as a `@private` notice.
+
+```jsonc
+// -> remove a user from the room; mentions name the target
+{
+  "method": "command", "id": "c30", "params": {
+    "room_id": "general",
+    "body": {"text": "/kick @guest_1234 spamming", "mentions": ["guest_1234"]}
+  }
+}
+// <-
+{"id": "c30", "result": {}}
+// <- to the room
+{
+  "method": "message", "params": {
+    "message_id": "1724803900001", "log_id": "1724803900001", "room_id": "general",
+    "from": {"user_id": "@room", "name": "General"},
+    "body": {"text": "@guest_1234 was removed by @alice: spamming"}
+  }
+}
+// <- to guest_1234's connections
+{"method": "room_update", "params": {"left": [{"room_id": "general"}]}}
+
+// -> answer an agent's permission prompt by replying to it
+{
+  "method": "command", "id": "c31", "params": {
+    "room_id": "agent", "reply_to": {"message_id": "1724803900000"},
+    "body": {"text": "/approve"}
+  }
+}
+// <- or, from a user without the right
+{"id": "c31", "error": {"code": -32001, "message": "Only the session owner can approve"}}
+
+// -> set an avatar from an upload (J.4)
+{
+  "method": "command", "id": "c32", "params": {
+    "body": {"text": "/avatar", "embeds": [{"kind": "upload", "title": "me.png"}]}
+  }
+}
+// <-
+{
+  "id": "c32", "result": {
+    "embeds": [{"embed_id": "embed_1300", "kind": "upload", "write_url": "https://chat.example/w/9c1e…"}]
+  }
+}
+```
