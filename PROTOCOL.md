@@ -110,6 +110,9 @@ room, including the sender.
   `jsonrpc` key in replies. Extension data goes in `ext` ([§3.5](#35-messages)).
 - Servers MAY process requests concurrently and reply in any order. A client
   that needs one request applied before another waits for the first reply.
+- On one connection, a result reflects every notification sent before it, so
+  clients apply frames in arrival order: an older result never follows a
+  notification of a change it does not include.
 - Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications.
