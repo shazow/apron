@@ -48,9 +48,9 @@ Contents:
   - [A.1 System identities and scoped notices](#a1-system-identities-and-scoped-notices)
   - [A.2 Field naming](#a2-field-naming)
   - [A.3 Mention text](#a3-mention-text)
-- [Appendix B — Multiplexing envelope (informative)](#appendix-b--multiplexing-envelope-informative)
-- [Appendix C — Under consideration](#appendix-c--under-consideration)
-  - [C.1 WebRTC: signaling for audio, video, and peer-to-peer connections](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)
+- [Appendix B — Under consideration](#appendix-b--under-consideration)
+  - [B.1 WebRTC: signaling for audio, video, and peer-to-peer connections](#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)
+  - [B.2 Multiplexing envelope](#b2-multiplexing-envelope)
 
 A first exchange. After the WebSocket opens, the server announces itself and
 accepts authentication, and the client lists the rooms it has joined. The
@@ -1169,8 +1169,6 @@ embed an opaque `embed_id`; other servers MAY store embeds as given.
 - Anyone with a URL the server hosts can fetch it, so servers SHOULD make
   these URLs unguessable, such as with a random path segment, not just the
   `embed_id`.
-- Suggested convention: `embed_` plus a server-wide counter, such as
-  `embed_1234`.
 
 #### 4.6.3 Writes
 
@@ -1468,7 +1466,7 @@ that ignore `token` remain conforming.
 ### A.1 System identities and scoped notices
 
 `user_id`s beginning with `@` are reserved for server-controlled identities,
-such as `@sfu` for a media server ([Appendix C.1](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
+such as `@sfu` for a media server ([Appendix B.1](#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
 them to users. They carry an ordinary `from` and render like any sender, so
 clients unaware of the convention still work; clients MAY style them as
 system messages.
@@ -1541,47 +1539,12 @@ In `body.text`, a mention ([§3.5](#35-messages)) usually appears as `@` followe
 
 ---
 
-## Appendix B — Multiplexing envelope (informative)
-
-Multiple logical protocol connections can share one physical WebSocket via an
-aggregator that proxies backends. This envelope is outside the core protocol.
-
-A mux endpoint wraps every core frame in an envelope with an opaque
-connection ID:
-
-```json
-{"conn_id": "b1", "frame": {"method": "message", "id": "c3", "params": {"room_id": "general", "body": {}}}}
-```
-
-Each `conn_id` carries an independent core session. Frame ordering is
-preserved per `conn_id`, not across them. Control uses unwrapped frames:
-
-```jsonc
-// ->
-{"type": "conn_open", "conn_id": "b1", "url": "wss://backend.example/ws"}
-// <-
-{"type": "conn_ready", "conn_id": "b1"}
-// <-
-{"type": "conn_error", "conn_id": "b1", "code": "unreachable", "message": "..."}
-// <- or ->
-{"type": "conn_close", "conn_id": "b1"}
-```
-
-`conn_id` is chosen by the opener, unique per socket. After `conn_ready`, the
-backend's `server` frame arrives wrapped, first on that `conn_id`.
-`conn_close` from either side ends the logical connection. The aggregator
-forwards inner frames unparsed and holds only the `conn_id`↔upstream mapping;
-backends remain authoritative, and frames may be encrypted end to end.
-Aggregator authentication is deployment-defined.
-
----
-
-## Appendix C — Under consideration
+## Appendix B — Under consideration
 
 Designs that are not yet part of the protocol, kept here so implementations
 can experiment and converge on them.
 
-### C.1 WebRTC: signaling for audio, video, and peer-to-peer connections
+### B.1 WebRTC: signaling for audio, video, and peer-to-peer connections
 
 Planned capability `rtc`: the socket carries signaling; media travels out of
 band. Future channels (screenshare, documents, file transfer) should reuse
@@ -1653,3 +1616,36 @@ clients negotiate a single PeerConnection.
 **Exclusions.** Mute and camera state are derivable from media streams.
 Invite/ring/reject state machines are covered by an `rtc` frame plus a push
 notification. Recording and transcoding are server-side.
+
+### B.2 Multiplexing envelope
+
+Multiple logical protocol connections can share one physical WebSocket via an
+aggregator that proxies backends. This envelope is outside the core protocol.
+
+A mux endpoint wraps every core frame in an envelope with an opaque
+connection ID:
+
+```json
+{"conn_id": "b1", "frame": {"method": "message", "id": "c3", "params": {"room_id": "general", "body": {}}}}
+```
+
+Each `conn_id` carries an independent core session. Frame ordering is
+preserved per `conn_id`, not across them. Control uses unwrapped frames:
+
+```jsonc
+// ->
+{"type": "conn_open", "conn_id": "b1", "url": "wss://backend.example/ws"}
+// <-
+{"type": "conn_ready", "conn_id": "b1"}
+// <-
+{"type": "conn_error", "conn_id": "b1", "code": "unreachable", "message": "..."}
+// <- or ->
+{"type": "conn_close", "conn_id": "b1"}
+```
+
+`conn_id` is chosen by the opener, unique per socket. After `conn_ready`, the
+backend's `server` frame arrives wrapped, first on that `conn_id`.
+`conn_close` from either side ends the logical connection. The aggregator
+forwards inner frames unparsed and holds only the `conn_id`↔upstream mapping;
+backends remain authoritative, and frames may be encrypted end to end.
+Aggregator authentication is deployment-defined.
