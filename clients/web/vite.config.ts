@@ -1,6 +1,6 @@
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
 	plugins: [
@@ -12,6 +12,13 @@ export default defineConfig({
 			adapter: adapter()
 		})
 	],
+	test: {
+		projects: [
+			{ extends: true, test: { name: 'unit', include: ['src/**/*.test.ts'], exclude: ['src/**/*.svelte.test.ts'] } },
+			// Rune tests need Svelte's client compile and runtime, where effects run.
+			{ extends: true, resolve: { conditions: ['browser'] }, test: { name: 'runes', include: ['src/**/*.svelte.test.ts'], environment: './src/lib/test/runes-environment.ts' } }
+		]
+	},
 	server: {
 		proxy: {
 			'/ws': {
