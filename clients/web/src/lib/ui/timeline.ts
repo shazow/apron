@@ -1,8 +1,8 @@
-import { childRooms, timelineMessages, type RoomRename, type RoomSnapshot } from '$lib/protocol/client';
+import { childRooms, timelineMessages, type Notice, type RoomListing, type RoomRename, type RoomSnapshot } from '$lib/protocol/client';
 import { compareLogIds } from '$lib/protocol/reducer';
 import { isLogId, type Identity, type MessageRecord } from '$lib/protocol/types';
 import { embedsOf, senderName, textOf } from './messages';
-import { dayKey, dayKeyOf, dayLabel, dayLabelOf, eventTime, isGrouped } from './time';
+import { dayKey, dayKeyOf, dayLabel, dayLabelOf, eventTime, idTime, isGrouped } from './time';
 
 /** Longest title a thread started from a message gets, in characters. */
 export const THREAD_TITLE_MAX = 60;
@@ -31,6 +31,12 @@ export interface ThreadEntry {
 	 * a log ID, as both example servers mint it, or its record's `log_id`).
 	 */
 	anchor?: string;
+	/**
+	 * The viewer has joined the thread (§4.3.2). A thread not joined is known
+	 * from `room_list` or a `room_update`: it still gets a card, and opening it
+	 * joins it.
+	 */
+	joined: boolean;
 }
 
 export type TimelineItem =
@@ -38,7 +44,8 @@ export type TimelineItem =
 	| { kind: 'message'; key: string; event: MessageRecord; grouped: boolean; intro?: boolean }
 	| { kind: 'thread'; key: string; entry: ThreadEntry }
 	| { kind: 'replies'; key: string; count: number; more?: boolean }
-	| { kind: 'renamed'; key: string; logId: string; title: string };
+	| { kind: 'renamed'; key: string; logId: string; title: string }
+	| { kind: 'notice'; key: string; notice: Notice };
 
 /**
  * The rooms the sidebar lists at the top level: rooms without a parent, and
@@ -77,13 +84,42 @@ export function threadEntry(room: RoomSnapshot): ThreadEntry {
 		participants,
 		lastReply: latest ? eventTime(latest) : '',
 		...(latest ? { latestMessage: latest } : {}),
-		...(anchor !== undefined ? { anchor } : {})
+		...(anchor !== undefined ? { anchor } : {}),
+		joined: true
 	};
 }
 
-/** The threads of a room, in announcement order. */
-export function threadEntries(rooms: readonly RoomSnapshot[], parentRoomId: string | undefined): ThreadEntry[] {
-	return parentRoomId === undefined ? [] : childRooms(rooms, parentRoomId).map(threadEntry);
+/** A thread the viewer has not joined, from a listing: a card without a count, since its history isn't loaded. */
+export function unjoinedThreadEntry(listing: RoomListing, message?: (messageId: string) => MessageRecord | undefined): ThreadEntry {
+	const introId = listing.record.intro_message?.message_id;
+	const intro = introId !== undefined ? message?.(introId) : undefined;
+	const anchor = introId ?? (isLogId(listing.id) ? listing.id : listing.record.log_id);
+	return {
+		id: listing.id,
+		parentRoomId: listing.parentRoomId ?? '',
+		title: listing.title,
+		...(introId !== undefined ? { introMessageId: introId } : {}),
+		...(intro ? { introMessage: intro } : {}),
+		loaded: false,
+		participants: [],
+		lastReply: listing.latestLogId !== undefined ? idTime(listing.latestLogId) : '',
+		...(anchor !== undefined ? { anchor } : {}),
+		joined: false
+	};
+}
+
+/**
+ * The threads of a room: the joined ones in listing order, then the ones
+ * listed as not joined (`unjoined`, from `room_list` with `parent_room_id`).
+ */
+export function threadEntries(
+	rooms: readonly RoomSnapshot[], parentRoomId: string | undefined, unjoined: readonly RoomListing[] = [],
+	message?: (messageId: string) => MessageRecord | undefined
+): ThreadEntry[] {
+	if (parentRoomId === undefined) return [];
+	const joined = childRooms(rooms, parentRoomId).map(threadEntry);
+	const known = new Set(joined.map((entry) => entry.id));
+	return [...joined, ...unjoined.filter((listing) => !known.has(listing.id)).map((listing) => unjoinedThreadEntry(listing, message))];
 }
 
 /**
@@ -115,7 +151,24 @@ export interface RoomTimelineInput {
 	messages: MessageRecord[];
 	/** The room's threads. */
 	threads: ThreadEntry[];
+	/** Transient notices shown in the room (§3.5), in arrival order. */
+	notices?: readonly Notice[];
 	now?: Date;
+}
+
+/**
+ * Hands out a room's notices in timeline order: each goes after the messages
+ * whose `message_id` is at most its position, the newest the room had when it
+ * arrived.
+ */
+function noticeQueue(notices: readonly Notice[]): (before?: string) => Notice[] {
+	const queue = [...notices].sort((a, b) => compareLogIds(a.after, b.after) || a.at - b.at);
+	let next = 0;
+	return (before) => {
+		const start = next;
+		while (next < queue.length && (before === undefined || compareLogIds(queue[next].after, before) < 0)) next++;
+		return queue.slice(start, next);
+	};
 }
 
 /**
@@ -124,7 +177,7 @@ export interface RoomTimelineInput {
  * card; other threads' cards sit where they were started (their anchor).
  * Date dividers split days.
  */
-export function buildRoomTimeline({ messages, threads, now = new Date() }: RoomTimelineInput): TimelineItem[] {
+export function buildRoomTimeline({ messages, threads, notices = [], now = new Date() }: RoomTimelineInput): TimelineItem[] {
 	const here = new Set(messages.map((event) => event.message_id));
 	const byIntro = new Map<string, ThreadEntry[]>();
 	const floating: ThreadEntry[] = [];
@@ -153,11 +206,20 @@ export function buildRoomTimeline({ messages, threads, now = new Date() }: RoomT
 		items.push({ kind: 'thread', key: `thread:${entry.id}`, entry });
 		previous = undefined;
 	};
+	const pending = noticeQueue(notices);
+	// A notice is a system line: it never groups with the messages around it.
+	const pushNotices = (before?: string) => {
+		for (const notice of pending(before)) {
+			items.push({ kind: 'notice', key: notice.key, notice });
+			previous = undefined;
+		}
+	};
 	let next = 0;
 	for (const event of messages) {
 		while (next < floating.length && floating[next].anchor !== undefined && compareLogIds(floating[next].anchor!, event.message_id) < 0) {
 			pushCard(floating[next++]);
 		}
+		pushNotices(event.message_id);
 		const cards = byIntro.get(event.message_id);
 		if (cards) {
 			for (const entry of cards) pushCard(entry);
@@ -168,6 +230,7 @@ export function buildRoomTimeline({ messages, threads, now = new Date() }: RoomT
 		previous = event;
 	}
 	while (next < floating.length) pushCard(floating[next++]);
+	pushNotices();
 	return items;
 }
 
@@ -181,6 +244,8 @@ export interface ThreadTimelineInput {
 	now?: Date;
 	/** Older replies are not loaded yet: the count is a lower bound. */
 	moreReplies?: boolean;
+	/** Transient notices shown in the thread (§3.5), in arrival order. */
+	notices?: readonly Notice[];
 }
 
 /**
@@ -189,7 +254,7 @@ export interface ThreadTimelineInput {
  * change was logged. Without an intro it is just the messages, with date
  * dividers.
  */
-export function buildThreadTimeline({ messages, intro, renames = [], now = new Date(), moreReplies = false }: ThreadTimelineInput): TimelineItem[] {
+export function buildThreadTimeline({ messages, intro, renames = [], now = new Date(), moreReplies = false, notices = [] }: ThreadTimelineInput): TimelineItem[] {
 	const items: TimelineItem[] = [];
 	let lastDay = '';
 	let previous: MessageRecord | undefined;
@@ -215,12 +280,21 @@ export function buildThreadTimeline({ messages, intro, renames = [], now = new D
 			previous = undefined;
 		}
 	};
+	const pending = noticeQueue(notices);
+	const pushNotices = (before?: string) => {
+		for (const notice of pending(before)) {
+			items.push({ kind: 'notice', key: notice.key, notice });
+			previous = undefined;
+		}
+	};
 	for (const event of rest) {
 		pushRenames(event.message_id);
+		pushNotices(event.message_id);
 		pushDay(event.message_id);
 		items.push({ kind: 'message', key: event.message_id, event, grouped: isGrouped(previous, event) });
 		previous = event;
 	}
 	pushRenames();
+	pushNotices();
 	return items;
 }

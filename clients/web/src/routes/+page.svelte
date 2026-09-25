@@ -17,6 +17,8 @@
 	import ThreadCard from '$lib/components/ThreadCard.svelte';
 	import ThreadEditor from '$lib/components/ThreadEditor.svelte';
 	import TypingDots from '$lib/components/TypingDots.svelte';
+	import NoticeLine from '$lib/components/NoticeLine.svelte';
+	import { composerAction } from '$lib/ui/commands';
 	import { backendHost, demoRetentionNotice, statusLabel } from '$lib/ui/connection';
 	import { directory } from '$lib/ui/directory.svelte';
 	import { FeedbackState } from '$lib/ui/feedback.svelte';
@@ -27,12 +29,12 @@
 	import { MessageSelection } from '$lib/ui/selection.svelte';
 	import { SessionView } from '$lib/ui/session.svelte';
 	import { SidebarLayout } from '$lib/ui/sidebar.svelte';
-	import { loadDisplayName, loadRecentServers, loadServerUrl, rememberServer, type RecentServer } from '$lib/ui/storage';
+	import { loadDisplayName, loadRecentServers, loadServerUrl, rememberServer, saveDisplayName, type RecentServer } from '$lib/ui/storage';
 	import { buildRoomTimeline, buildThreadTimeline, threadEntries, threadTitleFor } from '$lib/ui/timeline';
 	import { dayLabelOf, idDateTime, idIso, idTime } from '$lib/ui/time';
 	import { playPing, tabTitle } from '$lib/ui/attention';
 
-	/** A thread this viewer created, opened once the server has announced it. */
+	/** A thread this viewer created, opened once its `room_update` has arrived. */
 	type PendingOpen = { room: string; thread: string };
 
 	/** A thread just chosen: where it lands waits until its first load shows whether older replies remain. */
@@ -77,6 +79,8 @@
 	let serverInput = $state('');
 	let displayName = $state('');
 	let composerText = $state('');
+	/** The `user_id`s the composer's chips mention (§3.5), sent as `body.mentions`. */
+	let composerMentions = $state<string[]>([]);
 	let connectOpen = $state(false);
 	/** The sign-in scheme the connect screen opens with, when something asked for one. */
 	let connectScheme = $state<Scheme | undefined>();
@@ -92,7 +96,7 @@
 	let replyDrafts = $state<Record<string, string | undefined>>({});
 	let replyId = $state<string | undefined>();
 	let pendingOpen = $state<PendingOpen | undefined>();
-	/** A room or thread joined from the directory, opened once the server has announced it. */
+	/** A room or thread joined from the directory, opened once its `room_update` has arrived. */
 	let pendingJoin = $state<string | undefined>();
 	/**
 	 * Where the New divider sits in the open pane: after your read cursor as it
@@ -119,14 +123,18 @@
 	let snapshot = $derived(session.snapshot);
 	/** The top-level room open in the pane (or behind the open thread). */
 	let activeRoom = $derived(session.activeRoom);
-	let threads = $derived(threadEntries(session.rooms, activeRoom?.id));
-	let activeThreadEntry = $derived(activeThread ? threads.find((entry) => entry.id === activeThread) : undefined);
+	/** The active room's threads: the joined ones, then those listed as not joined, which get cards too. */
+	let threads = $derived(threadEntries(session.rooms, activeRoom?.id, activeRoom ? snapshot.threadDirectory[activeRoom.id] : undefined, resolveMessage));
+	let joinedThreads = $derived(threads.filter((entry) => entry.joined));
+	let activeThreadEntry = $derived(activeThread ? joinedThreads.find((entry) => entry.id === activeThread) : undefined);
 	let threadRoom = $derived(activeThreadEntry ? session.rooms.find((room) => room.id === activeThreadEntry.id) : undefined);
 	/** The room the pane shows and the composer posts to: the open thread (itself a room), else the room. */
 	let paneRoom = $derived(activeThread ? threadRoom : activeRoom);
 	let messages = $derived(timelineMessages(paneRoom));
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
-	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames, moreReplies: Boolean(threadRoom?.olderAvailable) }) : buildRoomTimeline({ messages, threads }));
+	let timeline = $derived(activeThread
+		? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames, moreReplies: Boolean(threadRoom?.olderAvailable), notices: paneRoom?.notices })
+		: buildRoomTimeline({ messages, threads, notices: paneRoom?.notices }));
 	let shownTimeline = $derived(hiddenItems > 0 ? timeline.slice(Math.min(hiddenItems, timeline.length)) : timeline);
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members, paneRoom?.membersAsOf));
@@ -150,13 +158,13 @@
 	let demoNotice = $derived(demoRetentionNotice(session.server));
 	/** The pane's messages this viewer may pick, in order: what shift-click ranges run along. */
 	let selectableOrder = $derived(messages.filter(canSelect).map((event) => event.message_id));
-	let selectThreads = $derived(threads.filter((entry) => entry.id !== activeThread));
+	let selectThreads = $derived(joinedThreads.filter((entry) => entry.id !== activeThread));
 	/** New threads hang off a top-level room; this client keeps threads one level deep. */
 	let canStartThreads = $derived(session.canManageRooms && Boolean(activeRoom) && activeRoom?.parentRoomId === undefined);
 
 	$effect(() => {
 		const roomId = activeRoom?.id;
-		if (roomId && selectedRoomId !== roomId) setDestination(roomId, undefined);
+		if (roomId !== undefined && selectedRoomId !== roomId) setDestination(roomId, undefined);
 	});
 
 	$effect(() => {
@@ -165,6 +173,12 @@
 
 	$effect(() => {
 		unread.observe(session.rooms, session.you, paneRoom?.id, latestVisible && pageVisible);
+	});
+
+	// Nobody is attending a hidden or unfocused tab (§4.4): the server may push instead.
+	$effect(() => {
+		const away = !(pageVisible && pageFocused);
+		if (client && session.ready) untrack(() => client?.setAway(away));
 	});
 
 	// Each mention that lands while you're in another window or tab chimes once and flags the tab.
@@ -204,7 +218,7 @@
 		untrack(() => client?.markRead(room.id, last.message_id));
 	});
 
-	// Members for the mention picker come from `room_list` (cap `rooms`): listed
+	// Members for the mention picker come from `room_list` with `room_id` (cap `rooms`): listed
 	// whenever the pane has none (a room not listed yet, or a new connection),
 	// and again when the picker opens on a stale list, since people come and go.
 	$effect(() => {
@@ -213,7 +227,7 @@
 		untrack(() => listMembers(MEMBERS_RETRY_MS));
 	});
 
-	// A room joined from the directory opens once the server has announced it.
+	// A room joined from the directory opens once its `room_update` has arrived.
 	$effect(() => {
 		const joined = pendingJoin;
 		const room = joined ? session.rooms.find((candidate) => candidate.id === joined) : undefined;
@@ -230,7 +244,7 @@
 		if (!session.canEdit) selection.cancel();
 	});
 
-	// A thread this viewer just created opens once the server has announced it.
+	// A thread this viewer just created opens once its `room_update` has arrived.
 	$effect(() => {
 		const pending = pendingOpen;
 		if (!pending || !session.rooms.some((room) => room.id === pending.thread)) return;
@@ -267,7 +281,7 @@
 	});
 
 	// Threads don't recover with their parent: the open one loads its own history,
-	// again after a reconnect, which announces it afresh.
+	// again after a reconnect, which lists it afresh.
 	$effect(() => {
 		const room = threadRoom;
 		if (!client || !room || !session.ready || room.loaded || room.loading || room.recoveryError) return;
@@ -376,7 +390,7 @@
 	function listMembers(maxAge: number): void {
 		const room = paneRoom;
 		if (!client || !room || !session.ready || !session.canManageRooms) return;
-		client.listRooms(room.parentRoomId, maxAge).catch(() => undefined);
+		client.listMembers(room.id, maxAge).catch(() => undefined);
 	}
 
 	/** The connect form was submitted: whatever belonged to the previous backend goes. */
@@ -417,7 +431,7 @@
 
 	/** The room the composer's draft belongs to: the open thread, else the room. */
 	function paneKey(): string | undefined {
-		return selectedRoomId ? draftKey(activeThread ?? selectedRoomId) : undefined;
+		return selectedRoomId !== undefined ? draftKey(activeThread ?? selectedRoomId) : undefined;
 	}
 
 	function saveCurrentDraft(): void {
@@ -533,14 +547,22 @@
 		typingTimer = setTimeout(() => client?.sendTyping(roomId, false), 5000);
 	}
 
+	/**
+	 * Sends the composer's text: a message with the draft's mentions (§3.5), or
+	 * with cap `command` a command (§4.8), which `/nick`, `/join`, `/leave` and
+	 * `/topic` turn into the requests they spell. A command's failure shows as
+	 * a local notice in the pane, where its replies land too.
+	 */
 	function sendMessage(): void {
 		if (!client || !paneRoom || !canCompose || !composerText.trim()) return;
+		const chat = client;
 		const draft = composerText;
 		const roomId = paneRoom.id;
 		const reply = replyId;
 		const originKey = draftKey(roomId);
-		const handle = client.send(roomId, draft, 'markdown', reply ? { replyTo: reply } : {});
-		feedback.track(handle, 'Sending…', () => {
+		const mentions = composerMentions;
+		const action = composerAction(draft, { command: snapshot.capabilities.command, rooms: session.canManageRooms });
+		const restore = () => {
 			// A failed send gives the draft back, unless something else has been typed since.
 			const currentKey = paneKey();
 			if (!drafts[originKey] && !replyDrafts[originKey] && !(currentKey === originKey && (composerText || replyId))) {
@@ -552,30 +574,85 @@
 				replyId = replyDrafts[originKey];
 				composer?.focus();
 			}
-		});
+		};
+		const options = { ...(reply ? { replyTo: reply } : {}), ...(mentions.length ? { mentions } : {}) };
+		if (action.kind === 'message') {
+			if (!action.text.trim()) return;
+			feedback.track(chat.send(roomId, action.text, 'markdown', options), 'Sending…', restore);
+			stickToBottom = true;
+		} else {
+			const failed = (cause: unknown) => {
+				chat.notify(roomId, cause instanceof Error && cause.message ? cause.message : 'The command failed');
+				restore();
+			};
+			if (action.kind === 'command') {
+				chat.command(roomId, draft, options).promise.catch(failed);
+			} else if (action.kind === 'nick') {
+				displayName = action.name;
+				saveDisplayName(action.name);
+				chat.setDisplayName(action.name)?.promise.catch(failed);
+			} else if (action.kind === 'join') {
+				joinByName(action.room, failed);
+			} else if (action.kind === 'leave') {
+				const leaving = action.room ?? roomId;
+				if (leaving === roomId && activeThread && activeRoom) backToRoom();
+				chat.leaveRoom(leaving).promise.catch(failed);
+			} else {
+				chat.updateRoom(roomId, { title: action.title }).promise.catch(failed);
+			}
+		}
 		clearComposer(roomId);
-		client.sendTyping(roomId, false);
+		chat.sendTyping(roomId, false);
 		if (typingTimer) clearTimeout(typingTimer);
-		stickToBottom = true;
 		composer?.focus();
+	}
+
+	/** `/join`: a room you're in opens; another, found by ID or title among those listed, is joined and opens once it arrives. */
+	function joinByName(name: string, failed: (cause: unknown) => void): void {
+		if (!client) return;
+		const wanted = name.toLowerCase();
+		const joined = session.rooms.find((room) => room.id === name) ?? session.rooms.find((room) => room.title.toLowerCase() === wanted);
+		if (joined) {
+			openMentionedRoom(joined.id);
+			return;
+		}
+		const listed = [...(snapshot.directory ?? []), ...Object.values(snapshot.threadDirectory).flat()];
+		const target = listed.find((listing) => listing.id === name) ?? listed.find((listing) => listing.title.toLowerCase() === wanted);
+		pendingJoin = target?.id ?? name;
+		client.joinRoom(pendingJoin).promise.catch(failed);
 	}
 
 	/**
 	 * Sends picked files (cap `embed:upload`) as upload embeds, with whatever
 	 * is in the composer as the text; each file is written to the URL the
-	 * server hands back, and the message shows it pending until then.
+	 * server hands back, and the message shows it pending until then. A command
+	 * takes them as arguments instead (§4.8).
 	 */
 	function sendFiles(files: File[]): void {
 		if (!client || !paneRoom || !canCompose || !session.snapshot.capabilities['embed:upload']) return;
+		const chat = client;
 		const roomId = paneRoom.id;
 		const reply = replyId;
-		const text = composerText;
-		const { sent, uploaded } = client.sendFiles(roomId, text, files, 'markdown', reply ? { replyTo: reply } : {});
+		const action = composerAction(composerText, { command: snapshot.capabilities.command, rooms: false });
+		const command = action.kind === 'command';
+		const text = action.kind === 'message' ? action.text : composerText;
+		const mentions = composerMentions;
+		const options = { ...(reply ? { replyTo: reply } : {}), ...(mentions.length ? { mentions } : {}) };
+		const { sent, uploaded } = chat.sendFiles(roomId, text, files, 'markdown', options, command);
 		feedback.pending(files.length === 1 ? `Uploading ${files[0].name || 'file'}…` : `Uploading ${files.length} files…`);
 		sent.then(() => {
 			clearComposer(roomId);
-		}, (cause: unknown) => feedback.error(cause, 'Unable to send the attachment'));
-		uploaded.then(() => feedback.clear(), (cause: unknown) => feedback.error(cause, 'Upload failed'));
+		}, (cause: unknown) => {
+			if (!command) {
+				feedback.error(cause, 'Unable to send the attachment');
+				return;
+			}
+			feedback.clear();
+			chat.notify(roomId, cause instanceof Error && cause.message ? cause.message : 'The command failed');
+		});
+		uploaded.then(() => feedback.clear(), (cause: unknown) => {
+			if (!command) feedback.error(cause, 'Upload failed');
+		});
 		stickToBottom = true;
 		composer?.focus();
 	}
@@ -597,7 +674,7 @@
 		feedback.track(client.leaveRoom(leaving.id), 'Leaving…');
 	}
 
-	/** A room mention in a message was clicked: open it, or join it when it isn't announced to you. */
+	/** A room mention in a message was clicked: open it, or join it when you haven't. */
 	function openMentionedRoom(roomId: string): void {
 		const room = session.rooms.find((candidate) => candidate.id === roomId);
 		if (!room) {
@@ -832,7 +909,7 @@
 	/**
 	 * Starts a thread on a message (cap `rooms`): a room under this one whose
 	 * intro is the message, which stays where it is. The thread opens once the
-	 * server has announced it.
+	 * `room_update` has arrived.
 	 */
 	async function startThread(event: MessageRecord): Promise<void> {
 		if (!client || !activeRoom || !canStartThreads || event.deleted || startingThreads[event.message_id]) return;
@@ -926,7 +1003,7 @@
 	style:--sidebar-w="{sidebar.collapsed ? 0 : sidebar.width}px"
 >
 	<Sidebar
-		{client} {session} {backendLabel} {threads} {activeThread} mentions={mentions.byRoom} bind:displayName {passkeyUnavailable}
+		{client} {session} {backendLabel} threads={joinedThreads} {activeThread} mentions={mentions.byRoom} bind:displayName {passkeyUnavailable}
 		onconnect={() => openConnect()} onsignin={(name) => openConnect({ passkey: true, name })}
 		onroom={chooseRoom} onthread={chooseThread} onjoin={joinRoom} onsignout={() => session.forget()}
 	/>
@@ -1004,7 +1081,9 @@
 						{:else if item.kind === 'replies'}
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count}{item.more ? '+' : ''} {item.count === 1 && !item.more ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
-							<ThreadCard entry={item.entry} onopen={() => chooseThread(item.entry.id)} />
+							<ThreadCard entry={item.entry} onopen={() => (item.entry.joined ? chooseThread(item.entry.id) : joinRoom(item.entry.id))} />
+						{:else if item.kind === 'notice'}
+							<NoticeLine notice={item.notice} onopenroom={openMentionedRoom} />
 						{:else if item.kind === 'renamed'}
 							<div data-timeline-item class="ap-msg ap-msg-system" data-testid="thread-renamed">
 								<div class="ap-msg-system-body">{#if item.title}Thread renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}Thread name cleared{/if}</div>
@@ -1068,9 +1147,11 @@
 				<Composer
 					bind:this={composer}
 					bind:value={composerText}
+					bind:mentions={composerMentions}
 					placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.title}`}
 					disabled={!canCompose}
 					canUpload={snapshot.capabilities['embed:upload']}
+					canCommand={snapshot.capabilities.command}
 					{people}
 					replyPreview={replyId ? replyPreview(replyId) : undefined}
 					oninput={composerInput} onsend={sendMessage} onfiles={sendFiles} oncancelreply={cancelReply}

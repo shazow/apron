@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "replay",
   "name": "Tombstones survive stale replay and hide reactions",
   "description": "A deletion snapshot (no body) wins over the older content snapshot however they arrive. Reaction state for the tombstoned message is kept but not projected.",

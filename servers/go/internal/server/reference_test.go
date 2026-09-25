@@ -3,9 +3,11 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -102,77 +104,166 @@ func TestServerFrameAdvertisesReferenceFeatures(t *testing.T) {
 	c.expectError(t, "push_register", "p", map[string]any{"kind": "relay", "url": "https://relay.example/p"}, codeUnsupported)
 }
 
-func TestMembershipRoomListAndPostingJoins(t *testing.T) {
+func TestRoomListFiltersAndOrder(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
-	a := dialTestClient(t, httpServer, "a", false)
-	b := dialTestClient(t, httpServer, "b", false)
-
-	// Everyone joins a new top-level room; its members join its new threads.
+	clients := dialGroup(t, httpServer, "a", "b")
+	a, b := clients[0], clients[1]
 	ops, _ := saveRoom(t, a, "ops", map[string]any{"title": "Ops"})
-	b.notification(t, "room")
-	thread, _ := saveRoom(t, a, "thread", map[string]any{"parent_room_id": ops, "title": "Deploy"})
-	b.notification(t, "room")
+	deploy, _ := saveRoom(t, a, "deploy", map[string]any{"parent_room_id": ops, "title": "Deploy"})
+	random, _ := saveRoom(t, b, "random", map[string]any{"title": "Random"})
+	idle, _ := saveRoom(t, b, "idle", map[string]any{"parent_room_id": "general", "title": "Idle"})
+	roomUpdated(t, a, "updated")
+	save(t, a, "post", map[string]any{"room_id": ops, "body": map[string]any{"text": "most recent"}})
 
-	// A user who arrives later joins every room and thread.
-	c, rooms := dialTestClientWithRooms(t, httpServer, "c", false)
-	var announced []string
-	for _, room := range rooms {
-		announced = append(announced, room["room_id"].(string))
+	// joined holds joined rooms at every depth, most recently active first;
+	// rooms holds visible unjoined top-level rooms.
+	listed := listRooms(t, a, map[string]any{})
+	if got := roomIDs(t, listed["joined"]); !reflect.DeepEqual(got, []string{ops, deploy, "general"}) {
+		t.Fatalf("joined: %v", got)
 	}
-	if !reflect.DeepEqual(announced, []string{"general", ops, thread}) {
-		t.Fatalf("late joiner rooms: %#v", announced)
+	if got := roomIDs(t, listed["rooms"]); !reflect.DeepEqual(got, []string{random}) {
+		t.Fatalf("rooms: %v", got)
 	}
-
-	// Leaving a room leaves its threads, and deliveries there stop.
-	b.result(t, "room_leave", "leave", map[string]any{"room_id": ops})
-	for _, roomID := range []string{ops, thread} {
-		if removed := b.notification(t, "room"); !reflect.DeepEqual(removed, map[string]any{"room_id": roomID, "removed": true}) {
-			t.Fatalf("leave removal: %#v", removed)
-		}
+	general := listed["joined"].([]any)[2].(map[string]any)
+	if general["member_count"] != float64(2) || !reflect.DeepEqual(memberIDs(general), []string{"guest_1", "guest_2"}) {
+		t.Fatalf("general members: %#v", general)
 	}
-	save(t, a, "post", map[string]any{"room_id": ops, "body": map[string]any{"text": "deploying"}})
-	c.notification(t, "message")
-	b.expectQuiet(t)
-
-	// room_list lists visible rooms with members, joined or not.
-	listed := b.result(t, "room_list", "list", map[string]any{})["rooms"].([]any)
-	if len(listed) != 2 {
-		t.Fatalf("room_list: %#v", listed)
+	wantUsers := []any{map[string]any{"user_id": "guest_1"}, map[string]any{"user_id": "guest_2"}}
+	if !reflect.DeepEqual(listed["users"], wantUsers) {
+		t.Fatalf("users: %#v", listed["users"])
 	}
-	general, opsEntry := listed[0].(map[string]any), listed[1].(map[string]any)
-	if general["room_id"] != "general" || !reflect.DeepEqual(memberIDs(general), []string{"guest_1", "guest_2", "guest_3"}) {
-		t.Fatalf("general entry: %#v", general)
-	}
-	if opsEntry["room_id"] != ops || opsEntry["title"] != "Ops" || opsEntry["latest_log_id"] == nil || !reflect.DeepEqual(memberIDs(opsEntry), []string{"guest_1", "guest_3"}) {
+	if opsEntry := listed["joined"].([]any)[0].(map[string]any); opsEntry["title"] != "Ops" || opsEntry["latest_log_id"] == nil || opsEntry["member_count"] != float64(1) {
 		t.Fatalf("ops entry: %#v", opsEntry)
 	}
-	threads := b.result(t, "room_list", "threads", map[string]any{"parent_room_id": ops})["rooms"].([]any)
-	if len(threads) != 1 || threads[0].(map[string]any)["room_id"] != thread || threads[0].(map[string]any)["parent_room_id"] != ops {
-		t.Fatalf("room_list threads: %#v", threads)
-	}
-	b.expectError(t, "room_list", "missing", map[string]any{"parent_room_id": "missing"}, codeInvalidParams)
 
-	// Posting in a visible room joins it: the room is announced first.
-	b.write(t, map[string]any{"method": "message", "id": "rejoin", "params": map[string]any{"room_id": ops, "body": map[string]any{"text": "back"}}})
+	// only_joined and not_joined leave out the other array.
+	if only := listRooms(t, a, map[string]any{"only_joined": true}); only["rooms"] != nil || len(only["joined"].([]any)) != 3 {
+		t.Fatalf("only_joined: %#v", only)
+	}
+	if not := listRooms(t, a, map[string]any{"not_joined": true}); not["joined"] != nil || !reflect.DeepEqual(roomIDs(t, not["rooms"]), []string{random}) {
+		t.Fatalf("not_joined: %#v", not)
+	}
+	// parent_room_id lists that room's threads, joined or not.
+	threads := listRooms(t, a, map[string]any{"parent_room_id": "general"})
+	if len(threads["joined"].([]any)) != 0 || !reflect.DeepEqual(roomIDs(t, threads["rooms"]), []string{idle}) {
+		t.Fatalf("general's threads: %#v", threads)
+	}
+	if threads := listRooms(t, b, map[string]any{"parent_room_id": ops}); !reflect.DeepEqual(roomIDs(t, threads["rooms"]), []string{deploy}) {
+		t.Fatalf("ops threads for a non-member: %#v", threads)
+	}
+	// room_id lists one room and overrides parent_room_id.
+	one := listRooms(t, b, map[string]any{"room_id": ops, "parent_room_id": "general"})
+	if !reflect.DeepEqual(roomIDs(t, one["rooms"]), []string{ops}) || len(one["joined"].([]any)) != 0 {
+		t.Fatalf("one room: %#v", one)
+	}
+	// latest_log_id lists only rooms active since.
+	since := listed["joined"].([]any)[1].(map[string]any)["latest_log_id"]
+	if recent := listRooms(t, a, map[string]any{"latest_log_id": since}); !reflect.DeepEqual(roomIDs(t, recent["joined"]), []string{ops}) || len(recent["rooms"].([]any)) != 1 {
+		t.Fatalf("latest_log_id filter: %#v", recent)
+	}
+	for i, params := range []map[string]any{
+		{"parent_room_id": "missing"}, {"room_id": "missing"}, {"only_joined": "yes"},
+		{"latest_log_id": 5}, {"parent_room_id": 5},
+	} {
+		a.expectError(t, "room_list", fmt.Sprint("bad-", i), params, codeInvalidParams)
+	}
+	a.expectQuiet(t)
+	b.expectQuiet(t)
+}
+
+func TestRoomListTruncatesOnlyUnjoinedRooms(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	clients := dialGroup(t, httpServer, "owner", "other")
+	owner, other := clients[0], clients[1]
+	var threads []string
+	for i := range maxListedRooms + 1 {
+		thread, _ := saveRoom(t, owner, fmt.Sprint("thread-", i), map[string]any{"parent_room_id": "general"})
+		roomUpdated(t, other, "updated")
+		threads = append(threads, thread)
+	}
+	if joined := listRooms(t, owner, map[string]any{"only_joined": true})["joined"].([]any); len(joined) != maxListedRooms+2 {
+		t.Fatalf("owner joined %d rooms", len(joined))
+	}
+	// The unjoined listing keeps the most recently active.
+	rooms := roomIDs(t, listRooms(t, other, map[string]any{"parent_room_id": "general"})["rooms"])
+	if len(rooms) != maxListedRooms || rooms[0] != threads[len(threads)-1] || slices.Contains(rooms, threads[0]) {
+		t.Fatalf("unjoined threads: %d, first %v", len(rooms), rooms[0])
+	}
+}
+
+func TestJoinLeaveAndDeliveries(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	clients := dialGroup(t, httpServer, "a", "b")
+	a, b := clients[0], clients[1]
+	ops, opsRecord := saveRoom(t, a, "ops", map[string]any{"title": "Ops"})
+
+	// A member receives the room's records; a poster who has not joined gets
+	// only the result.
+	b.write(t, map[string]any{"method": "message", "id": "outside", "params": map[string]any{"room_id": ops, "body": map[string]any{"text": "from outside"}}})
+	if frames := b.drain(t); !reflect.DeepEqual(methods(frames), []string{"reply"}) {
+		t.Fatalf("non-member post: %#v", frames)
+	}
+	outside := a.notification(t, "message")
+	if outside["from"].(map[string]any)["user_id"] != "guest_2" {
+		t.Fatalf("non-member post broadcast: %#v", outside)
+	}
+	// Reactions and typing in a room not joined reach only its members.
+	react(t, a, "react", outside["message_id"].(string), "👍")
+	b.write(t, map[string]any{"method": "activity", "params": map[string]any{"room_id": ops, "typing": 5}})
+	a.notification(t, "activity")
+	b.expectQuiet(t)
+
+	// Joining sends the room to the joiner and announces them to members.
+	record := joinRoom(t, b, ops)
+	if record["title"] != "Ops" || record["log_id"] != opsRecord["log_id"] || record["latest_log_id"] == nil {
+		t.Fatalf("joined record: %#v", record)
+	}
+	if joined := expectJoin(t, a, ops); joined["user_id"] != "guest_2" {
+		t.Fatalf("join: %#v", joined)
+	}
+	save(t, a, "inside", map[string]any{"room_id": ops, "body": map[string]any{"text": "welcome"}})
+	b.notification(t, "message")
+	// Joining again re-sends the record to the calling connection only.
+	joinRoom(t, b, ops)
+	a.expectQuiet(t)
+	b.expectError(t, "room_join", "missing", map[string]any{"room_id": "missing"}, codeInvalidParams)
+
+	// Leaving stops deliveries, and a result sent after the leave reflects it.
+	b.write(t, map[string]any{"method": "room_leave", "id": "leave", "params": map[string]any{"room_id": ops}})
+	b.write(t, map[string]any{"method": "room_list", "id": "after-leave", "params": map[string]any{"only_joined": true}})
 	frames := b.drain(t)
-	if !reflect.DeepEqual(methods(frames), []string{"reply", "room", "room", "message"}) || frames[1]["params"].(map[string]any)["room_id"] != ops {
-		t.Fatalf("posting join frames: %#v", frames)
+	if !reflect.DeepEqual(methods(frames), []string{"room_update", "reply", "reply"}) ||
+		!reflect.DeepEqual(frames[0]["params"], map[string]any{"left": []any{map[string]any{"room_id": ops}}}) {
+		t.Fatalf("leave frames: %#v", frames)
 	}
-	a.notification(t, "message")
-	c.notification(t, "message")
+	if got := roomIDs(t, frames[2]["result"].(map[string]any)["joined"]); !reflect.DeepEqual(got, []string{"general"}) {
+		t.Fatalf("joined after leave: %v", got)
+	}
+	expectLeave(t, a, ops, "guest_2")
+	save(t, a, "after", map[string]any{"room_id": ops, "body": map[string]any{"text": "gone"}})
+	b.expectQuiet(t)
+	// Leaving a room not joined changes nothing.
+	b.result(t, "room_leave", "again", map[string]any{"room_id": ops})
+	b.expectError(t, "room_leave", "missing", map[string]any{"room_id": "missing"}, codeInvalidParams)
+	a.expectQuiet(t)
 
-	// A guest who disconnects is retired and leaves every room.
-	_ = c.ws.Close(websocket.StatusNormalClosure, "done")
-	deadline := time.Now().Add(time.Second)
-	for {
-		listed := a.result(t, "room_list", "retired", map[string]any{})["rooms"].([]any)
-		if ids := memberIDs(listed[0].(map[string]any)); !slices.Contains(ids, "guest_3") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("disconnected guest is still a member")
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Leaving the last shared room also says the users share no room.
+	leaveRoom(t, b, "general")
+	expectLeave(t, a, "general", "guest_2")
+	if gone := a.notification(t, "user"); !reflect.DeepEqual(gone, map[string]any{"old": map[string]any{"user_id": "guest_2"}}) {
+		t.Fatalf("no longer sharing a room: %#v", gone)
+	}
+	joinRoom(t, b, ops)
+	expectJoin(t, a, ops)
+
+	// A guest who disconnects is retired: those who shared a room with it
+	// learn it no longer shares one, and it leaves every room.
+	_ = b.ws.Close(websocket.StatusNormalClosure, "done")
+	if gone := a.notification(t, "user"); !reflect.DeepEqual(gone, map[string]any{"old": map[string]any{"user_id": "guest_2"}}) {
+		t.Fatalf("retirement: %#v", gone)
+	}
+	if entry := listRooms(t, a, map[string]any{"room_id": ops})["joined"].([]any)[0].(map[string]any); !reflect.DeepEqual(memberIDs(entry), []string{"guest_1"}) {
+		t.Fatalf("retired guest is still a member: %#v", entry)
 	}
 }
 
@@ -201,8 +292,8 @@ func TestPrevLogIDLinksRecords(t *testing.T) {
 
 func TestReadCursors(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
-	a := dialTestClient(t, httpServer, "a", false)
-	b := dialTestClient(t, httpServer, "b", false)
+	clients := dialGroup(t, httpServer, "a", "b")
+	a, b := clients[0], clients[1]
 	first, _ := save(t, a, "one", map[string]any{"body": map[string]any{"text": "one"}})
 	b.notification(t, "message")
 	second, _ := save(t, a, "two", map[string]any{"body": map[string]any{"text": "two"}})
@@ -221,19 +312,35 @@ func TestReadCursors(t *testing.T) {
 	a.expectQuiet(t)
 	a.expectError(t, "activity", "unknown", map[string]any{"room_id": "general", "read_message_id": "999"}, codeInvalidParams)
 
-	// Kept cursors are re-sent after the room is announced.
-	c, _ := dialRaw(t, httpServer)
-	c.write(t, map[string]any{"method": "auth", "id": "auth", "params": map[string]any{"scheme": "guest"}})
+	// Kept cursors follow a room_list result that lists the room: every
+	// member's for a joined room, only the user's own for another.
+	c := dialTestClient(t, httpServer, "c", false)
+	expectJoin(t, a, "general")
+	expectJoin(t, b, "general")
+	c.write(t, map[string]any{"method": "room_list", "id": "list", "params": map[string]any{"only_joined": true}})
 	frames := c.drain(t)
-	if !reflect.DeepEqual(methods(frames), []string{"reply", "room", "activity"}) || !reflect.DeepEqual(frames[2]["params"], any(want)) {
-		t.Fatalf("announcement frames: %#v", frames)
+	if !reflect.DeepEqual(methods(frames), []string{"reply", "activity"}) || !reflect.DeepEqual(frames[1]["params"], any(want)) {
+		t.Fatalf("room_list frames: %#v", frames)
+	}
+	thread, _ := saveRoom(t, b, "thread", map[string]any{"parent_room_id": "general"})
+	roomUpdated(t, a, "updated")
+	roomUpdated(t, c, "updated")
+	b.write(t, map[string]any{"method": "activity", "params": map[string]any{"room_id": thread, "read_message_id": second}})
+	b.notification(t, "activity")
+	a.write(t, map[string]any{"method": "activity", "params": map[string]any{"room_id": thread, "read_message_id": first}})
+	a.notification(t, "activity")
+	b.notification(t, "activity")
+	a.write(t, map[string]any{"method": "room_list", "id": "threads", "params": map[string]any{"parent_room_id": "general"}})
+	frames = a.drain(t)
+	if !reflect.DeepEqual(methods(frames), []string{"reply", "activity"}) || frames[1]["params"].(map[string]any)["from"].(map[string]any)["user_id"] != "guest_1" {
+		t.Fatalf("unjoined room cursors: %#v", frames)
 	}
 }
 
 func TestProfilesAndUserNotifications(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
-	a := dialTestClient(t, httpServer, "a", false)
-	b := dialTestClient(t, httpServer, "b", false)
+	clients := dialGroup(t, httpServer, "a", "b")
+	a, b := clients[0], clients[1]
 	ext := map[string]any{"example.org": map[string]any{"pronouns": "she/her"}}
 	you := a.result(t, "me", "profile", map[string]any{"name": "  Ada  ", "avatar": "data:image/png;base64,iVBORw0KGgo=", "ext": ext})["you"]
 	want := map[string]any{"user_id": "guest_1", "name": "Ada", "avatar": "data:image/png;base64,iVBORw0KGgo=", "ext": ext}
@@ -249,24 +356,40 @@ func TestProfilesAndUserNotifications(t *testing.T) {
 	if !reflect.DeepEqual(snapshot["from"], map[string]any{"user_id": "guest_1", "name": "Ada"}) {
 		t.Fatalf("from: %#v", snapshot["from"])
 	}
-	listed := b.result(t, "room_list", "list", map[string]any{})["rooms"].([]any)
-	if members := listed[0].(map[string]any)["members"].([]any); !reflect.DeepEqual(members[0], any(want)) {
+	// room_list sends members bare, with complete objects in users.
+	listed := listRooms(t, b, map[string]any{"only_joined": true})
+	if members := listed["joined"].([]any)[0].(map[string]any)["members"].([]any); !reflect.DeepEqual(members[0], map[string]any{"user_id": "guest_1"}) {
 		t.Fatalf("members: %#v", members)
 	}
-	// An unchanged profile sends no notification; {} removes ext.
+	if users := listed["users"].([]any); !reflect.DeepEqual(users[0], any(want)) {
+		t.Fatalf("users: %#v", users)
+	}
+	// History pages carry the authors' current objects.
+	if users := historyPage(t, b, "general", map[string]any{})["users"]; !reflect.DeepEqual(users, []any{want}) {
+		t.Fatalf("history users: %#v", users)
+	}
+	// An unchanged profile sends no notification; omitted fields stay.
 	a.result(t, "me", "same", map[string]any{"name": "Ada"})
 	b.expectQuiet(t)
-	you = a.result(t, "me", "clear", map[string]any{"ext": map[string]any{}})["you"]
-	if _, has := you.(map[string]any)["ext"]; has {
-		t.Fatalf("ext not removed: %#v", you)
+	// An empty value removes a field, announced as that empty value.
+	you = a.result(t, "me", "clear", map[string]any{"ext": map[string]any{}, "avatar": ""})["you"]
+	cleared := map[string]any{"user_id": "guest_1", "name": "Ada", "avatar": "", "ext": map[string]any{}}
+	if !reflect.DeepEqual(you, any(cleared)) {
+		t.Fatalf("removal result: %#v", you)
 	}
-	b.notification(t, "user")
+	if notice := b.notification(t, "user"); !reflect.DeepEqual(notice, map[string]any{"new": cleared}) {
+		t.Fatalf("removal notification: %#v", notice)
+	}
+	if users := listRooms(t, b, map[string]any{"room_id": "general"})["users"].([]any); !reflect.DeepEqual(users[0], map[string]any{"user_id": "guest_1", "name": "Ada"}) {
+		t.Fatalf("profile after removal: %#v", users[0])
+	}
+	b.expectQuiet(t)
 }
 
 func TestUploadsAreHostedWithOpenGraph(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
-	a := dialTestClient(t, httpServer, "a", false)
-	b := dialTestClient(t, httpServer, "b", false)
+	clients := dialGroup(t, httpServer, "a", "b")
+	a, b := clients[0], clients[1]
 	result := a.result(t, "message", "attach", map[string]any{"room_id": "general", "body": map[string]any{
 		"text": "Before the fix:",
 		"embeds": []any{
@@ -492,13 +615,28 @@ func TestSavingWithoutAStreamEndsIt(t *testing.T) {
 	a.expectQuiet(t)
 }
 
-func TestAvatarUploads(t *testing.T) {
+func TestAvatarCommand(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
-	a := dialTestClient(t, httpServer, "a", false)
-	b := dialTestClient(t, httpServer, "b", false)
-	a.expectError(t, "message", "shape", map[string]any{"room_id": avatarRoomID, "body": map[string]any{"text": "no file"}}, codeInvalidParams)
-	result := a.result(t, "message", "avatar", map[string]any{"room_id": avatarRoomID, "body": map[string]any{"embeds": []any{map[string]any{"kind": "upload"}}}})
-	writeURL := result["embeds"].([]any)[0].(map[string]any)["write_url"].(string)
+	clients := dialGroup(t, httpServer, "a", "b")
+	a, b := clients[0], clients[1]
+	for i, embeds := range []any{nil, []any{}, []any{map[string]any{"kind": "stream"}}, []any{map[string]any{"kind": "upload"}, map[string]any{"kind": "upload"}}} {
+		body := map[string]any{"text": "/avatar"}
+		if embeds != nil {
+			body["embeds"] = embeds
+		}
+		a.expectError(t, "command", fmt.Sprint("shape-", i), map[string]any{"body": body}, codeInvalidParams)
+	}
+	result := a.result(t, "command", "avatar", map[string]any{"body": map[string]any{"text": "/avatar", "embeds": []any{map[string]any{"kind": "upload", "title": "me.png"}}}})
+	written := result["embeds"].([]any)
+	if len(result) != 1 || len(written) != 1 {
+		t.Fatalf("avatar result: %#v", result)
+	}
+	write := written[0].(map[string]any)
+	writeURL := write["write_url"].(string)
+	if write["kind"] != "upload" || write["embed_id"] == nil || !strings.HasPrefix(writeURL, httpServer.URL+writePath) {
+		t.Fatalf("avatar write: %#v", write)
+	}
+	// A command is never logged or broadcast.
 	a.expectQuiet(t)
 	b.expectQuiet(t)
 	if status, _, _ := httpDo(t, http.MethodPut, writeURL, bytes.NewReader(testPNG(t)), ""); status != http.StatusCreated {
@@ -515,9 +653,12 @@ func TestAvatarUploads(t *testing.T) {
 	if status, _, _ := httpDo(t, http.MethodGet, avatar, nil, ""); status != http.StatusOK {
 		t.Fatalf("avatar file: %d", status)
 	}
+	if page := historyPage(t, a, "general", map[string]any{}); len(page["entries"].([]any)) != 0 {
+		t.Fatalf("command was logged: %#v", page)
+	}
 
 	// Only images become avatars; replacing the avatar deletes the upload.
-	result = a.result(t, "message", "text", map[string]any{"room_id": avatarRoomID, "body": map[string]any{"embeds": []any{map[string]any{"kind": "upload"}}}})
+	result = a.result(t, "command", "text", map[string]any{"body": map[string]any{"text": "/avatar", "embeds": []any{map[string]any{"kind": "upload"}}}})
 	writeURL = result["embeds"].([]any)[0].(map[string]any)["write_url"].(string)
 	if status, _, _ := httpDo(t, http.MethodPut, writeURL, strings.NewReader("plain text"), "text/plain"); status != http.StatusUnsupportedMediaType {
 		t.Fatalf("text avatar: %d", status)
@@ -529,14 +670,118 @@ func TestAvatarUploads(t *testing.T) {
 	}
 }
 
+func TestCommands(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	clients := dialGroup(t, httpServer, "a", "b", "c")
+	a, b, c := clients[0], clients[1], clients[2]
+	ops, _ := saveRoom(t, a, "ops", map[string]any{"title": "Ops"})
+	joinRoom(t, b, ops)
+	expectJoin(t, a, ops)
+	joinRoom(t, c, ops)
+	expectJoin(t, a, ops)
+	expectJoin(t, b, ops)
+
+	// /help replies with a @private notice to the sender's connection, in
+	// the command's room, listing what the sender may use there.
+	help := func(client *testClient, roomID string) string {
+		t.Helper()
+		params := map[string]any{"body": map[string]any{"text": "/help"}}
+		if roomID != "" {
+			params["room_id"] = roomID
+		} else {
+			roomID = "general"
+		}
+		if result := client.result(t, "command", fmt.Sprint("help-", time.Now().UnixNano()), params); len(result) != 0 {
+			t.Fatalf("help result: %#v", result)
+		}
+		notice := client.notification(t, "message")
+		body := notice["body"].(map[string]any)
+		if _, has := notice["message_id"]; has || notice["log_id"] != nil || notice["room_id"] != roomID || body["format"] != "markdown" ||
+			!reflect.DeepEqual(notice["from"], map[string]any{"user_id": "@private", "name": "Only you"}) {
+			t.Fatalf("help notice: %#v", notice)
+		}
+		return body["text"].(string)
+	}
+	if text := help(a, ops); !strings.Contains(text, "`/help`") || !strings.Contains(text, "`/avatar`") || !strings.Contains(text, "`/kick @user [reason]`") {
+		t.Fatalf("creator's help: %q", text)
+	}
+	if text := help(b, ""); strings.Contains(text, "/kick") || !strings.Contains(text, "/avatar") {
+		t.Fatalf("member's help: %q", text)
+	}
+	for _, client := range clients {
+		client.expectQuiet(t)
+	}
+
+	// Invalid commands are errors whose message the client shows.
+	unknown := b.call(t, "command", "unknown", map[string]any{"body": map[string]any{"text": "/Frobnicate now"}})
+	if failure := unknown["error"].(map[string]any); failure["code"] != float64(codeInvalidParams) || failure["message"] != "Unknown command /Frobnicate; try /help" {
+		t.Fatalf("unknown command: %#v", unknown)
+	}
+	for i, params := range []map[string]any{
+		{"body": map[string]any{"text": "hello"}},
+		{"body": map[string]any{"text": ""}},
+		{"message_id": "1", "body": map[string]any{"text": "/help"}},
+		{"deleted": false, "body": map[string]any{"text": "/help"}},
+		{"room_id": "missing", "body": map[string]any{"text": "/help"}},
+		{"body": map[string]any{"text": "/help"}, "reply_to": map[string]any{"message_id": "999"}},
+		{"body": map[string]any{"text": "/help", "mentions": "x"}},
+		{},
+	} {
+		b.expectError(t, "command", fmt.Sprint("bad-", i), params, codeInvalidParams)
+	}
+
+	// /kick is for the room's creator, and names its target in mentions,
+	// which notifies no one.
+	kick := map[string]any{"room_id": ops, "body": map[string]any{"text": "/kick @guest_3 spamming", "mentions": []any{"guest_3"}}}
+	b.expectError(t, "command", "not-creator", kick, codeDenied)
+	a.expectError(t, "command", "general", map[string]any{"body": map[string]any{"text": "/kick @guest_3", "mentions": []any{"guest_3"}}}, codeDenied)
+	a.expectError(t, "command", "no-target", map[string]any{"room_id": ops, "body": map[string]any{"text": "/kick guest_3"}}, codeInvalidParams)
+	a.expectError(t, "command", "self", map[string]any{"room_id": ops, "body": map[string]any{"text": "/kick @guest_1", "mentions": []any{"guest_1"}}}, codeInvalidParams)
+	a.expectError(t, "command", "not-member", map[string]any{"room_id": ops, "body": map[string]any{"text": "/kick @nobody", "mentions": []any{"nobody"}}}, codeInvalidParams)
+	for _, client := range clients {
+		client.expectQuiet(t)
+	}
+	if result := a.result(t, "command", "kick", kick); len(result) != 0 {
+		t.Fatalf("kick result: %#v", result)
+	}
+	if left := roomUpdated(t, c, "left"); !reflect.DeepEqual(left, map[string]any{"room_id": ops}) {
+		t.Fatalf("kicked user's update: %#v", left)
+	}
+	var notice map[string]any
+	for _, member := range []*testClient{a, b} {
+		expectLeave(t, member, ops, "guest_3")
+		notice = member.notification(t, "message")
+	}
+	want := map[string]any{
+		"message_id": notice["message_id"], "log_id": notice["message_id"], "room_id": ops,
+		"from": map[string]any{"user_id": "@room", "name": "Ops"},
+		"body": map[string]any{"text": "@guest_3 was removed by @guest_1: spamming"},
+	}
+	if !reflect.DeepEqual(notice, want) {
+		t.Fatalf("@room notice = %#v, want %#v", notice, want)
+	}
+	c.expectQuiet(t)
+	// The notice is logged; the command is not.
+	if entries := historyPage(t, a, ops, map[string]any{})["entries"].([]any); len(entries) != 1 || !reflect.DeepEqual(entries[0], any(notice)) {
+		t.Fatalf("ops history: %#v", entries)
+	}
+	// A retried command does not run again.
+	if result := a.result(t, "command", "kick", kick); len(result) != 0 {
+		t.Fatalf("retried kick: %#v", result)
+	}
+	for _, client := range clients {
+		client.expectQuiet(t)
+	}
+}
+
 type relayRequest struct {
 	path          string
 	authorization string
 	payload       map[string]any
 }
 
-func TestPushRelayWakesMentionedUsers(t *testing.T) {
-	received := make(chan relayRequest, 8)
+func TestPushWakesMentionedUsersWhoAreAway(t *testing.T) {
+	received := make(chan relayRequest, 16)
 	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&payload)
@@ -551,32 +796,56 @@ func TestPushRelayWakesMentionedUsers(t *testing.T) {
 	config := DefaultConfig()
 	config.AllowInsecurePush = true
 	app, httpServer := newTestServer(t, config)
-	a := dialTestClient(t, httpServer, "a", false)
+	clients := dialGroup(t, httpServer, "a", "b")
+	a, b := clients[0], clients[1]
 	a.result(t, "push_register", "register", map[string]any{"kind": "relay", "url": relay.URL + "/a", "token": "secret"})
 	a.expectError(t, "push_register", "kind", map[string]any{"kind": "webpush", "url": relay.URL + "/a"}, codeInvalidParams)
 	a.expectError(t, "push_register", "scheme", map[string]any{"kind": "relay", "url": "ftp://relay.example/a"}, codeInvalidParams)
 	a.result(t, "push_unregister", "unregister", map[string]any{"url": relay.URL + "/a"})
 
-	// Push reaches users without a connection, such as a passkey user who is away.
+	// Push reaches users without a connection, such as a passkey user who is
+	// away, in rooms they have joined.
 	app.mu.Lock()
 	alice := newUserState("alice", "Alice")
 	alice.passkey = &passkeyUser{user: alice}
 	app.users[alice.id] = alice
-	app.joinDefaultRoomsLocked(alice)
+	app.addMemberLocked(alice, app.rooms[defaultRoomID])
 	app.pushes[relay.URL+"/alice"] = &pushRegistration{userID: "alice", kind: "relay", url: relay.URL + "/alice", token: "tok"}
 	app.pushes[relay.URL+"/gone"] = &pushRegistration{userID: "alice", kind: "relay", url: relay.URL + "/gone"}
 	app.mu.Unlock()
-
-	save(t, a, "code", map[string]any{"body": map[string]any{"text": "not `@alice` or me@alice.example", "format": "markdown"}})
-	id, _ := save(t, a, "mention", map[string]any{"body": map[string]any{"text": "@alice: the deploy is done", "format": "markdown"}})
-	a.expectQuiet(t) // The save has finished waking users.
-	app.push.wait()
-	if len(received) != 2 {
-		t.Fatalf("relay received %d requests, want one per registration", len(received))
+	expectJoin(t, a, "general")
+	expectJoin(t, b, "general")
+	pushes := func() []relayRequest {
+		t.Helper()
+		a.expectQuiet(t) // Requests before this one have finished waking users.
+		app.push.wait()
+		var requests []relayRequest
+		for len(received) > 0 {
+			requests = append(requests, <-received)
+		}
+		return requests
 	}
-	for range 2 {
-		request := <-received
-		want := map[string]any{"message_id": id, "room_id": "general", "from": map[string]any{"user_id": "guest_1"}, "body": map[string]any{"text": "@alice: the deploy is done"}}
+	post := func(id string, params map[string]any) string {
+		t.Helper()
+		messageID, _ := save(t, a, id, params)
+		b.notification(t, "message")
+		return messageID
+	}
+
+	// Only body.mentions decides who is mentioned; text is never parsed.
+	text := "@alice: the deploy is done"
+	id := post("text", map[string]any{"body": map[string]any{"text": text, "format": "markdown"}})
+	if got := pushes(); len(got) != 0 {
+		t.Fatalf("text mention woke %d", len(got))
+	}
+	// An edit mentions the users it adds.
+	post("add-mention", map[string]any{"message_id": id, "body": map[string]any{"text": text, "mentions": []any{"alice"}}})
+	got := pushes()
+	if len(got) != 2 {
+		t.Fatalf("relay received %d requests, want one per registration", len(got))
+	}
+	for _, request := range got {
+		want := map[string]any{"message_id": id, "room_id": "general", "from": map[string]any{"user_id": "guest_1"}, "body": map[string]any{"text": text}}
 		if !reflect.DeepEqual(request.payload, want) {
 			t.Fatalf("payload: %#v", request.payload)
 		}
@@ -590,6 +859,50 @@ func TestPushRelayWakesMentionedUsers(t *testing.T) {
 	app.mu.RUnlock()
 	if kept {
 		t.Fatal("gone registration was kept")
+	}
+	post("same-mention", map[string]any{"message_id": id, "body": map[string]any{"text": "edited", "mentions": []any{"alice"}}})
+	if got := pushes(); len(got) != 0 {
+		t.Fatalf("an edit re-mentioned: %d", len(got))
+	}
+
+	// A connected user is woken only when every connection is away.
+	b.result(t, "push_register", "b", map[string]any{"kind": "relay", "url": relay.URL + "/b"})
+	mentionB := map[string]any{"body": map[string]any{"text": "@guest_2 ping", "mentions": []any{"guest_2"}}}
+	post("attending", maps.Clone(mentionB))
+	if got := pushes(); len(got) != 0 {
+		t.Fatalf("attending user woken: %d", len(got))
+	}
+	b.write(t, map[string]any{"method": "activity", "params": map[string]any{"away": true}})
+	b.expectQuiet(t)
+	post("away", maps.Clone(mentionB))
+	if got := pushes(); len(got) != 1 || got[0].path != "/b" {
+		t.Fatalf("away user: %#v", got)
+	}
+	// Typing ends away.
+	b.write(t, map[string]any{"method": "activity", "params": map[string]any{"room_id": "general", "typing": 3}})
+	a.notification(t, "activity")
+	b.notification(t, "activity")
+	post("back", maps.Clone(mentionB))
+	if got := pushes(); len(got) != 0 {
+		t.Fatalf("user back from away woken: %d", len(got))
+	}
+	// A reply wakes the author of the message it replies to.
+	own, _ := save(t, b, "own", map[string]any{"body": map[string]any{"text": "mine"}})
+	a.notification(t, "message")
+	b.write(t, map[string]any{"method": "activity", "params": map[string]any{"away": true}})
+	b.expectQuiet(t)
+	post("reply", map[string]any{"body": map[string]any{"text": "a reply"}, "reply_to": map[string]any{"message_id": own}})
+	if got := pushes(); len(got) != 1 {
+		t.Fatalf("reply woke %d", len(got))
+	}
+	// Only rooms the user has joined wake them; mentions in commands notify
+	// no one.
+	ops, _ := saveRoom(t, a, "ops", map[string]any{"title": "Ops"})
+	save(t, a, "elsewhere", map[string]any{"room_id": ops, "body": map[string]any{"text": "@guest_2", "mentions": []any{"guest_2"}}})
+	a.result(t, "command", "help", map[string]any{"body": map[string]any{"text": "/help", "mentions": []any{"guest_2"}}})
+	a.notification(t, "message")
+	if got := pushes(); len(got) != 0 {
+		t.Fatalf("unjoined room or command woke %d", len(got))
 	}
 }
 
@@ -607,24 +920,6 @@ func TestPushRefusesInternalAddresses(t *testing.T) {
 	app := New(DefaultConfig())
 	if problem := app.checkPushURL("http://relay.example/p"); problem == "" {
 		t.Fatal("http push URL accepted without AllowInsecurePush")
-	}
-}
-
-func TestMentionedIDs(t *testing.T) {
-	for _, tc := range []struct {
-		text     string
-		markdown bool
-		want     []string
-	}{
-		{"@guest_1 and @bob.", false, []string{"guest_1", "bob"}},
-		{"mail me@example.com", false, nil},
-		{"(@alice-) @@server", false, []string{"alice", "@server"}},
-		{"`@alice` and\n```\n@bob\n```\n@carol", true, []string{"carol"}},
-		{"`@alice` stays in plain text", false, []string{"alice"}},
-	} {
-		if got := mentionedIDs(tc.text, tc.markdown); !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("mentionedIDs(%q) = %#v, want %#v", tc.text, got, tc.want)
-		}
 	}
 }
 

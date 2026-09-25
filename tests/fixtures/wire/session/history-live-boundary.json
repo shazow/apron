@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "session",
   "name": "History recovery with interleaved live records",
   "description": "Recovery fixes H = 105 from the announcement and pages with before: H even after a live room update reports latest_log_id 107. Pages mix room records, snapshots, and reaction sets (the server clamps limit to 5 records of any kind). Live records above H (an edit, a room update, a reaction on a message only history provides) are buffered and win over older history.",
@@ -12,14 +12,15 @@
     {
       "name": "raw",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"expect":{"you":{"user_id":"guest_1"}}},
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"105","history_log_id":"100"}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"105","history_log_id":"100"}]}}},
         {"request":{"as":"history-1","match":{"method":"history","params":{"room_id":"general","after":"100","before":"105"}}}},
         {"receive":{"method":"message","params":{"message_id":"101","log_id":"106","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live edit","format":"plain"}}}},
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"107","title":"General (live)","latest_log_id":"107","history_log_id":"100"}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"107","title":"General (live)","latest_log_id":"107","history_log_id":"100"}]}}},
         {"reply":{"to":"history-1","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"entries":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first","format":"plain"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second","format":"plain"},"ext":{"example.org":{"keep":true}}},{"message_id":"102","log_id":"104","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second edited","format":"plain"},"ext":{"example.org":{"keep":true}}}],"reactions":[{"log_id":"103","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_id":"100","last_id":"104","more":true,"latest_log_id":"107","history_log_id":"100"}}},
         {"request":{"as":"history-2","match":{"method":"history","params":{"room_id":"general","after":"105","before":"105"}}}},
         {"receive":{"method":"reactions","params":{"log_id":"108","message_id":"105","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["🎉"]}]}}},
@@ -29,14 +30,15 @@
     {
       "name": "compacted",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
+        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"expect":{"you":{"user_id":"guest_1"}}},
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"105","history_log_id":"100"}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"105","history_log_id":"100"}]}}},
         {"request":{"as":"history-1","match":{"method":"history","params":{"room_id":"general","after":"100","before":"105"}}}},
         {"receive":{"method":"message","params":{"message_id":"101","log_id":"106","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live edit","format":"plain"}}}},
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"107","title":"General (live)","latest_log_id":"107","history_log_id":"100"}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"107","title":"General (live)","latest_log_id":"107","history_log_id":"100"}]}}},
         {"reply":{"to":"history-1","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"entries":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"first","format":"plain"}},{"message_id":"102","log_id":"104","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second edited","format":"plain"},"ext":{"example.org":{"keep":true}}}],"reactions":[{"log_id":"103","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_id":"100","last_id":"104","more":true,"latest_log_id":"107","history_log_id":"100"}}},
         {"request":{"as":"history-2","match":{"method":"history","params":{"room_id":"general","after":"105","before":"105"}}}},
         {"receive":{"method":"reactions","params":{"log_id":"108","message_id":"105","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["🎉"]}]}}},
@@ -46,7 +48,7 @@
   ],
   "expected": {
     "you": {"user_id":"guest_1"},
-    "caps": ["history"],
+    "caps": ["history","rooms"],
     "rooms": [
       {"room_id":"general","log_id":"107","title":"General (live)","messages":[{"message_id":"101","log_id":"106","room_id":"general","from":{"user_id":"alice"},"body":{"text":"live edit","format":"plain"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]},{"message_id":"102","log_id":"104","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second edited","format":"plain"},"ext":{"example.org":{"keep":true}}},{"message_id":"105","log_id":"105","room_id":"general","from":{"user_id":"alice"},"body":{"text":"third","format":"plain"},"reactions":[{"emoji":"🎉","user_ids":["bob"]}]}]}
     ]

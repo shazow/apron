@@ -133,3 +133,17 @@ export async function startThread(page: Page, message: Locator): Promise<string>
 	expect(threadId).toBeTruthy();
 	return threadId!;
 }
+
+/**
+ * Opens a thread: its sidebar row once this page has joined it, else its card
+ * in the room, which joins it (a thread's members are only those who joined,
+ * PROTOCOL.md §4.3.2). Waits until it is the open pane.
+ */
+export async function openThread(page: Page, threadId: string): Promise<void> {
+	const row = page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+	const card = page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
+	await expect(row.or(card).first()).toBeVisible();
+	if (await row.count()) await row.click();
+	else await card.click();
+	await expect(page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"][aria-current="page"]`)).toHaveCount(1);
+}

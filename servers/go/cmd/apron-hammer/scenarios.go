@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,8 +103,9 @@ func postMessage(ctx context.Context, p *peer, roomID, body string) (string, err
 	return result.MessageID, err
 }
 
+// createRoom creates a room or thread with room_set, which joins its creator.
 func createRoom(ctx context.Context, p *peer, params map[string]any) (string, error) {
-	raw, err := p.call(ctx, "room", params)
+	raw, err := p.call(ctx, "room_set", params)
 	if err != nil {
 		return "", err
 	}
@@ -336,14 +338,22 @@ func runThreads(h *hammer, st *stats) {
 	defer closeAll(creator)
 	started := time.Now()
 	var next atomic.Int64
+	threads := make([]string, threadCount)
 	run(16, func(int) {
 		for i := next.Add(1); i <= threadCount; i = next.Add(1) {
-			if _, err := createRoom(setup, creator[0], map[string]any{"parent_room_id": generalRoom, "title": fmt.Sprintf("Thread %d", i)}); err != nil {
+			id, err := createRoom(setup, creator[0], map[string]any{"parent_room_id": generalRoom, "title": fmt.Sprintf("Thread %d", i)})
+			if err != nil {
 				return
 			}
+			threads[i-1] = id
 		}
 	})
-	st.note("created %d threads in %s", threadCount, time.Since(started).Round(time.Millisecond))
+	threads = slices.DeleteFunc(threads, func(id string) bool { return id == "" })
+	if len(threads) == 0 {
+		st.note("created no threads")
+		return
+	}
+	st.note("created %d threads in %s", len(threads), time.Since(started).Round(time.Millisecond))
 
 	listers := connect(h, max(1, h.clients/2), "lister", nil)
 	defer closeAll(listers)
@@ -359,13 +369,23 @@ func runThreads(h *hammer, st *stats) {
 				})
 				continue
 			}
+			// A client signs in, lists its rooms, and joins a thread.
 			var p *peer
 			if measure(ctx, st, "connect+auth", func() (err error) {
 				p, err = h.dialGuest(ctx, "joiner", dialOptions{})
 				return err
-			}) == nil {
-				p.close()
+			}) != nil {
+				continue
 			}
+			_ = measure(ctx, st, "room_list joined", func() error {
+				_, err := p.call(ctx, "room_list", map[string]any{"only_joined": true})
+				return err
+			})
+			_ = measure(ctx, st, "room_join", func() error {
+				_, err := p.call(ctx, "room_join", map[string]any{"room_id": threads[i%len(threads)]})
+				return err
+			})
+			p.close()
 		}
 	})
 }

@@ -24,7 +24,7 @@ function timeline(roomId: string, messages: MessageRecord[]): TimelineState {
 }
 
 function room(id: string, messages: MessageRecord[] = [], fields: Partial<RoomSnapshot> = {}): RoomSnapshot {
-	return { id, title: id, timeline: timeline(id, messages), recovering: false, loaded: true, loading: false, ...fields };
+	return { id, title: id, timeline: timeline(id, messages), recovering: false, loaded: true, loading: false, notices: [], ...fields };
 }
 
 const kinds = (items: TimelineItem[]) => items.map((item) => item.kind);
@@ -207,5 +207,43 @@ describe('message helpers', () => {
 		expect(rangeBetween(order, 'a', 'zz')).toEqual(['a', 'zz']);
 		expect(spanOf(order, ['e', 'b'])).toEqual(['b', 'c', 'd', 'e']);
 		expect(spanOf(order, ['c'])).toEqual(['c']);
+	});
+});
+
+describe('transient notices and threads not joined', () => {
+	const notice = (key: string, after: string) => ({
+		key, room_id: 'general', from: { user_id: '@private', name: 'Only you' }, body: { text: key }, after, at: base
+	});
+
+	it('places each notice after the messages it followed, and never groups across it', () => {
+		const first = message(0, 'alice');
+		const second = message(1000, 'alice');
+		const third = message(2000, 'alice');
+		const items = buildRoomTimeline({
+			messages: [first, second, third],
+			threads: [],
+			notices: [notice('late', String(base + 5000)), notice('between', first.message_id)]
+		});
+		expect(items.filter((item) => item.kind !== 'date').map((item) => item.kind === 'notice' ? item.notice.key : item.kind === 'message' ? `${item.event.message_id === first.message_id ? 'first' : item.event.message_id === second.message_id ? 'second' : 'third'}${item.grouped ? '+' : ''}` : item.kind))
+			.toEqual(['first', 'between', 'second', 'third+', 'late']);
+		const thread = buildThreadTimeline({ messages: [first, second], intro: first, notices: [notice('reply', second.message_id)] });
+		expect(kinds(thread)).toEqual(['message', 'replies', 'message', 'notice']);
+	});
+
+	it('gives a listed thread not joined a card, anchored at its intro', () => {
+		const intro = message(0, 'alice');
+		const joined = room('t1', [], { parentRoomId: 'general', title: 'Deploy' });
+		const listing = {
+			id: 't2', title: 'Incident', parentRoomId: 'general', latestLogId: String(base + 60_000), members: [], joined: false,
+			record: { room_id: 't2', log_id: String(base + 1), parent_room_id: 'general', title: 'Incident', intro_message: { message_id: intro.message_id } }
+		};
+		const entries = threadEntries([room('general', [intro]), joined], 'general', [listing, { ...listing, id: 't1' }], (id) => (id === intro.message_id ? intro : undefined));
+		expect(entries.map((entry) => [entry.id, entry.joined])).toEqual([['t1', true], ['t2', false]]);
+		const card = entries[1];
+		expect(card).toMatchObject({ title: 'Incident', introMessageId: intro.message_id, anchor: intro.message_id, loaded: false, participants: [] });
+		expect(card.introMessage).toBe(intro);
+		expect(card.count).toBeUndefined();
+		// The card stands in for its intro in the room.
+		expect(kinds(buildRoomTimeline({ messages: [intro], threads: entries }))).toEqual(['date', 'thread', 'thread']);
 	});
 });

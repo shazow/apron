@@ -1,5 +1,5 @@
 /**
- * Wire types and decoders for Apron protocol v4 (PROTOCOL.md at the repository
+ * Wire types and decoders for Apron protocol v5 (PROTOCOL.md at the repository
  * root). Decoders normalize server records to the fields the protocol defines
  * and drop unknown top-level keys (§1: unknown keys MAY be dropped), while
  * copying known values exactly, including `ext`, literal `null`s, unknown embed
@@ -15,9 +15,9 @@ export interface JsonObject {
  * Optional features of `server.params.caps` (§4) that this client uses;
  * it ignores the rest.
  */
-export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'activity' | 'embed:upload' | 'embed:stream';
+export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'activity' | 'embed:upload' | 'embed:stream' | 'command';
 
-/** A user object (§3.3): `you`, `from`, `members`, and `user` notifications. */
+/** A user object (§3.3): `you`, `from`, `members`, `users`, and `user` notifications. */
 export interface Identity extends JsonObject {
 	user_id: string;
 	name?: string;
@@ -30,6 +30,8 @@ export interface MessageBody extends JsonObject {
 	/** `plain` when absent (§3.5). */
 	format?: 'plain' | 'markdown' | string;
 	embeds?: Embed[];
+	/** The `user_id`s the message mentions (§3.5): the only thing that decides who is mentioned. */
+	mentions?: string[];
 }
 
 /** OpenGraph description of an embed (§4.6.1): `og:` prefix dropped, structured properties nested. */
@@ -121,6 +123,8 @@ export interface ServerParams {
 	auth: string[];
 	/** Extension metadata (§3.1). */
 	ext?: ServerExt;
+	/** Seconds between client pings (§1, §3.1). */
+	ping?: number;
 }
 
 export interface ServerExt extends JsonObject {
@@ -136,19 +140,23 @@ export interface DemoParams extends JsonObject {
 	max_snapshot_bytes?: number;
 	guest_posts_per_minute?: number;
 	registered_posts_per_minute?: number;
-	/** Send `{"method":"ping"}` this often to stay listed as connected. */
-	keepalive_seconds?: number;
 	/** `false` when every room is joined for good and `room_leave` is always denied. */
 	room_leave?: boolean;
 	/** `false` when the server keeps no read cursors, so `read_message_id` is not worth sending. */
 	read_cursors?: boolean;
 }
 
-/** Delivery fields of a `room` frame (§3.4): this client's view, not logged. */
+/**
+ * Delivery fields of a room record (§3.4): this client's view, not logged.
+ * Clients always take the latest values.
+ */
 export interface RoomDelivery {
 	latest_log_id?: string;
 	history_log_id?: string | null;
-	removed?: boolean;
+	/** How many users have joined the room, in `room_list` only (§4.3.1). */
+	member_count?: number;
+	/** The room's members, possibly `user_id` only, in `room_list` only (§4.3.1). */
+	members?: Identity[];
 }
 
 export interface HistoryResult {
@@ -245,8 +253,8 @@ export function decodeMessage(value: unknown): { record: MessageRecord; embedded
 }
 
 /**
- * Decode a room record (a `room` frame's params other than removals, or a
- * history `rooms` element). Delivery fields are returned separately.
+ * Decode a room record (a `room_list` or `room_update` element, or a history
+ * `rooms` element). Delivery fields are returned separately.
  */
 export function decodeRoom(value: unknown): { record: RoomRecord; embedded: MessageRecord[]; delivery: RoomDelivery } | null {
 	if (!isJsonObject(value) || typeof value.room_id !== 'string') return null;
@@ -270,8 +278,25 @@ export function decodeRoom(value: unknown): { record: RoomRecord; embedded: Mess
 	const delivery: RoomDelivery = {};
 	if (value.latest_log_id !== undefined && isLogId(value.latest_log_id)) delivery.latest_log_id = value.latest_log_id;
 	if (value.history_log_id === null || isLogId(value.history_log_id)) delivery.history_log_id = value.history_log_id;
-	if (value.removed === true) delivery.removed = true;
+	if (typeof value.member_count === 'number' && Number.isFinite(value.member_count) && value.member_count >= 0) delivery.member_count = value.member_count;
+	if (Array.isArray(value.members)) delivery.members = value.members.filter(isIdentity).map((member) => cloneJson(member));
 	return { record, embedded, delivery };
+}
+
+/**
+ * The fields of a transient notice (§3.5, Appendix A.1): a `message`
+ * notification without `message_id`, such as a `@private` command reply. It is
+ * rendered for the session but never installed as a snapshot. Null when the
+ * value has a `message_id` (a snapshot) or no valid `from`.
+ */
+export function decodeNotice(value: unknown): { room_id?: string; from: Identity; body?: MessageBody; ext?: JsonObject } | null {
+	if (!isJsonObject(value) || value.message_id !== undefined || !isIdentity(value.from)) return null;
+	return {
+		...(typeof value.room_id === 'string' ? { room_id: value.room_id } : {}),
+		from: cloneJson(value.from),
+		...(isJsonObject(value.body) ? { body: cloneJson(value.body) as MessageBody } : {}),
+		...(isJsonObject(value.ext) ? { ext: cloneJson(value.ext) } : {})
+	};
 }
 
 /** Decode a `reactions` record into one reaction set per element (§4.5). */

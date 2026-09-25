@@ -8,6 +8,7 @@ import {
 	moreAction,
 	moveMessage,
 	openChat,
+	openThread,
 	reactionChip,
 	reactTo,
 	sendMessage,
@@ -285,8 +286,9 @@ test.describe('chat protocol interoperability', () => {
 		const selected = page.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
 		await expect(selected).toHaveAttribute('data-thread', targetThreadId);
 		await expect(stableTarget).toBeFocused();
+		// After a reload this is a new guest, who has joined neither thread: the card joins it.
 		await page.reload();
-		await page.locator(`[data-testid="thread-list"] button[data-thread="${replyThreadId}"]`).click();
+		await openThread(page, replyThreadId);
 		await expect(stableReply.getByTestId('reply-reference')).toContainText(`${token}-target`);
 	});
 
@@ -516,8 +518,10 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageB.locator(`article[data-message-id="${replyId}"]`)).toHaveCount(0);
 			expect(await roomB.locator('article[data-message-id]').count()).toBe(roomArticlesBefore);
 
+			// B has not joined A's thread: its card joins it, and only then does it deliver.
 			const threadButtonB = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
-			await threadButtonB.click();
+			await expect(threadButtonB).toHaveCount(0);
+			await openThread(pageB, threadId);
 			await expect(await waitForMessage(pageB, replyText)).toContainText(replyText);
 			await expect(rootB).toBeVisible();
 			await expect(threadButtonB.locator('small')).toHaveText('1');
@@ -556,7 +560,8 @@ test.describe('chat protocol interoperability', () => {
 			await expect(replyA).toHaveCount(0);
 			await expect(pageA.locator(`article[data-message-id="${rootEventId}"]`)).toHaveCount(0);
 			await expect(moverA).toBeVisible();
-			await threadButton.click();
+			// The reload made A a new guest, who joins the thread from its card.
+			await openThread(pageA, threadId);
 			await expect(replyA).toBeVisible();
 			await expect(pageA.locator(`article[data-message-id="${rootEventId}"]`)).toBeVisible();
 			await expect(moverA).toHaveCount(0);
@@ -766,6 +771,9 @@ test.describe('chat protocol interoperability', () => {
 			const token = `threadping-${Date.now().toString(36)}`;
 			await sendMessage(pageA, `${token}-root`);
 			const threadId = await startThread(pageA, await waitForMessage(pageA, `${token}-root`));
+			// B joins the thread (its card), then goes back to the room.
+			await openThread(pageB, threadId);
+			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
 			const row = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
 			await expect(row).toBeVisible();
 			await expect(row.getByTestId('thread-mentions')).toHaveCount(0);
@@ -798,7 +806,7 @@ test.describe('chat protocol interoperability', () => {
 			await sendMessage(pageA, `${handle}-first-reply`);
 			await waitForMessage(pageA, `${handle}-first-reply`);
 
-			await pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
+			await openThread(pageB, threadId);
 			await waitForMessage(pageB, `${handle}-first-reply`);
 			await pageB.getByTestId('message-list').evaluate((node) => { node.scrollTop = 0; });
 			await expect(pageB.getByTestId('jump-button')).toHaveAccessibleName('Jump to latest');
@@ -866,7 +874,7 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageA.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`)).toBeVisible();
 			await expect(pageB.locator(`article[data-message-id="${firstId}"]`)).toHaveCount(0);
 			const threadButtonB = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
-			await threadButtonB.click();
+			await openThread(pageB, threadId);
 			for (const suffix of ['one', 'three']) await expect(await waitForMessage(pageB, `${token}-${suffix}`)).toBeVisible();
 			await expect(threadButtonB.locator('small')).toHaveText('3');
 		} finally {

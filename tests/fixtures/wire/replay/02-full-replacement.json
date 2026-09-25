@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "replay",
   "name": "Omitted fields are removed rather than merged",
   "description": "A later snapshot replaces the whole message: omitted body.format, reply_to, and ext namespaces disappear, and ext is replaced rather than merged.",

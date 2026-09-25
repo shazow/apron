@@ -62,7 +62,7 @@ function body(index: number, mention: string): { text: string; format?: 'markdow
 
 async function seed(): Promise<{ perfRoom: string; first: Record<string, string>; last: Record<string, string> }> {
 	const people = await Promise.all(['Ada', 'Bo', 'Cy'].map(guest));
-	const { room_id: perfRoom } = await people[0].call('room', { title: 'Perf' });
+	const { room_id: perfRoom } = await people[0].call('room_set', { title: 'Perf' });
 	const first: Record<string, string> = {};
 	const last: Record<string, string> = {};
 	for (const room of ['general', perfRoom as string]) {
@@ -129,8 +129,10 @@ function ratchet(name: string, value: number): void {
 test('switching rooms back and forth', async ({ page }) => {
 	const { perfRoom, first, last } = await seed();
 	await openChat(page);
-	// The Go server announces every room to every user.
-	await page.locator(`[data-testid="room-list"] button[data-room="${perfRoom}"]`).click();
+	// A new guest has joined only General: join the Perf room from Browse rooms, which opens it.
+	await page.getByTestId('browse-rooms').click();
+	await page.getByTestId('room-directory').locator(`[data-join="${perfRoom}"]`).click();
+	await expect(page.locator(`[data-testid="room-list"] button[data-room="${perfRoom}"]`)).toBeVisible();
 	await expect(page.locator(`article[data-message-id="${last[perfRoom]}"]`)).toBeAttached();
 	await page.locator('[data-testid="room-list"] button[data-room="general"]').click();
 	await expect(page.locator(`article[data-message-id="${last.general}"]`)).toBeAttached();

@@ -13,7 +13,7 @@ function message(id: string, fields: Record<string, unknown> = {}, log = id): Re
 	return { message_id: id, log_id: log, room_id: 'general', from: alice, body: { text: `m${id}` }, ...fields };
 }
 
-describe('ChatClient v4 operations', () => {
+describe('ChatClient operations', () => {
 	let client: ChatClient;
 	let snapshot: ClientSnapshot;
 	let socket: FakeSocket;
@@ -36,7 +36,7 @@ describe('ChatClient v4 operations', () => {
 
 	async function connect(caps = ['edit', 'rooms', 'reactions']): Promise<void> {
 		await socket.greet(caps, { room: { room_id: 'general', log_id: '10', title: 'General' } });
-		socket.receive({ method: 'room', params: { room_id: 'thread', log_id: '20', parent_room_id: 'general', title: 'Side', intro_message: { message_id: '100' } } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: 'thread', log_id: '20', parent_room_id: 'general', title: 'Side', intro_message: { message_id: '100' } }] } });
 	}
 
 	const room = (id: string) => snapshot.rooms.find((entry) => entry.id === id)!;
@@ -51,7 +51,7 @@ describe('ChatClient v4 operations', () => {
 
 	it('exposes room records, the parent relationship, and falls back to room_id for titles', async () => {
 		await connect();
-		socket.receive({ method: 'room', params: { room_id: 'ops' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: 'ops' }] } });
 		expect(snapshot.activeRoom).toBe('general');
 		expect(topLevelRooms(snapshot.rooms).map((entry) => entry.id)).toEqual(['general', 'ops']);
 		expect(childRooms(snapshot.rooms, 'general').map((entry) => [entry.id, entry.title, entry.introMessageId])).toEqual([['thread', 'Side', '100']]);
@@ -59,7 +59,7 @@ describe('ChatClient v4 operations', () => {
 		expect(room('thread').introMessage).toBeUndefined();
 		socket.receive({ method: 'message', params: message('100') });
 		expect(room('thread').introMessage?.body).toEqual({ text: 'm100' });
-		socket.receive({ method: 'room', params: { room_id: 'general', removed: true } });
+		socket.receive({ method: 'room_update', params: { left: [{ room_id: 'general' }] } });
 		expect(snapshot.activeRoom).toBe('ops');
 	});
 
@@ -134,18 +134,18 @@ describe('ChatClient v4 operations', () => {
 	it('creates threads and updates rooms from the latest record', async () => {
 		await connect();
 		quiet(client.createRoom({ parentRoomId: 'general', title: 'Deploy', introMessageId: '100' }));
-		expect(socket.request('room').params).toEqual({ parent_room_id: 'general', title: 'Deploy', intro_message: { message_id: '100' } });
-		socket.receive({ method: 'room', params: { room_id: 'thread', log_id: '21', parent_room_id: 'general', title: 'Side', intro_message: { message_id: '100' }, ext: { x: { y: 1 } } } });
+		expect(socket.request('room_set').params).toEqual({ parent_room_id: 'general', title: 'Deploy', intro_message: { message_id: '100' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: 'thread', log_id: '21', parent_room_id: 'general', title: 'Side', intro_message: { message_id: '100' }, ext: { x: { y: 1 } } }] } });
 		quiet(client.updateRoom('thread', { title: 'Renamed' }));
-		expect(socket.request('room').params).toEqual({ room_id: 'thread', title: 'Renamed', intro_message: { message_id: '100' }, ext: { x: { y: 1 } } });
+		expect(socket.request('room_set').params).toEqual({ room_id: 'thread', title: 'Renamed', intro_message: { message_id: '100' }, ext: { x: { y: 1 } } });
 		// A second update before the first is confirmed builds on it.
 		quiet(client.updateRoom('thread', { introMessageId: null, ext: null }));
-		expect(socket.request('room').params).toEqual({ room_id: 'thread', title: 'Renamed' });
+		expect(socket.request('room_set').params).toEqual({ room_id: 'thread', title: 'Renamed' });
 		// The matching record confirms it; later updates build on the store again.
-		socket.receive({ method: 'room', params: { room_id: 'thread', log_id: '22', parent_room_id: 'general', title: 'Renamed' } });
-		socket.receive({ method: 'room', params: { room_id: 'thread', log_id: '23', parent_room_id: 'general', title: 'Elsewhere' } });
+		socket.receive({ method: 'room_update', params: { updated: [{ room_id: 'thread', log_id: '22', parent_room_id: 'general', title: 'Renamed' }] } });
+		socket.receive({ method: 'room_update', params: { updated: [{ room_id: 'thread', log_id: '23', parent_room_id: 'general', title: 'Elsewhere' }] } });
 		quiet(client.updateRoom('thread', { ext: { z: 1 } }));
-		expect(socket.request('room').params).toEqual({ room_id: 'thread', title: 'Elsewhere', ext: { z: 1 } });
+		expect(socket.request('room_set').params).toEqual({ room_id: 'thread', title: 'Elsewhere', ext: { z: 1 } });
 	});
 
 	it('builds an edit then a move on the submitted state until a matching snapshot arrives', async () => {
@@ -255,7 +255,7 @@ describe('ChatClient history per room', () => {
 
 	it('loads a thread room only when asked, as its own room', async () => {
 		await socket.reply('history', { entries: [], more: false, latest_log_id: '12', history_log_id: '10' });
-		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '22', history_log_id: '20' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '22', history_log_id: '20' }] } });
 		expect(socket.sent.filter((frame) => frame.method === 'history')).toHaveLength(1);
 		expect(room('20')).toMatchObject({ parentRoomId: 'general', loaded: false, loading: false });
 		const loaded = client.loadRoom('20');
@@ -271,7 +271,7 @@ describe('ChatClient history per room', () => {
 
 	it('opens a thread on its newest page and loads older pages backward to the floor', async () => {
 		await socket.reply('history', { entries: [], more: false, latest_log_id: '12', history_log_id: '10' });
-		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '20' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '20' }] } });
 		const loaded = client.loadRoom('20');
 		await socket.reply('history', { entries: [message('38', { room_id: '20' }), message('40', { room_id: '20' })], first_id: '38', last_id: '40', more: true, latest_log_id: '40', history_log_id: '20' });
 		await loaded;
@@ -300,18 +300,18 @@ describe('ChatClient history per room', () => {
 
 	it('has nothing older once retention passes the oldest loaded page', async () => {
 		await socket.reply('history', { entries: [], more: false, latest_log_id: '12', history_log_id: '10' });
-		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '20' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '20' }] } });
 		const loaded = client.loadRoom('20');
 		await socket.reply('history', { entries: [message('38', { room_id: '20' })], first_id: '38', last_id: '38', more: true, latest_log_id: '40', history_log_id: '20' });
 		await loaded;
 		expect(room('20').olderAvailable).toBe(true);
-		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '39' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '39' }] } });
 		expect(room('20').olderAvailable).toBeUndefined();
 	});
 
 	it('offers nothing older when the newest page reaches the start', async () => {
 		await socket.reply('history', { entries: [], more: false, latest_log_id: '12', history_log_id: '10' });
-		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '22', history_log_id: '20' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '22', history_log_id: '20' }] } });
 		const loaded = client.loadRoom('20');
 		await socket.reply('history', { entries: [message('21', { room_id: '20' })], first_id: '20', last_id: '22', more: false, latest_log_id: '22', history_log_id: '20' });
 		await loaded;
@@ -321,10 +321,10 @@ describe('ChatClient history per room', () => {
 	});
 
 	it('keeps an embedded intro snapshot below a null bound', async () => {
-		socket.receive({ method: 'room', params: {
+		socket.receive({ method: 'room_update', params: { joined: [{
 			room_id: 'ops', log_id: '30', title: 'Ops', latest_log_id: '500', history_log_id: null,
 			intro_message: { message_id: '400', log_id: '400', room_id: 'ops', from: alice, body: { text: 'intro' } }
-		} });
+		}] } });
 		expect(client.message('400')?.body).toEqual({ text: 'intro' });
 		expect(room('ops').introMessage?.message_id).toBe('400');
 	});
@@ -338,7 +338,7 @@ describe('ChatClient history per room', () => {
 	});
 
 	it('starts at the lowest log_id when no bound is known', async () => {
-		socket.receive({ method: 'room', params: { room_id: 'nobound', log_id: '30', latest_log_id: '40' } });
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: 'nobound', log_id: '30', latest_log_id: '40' }] } });
 		expect(socket.request('history').params).toEqual({ room_id: 'nobound', after: '1', before: '40', limit: 200 });
 	});
 

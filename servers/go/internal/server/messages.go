@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-// avatarRoomID is the room of the avatar upload convention (§4.6.6): a
-// message sent there is never delivered or logged.
-const avatarRoomID = "@avatar"
-
 type reactionSet struct {
 	from   map[string]any
 	emojis []string
@@ -48,15 +44,20 @@ func (m *messageState) snapshot() map[string]any {
 }
 
 // saveMessage creates a message (no message_id) or saves an existing one
-// (§4.2): every client field is replaced by the submitted state. A save
-// naming a different room_id moves the message; the snapshot is logged in and
+// (§4.2): every client field is replaced by the submitted state. Without
+// room_id the message goes to the default room (§3.5). A save naming a
+// different room_id moves the message; the snapshot is logged in and
 // broadcast to both rooms, followed by a reactions record in the destination
-// when the message has reactions. Posting in a room the author has not joined
-// joins them first (§4.3.5).
+// when the message has reactions. Posting does not join the room (§4.3.5): a
+// poster who has not joined gets only the result. A new message with no text
+// and no embeds is neither logged nor broadcast, and its result is {}.
 func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
-	roomID, err := parseString(req.params, "room_id", true)
+	roomID, err := parseString(req.params, "room_id", false)
 	if err != nil {
 		return nil, false, err
+	}
+	if _, has := req.params["room_id"]; !has {
+		roomID = defaultRoomID
 	}
 	messageID, err := parseString(req.params, "message_id", false)
 	if err != nil {
@@ -95,9 +96,7 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u := c.user
-	if roomID == avatarRoomID && !replacing {
-		return s.uploadAvatarLocked(c, req, body)
-	}
+	c.away = false
 	destination := s.rooms[roomID]
 	if destination == nil {
 		return nil, false, invalidParams("Unknown room %q", roomID)
@@ -113,12 +112,22 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 			return nil, false, &rpcError{Code: codeDenied, Message: "Only the author may edit, move, or delete this message"}
 		}
 		from = current.from
-	} else if err := s.admitPostLocked(u); err != nil {
-		return nil, false, err
 	}
 	if hasReply {
 		if _, exists := s.messages[replyID]; !exists || (replacing && replyID == messageID) {
 			return nil, false, invalidParams("reply_to must name another existing message")
+		}
+	}
+	if !replacing {
+		if text, _ := body["text"].(string); text == "" && len(asList(body["embeds"])) == 0 {
+			result := map[string]any{}
+			if req.hasID {
+				c.sendResult(req, result)
+			}
+			return result, true, nil
+		}
+		if err := s.admitPostLocked(u); err != nil {
+			return nil, false, err
 		}
 	}
 
@@ -172,9 +181,6 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 	if req.hasID {
 		c.sendResult(req, result)
 	}
-	if u.joined[destination.id] == nil {
-		s.joinLocked(u, destination)
-	}
 	if current == nil {
 		current = &messageState{id: messageID, from: from, owner: u.id, reactions: make(map[string]reactionSet), reactionLogIDs: make(map[string]int64)}
 		s.messages[messageID] = current
@@ -186,9 +192,7 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 	if moved && len(current.reactions) > 0 {
 		s.commitReactionsLocked(current, current.reactionElements())
 	}
-	if !replacing {
-		s.wakeLocked(current, snapshot)
-	}
+	s.wakeLocked(current, snapshot, previous)
 	return result, true, nil
 }
 
@@ -208,6 +212,7 @@ func (s *Server) commitSnapshotLocked(m *messageState, snapshot map[string]any, 
 	m.logID = logID
 	m.roomID = destination.id
 	record := newLogRecord(logID, kindMessage, snapshot)
+	record.author = m.owner
 	m.records = append(m.records, record)
 	s.appendLocked(record, rooms...)
 	s.deliverLocked(rawNotification("message", record.raw), rooms...)
@@ -314,6 +319,20 @@ func parseMessageRef(params map[string]json.RawMessage, name string) (string, bo
 	return id, true, nil
 }
 
+// maxMentions bounds body.mentions.
+const maxMentions = 256
+
+// mentions returns a message body's body.mentions (§3.5).
+func mentions(body map[string]any) []string {
+	var ids []string
+	for _, value := range asList(body["mentions"]) {
+		if id, ok := value.(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func validateBody(body map[string]any) *rpcError {
 	if raw, ok := body["text"]; ok {
 		if _, ok := raw.(string); !ok {
@@ -324,6 +343,20 @@ func validateBody(body map[string]any) *rpcError {
 		format, ok := raw.(string)
 		if !ok || (format != "plain" && format != "markdown") {
 			return invalidParams("body.format must be plain or markdown")
+		}
+	}
+	if raw, ok := body["mentions"]; ok {
+		mentions, ok := raw.([]any)
+		if !ok {
+			return invalidParams("body.mentions must be an array of user_id strings")
+		}
+		if len(mentions) > maxMentions {
+			return invalidParams("body.mentions lists at most %d users", maxMentions)
+		}
+		for _, value := range mentions {
+			if id, ok := value.(string); !ok || id == "" {
+				return invalidParams("body.mentions must be an array of user_id strings")
+			}
 		}
 	}
 	if raw, ok := body["embeds"]; ok {
@@ -405,6 +438,9 @@ func (s *Server) commitReactionsLocked(m *messageState, elements []any) {
 	}
 	r := s.rooms[m.roomID]
 	record := newLogRecord(logID, kindReactions, value)
+	if len(elements) == 1 {
+		record.author = elements[0].(map[string]any)["from"].(map[string]any)["user_id"].(string)
+	}
 	s.appendLocked(record, r)
 	s.deliverLocked(rawNotification("reactions", record.raw), r)
 }

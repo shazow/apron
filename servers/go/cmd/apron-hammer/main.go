@@ -57,7 +57,7 @@ var scenarios = []scenario{
 	{"activity", "every client sends typing activity to general", runActivity},
 	{"slow", "slow consumers that stop reading while others keep posting", runSlow},
 	{"history", "seed a room, then page its history concurrently", runHistory},
-	{"threads", "create many threads, then sign in and list rooms concurrently", runThreads},
+	{"threads", "create many threads, then list them, sign in, list joined rooms, and join concurrently", runThreads},
 	{"edits", "post, edit, react, and delete in a loop", runEdits},
 	{"embeds", "upload files and run live streams with readers", runEmbeds},
 }

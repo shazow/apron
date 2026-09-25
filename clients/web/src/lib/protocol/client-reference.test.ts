@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatClient, AVATAR_ROOM, userIn, type ClientSnapshot } from './client';
+import { ChatClient, userIn, type ClientSnapshot } from './client';
 import { safeAvatar, safeLink, sameOriginMedia, serverOrigin } from './embeds';
 import { FakeSocket, settle } from './fake-socket';
 
@@ -34,24 +34,51 @@ describe('ChatClient reference features', () => {
 		await socket.reply('history', { entries: [], more: false, latest_log_id: '10', history_log_id: '10' });
 	}
 
-	it('keeps the latest user object per user_id and follows renames', async () => {
+	it('merges user objects field by field, and a from only when its message is newer', async () => {
 		await connect();
 		expect(snapshot.users.guest_1).toEqual({ user_id: 'guest_1', name: 'Guest' });
 		socket.receive({ method: 'message', params: { message_id: '20', log_id: '20', room_id: 'general', from: { user_id: 'bob', name: 'Bob' }, body: { text: 'hi' } } });
 		expect(snapshot.users.bob).toEqual({ user_id: 'bob', name: 'Bob' });
-		// A profile carries the avatar; a later live from updates only the name.
+		// A present field replaces, a missing one is left alone.
 		socket.receive({ method: 'user', params: { new: { user_id: 'bob', name: 'Bobby', avatar: 'https://example.com/b.png' } } });
 		socket.receive({ method: 'message', params: { message_id: '21', log_id: '21', room_id: 'general', from: { user_id: 'bob', name: 'Robert' }, body: { text: 'hi' } } });
 		expect(snapshot.users.bob).toEqual({ user_id: 'bob', name: 'Robert', avatar: 'https://example.com/b.png' });
-		// An old snapshot never overwrites what is known.
+		// A bare object changes nothing; an empty value removes the field.
+		socket.receive({ method: 'user', params: { new: { user_id: 'bob' } } });
+		expect(snapshot.users.bob).toEqual({ user_id: 'bob', name: 'Robert', avatar: 'https://example.com/b.png' });
+		socket.receive({ method: 'user', params: { new: { user_id: 'bob', avatar: '', ext: {} } } });
+		expect(snapshot.users.bob).toEqual({ user_id: 'bob', name: 'Robert' });
+		// An older from, embedded or an edit of an old message, never brings back an old name.
 		socket.receive({ method: 'message', params: { message_id: '22', log_id: '22', room_id: 'general', from: { user_id: 'carol', name: 'Carol' }, body: { text: 'hi' }, reply_to: { message_id: '19', log_id: '19', room_id: 'general', from: { user_id: 'bob', name: 'Old Bob' }, body: {} } } });
+		socket.receive({ method: 'message', params: { message_id: '20', log_id: '23', room_id: 'general', from: { user_id: 'bob', name: 'Bob' }, body: { text: 'edited' } } });
 		expect(snapshot.users.bob.name).toBe('Robert');
+		// Another user object moves the position to the greatest log_id received: a from of an
+		// older message stays out, one of a newer message comes in.
+		socket.receive({ method: 'user', params: { new: { user_id: 'carol', name: 'Caroline' } } });
+		socket.receive({ method: 'message', params: { message_id: '22', log_id: '24', room_id: 'general', from: { user_id: 'carol', name: 'Carol' }, body: { text: 'edited' } } });
+		expect(snapshot.users.carol.name).toBe('Caroline');
+		socket.receive({ method: 'message', params: { message_id: '25', log_id: '25', room_id: 'general', from: { user_id: 'carol', name: 'Cara' }, body: { text: 'new' } } });
+		expect(snapshot.users.carol.name).toBe('Cara');
 		// A user_id change aliases the old ID to the new identity.
 		socket.receive({ method: 'user', params: { new: { user_id: 'ada', name: 'Ada' }, old: { user_id: 'guest_9', name: 'Guest 9' } } });
 		expect(userIn(snapshot, { user_id: 'guest_9' })).toEqual({ user_id: 'ada', name: 'Ada' });
-		// `you` replaces this connection's identity.
-		socket.receive({ method: 'user', params: { you: { user_id: 'guest_1', name: 'Renamed', avatar: 'https://example.com/me.png' } } });
-		expect(snapshot.you).toEqual({ user_id: 'guest_1', name: 'Renamed', avatar: 'https://example.com/me.png' });
+		// `you` merges into this connection's identity.
+		socket.receive({ method: 'user', params: { you: { user_id: 'guest_1', avatar: 'https://example.com/me.png' } } });
+		expect(snapshot.you).toEqual({ user_id: 'guest_1', name: 'Guest', avatar: 'https://example.com/me.png' });
+		expect(snapshot.users.guest_1).toBe(snapshot.you);
+	});
+
+	it('merges a history page\'s users after its records, over older names in from', async () => {
+		await socket.greet(['history', 'rooms'], { room: { room_id: 'general', log_id: '10', title: 'General', latest_log_id: '12', history_log_id: '10' } });
+		await socket.reply('history', {
+			entries: [
+				{ message_id: '11', log_id: '11', room_id: 'general', from: { user_id: 'bob', name: 'Bob then' }, body: { text: 'a' } },
+				{ message_id: '12', log_id: '12', room_id: 'general', from: { user_id: 'bob', name: 'Bob later' }, body: { text: 'b' } }
+			],
+			users: [{ user_id: 'bob', name: 'Bob now', avatar: 'https://example.com/b.png' }],
+			more: false, latest_log_id: '12', history_log_id: '10'
+		});
+		expect(snapshot.users.bob).toEqual({ user_id: 'bob', name: 'Bob now', avatar: 'https://example.com/b.png' });
 	});
 
 	it('tracks read cursors forward only and advances your own with activity', async () => {
@@ -84,57 +111,78 @@ describe('ChatClient reference features', () => {
 		expect(snapshot.rooms.find((room) => room.id === 'general')?.readMessageId).toBe('31');
 	});
 
-	it('lists rooms with members and marks the joined ones', async () => {
+	it('lists rooms and threads to join, and one room with its members', async () => {
 		await connect();
 		const listing = client.listRooms();
-		expect(socket.request('room_list').params).toEqual({});
+		expect(socket.request('room_list').params).toEqual({ not_joined: true });
 		await socket.reply('room_list', { rooms: [
-			{ room_id: 'general', log_id: '10', title: 'General', latest_log_id: '12', members: [{ user_id: 'guest_1', name: 'Guest' }, { user_id: 'bob', name: 'Bob', avatar: 'https://example.com/b.png' }] },
-			{ room_id: 'ops', log_id: '11', latest_log_id: '11', members: [] }
+			{ room_id: 'ops', log_id: '11', latest_log_id: '11', member_count: 3 },
+			{ room_id: 'general', log_id: '10', title: 'General', latest_log_id: '12' }
 		] });
 		const rooms = await listing;
-		expect(rooms.map((room) => [room.id, room.title, room.joined])).toEqual([['general', 'General', true], ['ops', 'ops', false]]);
-		expect(snapshot.directory?.map((room) => room.id)).toEqual(['general', 'ops']);
-		expect(snapshot.users.bob.avatar).toBe('https://example.com/b.png');
-		expect(snapshot.rooms.find((room) => room.id === 'general')?.members?.map((member) => member.user_id)).toEqual(['guest_1', 'bob']);
+		expect(rooms.map((room) => [room.id, room.title, room.joined, room.memberCount])).toEqual([['ops', 'ops', false, 3], ['general', 'General', true, undefined]]);
+		expect(snapshot.directory?.map((room) => room.id)).toEqual(['ops', 'general']);
 		quiet(client.listRooms('general'));
-		expect(socket.request('room_list').params).toEqual({ parent_room_id: 'general' });
-		await socket.reply('room_list', { rooms: [{ room_id: 't1', log_id: '13', parent_room_id: 'general', title: 'Thread', members: [] }] });
+		expect(socket.request('room_list').params).toEqual({ parent_room_id: 'general', not_joined: true });
+		await socket.reply('room_list', { rooms: [{ room_id: 't1', log_id: '13', parent_room_id: 'general', title: 'Thread' }] });
 		expect(snapshot.threadDirectory.general.map((room) => room.id)).toEqual(['t1']);
+		// Members may come bare, with the complete objects in the result's users.
+		quiet(client.listMembers('general'));
+		expect(socket.request('room_list').params).toEqual({ room_id: 'general' });
+		await socket.reply('room_list', {
+			joined: [{ room_id: 'general', log_id: '10', title: 'General', latest_log_id: '12', member_count: 2, members: [{ user_id: 'guest_1' }, { user_id: 'bob' }] }],
+			users: [{ user_id: 'guest_1', name: 'Guest' }, { user_id: 'bob', name: 'Bob', avatar: 'https://example.com/b.png' }]
+		});
+		const general = () => snapshot.rooms.find((room) => room.id === 'general')!;
+		expect(general().members?.map((member) => member.user_id)).toEqual(['guest_1', 'bob']);
+		expect(general().memberCount).toBe(2);
+		expect(general().membersAsOf).toBe('12');
+		expect(snapshot.users.bob.avatar).toBe('https://example.com/b.png');
+		// Joins and leaves keep the members current, and draw nothing.
+		socket.receive({ method: 'user', params: { room_id: 'general', new: { user_id: 'carol', name: 'Carol' } } });
+		expect(general().members?.map((member) => member.user_id)).toEqual(['guest_1', 'bob', 'carol']);
+		expect(general().memberCount).toBe(3);
+		expect(snapshot.users.carol.name).toBe('Carol');
+		socket.receive({ method: 'user', params: { room_id: 'general', old: { user_id: 'bob' } } });
+		expect(general().members?.map((member) => member.user_id)).toEqual(['guest_1', 'carol']);
+		expect(general().memberCount).toBe(2);
+		expect(snapshot.users.bob.name).toBe('Bob');
+		expect(general().timeline.order).toEqual([]);
 	});
 
 	it('shares a room_list in flight and reuses a recent one', async () => {
 		await connect();
 		const listings = () => socket.sent.filter((frame) => frame.method === 'room_list').length;
+		const before = listings();
 		const first = client.listRooms();
 		const second = client.listRooms();
-		expect(listings()).toBe(1);
-		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }] });
-		expect((await first).map((room) => room.id)).toEqual(['general']);
-		expect((await second).map((room) => room.id)).toEqual(['general']);
+		expect(listings() - before).toBe(1);
+		await socket.reply('room_list', { rooms: [{ room_id: 'ops', log_id: '11' }] });
+		expect((await first).map((room) => room.id)).toEqual(['ops']);
+		expect((await second).map((room) => room.id)).toEqual(['ops']);
 		quiet(client.listRooms());
-		expect(listings()).toBe(1);
+		expect(listings() - before).toBe(1);
 		// A caller that wants fresher, or any caller once it is stale, lists again.
 		vi.advanceTimersByTime(5_000);
 		quiet(client.listRooms(undefined, 1_000));
-		expect(listings()).toBe(2);
+		expect(listings() - before).toBe(2);
 		await socket.reply('room_list', { rooms: [] });
 		vi.advanceTimersByTime(10_000);
 		quiet(client.listRooms());
-		expect(listings()).toBe(3);
-		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }] });
-		// A room the listing already showed changes nothing; a new one makes it stale.
-		socket.receive({ method: 'room', params: { room_id: 'general', log_id: '10', title: 'General' } });
+		expect(listings() - before).toBe(3);
+		await socket.reply('room_list', { rooms: [{ room_id: 'ops', log_id: '11' }] });
+		// An update to a room already joined changes nothing; joining one makes it stale.
+		socket.receive({ method: 'room_update', params: { updated: [{ room_id: 'general', log_id: '10', title: 'General' }] } });
 		quiet(client.listRooms());
-		expect(listings()).toBe(3);
-		socket.receive({ method: 'room', params: { room_id: 'ops', log_id: '11', title: 'Ops' } });
+		expect(listings() - before).toBe(3);
+		socket.receive({ method: 'room_update', params: { joined: [{ room_id: 'ops', log_id: '11', title: 'Ops' }] } });
 		quiet(client.listRooms());
-		expect(listings()).toBe(4);
-		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }, { room_id: 'ops', log_id: '11', members: [] }] });
-		// So does removing one it showed.
-		socket.receive({ method: 'room', params: { room_id: 'ops', removed: true } });
+		expect(listings() - before).toBe(4);
+		await socket.reply('room_list', { rooms: [] });
+		// So does leaving one.
+		socket.receive({ method: 'room_update', params: { left: [{ room_id: 'ops' }] } });
 		quiet(client.listRooms());
-		expect(listings()).toBe(5);
+		expect(listings() - before).toBe(5);
 	});
 
 	it('updates the profile with me and adopts what the server kept', async () => {
@@ -193,14 +241,22 @@ describe('ChatClient reference features', () => {
 		expect(general().timeline.order).toContain('12');
 	});
 
-	it('uploads an avatar as a message to room @avatar', async () => {
-		await connect();
-		vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 201 })));
+	it('uploads an avatar with a /avatar command carrying one upload embed', async () => {
+		await connect(['history', 'rooms', 'embed:upload', 'command']);
+		const writes: string[] = [];
+		vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+			writes.push(url);
+			return new Response(null, { status: 201 });
+		}));
 		const done = client.uploadAvatar(new File(['png'], 'me.png', { type: 'image/png' }));
-		expect(socket.request('message').params).toEqual({ room_id: AVATAR_ROOM, body: { embeds: [{ kind: 'upload', title: 'me.png' }] } });
-		await socket.reply('message', { message_id: '60', embeds: [{ embed_id: 'embed_3', kind: 'upload', write_url: 'http://fake.test/write/av' }] });
+		expect(socket.request('command').params).toEqual({ body: { text: '/avatar', embeds: [{ kind: 'upload', title: 'me.png' }] } });
+		expect(socket.sent.some((frame) => frame.method === 'message')).toBe(false);
+		await socket.reply('command', { embeds: [{ embed_id: 'embed_3', kind: 'upload', write_url: 'http://fake.test/write/av' }] });
 		await done;
-		await settle();
+		expect(writes).toEqual(['http://fake.test/write/av']);
+		// The server then sends `user`, which carries the avatar.
+		socket.receive({ method: 'user', params: { you: { user_id: 'guest_1', avatar: 'https://fake.test/f/av' } } });
+		expect(snapshot.you?.avatar).toBe('https://fake.test/f/av');
 	});
 });
 

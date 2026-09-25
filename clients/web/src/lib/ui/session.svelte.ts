@@ -16,7 +16,7 @@ export const blankSnapshot = (): ClientSnapshot => ({
  * identity from each new connection, so while a reconnect is in flight (and
  * until the fresh rooms have arrived) this keeps showing the last authenticated
  * view instead of collapsing to an empty shell, and re-selects the room the
- * viewer was in once the reconnected server announces it.
+ * viewer was in once the reconnected server lists it again.
  */
 export class SessionView {
 	// Snapshots are immutable values from the client: raw state avoids proxying them and keeps identity comparisons honest.
@@ -39,7 +39,7 @@ export class SessionView {
 	readonly server = $derived(this.snapshot.server ?? (this.holding ? this.held!.server : undefined));
 	readonly activeRoom = $derived.by(() => {
 		const live = this.rooms.find((room) => room.id === this.activeRoomId);
-		// A freshly announced room starts empty while history recovers; keep the
+		// A freshly listed room starts empty while history recovers; keep the
 		// held copy on screen until the recovered timeline replaces it.
 		const held = this.held;
 		if (live && held && live !== held.rooms.find((room) => room.id === live.id) && live.recovering && live.timeline.order.length === 0) {

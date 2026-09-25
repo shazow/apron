@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ProtocolStore, applyRecords, decodeHistoryRecords } from './reducer';
-import { decodeMessage, decodeReactions, decodeRoom, type MessageRecord } from './types';
+import { ProtocolStore, applyRecords, decodeHistoryRecords, type DecodedRecords } from './reducer';
+import { decodeMessage, decodeNotice, decodeReactions, decodeRoom, type MessageRecord } from './types';
 
 type WireRecord = Record<string, unknown>;
 interface Projection { rooms: unknown[] }
@@ -39,7 +39,7 @@ if (!fixtures.length) throw new Error('No replay fixtures found');
 describe('wire replay fixtures', () => {
 	for (const [fixtureFile, fixture] of fixtures) {
 		it(`${fixtureFile} reduces every variant with both envelopes`, () => {
-			expect(fixture.format).toBe(2);
+			expect(fixture.format).toBe(3);
 			expect(fixture.kind).toBe('replay');
 			expect(Object.keys(fixture).sort()).toEqual(['description', 'expected', 'format', 'kind', 'name', 'references', 'variants']);
 			expect(fixture.variants.length).toBeGreaterThan(0);
@@ -84,15 +84,17 @@ function runVariant(variant: ReplayVariant, useJsonRpc: boolean): Projection {
 function applyFrame(store: ProtocolStore, frame: WireRecord): void {
 	if (frame.method === 'message') {
 		const decoded = decodeMessage(frame.params);
-		if (!decoded) throw new Error(`Invalid message snapshot: ${JSON.stringify(frame)}`);
-		applyRecords(store, { rooms: [], messages: [decoded.record], reactions: [], embedded: decoded.embedded });
-		return;
+		if (decoded) {
+			applyRecords(store, { rooms: [], messages: [decoded.record], reactions: [], embedded: decoded.embedded });
+			return;
+		}
+		// A transient notice is rendered, never installed (§3.5).
+		if (decodeNotice(frame.params)) return;
+		throw new Error(`Invalid message snapshot: ${JSON.stringify(frame)}`);
 	}
-	if (frame.method === 'room') {
-		const decoded = decodeRoom(frame.params);
-		if (!decoded) throw new Error(`Invalid room record: ${JSON.stringify(frame)}`);
-		if (decoded.delivery.removed) return;
-		applyRecords(store, { rooms: [decoded.record], messages: [], reactions: [], embedded: decoded.embedded });
+	if (frame.method === 'room_update') {
+		const params = (frame.params ?? {}) as WireRecord;
+		applyRecords(store, roomRecords([...array(params.joined), ...array(params.updated)]));
 		return;
 	}
 	if (frame.method === 'reactions') {
@@ -103,14 +105,36 @@ function applyFrame(store: ProtocolStore, frame: WireRecord): void {
 	}
 	if (frame.method === undefined && Object.hasOwn(frame, 'result')) {
 		if (typeof frame.id !== 'string' || frame.id.length === 0) {
-			throw new Error('history result must have a fixed string request ID');
+			throw new Error('a result must have a fixed string request ID');
 		}
 		const result = frame.result as WireRecord;
-		if (!Array.isArray(result?.entries)) throw new Error('history.result.entries must be an array');
-		applyRecords(store, decodeHistoryRecords(result));
-		return;
+		if (Array.isArray(result?.entries)) {
+			applyRecords(store, decodeHistoryRecords(result));
+			return;
+		}
+		if (Array.isArray(result?.joined) || Array.isArray(result?.rooms)) {
+			applyRecords(store, roomRecords([...array(result.joined), ...array(result.rooms)]));
+			return;
+		}
+		throw new Error('a result must be a history page (entries) or a room_list (joined, rooms)');
 	}
 	throw new Error(`Unsupported replay fixture frame: ${JSON.stringify(frame)}`);
+}
+
+function array(value: unknown): unknown[] {
+	return Array.isArray(value) ? value : [];
+}
+
+/** Room records from `room_list` or `room_update`, with their embedded snapshots; delivery fields are not records. */
+function roomRecords(values: unknown[]): DecodedRecords {
+	const decoded: DecodedRecords = { rooms: [], messages: [], reactions: [], embedded: [] };
+	for (const value of values) {
+		const room = decodeRoom(value);
+		if (!room) throw new Error(`Invalid room record: ${JSON.stringify(value)}`);
+		decoded.rooms.push(room.record);
+		decoded.embedded.push(...room.embedded);
+	}
+	return decoded;
 }
 
 /** The logical projection of README "Room projection" / "Message projection". */

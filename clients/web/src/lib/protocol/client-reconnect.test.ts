@@ -39,7 +39,7 @@ describe('transport reconnects', () => {
 		expect(snapshot.status).toBe('reconnecting');
 		expect(snapshot.authenticated).toBe(false);
 		expect(snapshot.disconnectedAt).toBe(dropped);
-		// Rooms and identity are rebuilt from the next connection's announcements
+		// Rooms and identity are rebuilt from the next connection's room_list
 		// (PROTOCOL.md §4.3.1); the UI holds its own copy meanwhile.
 		expect(snapshot.rooms).toEqual([]);
 		expect(snapshot.you).toBeUndefined();
@@ -239,7 +239,7 @@ describe('connection errors', () => {
 	});
 
 	it('treats a frame with a method and no id as a notification', () => {
-		latest().receive({ method: 'room', params: { room_id: 'other', title: 'Other' }, error: { code: -32001, message: 'ignored' } });
+		latest().receive({ method: 'room_update', params: { joined: [{ room_id: 'other', title: 'Other' }] }, error: { code: -32001, message: 'ignored' } });
 		expect(snapshot.rooms.map((room) => room.id)).toEqual(['lobby', 'other']);
 		expect(snapshot.error).toBeUndefined();
 	});
@@ -432,7 +432,7 @@ describe('reconnect divider', () => {
 		expect(snapshot.rooms[0].recovering).toBe(false);
 		expect(snapshot.showReconnectDivider).toBe(false);
 		// A thread's first load is not a reconnect either.
-		latest().receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '21', history_log_id: '20' } });
+		latest().receive({ method: 'room_update', params: { joined: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '21', history_log_id: '20' }] } });
 		const load = client.loadRoom('20');
 		await latest().reply('history', { entries: [{ ...entry('21'), room_id: '20' }], more: false, latest_log_id: '21', history_log_id: '20' });
 		await load;
@@ -475,14 +475,14 @@ describe('reconnect divider', () => {
 		await latest().greet(['history', 'rooms'], { room });
 		await latest().reply('history', { entries: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
 		const thread = { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '21', history_log_id: '20' };
-		latest().receive({ method: 'room', params: thread });
+		latest().receive({ method: 'room_update', params: { joined: [thread] } });
 		const load = client.loadRoom('20');
 		await latest().reply('history', { entries: [{ ...entry('21'), room_id: '20' }], more: false, latest_log_id: '21', history_log_id: '20' });
 		await load;
 		latest().drop();
 		vi.advanceTimersByTime(5_000);
 		await latest().greet(['history', 'rooms'], { room });
-		latest().receive({ method: 'room', params: { ...thread, latest_log_id: '23' } });
+		latest().receive({ method: 'room_update', params: { joined: [{ ...thread, latest_log_id: '23' }] } });
 		// Kept, but the gap since its checkpoint is not loaded yet.
 		expect(snapshot.rooms.find((candidate) => candidate.id === '20')?.loaded).toBe(false);
 		const again = client.loadRoom('20');
@@ -506,7 +506,7 @@ describe('reconnect divider', () => {
 	});
 });
 
-describe('keepalive', () => {
+describe('liveness pings', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		FakeSocket.instances = [];
@@ -520,14 +520,22 @@ describe('keepalive', () => {
 
 	const pings = (socket: FakeSocket) => socket.sent.filter((frame) => frame.method === 'ping').length;
 
-	it('pings at the interval the demo server asks for, once authenticated, until the socket goes', async () => {
+	it('pings with the exact bytes every server.ping seconds, before auth too, until the socket goes', async () => {
 		const client = new ChatClient('ws://fake.test/');
+		const raw: string[] = [];
 		client.start();
-		await latest().greet([], { ext: { demo: { keepalive_seconds: 45 } } });
 		const first = latest();
-		expect(first.sent.find((frame) => frame.method === 'ping')).toEqual({ method: 'ping' });
+		const send = first.send.bind(first);
+		first.send = (data: string) => { raw.push(data); send(data); };
+		first.open();
+		first.receive({ method: 'server', params: { protocol: 5, auth: ['token'], caps: [], ping: 30 } });
+		// No guest scheme and no token: the client never authenticates, and still pings (§1).
+		expect(pings(first)).toBe(0);
+		vi.advanceTimersByTime(30_000);
+		expect(raw).toContain('{"method":"ping"}');
 		expect(pings(first)).toBe(1);
-		vi.advanceTimersByTime(45_000);
+		first.receive({ method: 'pong' });
+		vi.advanceTimersByTime(30_000);
 		expect(pings(first)).toBe(2);
 
 		first.drop();
@@ -538,26 +546,26 @@ describe('keepalive', () => {
 		expect(FakeSocket.instances.every((socket) => socket === first || pings(socket) === 0)).toBe(true);
 	});
 
-	it('replaces a socket whose keepalive goes unanswered, and keeps one that answers', async () => {
+	it('replaces a socket whose ping goes a whole interval without a pong, and keeps one that answers', async () => {
 		const client = new ChatClient('ws://fake.test/');
 		let snapshot: ClientSnapshot | undefined;
 		client.subscribe((next) => (snapshot = next));
 		client.start();
-		await latest().greet([], { ext: { demo: { keepalive_seconds: 45 } } });
+		await latest().greet([], { ping: 30 });
 		const first = latest();
 		// Answered: the connection stays.
 		for (let tick = 0; tick < 4; tick++) {
+			vi.advanceTimersByTime(30_000);
 			first.receive({ method: 'pong' });
-			vi.advanceTimersByTime(45_000);
 		}
+		expect(pings(first)).toBe(4);
 		expect(snapshot?.status).toBe('connected');
 		expect(FakeSocket.instances).toHaveLength(1);
 
-		// Two keepalives in a row unanswered: dropped and reconnected. The ping
-		// at 180s went unanswered, the one at 225s too, and the tick at 270s drops it.
-		vi.advanceTimersByTime(45_000);
+		// The ping at 150s goes unanswered, and the tick at 180s drops the socket.
+		vi.advanceTimersByTime(30_000);
 		expect(snapshot?.status).toBe('connected');
-		vi.advanceTimersByTime(45_000);
+		vi.advanceTimersByTime(30_000);
 		expect(snapshot?.status).toBe('reconnecting');
 		expect(first.readyState).toBe(FakeSocket.CLOSED);
 		vi.advanceTimersByTime(5_000);
@@ -570,13 +578,27 @@ describe('keepalive', () => {
 		let snapshot: ClientSnapshot | undefined;
 		client.subscribe((next) => (snapshot = next));
 		client.start();
-		await latest().greet([], { ext: { demo: { keepalive_seconds: 45 } } });
+		await latest().greet([], { ping: 30 });
+		vi.advanceTimersByTime(30_000);
 		latest().receive({ method: 'pong' });
 		// A frozen tab's clock jumps without its interval firing in between.
 		vi.setSystemTime(Date.now() + 10 * 60_000);
-		vi.advanceTimersByTime(45_000);
+		vi.advanceTimersByTime(30_000);
 		expect(snapshot?.status).toBe('connected');
-		expect(latest().sent.filter((frame) => frame.method === 'ping')).toHaveLength(2);
+		expect(pings(latest())).toBe(2);
+		client.stop();
+	});
+
+	it('follows a replacing server frame to its new interval', async () => {
+		const client = new ChatClient('ws://fake.test/');
+		client.start();
+		await latest().greet([], { ping: 30 });
+		latest().receive({ method: 'server', params: { protocol: 5, auth: ['guest'], caps: ['rooms'], ping: 10 } });
+		vi.advanceTimersByTime(10_000);
+		expect(pings(latest())).toBe(1);
+		latest().receive({ method: 'server', params: { protocol: 5, auth: ['guest'], caps: ['rooms'] } });
+		vi.advanceTimersByTime(300_000);
+		expect(pings(latest())).toBe(1);
 		client.stop();
 	});
 
