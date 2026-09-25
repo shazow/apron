@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collapseMentions, draftMentions, draftText, insertMention, mentionQuery } from './draft';
+import { collapseMentions, draftMentions, draftText, insertMention, insertText, mentionQuery } from './draft';
 
 const people = [
 	{ id: 'ada_1', name: 'Ada' },
@@ -78,5 +78,48 @@ describe('draft mentions', () => {
 	it('lists each chip once, and drops one whose chip was deleted', () => {
 		expect(draftMentions(['hi ', { id: 'bob' }, ' and ', { id: 'carol' }, ' and ', { id: 'bob' }])).toEqual(['bob', 'carol']);
 		expect(draftMentions(['hi @bob, typed but not picked'])).toEqual([]);
+	});
+});
+
+describe('inserting at the caret', () => {
+	it('puts text at a bare caret and the caret after it', () => {
+		expect(insertText(['hello world'], 5, 5, ' 👋')).toEqual({ parts: ['hello 👋 world'], caret: 8 });
+		expect(insertText(['hi'], 0, 0, '🎉')).toEqual({ parts: ['🎉hi'], caret: 2 });
+		expect(insertText(['hi'], 2, 2, '🎉')).toEqual({ parts: ['hi🎉'], caret: 4 });
+		expect(insertText([], 0, 0, '🎉')).toEqual({ parts: ['🎉'], caret: 2 });
+	});
+
+	it('replaces a selection, whichever way it was made', () => {
+		expect(insertText(['hello world'], 6, 11, '🌍')).toEqual({ parts: ['hello 🌍'], caret: 8 });
+		expect(insertText(['hello world'], 11, 6, '🌍')).toEqual({ parts: ['hello 🌍'], caret: 8 });
+		expect(insertText(['hello world'], 0, 11, '👍')).toEqual({ parts: ['👍'], caret: 2 });
+	});
+
+	it('keeps mention chips around the caret', () => {
+		const parts = ['hi ', { id: 'bob' }, ' there'];
+		// Before, right after, and past the chip (`@bob` is four characters of draft text).
+		expect(insertText(parts, 3, 3, '👋')).toEqual({ parts: ['hi 👋', { id: 'bob' }, ' there'], caret: 5 });
+		expect(insertText(parts, 7, 7, '👋')).toEqual({ parts: ['hi ', { id: 'bob' }, '👋 there'], caret: 9 });
+		expect(insertText(parts, 13, 13, '!')).toEqual({ parts: ['hi ', { id: 'bob' }, ' there!'], caret: 14 });
+		// Between two chips.
+		expect(insertText([{ id: 'bob' }, { id: 'ada' }], 4, 4, '+')).toEqual({ parts: [{ id: 'bob' }, '+', { id: 'ada' }], caret: 5 });
+		expect(draftText(insertText(parts, 7, 7, '👋').parts)).toBe('hi @bob👋 there');
+	});
+
+	it('moves a caret inside a chip to after it, and drops a chip the selection cuts into', () => {
+		const parts = ['hi ', { id: 'bob' }, ' there'];
+		expect(insertText(parts, 5, 5, '👋')).toEqual({ parts: ['hi ', { id: 'bob' }, '👋 there'], caret: 9 });
+		expect(insertText(parts, 1, 5, '👋')).toEqual({ parts: ['h👋 there'], caret: 3 });
+		expect(insertText(parts, 5, 9, '👋')).toEqual({ parts: ['hi 👋here'], caret: 5 });
+		expect(insertText(parts, 2, 8, '')).toEqual({ parts: ['hithere'], caret: 2 });
+	});
+
+	it('clamps positions to the draft', () => {
+		expect(insertText(['hi'], 40, 50, '🎉')).toEqual({ parts: ['hi🎉'], caret: 4 });
+		expect(insertText(['hi'], -3, 1, '🎉')).toEqual({ parts: ['🎉i'], caret: 2 });
+	});
+
+	it('leaves a leading slash in place, so a command stays a command', () => {
+		expect(draftText(insertText(['/shrug '], 7, 7, '🤷').parts)).toBe('/shrug 🤷');
 	});
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { emojiAnchor, emojiPicker } from '$lib/ui/emoji-picker.svelte';
 	import { REACTION_PALETTE, type ReactionChip } from '$lib/ui/reactions';
 
 	interface Props {
@@ -15,6 +16,8 @@
 	let { chips, enabled, paletteOpen, ontoggle, onclosepalette }: Props = $props();
 	let mine = $derived(new Set(chips.filter((chip) => chip.mine).map((chip) => chip.emoji)));
 	let palette = $state<HTMLDivElement | undefined>();
+	let more = $state<HTMLButtonElement | undefined>();
+	let moreOpen = $derived(emojiPicker.isOpenFor(more));
 
 	// The palette takes focus as it opens, so a keyboard user lands on the first emoji.
 	$effect(() => {
@@ -24,6 +27,11 @@
 	function pick(emoji: string): void {
 		onclosepalette();
 		ontoggle(emoji);
+	}
+
+	/** "More emoji" opens the full picker; a pick there toggles like a pick here. */
+	function openMore(): void {
+		if (more) emojiPicker.toggle({ anchor: more, onpick: pick });
 	}
 
 	function paletteKeydown(key: KeyboardEvent): void {
@@ -58,6 +66,19 @@
 		{#each REACTION_PALETTE as emoji (emoji)}
 			<button class="pick" class:mine={mine.has(emoji)} type="button" aria-label={`React with ${emoji}`} aria-pressed={mine.has(emoji)} title={emoji} disabled={!enabled} onclick={() => pick(emoji)}>{emoji}</button>
 		{/each}
+		<button
+			class="pick more"
+			type="button"
+			data-testid="more-emoji"
+			aria-label="More emoji"
+			title="More emoji"
+			aria-haspopup="dialog"
+			aria-expanded={moreOpen}
+			disabled={!enabled}
+			bind:this={more}
+			use:emojiAnchor
+			onclick={openMore}
+		><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01M19 2v6M16 5h6" /></svg></button>
 		<button class="pick close" type="button" aria-label="Close reactions" title="Close" onclick={onclosepalette}>×</button>
 	</div>
 {/if}
@@ -89,6 +110,7 @@
 	}
 	.pick:hover:not(:disabled) { background: var(--bg-300); color: var(--ink); }
 	.pick.mine { background: var(--accent-soft); }
+	.pick.more[aria-expanded='true'] { background: var(--bg-300); color: var(--ink); }
 	.pick:disabled { cursor: default; opacity: .6; }
 	.close { font-size: 16px; }
 	.chip:focus-visible, .pick:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

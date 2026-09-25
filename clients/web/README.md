@@ -143,9 +143,21 @@ A reply's quote may point into another room: clicking it opens that room or
 thread, loading the thread's history if needed, and highlights the message.
 
 With the `reactions` cap, a message's **React** action opens a small emoji
-palette, and reactions show as chips under the message: emoji and count,
+palette, whose **More emoji** button opens the full emoji picker; a pick there
+toggles like a pick in the palette. Reactions show as chips under the message: emoji and count,
 highlighted when one is yours, with a tooltip naming who reacted. Clicking a
 chip toggles your reaction. Tombstones show no reactions.
+
+The composer's emoji button (always there: emoji are text) opens the same
+picker and inserts the emoji at the caret, over any selection, leaving mention
+chips and command mode as they were. The picker is
+[emoji-mart](https://github.com/missive/emoji-mart), drawn by `EmojiPopover`
+outside the app shell so nothing clips it: a popover beside its button on wide
+screens, a bottom sheet on narrow ones, in the app's theme and tokens. Escape
+or a press outside closes it. emoji-mart and `@emoji-mart/data` load with a
+dynamic `import()` the first time a picker opens, so they stay out of the main
+bundle, and the picker gets its data, English strings and native glyphs passed
+in, so it never fetches from a CDN.
 
 Embeds render by kind, in the design system's components ([PROTOCOL.md §4.6](../../PROTOCOL.md#46-embeds-and-avatars)):
 
@@ -221,6 +233,7 @@ verbatim. The Svelte components under `src/lib/components` wrap its `ap-*`
 classes one to one with the system's React components — `ConnectScreen`,
 `Sidebar` and `ProfileBar`, `RoomHeader` and `ThreadEditor`, `ThreadCard`,
 `Message` with its `ReactionBar`, `Composer` with its `MentionPicker`, `SelectionBar`, `JumpBar`,
+`EmojiPopover` (the full emoji picker, which the design system leaves to the client),
 `StatusBanner`, `Avatar` — and carry only the layout glue each needs. Re-copy
 `apron.css` when the design system changes rather than editing it here.
 
@@ -230,7 +243,9 @@ reactive state behind it lives in `src/lib/ui` as small classes — `SessionView
 (the last authenticated view, held through a reconnect), `MentionTracker`,
 `MessageSelection`, `FeedbackState`, `SidebarLayout` — beside pure, unit-tested
 helpers: `timeline.ts` groups threads under their rooms and builds the room and
-thread views, `reactions.ts` turns reaction summaries into chips, `messages.ts`
+thread views, `reactions.ts` turns reaction summaries into chips, `emoji.ts`
+places and themes the emoji picker (`emoji-picker.svelte.ts` keeps the one open
+picker and loads emoji-mart), `draft.ts` edits the composer's draft, `messages.ts`
 and `time.ts` read messages, `connection.ts` words the connection state, and
 `storage.ts` keeps everything remembered between visits under `apron.*` keys.
 

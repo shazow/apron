@@ -147,3 +147,35 @@ export async function openThread(page: Page, threadId: string): Promise<void> {
 	else await card.click();
 	await expect(page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"][aria-current="page"]`)).toHaveCount(1);
 }
+
+/** The full emoji picker's popover (emoji-mart inside it, in a shadow root Playwright's locators pierce). */
+export function emojiPicker(page: Page): Locator {
+	return page.getByRole('dialog', { name: 'Emoji picker', exact: true });
+}
+
+/** Waits for the full picker to finish loading, then searches it and picks the first match with this glyph. */
+export async function pickFromEmojiPicker(page: Page, search: string, emoji: string): Promise<void> {
+	const picker = emojiPicker(page);
+	await expect(picker).toHaveAttribute('data-state', 'ready');
+	await picker.locator('em-emoji-picker input[type="search"]').fill(search);
+	await picker.getByRole('button', { name: emoji, exact: true }).first().click();
+	await expect(picker).toHaveCount(0);
+}
+
+/**
+ * Records every request and socket the page opens to anything but the app's
+ * own origin (the dev server, which proxies the chat server), so a test can
+ * assert the app talks to no third party.
+ */
+export function recordOffsiteRequests(page: Page): string[] {
+	const offsite: string[] = [];
+	const origin = new URL('http://127.0.0.1:5173');
+	const check = (url: string) => {
+		const parsed = new URL(url);
+		if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') return;
+		if (parsed.host !== origin.host) offsite.push(url);
+	};
+	page.on('request', (request) => check(request.url()));
+	page.on('websocket', (socket) => check(socket.url()));
+	return offsite;
+}

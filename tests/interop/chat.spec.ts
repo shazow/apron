@@ -3,14 +3,17 @@ import {
 	composer,
 	deleteMessage,
 	editMessage,
+	emojiPicker,
 	messageAction,
 	messageByText,
 	moreAction,
 	moveMessage,
 	openChat,
 	openThread,
+	pickFromEmojiPicker,
 	reactionChip,
 	reactTo,
+	recordOffsiteRequests,
 	sendMessage,
 	setDisplayName,
 	startThread,
@@ -880,5 +883,112 @@ test.describe('chat protocol interoperability', () => {
 		} finally {
 			await Promise.all([mover.close(), reader.close()]);
 		}
+	});
+});
+
+test.describe('full emoji picker', () => {
+	test('inserts an emoji at the composer caret, keeps mention chips, and sends it', async ({ page }) => {
+		const offsite = recordOffsiteRequests(page);
+		await openChat(page);
+		const me = await userIdOf(page);
+		const token = `emoji-${Date.now()}`;
+		const field = composer(page);
+		await field.click();
+		await page.keyboard.type(`${token} @${me} party time`);
+		await expect(field.locator('.ap-mention')).toHaveCount(1);
+		// The caret goes back before "time"; that is where the emoji lands.
+		for (let step = 0; step < 4; step++) await page.keyboard.press('ArrowLeft');
+
+		const button = page.getByRole('button', { name: 'Insert emoji', exact: true });
+		await expect(button).toHaveAttribute('aria-haspopup', 'dialog');
+		await expect(button).toHaveAttribute('aria-expanded', 'false');
+		await button.click();
+		await expect(button).toHaveAttribute('aria-expanded', 'true');
+		const picker = emojiPicker(page);
+		await expect(picker).toHaveAttribute('data-state', 'ready');
+		// Search takes focus, and the popover opens inside the viewport, above the composer.
+		await expect(picker.locator('em-emoji-picker input[type="search"]')).toBeFocused();
+		const bounds = (await picker.boundingBox())!;
+		const composerBounds = (await field.boundingBox())!;
+		const viewport = page.viewportSize()!;
+		expect(bounds.y).toBeGreaterThanOrEqual(0);
+		expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+		expect(bounds.y + bounds.height).toBeLessThanOrEqual(composerBounds.y);
+		// Its colors are the app's: emoji-mart's accent is the rust accent.
+		const accent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+		const rgb = [1, 3, 5].map((at) => parseInt(accent.slice(at, at + 2), 16)).join(', ');
+		expect(await picker.locator('em-emoji-picker').evaluate((element) => (element as HTMLElement).style.getPropertyValue('--rgb-accent'))).toBe(rgb);
+
+		await pickFromEmojiPicker(page, 'tada', '🎉');
+		await expect(button).toHaveAttribute('aria-expanded', 'false');
+		// Focus is back in the field with the caret after the emoji: typing carries on from there.
+		await expect(field).toBeFocused();
+		await page.keyboard.type(' ');
+		await expect(field.locator('.ap-mention')).toHaveCount(1);
+
+		// Escape closes the picker and returns focus to its button; a press outside closes it too.
+		await button.click();
+		await expect(picker).toHaveAttribute('data-state', 'ready');
+		await page.keyboard.press('Escape');
+		await expect(picker).toHaveCount(0);
+		await expect(button).toBeFocused();
+		await button.click();
+		await expect(picker).toBeVisible();
+		await page.getByRole('main', { name: 'Conversation' }).getByRole('heading', { name: 'General', exact: true }).click();
+		await expect(picker).toHaveCount(0);
+
+		await page.getByRole('button', { name: 'Send message', exact: true }).click();
+		const message = await waitForMessage(page, `${token} `);
+		await expect(message.locator('.ap-msg-text')).toHaveText(new RegExp(`^${token} @\\S+ party 🎉 time\\s*$`));
+		await expect(message.locator('.ap-mention')).toHaveCount(1);
+		expect(offsite).toEqual([]);
+	});
+
+	test('reacts with any emoji through the full picker, and toggles it back', async ({ page }) => {
+		const offsite = recordOffsiteRequests(page);
+		await openChat(page);
+		const token = `emoji-react-${Date.now()}`;
+		await sendMessage(page, token);
+		const messageId = await (await waitForMessage(page, token)).getAttribute('data-message-id');
+		const message = page.locator(`article[data-message-id="${messageId}"]`);
+
+		await (await messageAction(message, 'React')).click();
+		const palette = message.getByTestId('reaction-palette');
+		// The quick palette stays as it was, with More emoji at the end of it.
+		await expect(palette.getByRole('button', { name: /^React with / })).toHaveCount(8);
+		const more = palette.getByRole('button', { name: 'More emoji', exact: true });
+		await expect(more).toHaveAttribute('aria-expanded', 'false');
+		await more.click();
+		await expect(more).toHaveAttribute('aria-expanded', 'true');
+		const picker = emojiPicker(page);
+		await expect(picker).toHaveAttribute('data-state', 'ready');
+		const bounds = (await picker.boundingBox())!;
+		const viewport = page.viewportSize()!;
+		expect(bounds.x).toBeGreaterThanOrEqual(0);
+		expect(bounds.y).toBeGreaterThanOrEqual(0);
+		expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+		expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
+		// Escape closes only the picker, back on the button that opened it.
+		await page.keyboard.press('Escape');
+		await expect(picker).toHaveCount(0);
+		await expect(more).toBeFocused();
+		await expect(palette).toBeVisible();
+
+		await more.click();
+		await pickFromEmojiPicker(page, 'avocado', '🥑');
+		await expect(palette).toHaveCount(0);
+		const chip = reactionChip(message, '🥑');
+		await expect(chip).toHaveText('🥑1');
+		await expect(chip).toHaveAttribute('aria-pressed', 'true');
+
+		// Your set grows: a quick pick keeps the picked one, and picking it again takes it back.
+		await reactTo(message, '👍');
+		await expect(message.getByTestId('reaction-chip')).toHaveCount(2);
+		await (await messageAction(message, 'React')).click();
+		await palette.getByRole('button', { name: 'More emoji', exact: true }).click();
+		await pickFromEmojiPicker(page, 'avocado', '🥑');
+		await expect(chip).toHaveCount(0);
+		await expect(reactionChip(message, '👍')).toHaveText('👍1');
+		expect(offsite).toEqual([]);
 	});
 });
