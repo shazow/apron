@@ -827,12 +827,17 @@ Discovery and membership:
         "parent_room_id": "general", "title": "Deploy",
         "intro_message": {...},
         "latest_log_id": "1724803400000",
-        "member_count": 2
+        "member_count": 2,
+        "members": [{"user_id": "alice"}, {"user_id": "bob"}]
       }
+    ],
+    "users": [
+      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
+      {"user_id": "bob", "name": "Bob"}
     ]
   }
 }
-// -> one room, with its members
+// -> one room, its members given in full
 {"method": "room_list", "id": "c22", "params": {"room_id": "1724803312001"}}
 // <-
 {
@@ -855,15 +860,18 @@ Discovery and membership:
 ```
 
 - `room_list` returns room records (§3.4) for the visible rooms, most
-  recently active first, each with `member_count`, how many users have
-  joined it. With `parent_room_id` it lists that room's threads, including
-  ones never announced. Listing a room does not start deliveries. Servers
-  MAY omit `member_count` by policy.
+  recently active first. With `parent_room_id` it lists that room's threads,
+  including ones never announced. Listing a room does not start deliveries.
+- Each room carries `member_count`, how many users have joined it, and
+  `members`, user objects (§3.3): either complete, or `user_id` only with
+  the complete objects in the result's `users`. Servers MAY truncate or
+  omit `members` and MAY omit `member_count`, which stays the total. A
+  client given no `members` learns a room's members from its history and
+  from joins (§3.3).
 - Servers MAY list only the most recently active rooms. A room left out is
   still visible and can be joined by its `room_id`.
-- Servers SHOULD accept `room_id`, which lists only that visible room and
-  adds `members`, its members as user objects (§3.3). Servers MAY truncate
-  `members`; `member_count` stays the total. `room_id` overrides
+- Servers SHOULD accept `room_id`, which lists only that visible room, for
+  a client that wants one room's members. `room_id` overrides
   `parent_room_id`, and an unknown or invisible `room_id` is
   `invalid_params`.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
