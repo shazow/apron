@@ -297,7 +297,7 @@ export interface Identity {
   tier?: Tier;
 }
 
-/** A flat, self-describing message snapshot (protocol v4 section 3.5). */
+/** A flat, self-describing message snapshot (protocol v5 section 3.5). */
 export interface MessageSnapshot {
   message_id: string;
   log_id: string;
@@ -311,7 +311,7 @@ export interface MessageSnapshot {
   prev_log_id?: string;
 }
 
-/** A room record plus this server's delivery fields (protocol v4 section 3.4). */
+/** A room record plus this server's delivery fields (protocol v5 section 3.4). */
 export interface RoomRecord {
   room_id: string;
   log_id: string;
@@ -323,7 +323,7 @@ export interface RoomRecord {
   history_log_id: string | null;
 }
 
-/** One logged reaction change (protocol v4 Appendix D.2). */
+/** One logged reaction change (protocol v5 §4.5). */
 export interface ReactionsRecord {
   log_id: string;
   message_id: string;
@@ -1672,7 +1672,7 @@ export class Store {
 
   /**
    * A log_id for a message delivered to one connection and never logged, such
-   * as a `@server` notice (Appendix J.1). It advances the server-wide
+   * as a `@server` notice (Appendix A.1). It advances the server-wide
    * sequence, so no logged record can reuse it (section 2).
    */
   allocateUnloggedLogId(now = this.clock.now()): string {
@@ -2277,7 +2277,7 @@ export class Store {
     );
   }
 
-  /** Create, save, delete, restore, or move a message (section 3.5, Appendix B). */
+  /** Create, save, delete, restore, or move a message (section 3.5, §4.2). */
   private commitMessage(input: StoreMutationInput, context: CommitContext, floor: number): StoreMutationResult {
     const params = input.params;
     if (params.log_id !== undefined) throw new StoreError("invalid_params", "log_id is server assigned");
@@ -2322,7 +2322,7 @@ export class Store {
     const json = JSON.stringify(snapshot);
 
     const moved = current !== null && current.room_id !== roomId;
-    // A move belongs to the source and destination logs (Appendix A).
+    // A move belongs to the source and destination logs (§4.1).
     this.appendRecord(context, moved ? [current.room_id, roomId] : [roomId], "message", logId, json);
     this.rawExec(
       `INSERT INTO message_state (message_id, room_id, latest_log_id, snapshot_json, author_id)
@@ -2375,7 +2375,7 @@ export class Store {
     return emojis;
   }
 
-  /** Replace the caller's reaction set on one message (Appendix D.2). */
+  /** Replace the caller's reaction set on one message (§4.5). */
   private commitReactions(input: StoreMutationInput, context: CommitContext, floor: number): StoreMutationResult {
     const params = input.params;
     const messageIdParam = params.message_id;
@@ -2391,7 +2391,7 @@ export class Store {
       message.message_id, input.userId,
     )[0];
     const currentSet = existing && existing.log_id >= floor ? parseJson<string[]>(existing.emojis_json, []) : [];
-    // An unchanged set produces no record (Appendix D.2 permits no change).
+    // An unchanged set produces no record (§4.5 permits no change).
     if (currentSet.length === emojis.length && emojis.every((emoji) => currentSet.includes(emoji))) {
       return { result: {}, broadcasts: [] };
     }
@@ -2429,7 +2429,7 @@ export class Store {
   }
 
   /**
-   * Create a thread room or replace a thread room's client fields (Appendix C).
+   * Create a thread room or replace a thread room's client fields (§4.3.4).
    * Demo policy: only threads under a top-level room may be created, and only
    * thread rooms may be edited; the permanent `general` room is fixed.
    */
@@ -2639,7 +2639,7 @@ export class Store {
     return this.commitMutation({ ...input, params: clone(input.params) });
   }
 
-  /** History with the per-user/IP history quota charged (Appendix A). */
+  /** History with the per-user/IP history quota charged (§4.1). */
   history(query: StoreHistoryQuery): StoreHistoryResult {
     this.ensureReady();
     const operationNow = query.now ?? this.clock.now();
@@ -2697,7 +2697,7 @@ export class Store {
     if (lower > upper || historyLogId === null) return empty();
     const forward = after !== undefined;
     // One contiguous slice of the room's log across every record kind; the
-    // limit counts records of any kind (Appendix A).
+    // limit counts records of any kind (§4.1).
     const rows = this.rawRows<RawRecordRow>(
       `SELECT room_id, log_id, kind, record_json FROM records
        WHERE room_id = ? AND log_id >= ? AND log_id <= ?

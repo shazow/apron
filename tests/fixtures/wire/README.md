@@ -42,8 +42,8 @@ request ID or on optional envelope fields.
 
 ## Records, replay, and the logical projection
 
-Both suites share one client-side model (PROTOCOL.md §2, §3.4, §3.5,
-Appendices A–D). The client keeps three stores, one record per key:
+Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#2-identifiers), [§3.4](../../../PROTOCOL.md#34-rooms), [§3.5](../../../PROTOCOL.md#35-messages),
+[§4.1](../../../PROTOCOL.md#41-history)–[§4.5](../../../PROTOCOL.md#45-reactions)). The client keeps three stores, one record per key:
 
 | record | key | sources |
 |---|---|---|
@@ -218,7 +218,7 @@ stay queued. Then:
 
 ### What a conforming client sends
 
-These are exact (PROTOCOL.md §3.5, Appendices B–D). "Latest snapshot" and
+These are exact (PROTOCOL.md [§3.5](../../../PROTOCOL.md#35-messages), [§4.2](../../../PROTOCOL.md#42-edit), [§4.3.4](../../../PROTOCOL.md#434-creating-and-editing), [§4.5](../../../PROTOCOL.md#45-reactions)). "Latest snapshot" and
 "latest record" mean the stored record under the replay rule at the moment the
 operation is invoked.
 
@@ -243,7 +243,7 @@ unchanged.
 ### History recovery profile
 
 The fixtures pin the example client's recovery profile. It is a test profile
-built from PROTOCOL.md Appendix A, not
+built from [PROTOCOL.md §4.1](../../../PROTOCOL.md#41-history), not
 the only conforming strategy. All of this state is per connection.
 
 - **Head and bound.** Per visible room the client tracks its known head, the
@@ -307,7 +307,7 @@ The normalized session state has these keys:
   since removed) sorted by `room_id` in string order, each in the room
   projection above. Only server records appear; optimistic local echoes do
   not.
-- `typing`: active typing indicators `{room_id, from}` (Appendix D.1),
+- `typing`: active typing indicators `{room_id, from}` ([PROTOCOL.md §4.4](../../../PROTOCOL.md#44-activity)),
   sorted by `room_id` then `from.user_id`. An `activity` frame with
   `typing > 0` adds or refreshes one; `typing: 0` removes it; an `activity`
   frame without `typing` leaves it unchanged. Fixture servers that send
