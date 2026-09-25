@@ -1365,21 +1365,54 @@ that ignore `token` remain conforming.
 
 ## Appendix J — Conventions (informative)
 
-### J.1 System identities
+### J.1 System identities and scoped notices
 
 `user_id`s beginning with `@` are reserved for server-controlled identities,
-such as `@server` for the server itself or `@sfu` for a media server
-(Appendix H). Servers SHOULD NOT assign them to users. They carry an ordinary
-`from` and render like any sender, so clients unaware of the convention
-still work; clients MAY style them as system messages. Servers MAY post
-notices such as joins and leaves this way when they should stay in history.
+such as `@sfu` for a media server (Appendix H). Servers SHOULD NOT assign
+them to users. They carry an ordinary `from` and render like any sender, so
+clients unaware of the convention still work; clients MAY style them as
+system messages.
 
-```json
+Three of them tell the receiver who else got the message:
+
+| `from.user_id` | received by                   | logged | for example                                 |
+|----------------|-------------------------------|--------|---------------------------------------------|
+| `@server`      | every user on the server      | yes    | maintenance notices, announcements          |
+| `@room`        | every member of the room      | yes    | joins and leaves, removals, poll results    |
+| `@private`     | only this user                | no     | welcomes, command replies, errors, reminders |
+
+- `room_id` is where the message is shown. A notice about no room in
+  particular goes in room `@server`, which every user receives without
+  joining; clients unaware of it show it as a room of its own. Room IDs
+  beginning with `@` are reserved for such server-defined rooms (J.4).
+- `@private` messages are not logged and carry neither `log_id` nor
+  `message_id`. Like push payloads (Appendix F), clients render them but
+  never install them as snapshots, and they are not in history. A private
+  notice that should last belongs in a room of its own.
+
+```jsonc
+// <- to everyone on the server
 {
   "method": "message", "params": {
-    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
+    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "@server",
     "from": {"user_id": "@server", "name": "Server"},
     "body": {"text": "Maintenance at 17:00 UTC."}
+  }
+}
+// <- to everyone in general
+{
+  "method": "message", "params": {
+    "message_id": "1724803500002", "log_id": "1724803500002", "room_id": "general",
+    "from": {"user_id": "@room", "name": "General"},
+    "body": {"text": "@guest_1234 joined"}
+  }
+}
+// <- to the new member only, shown in general
+{
+  "method": "message", "params": {
+    "room_id": "general",
+    "from": {"user_id": "@private", "name": "Only you"},
+    "body": {"text": "Welcome to General! Deploy chatter goes in threads."}
   }
 }
 ```
