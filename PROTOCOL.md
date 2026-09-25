@@ -17,7 +17,7 @@ the sender.
 
 ```jsonc
 // <- server greeting with auth schemes
-{"method": "server", "params": {"protocol": 4, "auth": ["guest", "token"]}}
+{"method": "server", "params": {"protocol": 5, "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -204,7 +204,8 @@ All IDs are strings.
   message whose `prev_log_id` equals its `message_id` has changed exactly
   once since it was created.
 
-**Opaque IDs** — `room_id`, `user_id`, `session_id`, and request `id`.
+**Opaque IDs** — `room_id`, `user_id`, `embed_id`, `session_id`, and request
+`id`.
 
 - Arbitrary strings minted by whichever side creates them; `room_id` and
   `user_id` are server-assigned.
@@ -229,7 +230,7 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 4,
+    "protocol": 5,
     "name": "impl-name/1.0",
     "caps": ["history", "edit"],
     "auth": ["token"]
@@ -238,7 +239,7 @@ frame, unprompted. There is no client hello.
 ```
 
 - `protocol`: required integer, incremented with each revision of this spec.
-  Current value `4`. Implementations make a best effort to interoperate
+  Current value `5`. Implementations make a best effort to interoperate
   across versions; mismatched optional features degrade to their fallbacks
   (§4).
 - `name`: optional implementation/version string.
@@ -300,8 +301,8 @@ Identity is server-authoritative: every message carries its author in `from`.
 
 `user_id` is required and stable. `name` is an optional display string;
 absent `name` falls back to `user_id`. `avatar` (Appendix E) and `ext` (§3.5)
-are optional. Every identity on the wire (`you`, `from`, `users`, RTC
-members) uses this shape, and servers MAY send only `user_id`. Clients keep
+are optional. Every identity on the wire (`you`, `new`, `old`, `from`,
+`users`, RTC members) uses this shape, and servers MAY send only `user_id`. Clients keep
 one user object per `user_id` and merge into it every one they receive,
 whichever frame carried it: a present field replaces the kept value, an
 empty value (`""`, `{}`) removes it, and a missing field leaves it
@@ -339,8 +340,8 @@ After authentication, the server MAY send a `user` notification at any time,
 such as after a rename, a profile change, or an authentication change. It
 carries `you`, sent to the user's own connections, or `new` and `old`, sent
 to others who share a room with the user. `new` alone is the user's current
-object, `old` alone says the user is gone, and both together say `user_id`
-changed. With `room_id`, `new` alone announces the user joining that room
+object, `old` alone says the user no longer shares any room with the
+recipient, and both together say `user_id` changed. With `room_id`, `new` alone announces the user joining that room
 and `old` alone leaving it, sent to its members:
 
 ```jsonc
@@ -364,18 +365,16 @@ and `old` alone leaving it, sent to its members:
   connection now acts as the new identity: the server re-announces the rooms
   visible to it, removing those no longer visible (§3.4), and clients
   re-derive per-user state such as their own reactions (Appendix D).
-- Logged records keep the old `user_id`. Clients MAY treat `old` as a user
-  leaving and `new` as a user joining, or MAY alias `old.user_id` to the new
-  identity for past and later records.
+- After a `user_id` change, logged records keep the old `user_id`; clients
+  MAY alias it to the new identity.
 - Servers SHOULD NOT reissue a retired `user_id` to another user.
 - Joins and leaves are sent as they happen, never as a member list, and
   servers MAY skip them, such as in large rooms. The members a client
   learns this way are partial.
 
-Bots and agents are ordinary senders; nothing distinguishes them.
-
-- Suggested convention: `@`-prefixed `user_id`s such as `@server` are system
-  identities (Appendix J).
+Bots and agents are ordinary senders. Servers MAY mark kinds of users by a
+`user_id` convention, which `Name (@user_id)` shows, such as the `@` prefix
+for system identities (Appendix J.1).
 
 ### 3.4 Rooms
 
@@ -551,12 +550,12 @@ the fallback:
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | Appendix K |
 
 Features without a cap: other embeds are body content (Appendix E); push
-follows `server.push` (Appendix F).
+follows `server.push` (Appendix F), and liveness `server.ping` (§1).
 
 - Suggested convention: third-party extension caps use an `ext:` prefix,
   such as `ext:irc`.
 
-Four frame idioms cover everything logged or announced:
+Five frame idioms cover everything logged or announced:
 
 - **Records** (`room`, `message`): complete state at a `log_id` (§2).
 - **Per-user state** (`reactions`): `from` plus the user's complete state for
@@ -564,8 +563,10 @@ Four frame idioms cover everything logged or announced:
 - **Activity** (`activity`): `from` plus changes to the user's transient
   state; present fields update it and absent fields leave it unchanged. Not
   part of the append-only log.
-- **Announcements** (`server`, `user`, `rtc`): unlogged, re-sent in full;
-  each replaces the last.
+- **Announcements** (`server`, `rtc`): unlogged, re-sent in full; each
+  replaces the last.
+- **Users** (`user`, and every user object): unlogged; each merges into the
+  kept object (§3.3).
 
 ---
 
@@ -628,7 +629,7 @@ source room.
 - Continue forward with `after = last_id + 1`, backward with
   `before = first_id - 1`, computed numerically and encoded as strings.
   Never derive continuation from compacted records.
-- Each array is ascending by `log_id`.
+- `rooms`, `entries`, and `reactions` are each ascending by `log_id`.
 
 **Availability.** Every result includes `latest_log_id` and `history_log_id`
 (§3.4), captured consistently with the page. They describe the room, not the
