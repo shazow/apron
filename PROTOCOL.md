@@ -27,6 +27,11 @@ Contents:
   - [4.1 `history`](#41-history)
   - [4.2 `edit`](#42-edit)
   - [4.3 `rooms`](#43-rooms)
+    - [4.3.1 Listing](#431-listing)
+    - [4.3.2 Membership](#432-membership)
+    - [4.3.3 Updates](#433-updates)
+    - [4.3.4 Creating and editing](#434-creating-and-editing)
+    - [4.3.5 Posting](#435-posting)
   - [4.4 `activity`](#44-activity)
   - [4.5 `reactions`](#45-reactions)
   - [4.6 Embeds and avatars](#46-embeds-and-avatars)
@@ -383,7 +388,7 @@ carries `you`, sent to the user's own connections, or `new` and `old`, sent
 to others who share a room with the user. `new` alone is the user's current
 object, `old` alone says the user no longer shares any room with the
 recipient, and both together say `user_id` changed. With `room_id`, they
-announce joins and leaves ([§4.3](#43-rooms)):
+announce joins and leaves ([§4.3.2](#432-membership)):
 
 ```jsonc
 // <- to the user's own connections
@@ -402,7 +407,7 @@ announce joins and leaves ([§4.3](#43-rooms)):
 - `you` replaces the connection's identity. If its `user_id` changes, the
   connection now acts as the new identity: it receives deliveries for the
   new identity's rooms ([§3.4](#34-rooms)), and clients re-derive per-user state such as
-  their room list ([§4.3](#43-rooms)) and their own reactions ([§4.5](#45-reactions)).
+  their room list ([§4.3.1](#431-listing)) and their own reactions ([§4.5](#45-reactions)).
 - After a `user_id` change, logged records keep the old `user_id`; clients
   MAY alias it to the new identity.
 - Servers SHOULD NOT reissue a retired `user_id` to another user.
@@ -446,7 +451,7 @@ client, replaced whole by a save. `delivery`: this client's view, not logged.
 | `room_id`        | server   | required                                                          |
 | `log_id`         | server   | position of this room record ([§2](#2-identifiers))                                 |
 | `prev_log_id`    | server   | optional; this room's previous record ([§2](#2-identifiers))                        |
-| `parent_room_id` | client   | optional; fixed at creation; marks a thread ([§4.3](#43-rooms))          |
+| `parent_room_id` | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing))          |
 | `title`          | client   | optional plain string; absent falls back to `room_id`             |
 | `intro_message`  | client   | optional message object ([§3.5](#35-messages)): the room's description or summary |
 | `ext`            | client   | optional opaque extension data ([§3.5](#35-messages))                             |
@@ -513,7 +518,7 @@ namespace:
 ```
 
 Clients need not parse `ext`, and MUST send it back unchanged when saving a
-message ([§4.2](#42-edit)) or room ([§4.3](#43-rooms)) unless they mean to change it.
+message ([§4.2](#42-edit)) or room ([§4.3.4](#434-creating-and-editing)) unless they mean to change it.
 Data that must survive other clients' saves belongs in `ext`, not in unknown
 top-level keys. Servers MAY limit `ext` or normalize or reject any field by
 local policy.
@@ -644,7 +649,7 @@ Six frame idioms cover everything logged or announced:
 - **Announcements** (`server`, `rtc`): unlogged, re-sent in full; each
   replaces the last.
 - **Room updates** (`room_update`): unlogged changes to the user's rooms,
-  never a full list ([§4.3](#43-rooms)).
+  never a full list ([§4.3.3](#433-updates)).
 - **Users** (`user`, and every user object): unlogged; each merges into the
   kept object ([§3.3](#33-identity)).
 
@@ -737,7 +742,7 @@ for the page ([§3.3](#33-identity)) and is merged after the records.
 
 1. When live delivery starts, after authentication or on joining, buffer
    live records for the room. Take `H` as its `latest_log_id`, from its room
-   record ([§4.3](#43-rooms)) or a `history` page, and keep the buffered records
+   record ([§4.3.1](#431-listing)) or a `history` page, and keep the buffered records
    above H.
 2. Page forward with `before: H`, from `after: C + 1` given a checkpoint C,
    otherwise from the start, until `more: false`.
@@ -833,9 +838,12 @@ clients holding the old content drop it on the new tombstone.
 
 Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
 share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
-`room_set` are requests; `room_update` is a notification.
+`room_set` are requests; `room_update` is a notification. Visibility and
+membership are server policy.
 
-**Listing.** `room_list` answers with the rooms matching its filters, as
+#### 4.3.1 Listing
+
+`room_list` answers with the rooms matching its filters, as
 room records ([§3.4](#34-rooms)) in two arrays: `joined`, rooms the user has joined, and
 `rooms`, visible rooms the user has not joined. Listing never joins.
 
@@ -897,7 +905,9 @@ complete objects in the result's `users`. Servers MAY truncate or omit
 `members` and MAY omit `member_count`, which stays the total. A client given
 no `members` learns a room's members from its history and from joins ([§3.3](#33-identity)).
 
-**Membership.** `room_join` and `room_leave` take only a `room_id` and
+#### 4.3.2 Membership
+
+`room_join` and `room_leave` take only a `room_id` and
 return `{}`. Joining subscribes: every connection of the user receives
 deliveries for the joined room, and only joined rooms notify ([§4.7](#47-push)).
 An unknown or invisible `room_id` is `invalid_params`; the server MAY deny
@@ -918,7 +928,9 @@ such as in large rooms; the members a client learns this way are partial.
 {"method": "user", "params": {"room_id": "general", "old": {"user_id": "ada"}}}
 ```
 
-**Updates.** `room_update` tells the user's connections what changed, never
+#### 4.3.3 Updates
+
+`room_update` tells the user's connections what changed, never
 the full list:
 
 - `joined`: room records of rooms the user joined, on any connection, by
@@ -937,7 +949,9 @@ the full list:
 {"method": "room_update", "params": {"updated": [{"room_id": "general", "log_id": "1724803600000", "title": "General (ops)", ...}]}}
 ```
 
-**Creating and editing.** `room_set` without `room_id` creates a room and
+#### 4.3.4 Creating and editing
+
+`room_set` without `room_id` creates a room and
 joins the creator; with `room_id` it replaces the client fields ([§3.4](#34-rooms))
 other than `parent_room_id`, which is fixed at creation, and omitted fields
 are cleared. Both return `{"room_id": "..."}`, and the change arrives as a
@@ -982,11 +996,11 @@ are cleared. Both return `{"room_id": "..."}`, and the change arrives as a
   unknown `parent_room_id`, or invalid types are `invalid_params`;
   unauthorized requests are `denied`.
 
-**Posting** in a room does not require joining it ([§3.5](#35-messages)). The server MAY
+#### 4.3.5 Posting
+
+Posting in a room does not require joining it ([§3.5](#35-messages)). The server MAY
 deny the post, or MAY join the poster. A poster who has not joined does not
 receive the broadcast; the result is the confirmation.
-
-Visibility and membership are server policy.
 
 ### 4.4 `activity`
 
@@ -1026,7 +1040,7 @@ Activity is not part of the append-only log. Servers MAY drop `typing` and
 - Delivery is server policy: to the room, which shows read receipts, or only
   to the user's own connections, which syncs read cursors across devices.
 - Servers MAY keep each user's latest `read_message_id` per room and send
-  it to the user's connections after they list the room ([§4.3](#43-rooms)).
+  it to the user's connections after they list the room ([§4.3.1](#431-listing)).
 - `away` (optional): `true` when nobody is attending this connection, such as
   an unfocused tab, a backgrounded app, or a connection opened to fetch after
   a push. It applies to the sending connection only and ends with `away:
@@ -1283,7 +1297,7 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   `log_id`, so clients render it but never install it as a snapshot. `body`
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
-- Suggested convention: wake a user only for rooms they have joined ([§4.3](#43-rooms)),
+- Suggested convention: wake a user only for rooms they have joined ([§4.3.2](#432-membership)),
   when every connection of theirs is away or gone ([§4.4](#44-activity)) and neither
   that room nor all rooms are muted for them. Servers MAY wait briefly first
   and skip the push if the user's `read_message_id` has passed the message.
