@@ -76,7 +76,7 @@ Cloudflare recommends the hibernation API for WebSocket servers: [WebSocket guid
 - Keep attachments comfortably below the platform's 16 KiB maximum; do not put message history or credentials into them.
 - Reconstruct connection indexes through `ctx.getWebSockets()` and attachments after hibernation. Check socket state before sending. Reconstructed indexes are caches, never durable authority.
 - Do not re-send initial announcements or repeat auth just because the constructor runs after hibernation. Actual reconnects authenticate again.
-- Use native WebSocket control ping/pong; no application heartbeat and no permanent `setInterval` or `setTimeout`.
+- The runtime cannot send WebSocket pings, so a peer that vanishes without a close frame (sleep, a network change) would stay connected until the edge gives up on it. Clients may opt in to a keepalive instead: the frame `{"method":"ping"}`, byte for byte, every `keepalive_seconds` (`ext.demo`, 45). `setWebSocketAutoResponse` answers `{"method":"pong"}` without waking the object, so it spends no frame budget; both are notifications with unknown methods, which every other server and client ignores. A connection that has sent the keepalive and then neither it nor any frame for `keepalive_timeout_seconds` (150) is stale: it is closed with 1001 before `members` are listed and before admission, and does not count against its IP's connection limits. A connection that never sent the keepalive is never judged stale. No permanent `setInterval` or `setTimeout`, and no alarm for this.
 - Share one DO alarm scheduler between auth deadlines, cleanup, and maintenance retries. Always schedule the earliest outstanding task; cleanup scheduling must not overwrite an earlier auth deadline.
 - A closing socket may remain visible to the runtime; do not let it receive broadcasts or grant extra admission while its close is pending.
 
@@ -87,7 +87,7 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6}}}}
+{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"keepalive_seconds":45,"room_leave":false,"read_cursors":false}}}}
 ```
 
 `ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol Appendix I, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
@@ -265,6 +265,8 @@ The smaller frame limit is a documented demo exception to the protocol's advisor
 | activity_broadcasts_per_user_minute | 10 relayed typing updates |
 | room_list_requests_per_user_minute | 6 |
 | room_list_members | 20 connected users listed per room |
+| keepalive_seconds | 45, advertised; answered by the runtime, not counted as frames |
+| keepalive_timeout_seconds | 150 without a keepalive or frame, once one was sent |
 | processed_frames_per_day | 100,000 globally |
 | repeated_policy_violations | Close after 3 within 60 seconds; severe oversized/binary input closes immediately |
 
@@ -304,7 +306,7 @@ The 5,000-post ceiling is a maximum, not a promise. If the measured schema/traff
 
 Implementation must have one metered storage boundary for all SQL/KV/alarm work. For each operation class, establish a conservative cost bound, reserve it before work, and observe actual SQL cursor row counts to verify the model. Include the cost of the reservation itself. No public request may trigger a full-table scan, unbounded join, migration, or unmetered maintenance query. `LIMIT` alone does not prove bounded scan cost. A cap breach in cost calibration is a release blocker, not a reason to silently raise budgets.
 
-Durable block reservation is allowed to avoid a SQL write on every incoming/rejected frame: commit an allowance before spending it; tie it to an owner and UTC day; never grant the same allowance twice. Persist consumption where necessary, or burn unused allowance on restart. Connection attachments can preserve connection-local lease state across normal hibernation. Budget reservations must remain charged even if subsequent work rolls back or crashes; a rolled-back row is not evidence of refunded platform usage. Exhausted/uncertain accounting fails closed.
+Durable block reservation is allowed to avoid a SQL write on every incoming/rejected frame: commit an allowance before spending it; tie it to an owner and UTC day; never grant the same allowance twice. Persist consumption where necessary, or burn unused allowance on restart. Connection attachments can preserve connection-local lease state across normal hibernation. Budget reservations must remain charged even if subsequent work rolls back or crashes; a rolled-back row is not evidence of refunded platform usage. Once a metered operation finishes, the part of its reservation that its SQL cursors show it did not use (rolled-back rows count as used) is credited back in one budget-row update, which the operation pays for; a crash before then leaves the whole reservation charged, and KV work, which has no cursor, stays fully charged. Exhausted/uncertain accounting fails closed.
 
 Posting window timestamps and counters must survive reconnection/hibernation and concurrent sockets. Keep bounded persistent limiter keys for admitted principals, expire them after their applicable windows, and bound any additional in-memory negative cache. Never create one durable record per attacker-supplied request ID, failed credential, or rejected IP. Proposed limiter-record cap: 10,000, with old expired entries reclaimable in metered batches; new principals are denied when the cap is reached.
 

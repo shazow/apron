@@ -41,3 +41,4 @@ jobs:
         working-directory: tests/interop
       - run: make test-interop
       - run: make test-worker-browser
+      - run: make test-perf

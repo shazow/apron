@@ -72,6 +72,18 @@ describe('ChatClient reference features', () => {
 		expect(general().readMessageId).toBe('31');
 	});
 
+	it('keeps your read cursor locally when the server keeps none', async () => {
+		await socket.greet(['history', 'rooms', 'activity'], {
+			room: { room_id: 'general', log_id: '10', title: 'General', latest_log_id: '10', history_log_id: '10' },
+			ext: { demo: { read_cursors: false } }
+		});
+		await socket.reply('history', { entries: [], more: false, latest_log_id: '10', history_log_id: '10' });
+		socket.sent = [];
+		client.markRead('general', '31');
+		expect(socket.sent).toEqual([]);
+		expect(snapshot.rooms.find((room) => room.id === 'general')?.readMessageId).toBe('31');
+	});
+
 	it('lists rooms with members and marks the joined ones', async () => {
 		await connect();
 		const listing = client.listRooms();
@@ -89,6 +101,40 @@ describe('ChatClient reference features', () => {
 		expect(socket.request('room_list').params).toEqual({ parent_room_id: 'general' });
 		await socket.reply('room_list', { rooms: [{ room_id: 't1', log_id: '13', parent_room_id: 'general', title: 'Thread', members: [] }] });
 		expect(snapshot.threadDirectory.general.map((room) => room.id)).toEqual(['t1']);
+	});
+
+	it('shares a room_list in flight and reuses a recent one', async () => {
+		await connect();
+		const listings = () => socket.sent.filter((frame) => frame.method === 'room_list').length;
+		const first = client.listRooms();
+		const second = client.listRooms();
+		expect(listings()).toBe(1);
+		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }] });
+		expect((await first).map((room) => room.id)).toEqual(['general']);
+		expect((await second).map((room) => room.id)).toEqual(['general']);
+		quiet(client.listRooms());
+		expect(listings()).toBe(1);
+		// A caller that wants fresher, or any caller once it is stale, lists again.
+		vi.advanceTimersByTime(5_000);
+		quiet(client.listRooms(undefined, 1_000));
+		expect(listings()).toBe(2);
+		await socket.reply('room_list', { rooms: [] });
+		vi.advanceTimersByTime(10_000);
+		quiet(client.listRooms());
+		expect(listings()).toBe(3);
+		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }] });
+		// A room the listing already showed changes nothing; a new one makes it stale.
+		socket.receive({ method: 'room', params: { room_id: 'general', log_id: '10', title: 'General' } });
+		quiet(client.listRooms());
+		expect(listings()).toBe(3);
+		socket.receive({ method: 'room', params: { room_id: 'ops', log_id: '11', title: 'Ops' } });
+		quiet(client.listRooms());
+		expect(listings()).toBe(4);
+		await socket.reply('room_list', { rooms: [{ room_id: 'general', log_id: '10', members: [] }, { room_id: 'ops', log_id: '11', members: [] }] });
+		// So does removing one it showed.
+		socket.receive({ method: 'room', params: { room_id: 'ops', removed: true } });
+		quiet(client.listRooms());
+		expect(listings()).toBe(5);
 	});
 
 	it('updates the profile with me and adopts what the server kept', async () => {

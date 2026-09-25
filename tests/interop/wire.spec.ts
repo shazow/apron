@@ -20,6 +20,7 @@ type Step =
 	| { createRoom: { as: string; parent_room_id?: string; title?: string; intro_message_id?: string } }
 	| { updateRoom: { as: string; room: string; title?: string | null; intro_message_id?: string | null } }
 	| { loadRoom: { as: string; room: string } }
+	| { loadOlder: { as: string; room: string } }
 	| { disconnect: true }
 	| { expect: ObjectValue };
 interface Fixture {
@@ -31,7 +32,7 @@ interface Fixture {
 }
 
 const MUTATIONS = new Set(['message', 'room', 'reactions']);
-const OPERATIONS = ['send', 'editMessage', 'moveMessage', 'deleteMessage', 'react', 'createRoom', 'updateRoom', 'loadRoom'];
+const OPERATIONS = ['send', 'editMessage', 'moveMessage', 'deleteMessage', 'react', 'createRoom', 'updateRoom', 'loadRoom', 'loadOlder'];
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../..');
@@ -227,6 +228,9 @@ for (const fixture of fixtures) {
 							} else if ('loadRoom' in step) {
 								const { as, room } = step.loadRoom;
 								track(as, client.loadRoom(room));
+							} else if ('loadOlder' in step) {
+								const { as, room } = step.loadOlder;
+								track(as, client.loadOlder(room));
 							} else if ('disconnect' in step) {
 								await control(`/connections/${connection}/close`);
 								unmatched.length = 0;

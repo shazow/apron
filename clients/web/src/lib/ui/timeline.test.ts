@@ -143,6 +143,13 @@ describe('thread view', () => {
 		expect(items[2]).toMatchObject({ grouped: false });
 	});
 
+	it('marks the reply count as a lower bound while older replies are not loaded', () => {
+		const intro = message(0, 'alice');
+		const reply = message(1000, 'bob', { room_id: 't1' });
+		expect(buildThreadTimeline({ messages: [reply], intro, moreReplies: true })[1]).toEqual({ kind: 'replies', key: 'replies', count: 1, more: true });
+		expect(buildThreadTimeline({ messages: [reply], intro })[1]).toEqual({ kind: 'replies', key: 'replies', count: 1 });
+	});
+
 	it('places each rename by its log position and breaks grouping around it', () => {
 		const intro = message(0, 'alice');
 		const first = message(1000, 'bob', { room_id: 't1' });
@@ -181,6 +188,17 @@ describe('message helpers', () => {
 		const people = peopleIn([message(0, 'alice'), message(1, 'bob'), message(2, 'alice')], me);
 		expect(people.map((p) => [p.id, p.me ?? false])).toEqual([['alice', false], ['bob', false], ['sam', true]]);
 		expect(peopleIn([message(0, 'sam')], me)).toEqual([{ id: 'sam', name: 'Sam', me: true }]);
+	});
+
+	it('offers only the listed members when the room has a members list', () => {
+		const me = { user_id: 'sam', name: 'Sam' };
+		const messages = [message(0, 'alice'), message(1, 'bob'), message(2, 'carol')];
+		// Bob has disconnected; Dana is connected but has not spoken.
+		const people = peopleIn(messages, me, [{ user_id: 'alice' }, { user_id: 'carol' }, { user_id: 'dana' }]);
+		expect(people.map((p) => p.id)).toEqual(['carol', 'alice', 'dana', 'sam']);
+		expect(peopleIn(messages, me, []).map((p) => p.id)).toEqual(['sam']);
+		// Whoever posted after the listing was around since it was taken.
+		expect(peopleIn(messages, me, [{ user_id: 'alice' }], String(base + 1)).map((p) => p.id)).toEqual(['carol', 'alice', 'sam']);
 	});
 
 	it('fills ranges along the timeline order', () => {

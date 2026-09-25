@@ -85,10 +85,19 @@ export interface RoomSnapshot {
 	loaded: boolean;
 	/** A `loadRoom` request is in flight. */
 	loading: boolean;
+	/**
+	 * A thread loaded newest-first has older records to fetch with
+	 * `loadOlder`; its message count is a lower bound until they are.
+	 */
+	olderAvailable?: boolean;
+	/** A `loadOlder` request is in flight. */
+	loadingOlder?: boolean;
 	/** Your read cursor in this room (Appendix D.1), as the server last reported or you advanced it. */
 	readMessageId?: string;
 	/** The room's members from the latest `room_list` that listed it (Appendix C). */
 	members?: Identity[];
+	/** The room's `latest_log_id` in that listing: whoever posted after it was around since. */
+	membersAsOf?: string;
 }
 
 /**
@@ -251,6 +260,18 @@ interface RoomState {
 	waiters: Array<{ resolve: () => void; reject: (error: Error) => void }>;
 	/** Thread checkpoint T of `loadRoom`. */
 	loadCheckpoint?: string;
+	/**
+	 * Kept from an earlier connection: a thread's records after T are not
+	 * loaded yet, so it reports unloaded until the next `loadRoom` catches up.
+	 */
+	resumed?: boolean;
+	/**
+	 * A thread loaded newest-first: the `first_id` of its oldest loaded page,
+	 * below which `loadOlder` pages backward while `hasOlder`.
+	 */
+	olderBefore?: string;
+	hasOlder?: boolean;
+	loadingOlder?: boolean;
 	loadGeneration: number;
 	loading: boolean;
 	/** The published timeline; rebuilt from the store when dirty and not recovering. */
@@ -315,6 +336,8 @@ type ValidHistoryResponse = JsonObject & {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const HISTORY_PAGE_SIZE = 200;
+/** A thread opens on its newest page this size; older pages load as the reader scrolls back. */
+const THREAD_PAGE_SIZE = 50;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 /** How long a typing indicator this client sends should persist without a refresh, in the `activity` frame's `typing` seconds. */
 const TYPING_TIMEOUT_S = 15;
@@ -322,6 +345,20 @@ const TYPING_TIMEOUT_S = 15;
 const MAX_TYPING_S = 300;
 /** How often the indicator is refreshed while typing continues: well inside the timeout, and far from one frame per keystroke. */
 const TYPING_REFRESH_MS = 12_000;
+/**
+ * The demo worker's keepalive, sent verbatim so its runtime can answer it
+ * without waking the server. Any other server ignores it as an unknown
+ * notification (§1).
+ */
+const KEEPALIVE_FRAME = '{"method":"ping"}';
+/**
+ * How long a connection must stay authenticated before the reconnect backoff
+ * starts over. Resetting on auth alone let a server that closes right after
+ * auth be reconnected to every half second, each time paying for a new session.
+ */
+const STABLE_CONNECTION_MS = 30_000;
+/** How long a `room_list` result is reused for the same parent unless the caller asks for fresher. */
+const ROOM_LIST_REUSE_MS = 10_000;
 const MAX_HISTORY_BUFFER_ENTRIES = 1_000;
 const MAX_HISTORY_BUFFER_BYTES = 1_048_576;
 const RETRY_AFTER_MAX_MS = 24 * 60 * 60 * 1000;
@@ -369,11 +406,28 @@ export class ChatClient {
 	/** Read cursors per room, per user (Appendix D.1). */
 	private readonly reads = new Map<string, Map<string, string>>();
 	private readonly uploads = new Map<string, UploadState>();
-	private readonly roomMembers = new Map<string, Identity[]>();
+	private readonly roomMembers = new Map<string, { members: Identity[]; asOf?: string }>();
+	/**
+	 * Rooms kept from a lost connection with their records, floors and
+	 * checkpoints. Hidden until announced again, when recovery resumes from the
+	 * checkpoint instead of paging all retained history (Appendix A).
+	 */
+	private readonly retainedRooms = new Map<string, RoomState>();
 	private directory?: RoomListing[];
 	private readonly threadDirectory = new Map<string, RoomListing[]>();
+	/** The latest `room_list` per parent (`''` for top-level), shared while in flight and reused while recent. */
+	private readonly listings = new Map<string, { at: number; promise: Promise<RoomListing[]>; rooms?: Set<string> }>();
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
+	private keepaliveTimer?: ReturnType<typeof setInterval>;
+	/** Resets the reconnect backoff once the current connection has stayed up. */
+	private stableTimer?: ReturnType<typeof setTimeout>;
+	/** Resumes connecting when the page is shown or the network returns; set while waiting for either. */
+	private presenceWaiter?: () => void;
+	/** Keepalives sent on the current socket since its last answer. */
+	private unansweredPings = 0;
+	/** Drops the current socket as if it had closed: for one that stopped answering. */
+	private abandonSocket?: () => void;
 	private connectionId = 0;
 	private reconnectAttempt = 0;
 	private running = false;
@@ -393,6 +447,8 @@ export class ChatClient {
 	private displayName = '';
 	/** The `me` request `handleAuth` sent for `displayName`, if any. */
 	private authNameRequest?: OperationHandle;
+	/** A name the server denied (a guest on a server that only lets registered users rename): not resent on reconnect. */
+	private declinedName?: string;
 	private status: ConnectionStatus = 'idle';
 	private error?: string;
 	private showReconnectDivider = false;
@@ -448,17 +504,20 @@ export class ChatClient {
 	}
 
 	private sendName(): OperationHandle {
-		const request = this.enqueueRequest('me', { name: this.displayName }, {
+		const name = this.displayName;
+		const request = this.enqueueRequest('me', { name }, {
 			visible: false,
 			allowBeforeAuth: false
 		});
 		request.promise
 			.then((result) => {
 				if (isJsonObject(result.you) && typeof result.you.user_id === 'string') this.setYou(result.you as Identity);
+				if (this.declinedName === name) this.declinedName = undefined;
 				this.emit();
 			})
-			.catch(() => {
+			.catch((cause: Error & { code?: number }) => {
 				// A name is advisory; a server may decline it without affecting the session.
+				if (cause.code === -32001) this.declinedName = name;
 			});
 		return request;
 	}
@@ -468,6 +527,7 @@ export class ChatClient {
 		this.running = true;
 		this.reconnectHeld = false;
 		this.showReconnectDivider = this.reconnectAttempt > 0;
+		if (this.waitForPresence()) return;
 		this.connectNow();
 	}
 
@@ -477,11 +537,14 @@ export class ChatClient {
 		this.running = false;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = undefined;
+		this.stopWaitingForPresence();
+		this.clearStableTimer();
 		const socket = this.socket;
 		this.socket = undefined;
 		this.authenticated = false;
 		this.authRequested = false;
 		this.clearTyping();
+		this.stopKeepalive();
 		for (const request of this.requests.values()) {
 			clearTimeout(request.timer);
 			request.reject(new Error('Connection stopped'));
@@ -599,10 +662,12 @@ export class ChatClient {
 					timeline: room.timeline,
 					recovering: Boolean(room.recovery),
 					...(room.recoveryError ? { recoveryError: room.recoveryError } : {}),
-					loaded: !history || (thread ? room.loadCheckpoint !== undefined : room.checkpoint !== undefined),
+					loaded: !history || (thread ? room.loadCheckpoint !== undefined && !room.resumed : room.checkpoint !== undefined),
 					loading: room.loading,
+					...(this.hasOlderRecords(room) ? { olderAvailable: true } : {}),
+					...(room.loadingOlder ? { loadingOlder: true } : {}),
 					...(this.readCursor(room.id) !== undefined ? { readMessageId: this.readCursor(room.id) } : {}),
-					...(this.roomMembers.has(room.id) ? { members: this.roomMembers.get(room.id) } : {})
+					...this.membersOf(room.id)
 				};
 			}),
 			activeRoom: this.activeRoomId,
@@ -1091,8 +1156,19 @@ export class ChatClient {
 		const current = this.readCursor(roomId);
 		if (current !== undefined && compareLogIds(messageId, current) <= 0) return;
 		this.setReadCursor(roomId, this.you!.user_id, messageId);
-		this.sendFrame({ method: 'activity', params: { room_id: roomId, read_message_id: messageId } });
+		// The cursor still moves here (it places the New divider); a server that
+		// keeps no read cursors would only be charged a frame for it.
+		if (this.server?.ext?.demo?.read_cursors !== false) {
+			this.sendFrame({ method: 'activity', params: { room_id: roomId, read_message_id: messageId } });
+		}
 		this.emit();
+	}
+
+	/** A room's snapshot fields from its latest listing, if it has been listed. */
+	private membersOf(roomId: string): Pick<RoomSnapshot, 'members' | 'membersAsOf'> {
+		const listed = this.roomMembers.get(roomId);
+		if (!listed) return {};
+		return { members: listed.members, ...(listed.asOf !== undefined ? { membersAsOf: listed.asOf } : {}) };
 	}
 
 	/**
@@ -1101,7 +1177,25 @@ export class ChatClient {
 	 * result also lands in the snapshot's `directory` or `threadDirectory`, and
 	 * members become known users.
 	 */
-	listRooms(parentRoomId?: string): Promise<RoomListing[]> {
+	listRooms(parentRoomId?: string, maxAgeMs = ROOM_LIST_REUSE_MS): Promise<RoomListing[]> {
+		// Listing is costly on some servers and rate limited on most, and several
+		// parts of the UI want it at once: a request in flight, or one answered
+		// within `maxAgeMs`, serves them all.
+		const key = parentRoomId ?? '';
+		const recent = this.listings.get(key);
+		if (recent && Date.now() - recent.at < maxAgeMs) return recent.promise.then((listings) => listings.map((listing) => this.withJoined(listing)));
+		const promise = this.fetchRooms(parentRoomId);
+		const entry: { at: number; promise: Promise<RoomListing[]>; rooms?: Set<string> } = { at: Date.now(), promise };
+		this.listings.set(key, entry);
+		promise.then((listings) => {
+			entry.rooms = new Set(listings.map((listing) => listing.id));
+		}, () => {
+			if (this.listings.get(key) === entry) this.listings.delete(key);
+		});
+		return promise.then((listings) => listings.map((listing) => this.withJoined(listing)));
+	}
+
+	private fetchRooms(parentRoomId?: string): Promise<RoomListing[]> {
 		const params: JsonObject = parentRoomId === undefined ? {} : { parent_room_id: parentRoomId };
 		return this.enqueueRequest('room_list', params, { visible: false, allowBeforeAuth: false }).promise.then((result) => {
 			const listings: RoomListing[] = [];
@@ -1112,7 +1206,7 @@ export class ChatClient {
 				for (const member of members) this.noteUser(member, 'profile');
 				for (const message of decoded.embedded) this.installMessage(message);
 				const record = decoded.record;
-				this.roomMembers.set(record.room_id, members);
+				this.roomMembers.set(record.room_id, { members, ...(decoded.delivery.latest_log_id !== undefined ? { asOf: decoded.delivery.latest_log_id } : {}) });
 				listings.push({
 					id: record.room_id,
 					title: typeof record.title === 'string' && record.title ? record.title : record.room_id,
@@ -1126,8 +1220,19 @@ export class ChatClient {
 			if (parentRoomId === undefined) this.directory = listings;
 			else this.threadDirectory.set(parentRoomId, listings);
 			this.emit();
-			return listings.map((listing) => this.withJoined(listing));
+			return listings;
 		});
+	}
+
+	/** A room was removed: listings that showed it are stale. */
+	private forgetListingsWith(roomId: string): void {
+		for (const [key, entry] of this.listings) if (entry.rooms?.has(roomId)) this.listings.delete(key);
+	}
+
+	/** A room was announced: a finished listing of its parent that lacks it predates it. */
+	private forgetListingMissing(parentKey: string, roomId: string): void {
+		const entry = this.listings.get(parentKey);
+		if (entry?.rooms && !entry.rooms.has(roomId)) this.listings.delete(parentKey);
 	}
 
 	private withJoined(listing: RoomListing): RoomListing {
@@ -1235,14 +1340,33 @@ export class ChatClient {
 
 	private async loadThread(room: RoomState): Promise<void> {
 		const head = room.latestLogId;
-		if (!head) return;
+		if (!head) {
+			room.resumed = false;
+			return;
+		}
 		const generation = ++room.loadGeneration;
 		const stale = () => this.rooms.get(room.id) !== room || room.loadGeneration !== generation;
 		room.loading = true;
 		room.recoveryError = undefined;
 		this.emit();
 		try {
-			let checkpoint = room.loadCheckpoint;
+			if (room.loadCheckpoint === undefined) {
+				// First load: only the newest page. Everything up to H is then
+				// covered for live delivery, and older pages load on demand.
+				const result = await this.enqueueRequest('history', { room_id: room.id, before: head, limit: THREAD_PAGE_SIZE }, {
+					visible: false, allowBeforeAuth: false
+				}).promise;
+				if (stale()) return;
+				if (!validHistoryMetadata(result)) throw new Error('Invalid history response');
+				this.observeHistoryResponse(room, result);
+				if (stale()) return;
+				this.applyPage(room, result);
+				this.noteOlderPage(room, result);
+				room.loadCheckpoint = head;
+				room.resumed = false;
+				return;
+			}
+			let checkpoint: string | undefined = room.loadCheckpoint;
 			let after: string | undefined = maxDefined(checkpoint === undefined ? undefined : increment(checkpoint), room.floor) ?? FIRST_LOG_ID;
 			while (after === undefined || compareLogIds(after, head) <= 0) {
 				const result = await this.enqueueRequest('history', historyParams(room.id, after, head), {
@@ -1261,6 +1385,7 @@ export class ChatClient {
 				if (!result.more) {
 					checkpoint = maxDefined(checkpoint, head);
 					room.loadCheckpoint = checkpoint;
+					room.resumed = false;
 					return;
 				}
 				const lastId = result.last_id;
@@ -1281,8 +1406,50 @@ export class ChatClient {
 		}
 	}
 
+	/**
+	 * Loads the page of a thread's history just before what is loaded, when a
+	 * newest-first load left older records (Appendix A, backward paging).
+	 */
+	async loadOlder(roomId: string): Promise<void> {
+		const room = this.rooms.get(roomId);
+		if (!room || room.loadingOlder || !this.hasOlderRecords(room) || room.olderBefore === undefined) return;
+		const generation = room.loadGeneration;
+		const stale = () => this.rooms.get(room.id) !== room || room.loadGeneration !== generation;
+		room.loadingOlder = true;
+		this.emit();
+		try {
+			const before = decrement(room.olderBefore);
+			const result = await this.enqueueRequest('history', { room_id: room.id, before, limit: THREAD_PAGE_SIZE }, {
+				visible: false, allowBeforeAuth: false
+			}).promise;
+			if (stale()) return;
+			if (!validHistoryMetadata(result)) throw new Error('Invalid history response');
+			this.observeHistoryResponse(room, result);
+			if (stale()) return;
+			this.applyPage(room, result);
+			this.noteOlderPage(room, result);
+		} finally {
+			if (!stale()) room.loadingOlder = false;
+			this.emit();
+		}
+	}
+
+	/** Records where a backward page ended: its `first_id` bounds the next one. */
+	private noteOlderPage(room: RoomState, result: ValidHistoryResponse): void {
+		const first = isLogId(result.first_id) ? result.first_id : undefined;
+		if (first !== undefined) room.olderBefore = first;
+		room.hasOlder = result.more && first !== undefined;
+	}
+
+	/** Older records remain above the room's floor. */
+	private hasOlderRecords(room: RoomState): boolean {
+		if (!room.hasOlder || room.olderBefore === undefined) return false;
+		return room.floor === undefined || compareLogIds(room.olderBefore, room.floor) > 0;
+	}
+
 	private connectNow(): void {
 		if (!this.running || this.socket) return;
+		this.stopWaitingForPresence();
 		this.connectionProbe?.abort();
 		const id = ++this.connectionId;
 		let opened = false;
@@ -1314,8 +1481,9 @@ export class ChatClient {
 			if (this.isCurrentSocket(id, socket) && !this.connectionErrored) this.error = 'WebSocket connection error';
 			this.emit();
 		};
-		socket.onclose = () => {
+		const closed = (): void => {
 			if (!this.isCurrentSocket(id, socket)) return;
+			this.abandonSocket = undefined;
 			this.cancelPasskey();
 			this.showReconnectDivider = this.rooms.size > 0 || this.showReconnectDivider;
 			this.socket = undefined;
@@ -1323,10 +1491,14 @@ export class ChatClient {
 			this.authRequested = false;
 			this.clearTransientRequests();
 			this.clearTyping();
+			this.stopKeepalive();
+			this.clearStableTimer();
 			// The protocol view is rebuilt from the next connection's announcements
-			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session). The UI keeps the
-			// last authenticated view on screen meanwhile, keyed off disconnectedAt.
-			this.discardProtocolView('Connection closed');
+			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session), but each room's
+			// records and checkpoint are kept so it resumes where it stopped. The
+			// UI keeps the last authenticated view on screen meanwhile, keyed off
+			// disconnectedAt.
+			this.suspendProtocolView('Connection closed');
 			if (this.running) {
 				this.disconnectedAt ??= Date.now();
 				this.status = 'reconnecting';
@@ -1336,6 +1508,13 @@ export class ChatClient {
 				this.status = 'offline';
 			}
 			this.emit();
+		};
+		socket.onclose = closed;
+		// A socket whose peer vanished can stay OPEN here indefinitely; close it
+		// and carry on as if the close had arrived, without waiting for it.
+		this.abandonSocket = () => {
+			try { socket.close(4000, 'keepalive unanswered'); } catch { /* already closed */ }
+			closed();
 		};
 	}
 
@@ -1403,6 +1582,9 @@ export class ChatClient {
 				return;
 			case 'user':
 				this.handleUser(frame.params);
+				return;
+			case 'pong':
+				this.unansweredPings = 0;
 				return;
 		}
 		if (frame.method !== undefined) return;
@@ -1525,17 +1707,71 @@ export class ChatClient {
 		this.retryAfterUntil = 0;
 		this.authenticated = true;
 		this.authRequested = false;
-		this.reconnectAttempt = 0;
+		// The backoff starts over only once this connection has stayed up.
+		this.clearStableTimer();
+		const stableSocket = this.socket;
+		this.stableTimer = setTimeout(() => {
+			this.stableTimer = undefined;
+			if (this.socket === stableSocket && this.authenticated) this.reconnectAttempt = 0;
+		}, STABLE_CONNECTION_MS);
 		this.disconnectedAt = undefined;
-		// A reconnect drops the store, and a server with cap `history` gives it all
-		// back through recovery; only a session-only scrollback (§4 fallback) has a
-		// real gap to mark.
+		// A reconnect keeps each room's records, and a server with cap `history`
+		// fills the gap through recovery; only a session-only scrollback (§4
+		// fallback) has a real gap to mark.
 		this.showReconnectDivider = (this.showReconnectDivider || this.rooms.size > 0) && !this.hasCap('history');
 		// Requests queued while this connection was authenticating go out now.
 		for (const request of this.requests.values()) this.sendRequest(request);
-		this.authNameRequest = this.displayName ? this.sendName() : undefined;
+		// Renaming is a logged mutation on some servers: send the saved name only
+		// when the server doesn't already have it, and not again after it was
+		// denied, unless this sign-in is a registered one that may now be allowed.
+		const registered = passkey || typeof result.token === 'string';
+		const name = this.displayName;
+		const wanted = Boolean(name) && name !== this.you?.name && (registered || this.declinedName !== name);
+		this.authNameRequest = wanted ? this.sendName() : undefined;
+		this.startKeepalive();
 		this.emit();
 		return true;
+	}
+
+	/**
+	 * Sends the keepalive the server asks for in `ext.demo.keepalive_seconds`,
+	 * now and then at that interval, for as long as this socket is current.
+	 * The demo worker cannot ping, so this is how it tells a connection that is
+	 * still there from one whose peer vanished without closing it; it also
+	 * keeps Cloudflare from dropping the socket as idle. When two keepalives
+	 * in a row go unanswered, the socket is presumed dead and replaced. Counting
+	 * keepalives rather than time means a tab whose timers were frozen probes
+	 * again after it wakes instead of dropping a socket that may still work.
+	 */
+	private startKeepalive(): void {
+		this.stopKeepalive();
+		const seconds = this.server?.ext?.demo?.keepalive_seconds;
+		const socket = this.socket;
+		if (!socket || typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return;
+		const interval = Math.max(5, seconds) * 1_000;
+		this.unansweredPings = 0;
+		const ping = (): boolean => {
+			if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return false;
+			socket.send(KEEPALIVE_FRAME);
+			this.unansweredPings += 1;
+			return true;
+		};
+		if (!ping()) return;
+		const timer = setInterval(() => {
+			if (socket === this.socket && this.unansweredPings >= 2) {
+				this.abandonSocket?.();
+			} else if (ping()) {
+				return;
+			}
+			clearInterval(timer);
+			if (this.keepaliveTimer === timer) this.keepaliveTimer = undefined;
+		}, interval);
+		this.keepaliveTimer = timer;
+	}
+
+	private stopKeepalive(): void {
+		if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
+		this.keepaliveTimer = undefined;
 	}
 
 	private setYou(identity: Identity): void {
@@ -1620,6 +1856,7 @@ export class ChatClient {
 			const room = this.rooms.get(roomId);
 			if (room) this.discardRoom(room, 'Room removed');
 			this.rooms.delete(roomId);
+			this.forgetListingsWith(roomId);
 			if (this.activeRoomId === roomId) this.activeRoomId = this.defaultRoomId();
 			this.emit();
 			return;
@@ -1627,7 +1864,8 @@ export class ChatClient {
 		const decoded = decodeRoom(params);
 		if (!decoded) return;
 		this.installRoom(decoded.record);
-		const existing = this.rooms.get(roomId);
+		const existing = this.rooms.get(roomId) ?? this.adoptRetainedRoom(roomId);
+		if (!existing) this.forgetListingMissing(decoded.record.parent_room_id ?? '', roomId);
 		const room: RoomState = existing ?? {
 			id: roomId,
 			recoveryGeneration: 0,
@@ -1906,22 +2144,59 @@ export class ChatClient {
 		for (const waiter of room.waiters.splice(0)) waiter.reject(new Error(reason));
 	}
 
+	/**
+	 * After a lost connection: hide every room until the next connection
+	 * announces it, but keep its records, floor and checkpoint so it resumes
+	 * from there (Appendix A recovery from `C + 1`). Everything else scoped to
+	 * the connection is forgotten as in `discardProtocolView`.
+	 */
+	private suspendProtocolView(reason: string): void {
+		for (const room of this.rooms.values()) {
+			this.discardRoom(room, reason);
+			this.retainedRooms.set(room.id, room);
+		}
+		this.rooms.clear();
+		this.forgetConnectionState();
+	}
+
+	/** A room kept from a lost connection, now announced again. */
+	private adoptRetainedRoom(roomId: string): RoomState | undefined {
+		const room = this.retainedRooms.get(roomId);
+		if (!room) return undefined;
+		this.retainedRooms.delete(roomId);
+		// Anything in flight was cancelled with the old connection.
+		room.loading = false;
+		room.loadingOlder = false;
+		room.recoveryError = undefined;
+		// A thread's checkpoint predates the gap; the next load catches up from it.
+		if (room.loadCheckpoint !== undefined) room.resumed = true;
+		// Reaction summaries depend on the viewer, who may be a new guest.
+		room.dirty = true;
+		return room;
+	}
+
 	/** Forget every connection-scoped protocol record; the next connection re-announces. */
 	private discardProtocolView(reason: string): void {
 		for (const room of this.rooms.values()) this.discardRoom(room, reason);
 		this.rooms.clear();
+		this.retainedRooms.clear();
 		this.store.clear();
 		this.store.takeTouched();
+		this.users.clear();
+		this.userAliases.clear();
+		this.forgetConnectionState();
+	}
+
+	private forgetConnectionState(): void {
 		this.reactionIntents.clear();
 		this.pendingMessageSaves.clear();
 		this.pendingRoomSaves.clear();
 		this.activeRoomId = undefined;
 		this.server = undefined;
 		this.you = undefined;
-		this.users.clear();
-		this.userAliases.clear();
 		this.reads.clear();
 		this.roomMembers.clear();
+		this.listings.clear();
 		this.directory = undefined;
 		this.threadDirectory.clear();
 	}
@@ -1976,14 +2251,19 @@ export class ChatClient {
 		if (!request) return;
 		this.requests.delete(id);
 		clearTimeout(request.timer);
-		if (rpcError) request.reject(this.errorFromRpc(isJsonObject(rpcError) ? rpcError : { code: -32603, message: 'Invalid error' }));
+		if (rpcError) request.reject(this.errorFromRpc(isJsonObject(rpcError) ? rpcError : { code: -32603, message: 'Invalid error' }, request.method === 'auth'));
 		else request.resolve(result);
 		this.emit();
 	}
 
-	private errorFromRpc(rpcError: RpcError): Error {
+	/**
+	 * `connection`: a refused `auth`, whose `retry_after` holds back reconnecting.
+	 * Any other request's `retry_after` is that request's limit (a throttled
+	 * listing or history page) and stays on its error for the caller.
+	 */
+	private errorFromRpc(rpcError: RpcError, connection = false): Error {
 		const retryAfter = retryAfterMilliseconds(rpcError);
-		if (retryAfter !== undefined) {
+		if (retryAfter !== undefined && connection) {
 			this.retryAfterUntil = Math.max(this.retryAfterUntil, Date.now() + retryAfter);
 		}
 		const error = new Error(userFacingRpcError(rpcError));
@@ -2100,8 +2380,42 @@ export class ChatClient {
 			: reconnectDelay(this.reconnectAttempt, Math.random(), retryAfter);
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = undefined;
+			if (this.waitForPresence()) return;
 			this.connectNow();
 		}, delay);
+	}
+
+	/**
+	 * Connecting waits while the page is hidden or the browser is offline: a
+	 * background tab needs no socket until it is looked at, and every new
+	 * connection costs the server a session and its history. An open socket is
+	 * kept. Returns whether it is waiting; it connects once both clear.
+	 */
+	private waitForPresence(): boolean {
+		if (!absent()) return false;
+		if (this.presenceWaiter) return true;
+		const resume = (): void => {
+			if (absent()) return;
+			this.stopWaitingForPresence();
+			if (this.running && !this.socket && !this.reconnectTimer) this.connectNow();
+		};
+		this.presenceWaiter = resume;
+		globalThis.document?.addEventListener('visibilitychange', resume);
+		globalThis.addEventListener?.('online', resume);
+		return true;
+	}
+
+	private stopWaitingForPresence(): void {
+		const resume = this.presenceWaiter;
+		if (!resume) return;
+		this.presenceWaiter = undefined;
+		globalThis.document?.removeEventListener('visibilitychange', resume);
+		globalThis.removeEventListener?.('online', resume);
+	}
+
+	private clearStableTimer(): void {
+		if (this.stableTimer) clearTimeout(this.stableTimer);
+		this.stableTimer = undefined;
 	}
 
 	/**
@@ -2276,6 +2590,10 @@ function increment(id: string): string {
 	return (BigInt(id) + 1n).toString();
 }
 
+function decrement(id: string): string {
+	return (BigInt(id) - 1n).toString();
+}
+
 function maxDefined(a: string | undefined, b: string | undefined): string | undefined {
 	if (a === undefined) return b;
 	if (b === undefined) return a;
@@ -2367,6 +2685,11 @@ function userFacingRpcError(error: RpcError): string {
 }
 
 /** Exposed for deterministic UI/client tests without relying on timer scheduling. */
+/** Whether the page is hidden or the browser reports no network; false outside a browser. */
+function absent(): boolean {
+	return globalThis.document?.visibilityState === 'hidden' || globalThis.navigator?.onLine === false;
+}
+
 export function reconnectDelay(attempt: number, random = 0.5, retryAfterMs?: number): number {
 	const boundedAttempt = Math.max(1, Math.floor(attempt));
 	const base = Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(7, boundedAttempt - 1));

@@ -259,13 +259,65 @@ describe('ChatClient history per room', () => {
 		expect(socket.sent.filter((frame) => frame.method === 'history')).toHaveLength(1);
 		expect(room('20')).toMatchObject({ parentRoomId: 'general', loaded: false, loading: false });
 		const loaded = client.loadRoom('20');
-		expect(socket.request('history').params).toEqual({ room_id: '20', after: '20', before: '22', limit: 200 });
+		// The newest page first; older pages load on demand.
+		expect(socket.request('history').params).toEqual({ room_id: '20', before: '22', limit: 50 });
 		expect(room('20').loading).toBe(true);
 		await socket.reply('history', { entries: [message('21', { room_id: '20' }), message('22', { room_id: '20' })], more: false, latest_log_id: '22', history_log_id: '20' });
 		await loaded;
 		expect(room('20')).toMatchObject({ loaded: true, loading: false });
 		expect(room('20').timeline.order).toEqual(['21', '22']);
 		expect(room('general').timeline.order).toEqual([]);
+	});
+
+	it('opens a thread on its newest page and loads older pages backward to the floor', async () => {
+		await socket.reply('history', { entries: [], more: false, latest_log_id: '12', history_log_id: '10' });
+		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '20' } });
+		const loaded = client.loadRoom('20');
+		await socket.reply('history', { entries: [message('38', { room_id: '20' }), message('40', { room_id: '20' })], first_id: '38', last_id: '40', more: true, latest_log_id: '40', history_log_id: '20' });
+		await loaded;
+		expect(room('20')).toMatchObject({ loaded: true, olderAvailable: true });
+		expect(room('20').timeline.order).toEqual(['38', '40']);
+
+		const older = client.loadOlder('20');
+		expect(room('20').loadingOlder).toBe(true);
+		// A second call while one is in flight sends nothing more.
+		void client.loadOlder('20');
+		expect(socket.sent.filter((frame) => frame.method === 'history' && (frame.params as { room_id: string }).room_id === '20')).toHaveLength(2);
+		expect(socket.request('history').params).toEqual({ room_id: '20', before: '37', limit: 50 });
+		await socket.reply('history', { entries: [message('25', { room_id: '20' }), message('30', { room_id: '20' })], first_id: '25', last_id: '30', more: true, latest_log_id: '40', history_log_id: '20' });
+		await older;
+		expect(room('20').timeline.order).toEqual(['25', '30', '38', '40']);
+		expect(room('20')).toMatchObject({ olderAvailable: true });
+		expect(room('20').loadingOlder).toBeUndefined();
+
+		const oldest = client.loadOlder('20');
+		expect(socket.request('history').params).toEqual({ room_id: '20', before: '24', limit: 50 });
+		await socket.reply('history', { rooms: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side' }], entries: [message('21', { room_id: '20' })], first_id: '20', last_id: '21', more: false, latest_log_id: '40', history_log_id: '20' });
+		await oldest;
+		expect(room('20').timeline.order).toEqual(['21', '25', '30', '38', '40']);
+		expect(room('20').olderAvailable).toBeUndefined();
+	});
+
+	it('has nothing older once retention passes the oldest loaded page', async () => {
+		await socket.reply('history', { entries: [], more: false, latest_log_id: '12', history_log_id: '10' });
+		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '20' } });
+		const loaded = client.loadRoom('20');
+		await socket.reply('history', { entries: [message('38', { room_id: '20' })], first_id: '38', last_id: '38', more: true, latest_log_id: '40', history_log_id: '20' });
+		await loaded;
+		expect(room('20').olderAvailable).toBe(true);
+		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '40', history_log_id: '39' } });
+		expect(room('20').olderAvailable).toBeUndefined();
+	});
+
+	it('offers nothing older when the newest page reaches the start', async () => {
+		await socket.reply('history', { entries: [], more: false, latest_log_id: '12', history_log_id: '10' });
+		socket.receive({ method: 'room', params: { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '22', history_log_id: '20' } });
+		const loaded = client.loadRoom('20');
+		await socket.reply('history', { entries: [message('21', { room_id: '20' })], first_id: '20', last_id: '22', more: false, latest_log_id: '22', history_log_id: '20' });
+		await loaded;
+		expect(room('20').olderAvailable).toBeUndefined();
+		await client.loadOlder('20');
+		expect(socket.sent.filter((frame) => frame.method === 'history' && (frame.params as { room_id: string }).room_id === '20')).toHaveLength(1);
 	});
 
 	it('keeps an embedded intro snapshot below a null bound', async () => {
@@ -294,7 +346,8 @@ describe('ChatClient history per room', () => {
 		socket.receive({ id: socket.request('history').id, error: { code: -32002, message: 'Busy', data: { retry_after: 2 } } });
 		await settle();
 		expect(room('general').recoveryError).toBe('Busy Try again in 2s.');
-		expect(snapshot.retryAfterMs).toBe(2000);
+		// A request's limit is not the connection's: reconnecting is not held back.
+		expect(snapshot.retryAfterMs).toBeUndefined();
 		const retried = client.loadRoom('general');
 		expect(socket.request('history').params).toMatchObject({ after: '10', before: '12' });
 		await socket.reply('history', { entries: [message('11')], more: false, latest_log_id: '12', history_log_id: '10' });

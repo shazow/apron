@@ -79,8 +79,10 @@ for each room, and a thread is a room of its own.
 Thread cards preview up to three lines of the intro message, with its author,
 when it is available (not deleted and not empty), and otherwise the latest
 loaded message on one line. Threads load their own history (`history` on the
-thread's `room_id`) when opened, so message counts in the sidebar and on cards
-appear once a thread has loaded. The Edit button in a thread's header (cap
+thread's `room_id`) when opened, newest page first, so message counts in the
+sidebar and on cards appear once a thread has loaded. A thread with more than a
+page of replies opens at its latest ones with "N+ replies"; scrolling back
+loads older pages until its intro, and the count becomes exact. The Edit button in a thread's header (cap
 `rooms`) opens a popover for its title; the save is a `room` request with the
 thread's `room_id` that resubmits `intro_message` and `ext` unchanged. Any
 authenticated user may create threads and edit their titles on the Go example;
@@ -106,7 +108,8 @@ row and pulses once when it arrives, and shows an `@` badge on a room you
 aren't reading (a thread's mentions badge its parent room) or a rust jump bar
 when it landed above the fold. Messages from history, including a thread's
 history loaded when it is opened, never ping. Typing `@` in the composer lists
-the room's recent senders and members; a picked person, or a finished `@name`
+the room's members (on the demo worker, the users connected now), or its recent
+senders on a server without `room_list`; a picked person, or a finished `@name`
 or `@user_id` that names exactly one of them, becomes a chip showing their
 name that is sent as `@user_id`.
 
