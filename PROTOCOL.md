@@ -562,7 +562,7 @@ the fallback:
 | `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | Appendix B |
 | `rooms`        | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads  | Appendix C |
 | `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | Appendix D |
-| `activity`     | typing indicators and read markers                           | no typing or read indicators | Appendix D |
+| `activity`     | typing, read markers, away, and mute                         | no typing or read indicators | Appendix D |
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | Appendix E |
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | Appendix K |
 
@@ -893,10 +893,12 @@ Discovery and membership:
 
 ### D.1 `activity`
 
-Cap `activity`. A client reports changes to its activity in one room, as a
-notification: typing, and how far it has read. Each present field updates
-that user's state; absent fields leave it unchanged. Activity is not part of
-the append-only log, and servers MAY drop it.
+Cap `activity`. A client reports changes to its activity as a
+notification: typing and how far it has read in a room, and optionally
+whether anyone is attending the connection and what the user has muted.
+Each present field updates that state; absent fields leave it unchanged.
+Activity is not part of the append-only log. Servers MAY drop `typing` and
+`read_message_id`, but apply the latest `away` and `mute` they support.
 
 ```jsonc
 // -> start typing
@@ -905,6 +907,11 @@ the append-only log, and servers MAY drop it.
 {"method": "activity", "params": {"room_id": "general", "typing": 0}}
 // -> advance the read cursor
 {"method": "activity", "params": {"room_id": "general", "read_message_id": "1724803312050"}}
+// -> nobody is attending this connection, such as an unfocused tab
+{"method": "activity", "params": {"away": true}}
+// -> no notifications from general for 8 hours; then none from anywhere
+{"method": "activity", "params": {"room_id": "general", "mute": 28800}}
+{"method": "activity", "params": {"mute": 3600}}
 // <- (broadcast)
 {
   "method": "activity", "params": {
@@ -923,6 +930,20 @@ the append-only log, and servers MAY drop it.
   to the user's own connections, which syncs read cursors across devices.
 - Servers MAY keep each user's latest `read_message_id` per room and re-send
   it after announcing the room.
+- `away` (optional): `true` when nobody is attending this connection, such
+  as an unfocused tab, a backgrounded app, or a connection opened to fetch
+  after a push. It applies to the sending connection only and ends with
+  `away: false`, `typing`, `read_message_id`, or a `message` from that
+  connection, or the connection closing; fetching history does not end it. Servers MAY hold back unlogged frames, such as
+  typing, from away connections, and use it to decide pushes (Appendix F).
+- `mute` (optional, seconds): the user wants no notifications from the
+  room named by `room_id`, or from every room without one, for that long.
+  `0` clears it. Each scope is set and cleared on its own: clearing the
+  all-rooms mute leaves a muted room muted. What muting holds back, such as
+  whether mentions still notify, is server policy; servers MAY cap the
+  duration.
+- `away` is never delivered. Servers keep `mute` and send it only to the
+  user's own connections, with the seconds remaining, so devices agree.
 - There is no presence system.
 
 ### D.2 `reactions`
@@ -1121,6 +1142,10 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   `log_id`, so clients render it but never install it as a snapshot. `body`
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
+- Suggested convention: wake a user only when every connection of theirs is
+  away or gone (Appendix D) and neither the message's room nor all rooms
+  are muted for them. Servers MAY wait briefly first and skip the push if
+  the user's `read_message_id` has passed the message.
 
 ```json
 {
