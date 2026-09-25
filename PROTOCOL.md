@@ -119,8 +119,8 @@ room, including the sender.
 - Liveness: a server MAY advertise `ping` ([§3.1](#31-server-frame)). Clients that support it
   then send exactly `{"method":"ping"}` at that interval, fixed bytes so
   servers can answer without parsing, and the server answers
-  `{"method":"pong"}`. A server MAY close a connection that pinged and then
-  stopped.
+  `{"method":"pong"}`, before authentication too. A server MAY close a
+  connection that pinged and then stopped.
 
 ### 1.1 Envelope and replies
 
@@ -446,20 +446,21 @@ carry it ([§4.3](#43-rooms)):
 `server`: assigned by the server, ignored on input. `client`: supplied by the
 client, replaced whole by a save. `delivery`: this client's view, not logged.
 
-| field            | set by   | meaning                                                           |
-|------------------|----------|-------------------------------------------------------------------|
-| `room_id`        | server   | required                                                          |
-| `log_id`         | server   | position of this room record ([§2](#2-identifiers))                                 |
-| `prev_log_id`    | server   | optional; this room's previous record ([§2](#2-identifiers))                        |
-| `parent_room_id` | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing))          |
-| `title`          | client   | optional plain string; absent falls back to `room_id`             |
-| `intro_message`  | client   | optional message object ([§3.5](#35-messages)): the room's description or summary |
-| `ext`            | client   | optional opaque extension data ([§3.5](#35-messages))                             |
-| `latest_log_id`  | delivery | greatest `log_id` in the room's log                               |
-| `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none   |
+| field                     | set by   | meaning                                                                           |
+|---------------------------|----------|-----------------------------------------------------------------------------------|
+| `room_id`                 | server   | required                                                                          |
+| `log_id`                  | server   | position of this room record ([§2](#2-identifiers))                               |
+| `prev_log_id`             | server   | optional; this room's previous record ([§2](#2-identifiers))                      |
+| `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing)) |
+| `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
+| `intro_message`           | client   | optional message object ([§3.5](#35-messages)): the room's description or summary |
+| `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
+| `latest_log_id`           | delivery | greatest `log_id` in the room's log                                               |
+| `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
+| `member_count`, `members` | delivery | optional, in `room_list` only ([§4.3.1](#431-listing))                            |
 
-A room record is complete ([§2](#2-identifiers)); omitted fields are cleared. Delivery fields
-describe this client's view and are not logged.
+A room record is complete ([§2](#2-identifiers)); omitted fields are cleared, except
+`member_count` and `members`.
 
 `intro_message` is a message like any other. Servers SHOULD embed its
 snapshot in room records so clients can render it without history; editing
@@ -536,7 +537,8 @@ local policy.
   below.
 - A request without `room_id` posts to the server's default room, and the
   snapshot names it. Posting does not require joining the room; servers MAY
-  deny it by policy.
+  deny it by policy (`denied`). An unknown or invisible `room_id` is
+  `invalid_params`.
 - A new message with no `text` and no `embeds` SHOULD be neither logged nor
   broadcast; its result is then `{}`.
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
@@ -555,6 +557,9 @@ local policy.
   itself; it MAY be in another room. Invalid references are `invalid_params`.
 - On a live connection, servers deliver each room's snapshots in ascending
   `log_id`, and each snapshot once per connection.
+- A `message` notification without `message_id` is a transient notice, such
+  as a private system notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)): clients render it but never
+  install it as a snapshot.
 
 **Mentions.** A message lists the users it mentions in `body.mentions`, and
 usually shows each one in `body.text` as `@` followed by the `user_id`
@@ -568,8 +573,8 @@ usually shows each one in `body.text` as `@` followed by the `user_id`
 }
 ```
 
-- `mentions` alone decides who is mentioned: servers wake ([§4.7](#47-push)) and
-  clients highlight only the users it lists, whatever `text` contains.
+- `mentions` alone decides who is mentioned: servers ([§4.7](#47-push)) and clients
+  treat as mentioned only the users it lists, whatever `text` contains.
   Servers never parse `text` to find mentions.
 - An edit ([§4.2](#42-edit)) mentions only the users it adds to `mentions`; users
   already listed are not mentioned again.
@@ -584,7 +589,7 @@ Every server:
 1. Sends a `server` frame on connect ([§3.1](#31-server-frame)).
 2. Accepts at least one `auth` scheme and replies with `you` ([§3.2](#32-authentication)).
 3. Accepts `message` without `room_id` into its default room ([§3.5](#35-messages)).
-4. Accepts `message` creation: replies with `message_id`, then broadcasts the
+4. Accepts `message` creation: replies with `message_id` and broadcasts the
    snapshot to the room ([§3.5](#35-messages)).
 5. Replies `error/unsupported` to unknown requests, including `message` with
    a `message_id` when cap `edit` is absent; ignores unknown notifications.
@@ -657,7 +662,8 @@ Six frame idioms cover everything logged or announced:
 
 Stateless window query over a room's **log**. `rooms` holds room records
 ([§3.4](#34-rooms)), `entries` message snapshots ([§3.5](#35-messages)), and `reactions` reaction sets
-([§4.5](#45-reactions)): one log, partitioned by kind.
+([§4.5](#45-reactions)): one log, partitioned by kind. Without `room_id`, it pages the default
+room ([§3.5](#35-messages)).
 
 ```jsonc
 // ->
@@ -745,7 +751,7 @@ for the page ([§3.3](#33-identity)) and is merged after the records.
    record ([§4.3.1](#431-listing)) or a `history` page, and keep the buffered records
    above H.
 2. Page forward with `before: H`, from `after: C + 1` given a checkpoint C,
-   otherwise from the start, until `more: false`.
+   otherwise from `after: history_log_id`, until `more: false`.
 3. Apply the buffered records. The checkpoint is now H.
 
 If a response's effective lower bound passes the next position you need,
@@ -892,24 +898,26 @@ Every filter is optional:
   overrides `parent_room_id`; an unknown or invisible `room_id` is
   `invalid_params`. Servers SHOULD accept it.
 - `latest_log_id` lists only rooms whose `latest_log_id` is greater. A room
-  left since then is not in such a result; a client that needs to drop
-  stale rooms lists with `only_joined` alone.
+  joined or left since then may be missing from such a result; a client
+  that needs its full membership lists with `only_joined` alone.
 
-A result lists every room matching its filters, most recently active first.
-`joined` is never truncated; servers MAY list only the most recently active
-of `rooms`, and a room left out is still visible and can be joined.
+A result lists rooms matching its filters, most recently active first.
+`joined` lists every match and is never truncated; servers MAY list only
+the most recently active of `rooms`, and a room left out is still visible
+and can be joined.
 
 Each room carries `member_count`, how many users have joined it, and
 `members`, user objects ([§3.3](#33-identity)): either complete, or `user_id` only with the
 complete objects in the result's `users`. Servers MAY truncate or omit
 `members` and MAY omit `member_count`, which stays the total. A client given
-no `members` learns a room's members from its history and from joins ([§3.3](#33-identity)).
+no `members` learns a room's members from its history and from joins ([§4.3.2](#432-membership)).
 
 #### 4.3.2 Membership
 
 `room_join` and `room_leave` take only a `room_id` and
 return `{}`. Joining subscribes: every connection of the user receives
-deliveries for the joined room, and only joined rooms notify ([§4.7](#47-push)).
+deliveries for the joined room, and under the suggested wake rule only
+joined rooms notify ([§4.7](#47-push)).
 An unknown or invisible `room_id` is `invalid_params`; the server MAY deny
 either by policy.
 
@@ -923,7 +931,7 @@ such as in large rooms; the members a client learns this way are partial.
 {"method": "room_join", "id": "c24", "params": {"room_id": "1724803399000"}}
 // ->
 {"method": "room_leave", "id": "c25", "params": {"room_id": "1724803312001"}}
-// <- to the members of general: Ada joined, then left
+// <- to the members of general, when Ada joins it and later leaves
 {"method": "user", "params": {"room_id": "general", "new": {"user_id": "ada", "name": "Ada"}}}
 {"method": "user", "params": {"room_id": "general", "old": {"user_id": "ada"}}}
 ```
@@ -990,7 +998,7 @@ are cleared. Both return `{"room_id": "..."}`, and the change arrives as a
 - `intro_message` is a bare reference on input. It MAY live in any room; for
   a thread it is usually the parent-room message that started it. Its text is
   updated by saving that message ([§4.2](#42-edit)), not by `room_set`. A
-  described top-level room takes two steps: create it, post the description
+  described top-level room takes three steps: create it, post the description
   in it, then `room_set` with `room_id` and `intro_message`.
 - The server MAY adjust or supply metadata by policy. Unknown `room_id`,
   unknown `parent_room_id`, or invalid types are `invalid_params`;
@@ -1132,8 +1140,8 @@ prefix, with structured properties nested (`og:image:width` becomes
 }
 ```
 
-- Clients render kinds they support natively and MAY draw the rest from
-  `og`: `title`, `description`, `site_name`, and `image`, `video`, and
+- Clients render kinds they support natively and draw the rest from `og`
+  ([§3.5](#35-messages)): `title`, `description`, `site_name`, and `image`, `video`, and
   `audio` (each with `url`, `type`, `width`, `height`, `alt`). They ignore
   other properties.
 - `og.image` is a preview to show, `og.video` and `og.audio` are what a
@@ -1166,7 +1174,7 @@ embed an opaque `embed_id`; other servers MAY store embeds as given.
 #### 4.6.3 Writes
 
 New `upload` and `stream` embeds take their content over HTTP.
-The `message` result lists them, in request order:
+The `message` or `command` ([§4.8](#48-command)) result lists them, in request order:
 
 ```jsonc
 // -> the sender attaches a file
@@ -1200,7 +1208,8 @@ The `message` result lists them, in request order:
   `write_url` is a credential and expires if unused.
 - The server finishes each write exactly once: on success it publishes a
   snapshot with the embed completed; if the write never starts in time or
-  fails, it publishes a snapshot without the embed.
+  fails, it publishes a snapshot without the embed. For a command, the server
+  acts on the finished write instead, such as setting an avatar ([§4.6.6](#466-avatars)).
 
 #### 4.6.4 `embed:upload`
 
