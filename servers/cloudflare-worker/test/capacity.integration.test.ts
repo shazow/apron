@@ -25,7 +25,6 @@ it('bounds admission at 100 live sockets and delivers one ordered maximum fan-ou
 			expect((await peer.next()).method).toBe('server');
 			socket.send(JSON.stringify({ id: 'auth', method: 'auth', params: { scheme: 'guest' } }));
 			expect((await peer.next()).result.you.user_id).toBeTruthy();
-			expect((await peer.next()).method).toBe('room');
 		}
 		const rejected = await SELF.fetch('https://capacity.test/ws', { headers: {
 			Upgrade: 'websocket', 'CF-Connecting-IP': '198.51.100.101',

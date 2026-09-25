@@ -91,7 +91,6 @@ async function guestSocket(ip = testIp()) {
 	peer.socket.send(JSON.stringify({ id: "auth", method: "auth", params: { scheme: "guest" } }));
 	const auth = await peer.next();
 	expect(auth.result?.you?.user_id).toBeTruthy();
-	expect((await peer.next()).method).toBe("room");
 	return peer;
 }
 

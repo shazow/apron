@@ -19,16 +19,17 @@ async function connect(ip: string) {
 	return { socket, next, send: (frame: unknown) => socket.send(JSON.stringify(frame)) };
 }
 
-it('announces committed thread-room removals even when the room listing fails', async () => {
+it('tells members of expired thread rooms they left, even when the room listing fails', async () => {
 	const peer = await connect('192.0.2.77');
 	try {
 		expect((await peer.next()).method).toBe('server');
 		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
 		expect((await peer.next()).id).toBe('auth');
-		expect((await peer.next()).params.room_id).toBe('general');
-		peer.send({ id: 'thread', method: 'room', params: { parent_room_id: 'general', title: 'Short-lived' } });
-		const roomId = (await peer.next()).result.room_id;
-		expect((await peer.next()).params.room_id).toBe(roomId);
+		peer.send({ id: 'thread', method: 'room_set', params: { parent_room_id: 'general', title: 'Short-lived' } });
+		const joined = await peer.next();
+		expect(joined.method).toBe('room_update');
+		const roomId = joined.params.joined[0].room_id;
+		expect((await peer.next()).result.room_id).toBe(roomId);
 
 		await runInDurableObject(env.DEMO.getByName('public-demo-v1'), async (instance, state) => {
 			// Age every record past retention and make cleanup due now.
@@ -39,6 +40,9 @@ it('announces committed thread-room removals even when the room listing fails', 
 			runtime.store.listRooms = () => { throw new Error('listing unavailable'); };
 			await runtime.alarm();
 		});
-		expect(await peer.next()).toEqual({ method: 'room', params: { room_id: roomId, removed: true } });
+		expect(await peer.next()).toEqual({ method: 'room_update', params: { left: [{ room_id: roomId }] } });
+		// The member no longer receives the room's deliveries, and it is gone.
+		peer.send({ id: 'join', method: 'room_join', params: { room_id: roomId } });
+		expect((await peer.next()).error.code).toBe(-32602);
 	} finally { peer.socket.close(1000, 'done'); }
 });

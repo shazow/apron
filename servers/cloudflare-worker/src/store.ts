@@ -33,11 +33,14 @@ import { createHash } from "node:crypto";
 export const ROOM_ID = "general";
 export const ROOM_TITLE = "General";
 /**
- * Schema 2 stores the protocol v4 server-wide log: room records, flat message
- * snapshots, and reaction sets. Stored data from any other schema version is
- * not migrated: the object is wiped and started fresh (see resetStorage()).
+ * Schema 3 stores the protocol v5 server-wide log (room records, flat message
+ * snapshots, and reaction sets) and each registered identity's joined rooms.
+ * Stored data from any other schema version is not migrated: the object is
+ * wiped and started fresh (see resetStorage()).
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+/** Rooms a new identity has joined: the permanent top-level room (§3.4). */
+export const DEFAULT_JOINED_ROOMS: readonly string[] = [ROOM_ID];
 /** Title the demo supplies for a thread room created or saved without one. */
 export const DEFAULT_THREAD_TITLE = "Thread";
 export const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
@@ -297,7 +300,7 @@ export interface Identity {
   tier?: Tier;
 }
 
-/** A flat, self-describing message snapshot (protocol v4 section 3.5). */
+/** A flat, self-describing message snapshot (protocol v5 section 3.5). */
 export interface MessageSnapshot {
   message_id: string;
   log_id: string;
@@ -311,7 +314,7 @@ export interface MessageSnapshot {
   prev_log_id?: string;
 }
 
-/** A room record plus this server's delivery fields (protocol v4 section 3.4). */
+/** A room record plus this server's delivery fields (protocol v5 section 3.4). */
 export interface RoomRecord {
   room_id: string;
   log_id: string;
@@ -334,13 +337,17 @@ export interface ReactionsRecord {
 
 export type RecordKind = "room" | "message" | "reactions";
 
-/** A committed record, in log order, ready to broadcast as a notification. */
+/**
+ * A committed record, in log order, ready to deliver as a notification to the
+ * members of `rooms`: its room, and for a move both rooms (§3.4, §4.1).
+ */
 export interface Broadcast {
-  method: RecordKind;
+  method: "message" | "reactions";
   params: Record<string, unknown>;
+  rooms: string[];
 }
 
-export type MutationMethod = "message" | "room" | "reactions" | "me";
+export type MutationMethod = "message" | "room_set" | "reactions" | "me";
 
 export interface StoreMutationInput {
   userId: string;
@@ -361,14 +368,17 @@ export interface StoreMutationResult {
   broadcasts: Broadcast[];
   /** The saved message snapshot, for message operations. */
   message?: MessageSnapshot;
-  /** The saved room record, for room operations. */
+  /** The saved room record, for `room_set`. */
   room?: RoomRecord;
+  /** Whether `room_set` created the room, which joins its creator (§4.3.4). */
+  created?: boolean;
   /** An accepted retry: the original result, with no new records. */
   deduplicated?: boolean;
 }
 
 export interface StoreHistoryQuery {
-  roomId: string;
+  /** Omitted, the default room (§4.1). */
+  roomId?: string;
   after?: string | bigint;
   before?: string | bigint;
   limit?: number;
@@ -383,6 +393,8 @@ export interface StoreHistoryResult {
   rooms?: RoomRecord[];
   entries: MessageSnapshot[];
   reactions?: ReactionsRecord[];
+  /** Current objects of the page's registered authors and reactors (§3.3). */
+  users?: Identity[];
   first_id?: string;
   last_id?: string;
   more: boolean;
@@ -526,6 +538,7 @@ interface RawIdentityRow {
   user_handle: string;
   name: string;
   tier: string;
+  rooms_json: string;
   created_ms: number;
   updated_ms: number;
 }
@@ -552,6 +565,8 @@ interface RawMaintenanceRow {
 }
 
 const META_EFFECTIVE_NOW = "effective_now_ms";
+/** Registered users looked up for one history page's `users`, at most one per page record. */
+const HISTORY_USERS_MAX = 50;
 const META_ACCOUNTING_UNSAFE = "accounting_unsafe";
 const META_ACCOUNT_USAGE = "account_usage_snapshot";
 
@@ -674,6 +689,13 @@ function roomHistoryLogId(room: Pick<RawRoomRow, "created_log_id" | "latest_log_
   return lower <= room.latest_log_id ? idString(lower) : null;
 }
 
+/** A stored list of joined room IDs, dropping anything malformed. */
+function joinedRooms(value: string | null | undefined): string[] {
+  const parsed = parseJson<unknown>(value ?? "[]", []);
+  if (!Array.isArray(parsed)) return [...DEFAULT_JOINED_ROOMS];
+  return [...new Set(parsed.filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= 64))];
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -685,10 +707,10 @@ function ensureText(value: unknown, field: string, maxBytes: number): string {
 }
 
 /**
- * Schema 2. Tables that hold authority independent of chat content keep their
- * schema 1 definitions, so an upgraded object uses them unchanged.
+ * Schema 3: schema 2 plus each registered identity's joined rooms. Guests'
+ * memberships live in their connection only, like the guest identity itself.
  */
-const SCHEMA_V2_DDL = `
+const SCHEMA_V3_DDL = `
   CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -742,6 +764,7 @@ const SCHEMA_V2_DDL = `
     user_handle TEXT NOT NULL,
     name TEXT NOT NULL,
     tier TEXT NOT NULL,
+    rooms_json TEXT NOT NULL DEFAULT '["general"]',
     created_ms INTEGER NOT NULL,
     updated_ms INTEGER NOT NULL
   );
@@ -893,7 +916,7 @@ export class Store {
       return;
     }
     const now = this.transaction(() => {
-      this.rawScript(SCHEMA_V2_DDL);
+      this.rawScript(SCHEMA_V3_DDL);
       const now = this.effectiveNow(this.clock.now());
       this.bootstrapSchema(now);
       // Charge the one-time schema/bootstrap work to the maintenance reserve.
@@ -1730,22 +1753,6 @@ export class Store {
     return room;
   }
 
-  /**
-   * A log_id for a message delivered to one connection and never logged, such
-   * as a `@server` notice (Appendix A.1). It advances the server-wide
-   * sequence, so no logged record can reuse it (section 2).
-   */
-  allocateUnloggedLogId(now = this.clock.now()): string {
-    this.ensureReady();
-    return this.reserved({ reads: 4, writes: 4 }, false, now, () => this.transaction(() => {
-      const state = this.logState();
-      const logId = Math.max(Math.trunc(this.effectiveNow(now)), state.last_log_id + 1, state.history_floor);
-      if (!Number.isSafeInteger(logId) || logId <= 0 || logId > MAX_SAFE_ID) throw new StoreError("internal_error", "log identifier range exhausted");
-      this.rawExec("UPDATE log_state SET last_log_id = ? WHERE id = 1", logId);
-      return idString(logId);
-    }));
-  }
-
   /** The server-wide log head and retention floor. */
   logBounds(): { latest_log_id: string; history_floor: string } {
     this.ensureReady();
@@ -1757,7 +1764,7 @@ export class Store {
 
   private identityRow(userId: string): RawIdentityRow | null {
     const rows = this.rawRows<RawIdentityRow>(
-      "SELECT user_id, user_handle, name, tier, created_ms, updated_ms FROM identities WHERE user_id = ? LIMIT 1",
+      "SELECT user_id, user_handle, name, tier, rooms_json, created_ms, updated_ms FROM identities WHERE user_id = ? LIMIT 1",
       userId,
     );
     return rows[0] ?? null;
@@ -1775,6 +1782,7 @@ export class Store {
         name: row.name,
         userHandle: row.user_handle,
         credentialCount,
+        rooms: joinedRooms(row.rooms_json),
       };
     });
   }
@@ -2067,12 +2075,15 @@ export class Store {
     credential: StoredCredential;
     now: number;
     ipKey: string;
+    /** The rooms the new identity starts in, such as the guest's it replaces. */
+    rooms?: readonly string[];
   }): StoredIdentity {
     this.ensureReady();
     const { credential } = input;
     const beforeReads = this.observed.reads;
     const beforeWrites = this.observed.writes;
-    const reservation = this.reserveCost({ reads: 128, writes: 64, registrations: 1 }, false, input.now);
+    // The joined-room list is pruned against the capped rooms table.
+    const reservation = this.reserveCost({ reads: 128 + MAX_THREAD_LIMIT + 1, writes: 64, registrations: 1 }, false, input.now);
     try {
       if (!input.userId || !input.userHandle || !input.ipKey) throw new StoreError("invalid_params", "registration identity is incomplete");
       ensureText(input.name, "name", this.config.maxNameBytes);
@@ -2098,6 +2109,7 @@ export class Store {
       if (this.credentialValue(credential.credentialId)) throw new StoreError("invalid_params", "credential is already registered");
       if (this.metaNumber("identity_count") >= this.config.registeredIdentityCount) throw new StoreError("denied", "registration_closed");
       this.chargeRegistration(input.ipKey, effective);
+      const rooms = this.existingRooms(input.rooms ?? DEFAULT_JOINED_ROOMS);
       const publicKeyMetadata = JSON.stringify({
         publicKey: credential.publicKey,
         ...(credential.transports ? { transports: credential.transports } : {}),
@@ -2105,10 +2117,11 @@ export class Store {
         ...(credential.backedUp !== undefined ? { backedUp: credential.backedUp } : {}),
       });
       this.rawExec(
-        "INSERT INTO identities (user_id, user_handle, name, tier, created_ms, updated_ms) VALUES (?, ?, ?, 'registered', ?, ?)",
+        "INSERT INTO identities (user_id, user_handle, name, tier, rooms_json, created_ms, updated_ms) VALUES (?, ?, ?, 'registered', ?, ?, ?)",
         input.userId,
         input.userHandle,
         input.name,
+        JSON.stringify(rooms),
         effective,
         effective,
       );
@@ -2130,6 +2143,7 @@ export class Store {
           name: input.name,
           userHandle: input.userHandle,
           credentialCount: 1,
+          rooms,
         });
       });
     } finally {
@@ -2144,6 +2158,7 @@ export class Store {
     credential: StoredCredential;
     now: number;
     ipKey: string;
+    rooms?: readonly string[];
   }): DomainIdentity {
     const stored = this.registerIdentity(input);
     return { user_id: stored.userId, name: stored.name };
@@ -2277,7 +2292,76 @@ export class Store {
     const embeds = body.embeds === undefined ? [] : body.embeds;
     if (!Array.isArray(embeds)) throw new StoreError("invalid_params", "body.embeds must be an array");
     if (embeds.length > this.config.maxEmbeds) throw new StoreError("too_large", "too many embeds");
-    return { ...clone(body), text, format, embeds: clone(embeds) };
+    // Who a message mentions is the list its sender gives (§3.5); the server
+    // never reads mentions out of text. Duplicates collapse.
+    let mentions: string[] | undefined;
+    if (body.mentions !== undefined) {
+      if (!Array.isArray(body.mentions)) throw new StoreError("invalid_params", "body.mentions must be an array of user_id strings");
+      const unique = new Set<string>();
+      for (const item of body.mentions) {
+        if (typeof item !== "string" || item.length === 0 || utf8Bytes(item) > 256) {
+          throw new StoreError("invalid_params", "body.mentions must be an array of user_id strings");
+        }
+        unique.add(item);
+      }
+      mentions = [...unique];
+    }
+    return { ...clone(body), text, format, embeds: clone(embeds), ...(mentions ? { mentions } : {}) };
+  }
+
+  /** A new message with no text and no embeds, which is neither logged nor broadcast (§3.5). */
+  private emptyNewMessage(params: Record<string, unknown>): boolean {
+    if (params.message_id !== undefined || (params.deleted !== undefined && params.deleted !== false) || !isPlainObject(params.body)) return false;
+    const body = this.normalizedBody(params.body);
+    return body.text === "" && (body.embeds as unknown[]).length === 0;
+  }
+
+  /** The given room IDs that still exist, once each and in order. Reads the capped rooms table. */
+  private existingRooms(ids: readonly string[]): string[] {
+    const known = new Set(this.rawRows<{ room_id: string }>("SELECT room_id FROM rooms LIMIT ?", MAX_THREAD_LIMIT + 1).map((row) => row.room_id));
+    return [...new Set(ids)].filter((id) => known.has(id));
+  }
+
+  /** Adds a room to a registered identity's joined rooms, pruning rooms that no longer exist. */
+  private persistJoin(userId: string, roomId: string, now: number): void {
+    const row = this.identityRow(userId);
+    if (!row) return;
+    const rooms = this.existingRooms([...joinedRooms(row.rooms_json), roomId]);
+    this.rawExec("UPDATE identities SET rooms_json = ?, updated_ms = ? WHERE user_id = ?", JSON.stringify(rooms), now, userId);
+  }
+
+  /**
+   * Joins or leaves one room for a registered identity, whose rooms last
+   * across connections (§4.3.2). Guests' rooms live in their connection. A
+   * change is a durable write and counts as a post; joining or leaving where
+   * nothing would change writes nothing. Returns the identity's rooms.
+   */
+  changeMembership(input: { userId: string; ipKey: string; roomId: string; join: boolean; now?: number }): { rooms: string[]; changed: boolean } {
+    this.ensureReady();
+    const operationNow = input.now ?? this.clock.now();
+    const beforeReads = this.observed.reads;
+    const beforeWrites = this.observed.writes;
+    // The three posting limiter rows, the identity row, and the capped rooms table.
+    const reserved = this.reserveCost({ reads: 64 + MAX_THREAD_LIMIT + 1, writes: 64, posts: 1 }, false, operationNow);
+    try {
+      const effective = this.effectiveNow(operationNow);
+      if (input.join) this.ensureGrowthCapacity(1024);
+      return this.transaction(() => {
+        const row = this.identityRow(input.userId);
+        if (!row) throw new StoreError("denied", "Only registered identities keep rooms");
+        const current = joinedRooms(row.rooms_json);
+        if (current.includes(input.roomId) === input.join) return { rooms: current, changed: false };
+        this.chargePosting({ userId: input.userId, tier: "registered", ipKey: input.ipKey, now: effective });
+        const rooms = this.existingRooms(input.join ? [...current, input.roomId] : current.filter((id) => id !== input.roomId));
+        if (input.join && !rooms.includes(input.roomId)) throw new StoreError("invalid_params", "Unknown room");
+        this.rawExec("UPDATE identities SET rooms_json = ?, updated_ms = ? WHERE user_id = ?", JSON.stringify(rooms), effective, input.userId);
+        this.assertStorageTarget();
+        this.assertReservation(reserved, beforeReads, beforeWrites);
+        return { rooms, changed: true };
+      });
+    } finally {
+      this.settleReservation(reserved, beforeReads, beforeWrites);
+    }
   }
 
   private optionalExt(value: unknown, field = "ext"): Record<string, unknown> | undefined {
@@ -2341,7 +2425,8 @@ export class Store {
   private commitMessage(input: StoreMutationInput, context: CommitContext, floor: number): StoreMutationResult {
     const params = input.params;
     if (params.log_id !== undefined) throw new StoreError("invalid_params", "log_id is server assigned");
-    const roomId = params.room_id;
+    // Without room_id a message goes to the default room (§3.5).
+    const roomId = params.room_id === undefined ? ROOM_ID : params.room_id;
     if (typeof roomId !== "string" || roomId.length === 0) throw new StoreError("invalid_params", "room_id must be a non-empty string");
     const messageIdParam = params.message_id;
     if (messageIdParam !== undefined && typeof messageIdParam !== "string") throw new StoreError("invalid_params", "message_id must be a string");
@@ -2393,7 +2478,9 @@ export class Store {
          snapshot_json = excluded.snapshot_json`,
       messageId, roomId, logId, json, from.user_id,
     );
-    const broadcasts: Broadcast[] = [{ method: "message", params: clone(snapshot) as unknown as Record<string, unknown> }];
+    const broadcasts: Broadcast[] = [{
+      method: "message", params: clone(snapshot) as unknown as Record<string, unknown>, rooms: moved ? [current.room_id, roomId] : [roomId],
+    }];
     if (moved) {
       // Reactions follow a moved message: one record in the destination with
       // every retained non-empty set. The per-message cap bounds this read.
@@ -2413,7 +2500,7 @@ export class Store {
         this.appendRecord(context, [roomId], "reactions", reactionLogId, JSON.stringify(record));
         // The sets' latest record is now the moved copy; retention follows it.
         this.rawExec("UPDATE reaction_state SET log_id = ? WHERE message_id = ? AND log_id >= ?", reactionLogId, messageId, floor);
-        broadcasts.push({ method: "reactions", params: clone(record) as unknown as Record<string, unknown> });
+        broadcasts.push({ method: "reactions", params: clone(record) as unknown as Record<string, unknown>, rooms: [roomId] });
       }
     }
     return { result: { message_id: messageId }, broadcasts, message: snapshot };
@@ -2485,15 +2572,15 @@ export class Store {
     } else if (existing) {
       this.rawExec("DELETE FROM reaction_state WHERE message_id = ? AND user_id = ?", message.message_id, input.userId);
     }
-    return { result: {}, broadcasts: [{ method: "reactions", params: clone(record) as unknown as Record<string, unknown> }] };
+    return { result: {}, broadcasts: [{ method: "reactions", params: clone(record) as unknown as Record<string, unknown>, rooms: [message.room_id] }] };
   }
 
   /**
-   * Create a thread room or replace a thread room's client fields (§4.3.4).
+   * `room_set`: create a thread room or replace a thread room's client fields (§4.3.4).
    * Demo policy: only threads under a top-level room may be created, and only
    * thread rooms may be edited; the permanent `general` room is fixed.
    */
-  private commitRoom(input: StoreMutationInput, context: CommitContext, floor: number): StoreMutationResult {
+  private commitRoom(input: StoreMutationInput, context: CommitContext, floor: number, registered: boolean): StoreMutationResult {
     const params = input.params;
     const roomIdParam = params.room_id;
     if (roomIdParam !== undefined && (typeof roomIdParam !== "string" || roomIdParam.length === 0)) throw new StoreError("invalid_params", "room_id must be a non-empty string");
@@ -2525,6 +2612,8 @@ export class Store {
         roomId, parentId, logId, logId, logId, introId ?? null, fieldsJson, context.commitMs, context.commitMs,
       );
       this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('thread_count', ?)", String(this.metaNumber("thread_count") + 1));
+      // Creating a room joins its creator (§4.3.4); a registered creator keeps it.
+      if (registered) this.persistJoin(input.userId, roomId, context.commitMs);
       row = {
         room_id: roomId, parent_room_id: parentId, created_log_id: logId, record_log_id: logId, latest_log_id: logId,
         intro_message_id: introId ?? null, fields_json: fieldsJson, created_ms: context.commitMs, updated_ms: context.commitMs,
@@ -2552,7 +2641,8 @@ export class Store {
       "INSERT INTO records (room_id, log_id, commit_ms, kind, record_json) VALUES (?, ?, ?, 'room', ?)",
       row.room_id, logId, context.commitMs, JSON.stringify(logged),
     );
-    return { result: { room_id: row.room_id }, broadcasts: [{ method: "room", params: clone(record) as unknown as Record<string, unknown> }], room: record };
+    // Room records are not broadcast: the caller sends room_update (§4.3.3).
+    return { result: { room_id: row.room_id }, broadcasts: [], room: record, created: roomIdParam === undefined };
   }
 
   private checkRoomFields(fields: Record<string, unknown>, introId: string | undefined): void {
@@ -2614,7 +2704,7 @@ export class Store {
 
   private mutationMethod(method: string | undefined): MutationMethod {
     if (method === undefined || method === "message") return "message";
-    if (method === "room" || method === "reactions" || method === "me") return method;
+    if (method === "room_set" || method === "reactions" || method === "me") return method;
     throw new StoreError("unsupported", "Unsupported mutation");
   }
 
@@ -2631,8 +2721,16 @@ export class Store {
       if (typeof input.requestId !== "string" || utf8Bytes(input.requestId) > 128) throw new StoreError("invalid_params", "invalid request ID");
     }
     const method = this.mutationMethod(input.method);
-    const digest = input.digest ?? digestOperation(method, input.params);
     const operationNow = input.now ?? this.clock.now();
+    if (method === "message" && this.emptyNewMessage(input.params)) {
+      // Nothing is logged, charged, or recorded; only the room is checked.
+      return this.reserved({ reads: 8 }, false, operationNow, () => {
+        const roomId = input.params.room_id === undefined ? ROOM_ID : input.params.room_id;
+        if (typeof roomId !== "string" || !this.roomRow(roomId)) throw new StoreError("invalid_params", "unknown room");
+        return { result: {}, broadcasts: [] };
+      });
+    }
+    const digest = input.digest ?? digestOperation(method, input.params);
     // A retry lookup is deliberately cheaper than a full mutation reserve.
     // Accepted retries must remain available even when posting/storage
     // capacity is exhausted, while still paying their bounded SQL lookup.
@@ -2685,7 +2783,7 @@ export class Store {
           const context: CommitContext = { state, commitMs: Math.max(effective, state.last_commit_ms), touched: new Map() };
           const floor = state.history_floor;
           committed = method === "message" ? this.commitMessage(input, context, floor)
-            : method === "room" ? this.commitRoom(input, context, floor)
+            : method === "room_set" ? this.commitRoom(input, context, floor, tier === "registered")
             : this.commitReactions(input, context, floor);
           this.finishCommit(context, startLogId);
         }
@@ -2744,8 +2842,9 @@ export class Store {
   }
 
   private historyPageInternal(query: StoreHistoryQuery): StoreHistoryResult {
-    if (typeof query.roomId !== "string" || query.roomId.length === 0) throw new StoreError("invalid_params", "room_id must be a non-empty string");
-    const room = this.roomRow(query.roomId);
+    const roomId = query.roomId === undefined ? ROOM_ID : query.roomId;
+    if (typeof roomId !== "string" || roomId.length === 0) throw new StoreError("invalid_params", "room_id must be a non-empty string");
+    const room = this.roomRow(roomId);
     if (!room) throw new StoreError("invalid_params", "unknown room");
     const floor = this.logState().history_floor;
     const lowerBound = roomHistoryFloor(room, floor);
@@ -2759,16 +2858,26 @@ export class Store {
     const latestLogId = idString(head);
     const historyLogId = roomHistoryLogId(room, floor);
     const empty = (): StoreHistoryResult => ({ entries: [], more: false, latest_log_id: latestLogId, history_log_id: historyLogId });
-    if (lower > upper || historyLogId === null) return empty();
     const forward = after !== undefined;
     // One contiguous slice of the room's log across every record kind; the
     // limit counts records of any kind (§4.1).
-    const rows = this.rawRows<RawRecordRow>(
+    let rows = lower > upper || historyLogId === null ? [] : this.rawRows<RawRecordRow>(
       `SELECT room_id, log_id, kind, record_json FROM records
        WHERE room_id = ? AND log_id >= ? AND log_id <= ?
        ORDER BY log_id ${forward ? "ASC" : "DESC"} LIMIT ?`,
       room.room_id, lower, upper, limit + 1,
     );
+    // A window bounded to one log_id returns that record (§2), even when it is
+    // no longer in this room's log, such as a moved message's earlier snapshot,
+    // so prev_log_id links can be walked back. Room records stay in their room.
+    if (rows.length === 0 && after !== undefined && after === before && after >= floor) {
+      rows = this.rawRows<RawRecordRow>(
+        `SELECT room_id, log_id, kind, record_json FROM records INDEXED BY records_log_idx
+         WHERE log_id = ? AND kind != 'room' LIMIT 1`,
+        after,
+      );
+    }
+    if (rows.length === 0) return empty();
     // The runtime wraps this result in a JSON-RPC response.  Reserve a fixed
     // envelope allowance for jsonrpc/id/result keys, decimal IDs, commas and
     // first/last/more fields.  An empty page is always valid even when a
@@ -2804,16 +2913,43 @@ export class Store {
       else if (record.kind === "reactions") reactions.push(record.value as unknown as ReactionsRecord);
       else entries.push(record.value as unknown as MessageSnapshot);
     }
+    const users = this.historyUsers(entries, reactions, maxBytes - bytes - responseOverhead);
     return {
       ...(rooms.length ? { rooms } : {}),
       entries,
       ...(reactions.length ? { reactions } : {}),
+      ...(users.length ? { users } : {}),
       first_id: idString(selected[0].logId),
       last_id: idString(selected[selected.length - 1].logId),
       more,
       latest_log_id: latestLogId,
       history_log_id: historyLogId,
     };
+  }
+
+  /**
+   * Current objects of a page's registered authors and reactors (§3.3): their
+   * `from` keeps the name at posting time, and a registered user may rename.
+   * Guests cannot rename, so their `from` is already current. At most one
+   * indexed lookup per record; left out when it would not fit `spareBytes`.
+   */
+  private historyUsers(entries: MessageSnapshot[], reactions: ReactionsRecord[], spareBytes: number): Identity[] {
+    const ids = new Set<string>();
+    const note = (from: Identity | undefined) => {
+      const id = from?.user_id;
+      if (typeof id === "string" && !id.startsWith("guest_") && !id.startsWith("@")) ids.add(id);
+    };
+    for (const entry of entries) note(entry.from);
+    for (const record of reactions) for (const set of record.reactions ?? []) note(set.from);
+    const wanted = [...ids].slice(0, HISTORY_USERS_MAX);
+    if (wanted.length === 0) return [];
+    const rows = this.rawRows<{ user_id: string; name: string }>(
+      `SELECT user_id, name FROM identities WHERE user_id IN (${wanted.map(() => "?").join(", ")}) LIMIT ?`,
+      ...wanted, wanted.length,
+    );
+    // An empty name is a removed one, announced as its empty value.
+    const users = rows.map((row) => ({ user_id: row.user_id, name: row.name }));
+    return utf8Bytes(JSON.stringify({ users })) <= spareBytes ? users : [];
   }
 
   /** The withheld control rows can persist one deferral and its reset alarm. */

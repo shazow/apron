@@ -361,7 +361,24 @@ describe('measured storage accounting', () => {
 			expect(rooms[1].intro_message).toMatchObject({ message_id: '1', body: { text: 'intro 1' } });
 			expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
 			expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
-			return { rooms: rooms.length, observed, reserved };
+
+			// A registered user's join reads the whole capped rooms table to prune
+			// rooms that no longer exist from the stored list.
+			store.registerIdentity({
+				userId: 'lister', name: 'Lister', userHandle: 'lister-handle', now: clock.now(), ipKey: 'lister-ip',
+				credential: { credentialId: 'lister-credential', userId: 'lister', publicKey: 'key', counter: 0 },
+				rooms: ['general', ...Array.from({ length: 99 }, (_, index) => `thread-${index + 1}`), 'expired-thread'],
+			});
+			const beforeJoinBudget = store.budget();
+			const beforeJoin = store.storageAccounting();
+			const joined = store.changeMembership({ userId: 'lister', ipKey: 'lister-ip', roomId: 'thread-100', join: true, now: clock.now() });
+			const afterJoin = store.storageAccounting();
+			const join = { observed: diffAccounting(afterJoin, beforeJoin), reserved: reservedBetween(store.budget(), beforeJoinBudget, afterJoin, beforeJoin) };
+			expect(joined.rooms).toHaveLength(101);
+			expect(joined.rooms).not.toContain('expired-thread');
+			expect(join.observed.reads).toBeLessThanOrEqual(join.reserved.reads);
+			expect(join.observed.writes).toBeLessThanOrEqual(join.reserved.writes);
+			return { rooms: rooms.length, observed, reserved, join };
 		});
 		console.info('accounting-room-list', JSON.stringify(result));
 	});
@@ -451,7 +468,7 @@ describe('measured storage accounting', () => {
 				if (observed.writes >= reactionCost.observed.writes) reactionCost = { observed, reserved };
 			}
 			const thread = store.commitMutation({
-				userId: 'mover', ipKey: 'move-ip', requestId: 'thread', method: 'room', now: clock.now(),
+				userId: 'mover', ipKey: 'move-ip', requestId: 'thread', method: 'room_set', now: clock.now(),
 				params: { parent_room_id: 'general', title: 'Destination' }, identity: identity('mover'),
 			});
 			const beforeBudget = store.budget();
@@ -670,7 +687,6 @@ describe('measured storage accounting', () => {
 			measure('history quota reservation', () => store.reserveHistory({ userId: 'matrix-history-user', ipKey: 'matrix-history-ip', now: clock.now() }));
 			measure('frame reservation', () => store.reserveFrames({ ipKey: 'matrix-frame-ip', now: clock.now(), count: 1 }));
 			measure('frame block', () => store.reserveFrames({ ipKey: 'matrix-block-ip', now: clock.now(), count: DEFAULT_LIMITS.frameLease }));
-			measure('unlogged notice log id', () => store.allocateUnloggedLogId(clock.now()));
 			measure('connection admission reservation', () => store.reserveConnection({ ipKey: 'matrix-connection-ip', tier: 'pending', now: clock.now() }));
 			measure('identity registration', () => store.registerIdentity({
 				userId: 'matrix-user',
@@ -701,13 +717,20 @@ describe('measured storage accounting', () => {
 				params: { message_id: messageId, emojis: ['👍', '🎉'] }, identity,
 			}));
 			const thread = measure('thread room create', () => store.commitMutation({
-				userId: 'matrix-user', ipKey: 'matrix-thread-ip', requestId: 'matrix-thread', method: 'room', now: clock.now(),
+				userId: 'matrix-user', ipKey: 'matrix-thread-ip', requestId: 'matrix-thread', method: 'room_set', now: clock.now(),
 				params: { parent_room_id: 'general', title: 'Matrix thread', intro_message: { message_id: messageId } }, identity,
 			})) as { result: { room_id: string } };
 			measure('thread room update', () => store.commitMutation({
-				userId: 'matrix-user', ipKey: 'matrix-thread-ip', requestId: 'matrix-thread-update', method: 'room', now: clock.now(),
+				userId: 'matrix-user', ipKey: 'matrix-thread-ip', requestId: 'matrix-thread-update', method: 'room_set', now: clock.now(),
 				params: { room_id: thread.result.room_id, title: 'Matrix thread renamed', ext: { demo: true } }, identity,
 			}));
+			const membership = (join: boolean) => store.changeMembership({ userId: 'matrix-user', ipKey: 'matrix-member-ip', roomId: thread.result.room_id, join, now: clock.now() });
+			expect((measure('registered room leave', () => membership(false)) as { changed: boolean }).changed).toBe(true);
+			expect((measure('registered room join', () => membership(true)) as { rooms: string[] }).rooms).toEqual(['general', thread.result.room_id]);
+			expect(measure('empty new message', () => store.commitMutation({
+				userId: 'matrix-user', ipKey: 'matrix-post-ip', requestId: 'matrix-empty', method: 'message', now: clock.now(),
+				params: { body: { text: '' } }, identity,
+			}))).toEqual({ result: {}, broadcasts: [] });
 			measure('message move with reactions', () => store.commitMutation({
 				userId: 'matrix-user', ipKey: 'matrix-post-ip', requestId: 'matrix-move', method: 'message', now: clock.now(),
 				params: { message_id: messageId, room_id: thread.result.room_id, body: { text: 'matrix moved', format: 'plain' } }, identity,
@@ -726,7 +749,7 @@ describe('measured storage accounting', () => {
 			await measureAsync('alarm scheduling', () => store.scheduleAlarm(clock.now() + 1_000, clock.now()));
 
 			expect((create as { result: { message_id?: string } }).result.message_id).toBeTruthy();
-			expect(costs).toHaveLength(26);
+			expect(costs).toHaveLength(28);
 			return { costs };
 		});
 		console.info('accounting-operation-matrix', JSON.stringify(result));

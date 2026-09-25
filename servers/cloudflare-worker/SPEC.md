@@ -4,7 +4,7 @@ Date: 2026-09-20
 Status: Implementation specification
 Target: https://github.com/shazow/apron
 Protocol: https://github.com/shazow/apron/blob/main/PROTOCOL.md
-Protocol reference reviewed: protocol version 3, Git blob SHA `b847bb0b2220a7827e236c2b97166aace81296a7` (a file blob, not a commit).
+Protocol reference reviewed: protocol version 5, the repository's `PROTOCOL.md`.
 
 ## 1. Objective and instructions to the coding harness
 
@@ -18,13 +18,14 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 
 ### Required capabilities
 
-- Protocol v4 core: server announcement, authentication, room announcements, creation and broadcast of flat message snapshots, framing, errors, one server-wide log ID sequence.
+- Protocol v5 core: server announcement with liveness `ping`, authentication, the default room, creation and delivery of flat message snapshots to the rooms' members, framing, errors, one server-wide log ID sequence.
 - `history`: complete record snapshots of every kind (room records, message snapshots, reaction sets), correct pagination and live/recovery ordering per room.
 - `edit`: owner-authorized replacement, deletion, restoration, and moves between rooms of retained messages.
-- `rooms`: thread rooms (rooms with `parent_room_id`) created and edited by participants; `room_join`/`room_leave`. The permanent `general` room is the only top-level room.
+- `rooms`: rooms by request (`room_list`, `room_update`); thread rooms (rooms with `parent_room_id`) created and edited by participants with `room_set`; `room_join`/`room_leave` for `general` and threads, with deliveries only to joined rooms. The permanent `general` room is the only top-level room.
 - `reactions`: per-user emoji sets on messages.
-- `activity`: implemented but off by default (`ACTIVITY=true` advertises it): typing only, relayed and never stored, at most 10 relays per user per minute (section 4.2). Read cursors are neither kept nor relayed.
-- `room_list`: the top-level room or one room's threads, each with the users connected now as `members`.
+- `activity`: implemented but off by default (`ACTIVITY=true` advertises it): typing only, relayed to the room's members and never stored, at most 10 relays per user per minute (section 4.2). Read cursors are neither kept nor relayed; `away` is accepted and ignored (there is no push).
+- `room_list`: joined rooms and rooms to join, by the protocol's filters, each with the connected members as `members`.
+- `command`: `/help` only, answered with a `@private` notice.
 - Guest authentication (`guest`) and verified WebAuthn registration/login.
 - Persistent request deduplication for mutating operations.
 - Rolling 24-hour history with hourly cleanup, using the same room ID indefinitely.
@@ -33,7 +34,7 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 
 ### Non-goals
 
-No public workspace creation, top-level room creation, leaving rooms, federation, multiplexing proxy, presence service, read cursors, avatars, uploads (`embed:upload`, `@avatar`), streams (`embed:stream`), R2, push, email, external URL previews, outbound bots, RTC, arbitrary search, FTS, or third-party analytics. Do not advertise unsupported capabilities. Passkeys do not establish one-human-one-account or solve Sybil resistance.
+No public workspace creation, top-level room creation, federation, multiplexing proxy, presence service, read cursors, member counts, avatars, uploads (`embed:upload`, `/avatar`), streams (`embed:stream`), R2, push, email, external URL previews, outbound bots, RTC, arbitrary search, FTS, or third-party analytics. Do not advertise unsupported capabilities. Passkeys do not establish one-human-one-account or solve Sybil resistance.
 
 ## 2. User scenarios
 
@@ -76,7 +77,7 @@ Cloudflare recommends the hibernation API for WebSocket servers: [WebSocket guid
 - Keep attachments comfortably below the platform's 16 KiB maximum; do not put message history or credentials into them.
 - Reconstruct connection indexes through `ctx.getWebSockets()` and attachments after hibernation. Check socket state before sending. Reconstructed indexes are caches, never durable authority.
 - Do not re-send initial announcements or repeat auth just because the constructor runs after hibernation. Actual reconnects authenticate again.
-- The runtime cannot send WebSocket pings, so a peer that vanishes without a close frame (sleep, a network change) would stay connected until the edge gives up on it. Clients may opt in to a keepalive instead: the frame `{"method":"ping"}`, byte for byte, every `keepalive_seconds` (`ext.demo`, 45). `setWebSocketAutoResponse` answers `{"method":"pong"}` without waking the object, so it spends no frame budget; both are notifications with unknown methods, which every other server and client ignores. A connection that has sent the keepalive and then neither it nor any frame for `keepalive_timeout_seconds` (150) is stale: it is closed with 1001 before `members` are listed and before admission, and does not count against its IP's connection limits. A connection that never sent the keepalive is never judged stale. No permanent `setInterval` or `setTimeout`, and no alarm for this.
+- The runtime cannot send WebSocket pings, so a peer that vanishes without a close frame (sleep, a network change) would stay connected until the edge gives up on it. The server frame advertises protocol liveness instead (`server.ping`, 45 seconds, [PROTOCOL.md §1](../../PROTOCOL.md#1-transport--framing)): clients send the frame `{"method":"ping"}`, byte for byte, at that interval, and `setWebSocketAutoResponse` answers `{"method":"pong"}` without waking the object, before authentication too, so it spends no frame budget. A `ping` notification with other spacing reaches the handler and is answered there, as an ordinary frame. A connection that has pinged and then sent neither a ping nor any frame for `ping_timeout_seconds` (150) is stale: it is closed with 1001 before `members` are listed and before admission, and does not count against its IP's connection limits. A connection that never pinged is never judged stale. No permanent `setInterval` or `setTimeout`, and no alarm for this.
 - Share one DO alarm scheduler between auth deadlines, cleanup, and maintenance retries. Always schedule the earliest outstanding task; cleanup scheduling must not overwrite an earlier auth deadline.
 - A closing socket may remain visible to the runtime; do not let it receive broadcasts or grant extra admission while its close is pending.
 
@@ -87,14 +88,14 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"keepalive_seconds":45,"room_leave":false,"read_cursors":false}}}}
+{"method":"server","params":{"protocol":5,"name":"apron-cloudflare-demo/4","caps":["history","edit","rooms","reactions","command"],"auth":["webauthn","token","guest"],"ping":45,"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"read_cursors":false}}}}
 ```
 
 `ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol [§4.9](../../PROTOCOL.md#49-webauthn-authentication), without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
 
-History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room announcements and history results, following protocol [section 3.4](../../PROTOCOL.md#34-rooms) and [§4.1](../../PROTOCOL.md#41-history). Both are per room.
+History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room records (`room_list`, `room_update`) and history results, following protocol [section 3.4](../../PROTOCOL.md#34-rooms) and [§4.1](../../PROTOCOL.md#41-history). Both are per room.
 
-After final authentication, reply with `result.you` (`user_id` and `name` only; the internal quota tier is private), then announce every room: `general` first, then each thread room, each as a complete room record with its `log_id` and current `latest_log_id` and `history_log_id`. Do not send room records to unauthenticated sockets. Establish every room's head and eligibility for live delivery at one serialization point.
+After final authentication, reply with `result.you` (`user_id` and `name` only; the internal quota tier is private). Rooms are not announced: the client lists its joined rooms with `room_list` (`only_joined`), and live delivery for them starts with the auth result. A `user_id` or `name` requested in `auth` is not honored: guests get a random `guest_` ID, never reissued, and a generated name, and registered identities come from the verified credential or session. Do not send room records to unauthenticated sockets.
 
 ### Framing, ordering, and errors
 
@@ -124,34 +125,36 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 
 - Every record (room record, message snapshot, reaction set) receives the next `log_id = max(now_ms, last_log_id + 1)` from one server-wide sequence, checked below `2^53`; use integer columns and decimal strings on the wire. A new message's `message_id` equals its creation `log_id`, so it is unique across rooms. Room IDs of threads are their creation `log_id`.
 - Maintain `last_log_id` even after the entire log has expired. Clock rollback must not reuse IDs.
-- Store each accepted record as a complete authoritative snapshot. Message notifications and history entries are the same flat object: `message_id`, `log_id`, `room_id`, `from`, `body`, optional `reply_to` (bare `{message_id}`), `deleted`, and `ext`. `body.format` defaults to `plain`. Broadcast to every authenticated socket, including the sender. Every room is visible to every client, so a record is sent once per connection even when it belongs to two rooms.
-- Only the original author may replace/delete/restore/move their retained message. Preserve immutable author/ID fields. A save replaces every client field (`room_id`, `body`, `reply_to`, `deleted`, `ext`); it is not a patch/merge. Tombstones omit `body`. `room_id` is required on every message request.
+- Store each accepted record as a complete authoritative snapshot. Message notifications and history entries are the same flat object: `message_id`, `log_id`, `room_id`, `from`, `body`, optional `reply_to` (bare `{message_id}`), `deleted`, and `ext`. `body.format` defaults to `plain`. Deliver to every authenticated connection whose user has joined a room the record belongs to, including the sender's; a record is sent once per connection even when it belongs to two rooms. Every room is visible to every client, so anyone may page any room's history, and posting does not require joining: a poster who has not joined gets only the result.
+- Only the original author may replace/delete/restore/move their retained message. Preserve immutable author/ID fields. A save replaces every client field (`room_id`, `body`, `reply_to`, `deleted`, `ext`); it is not a patch/merge. Tombstones omit `body`. A request without `room_id` (a new message or a save) is in the default room, `general`.
 - `reply_to` names an existing, retained message other than the message itself, in any room; otherwise `invalid_params`. A save that resubmits its current `reply_to` unchanged is accepted even after the target expires, so old replies stay editable.
 - A save with a different `room_id` moves the message: the destination must exist, and the move snapshot belongs to both rooms' logs and history. When the message has retained reactions, the same atomic commit then logs one reaction record in the destination carrying every non-empty set.
 - Guest authors own messages under their assigned guest identity; passkey authentication does not automatically transfer ownership of earlier guest messages.
-- Rooms (cap `rooms`): the public demo permits creating threads only. `room` without `room_id` must name an existing top-level `parent_room_id` (`general`); a top-level room request or a nested thread is `denied`, an unknown parent is `invalid_params`. Any participant may save a thread room's client fields (`title`, `intro_message`, `ext`); `general` cannot be edited. A save replaces all client fields except `parent_room_id`, which is fixed; the server supplies the title `Thread` when none is given so clients ignoring `parent_room_id` still render it. `intro_message` is a bare reference to a retained message (unchanged references stay valid) and is announced with its current snapshot embedded. Every room creation and save is a logged record in the room's own log. `room_join` on a known room returns `{}` and re-sends its record; `room_leave` is `denied`.
-- Allow at most 100 thread rooms, each with at most 2 KiB of serialized client fields. All room creation and saves consume posting and resource budgets. No implicit room creation. A thread room whose entire log (creation record included) has expired is removed at cleanup and announced as `{"room_id": ..., "removed": true}`, releasing its slot; deny further creation while the ceiling is full.
+- Rooms (cap `rooms`): the public demo permits creating threads only. `room_set` without `room_id` must name an existing top-level `parent_room_id` (`general`); a top-level room request or a nested thread is `denied`, an unknown parent is `invalid_params`. Creating a thread joins its creator: the creator's connections get `room_update` `joined`, and the parent's other members `updated`, before the `{room_id}` result. Any participant may save a thread room's client fields (`title`, `intro_message`, `ext`); `general` cannot be edited. A save replaces all client fields except `parent_room_id`, which is fixed; the server supplies the title `Thread` when none is given so clients ignoring `parent_room_id` still render it. A save goes as `room_update` `updated` to the members of the thread and of its parent, and to the saver. `intro_message` is a bare reference to a retained message (unchanged references stay valid) and is sent with its current snapshot embedded. Every room creation and save is a logged record in the room's own log.
+- Membership ([PROTOCOL.md §4.3.2](../../PROTOCOL.md#432-membership)): a new guest or registered identity has joined `general`. `room_join` and `room_leave` take a known `room_id` (else `invalid_params`), work for `general` and threads alike, and return `{}` after a `room_update` (`joined` with the room record, or `left`) to every connection of the user. Joining a joined room re-sends its record to that connection; leaving a room not joined changes nothing. A guest's rooms live in its connection attachment, like the guest identity. A registered identity's rooms are stored with it (`identities.rooms_json`, pruned of rooms that no longer exist on each write), kept equal on all its connections, and restored on the next authentication; a registration on a guest's connection starts with the guest's rooms. Because they are durable writes, a registered user's joins and leaves count as posts; unchanged ones write nothing. `user` notifications for joins and leaves are not sent (the protocol lets servers skip them).
+- Allow at most 100 thread rooms, each with at most 2 KiB of serialized client fields. All room creation and saves consume posting and resource budgets. No implicit room creation. A thread room whose entire log (creation record included) has expired is removed at cleanup; its members leave it and are told with `room_update` `left`, releasing its slot; deny further creation while the ceiling is full.
 - Reactions (cap `reactions`): a request sets the caller's complete emoji set on one retained message; `[]` clears it and duplicates collapse. Emoji are non-empty strings of at most 64 UTF-8 bytes without control characters, at most 8 distinct per user per message, and at most 32 reacting users per message (calibrated ceilings 16 and 64). A set that equals the current one is accepted without a new record. Non-empty sets on a tombstone are `invalid_params`; clearing is allowed. Each change is a logged record in the message's current room. Reactions are mutations: they share the posting quotas and request deduplication below.
-- Reject empty text with no embeds as local policy. Accept plain and Markdown formats. Limit embeds to four within all byte budgets; store accepted URLs/content without backend fetching or rendering. Unknown embed kinds remain opaque. Client sanitization/sandboxing remains mandatory under the base protocol.
-- `me` changes the display name as a bounded, rate-limited identity operation for registered users; `name: ""` removes it (clients fall back to `user_id`), omitted fields are unchanged, and guests keep their assigned name (`denied`). The demo keeps no avatars or profile `ext`: `me` type-checks `avatar` and `ext` and then ignores them. No avatar downloads or automatic link previews.
-- A rename sends `user` ([PROTOCOL.md §3.3](../../PROTOCOL.md#33-identity)): `you` to the user's other connections and `new` to every other connection. Signing in with a passkey or token on a guest's connection sends `new` with `old` (the retired guest) to every other connection.
+- A new message with empty text and no embeds is neither logged, charged, nor delivered; its result is `{}` (an unknown room is still `invalid_params`). A save that would leave a message empty is `invalid_params` by local policy; delete it instead. Accept plain and Markdown formats. `body.mentions`, when present, is an array of non-empty `user_id` strings (duplicates collapse) stored as sent; the server never reads mentions out of `text`. Limit embeds to four within all byte budgets; store accepted URLs/content without backend fetching or rendering. Unknown embed kinds remain opaque. Client sanitization/sandboxing remains mandatory under the base protocol.
+- `me` merges into the profile ([PROTOCOL.md §3.3](../../PROTOCOL.md#33-identity)): a given field replaces its value, an omitted one is unchanged, and an empty one removes it. It changes the display name as a bounded, rate-limited identity operation for registered users; `name: ""` removes it (clients fall back to `user_id`) and is announced as `name: ""`, and guests keep their assigned name (`denied`). The demo keeps no avatars or profile `ext`: `me` type-checks `avatar` and `ext` and then ignores them. No avatar downloads or automatic link previews.
+- A rename sends `user` ([PROTOCOL.md §3.3](../../PROTOCOL.md#33-identity)): `you` to the user's other connections and `new` to every other connection. Signing in with a passkey or token on a guest's connection sends `new` with `old` (the retired guest) to every other connection. History pages carry `users`: the current objects of their registered authors and reactors, whose `from` keeps the name at posting time (guests cannot rename).
+- `command` (cap `command`, [PROTOCOL.md §4.8](../../PROTOCOL.md#48-command)): `/help` answers `{}` and a `@private` notice listing the commands, delivered to that connection only, never logged, with no `message_id` or `log_id`. Other commands are `invalid_params` without counting as policy violations. A command costs a frame and no SQL beyond a cached room check.
 - Message snapshots and single-set reaction records carry `prev_log_id` when an earlier record for the same key is still stored. Room records and the reaction record a move re-logs do not. The link is added after the snapshot size check. Deleted messages are not redacted.
-- `room_list` (cap `rooms`) returns room records with delivery fields: without `parent_room_id`, the top-level `general`; with it, that room's threads; an unknown parent is `invalid_params`. Every room is visible and joined, so each room's `members` is the same list: the users connected now, one entry each, at most 20. It reads the capped room table under the room-listing reservation and writes nothing.
+- `room_list` (cap `rooms`, [PROTOCOL.md §4.3.1](../../PROTOCOL.md#431-listing)) returns room records with delivery fields in `joined` (the user's rooms, never truncated) and `rooms` (visible rooms not joined: `general` when left, or with `parent_room_id` that room's threads), each most recently active first. It takes `only_joined`, `not_joined`, `parent_room_id`, `room_id` (one room; unknown is `invalid_params`), and `latest_log_id`. Each room's `members` are the users connected now who have joined it, one entry each, at most 20; `member_count` is omitted, since members who are not connected are not counted. It reads the capped room table under the room-listing reservation and writes nothing. A listing that would pass the 256 KiB response cap sends intro messages as bare references, then leaves out `members`. Listing unjoined top-level rooms while joined to `general` needs no storage and is not throttled.
 
 ### 4.2 Server-wide minute, activity, and per-type throttles
 
 The whole server processes at most `globalFramesPerMinute` (300) frames in a rolling minute, counted in memory after the per-connection gates and parsing but before any SQL. Over it, a request gets `retry_after` with the seconds until the oldest counted frame leaves the window, and a notification or malformed frame is dropped; the socket stays open and nothing is charged. The default is sized for a spike from 50 connected users, 10 of them active: about 20 frames a minute per active user (posts, reactions, edits, history pages, room lookups), about one per quiet user, and a reconnect wave of one auth and one history page each. It is at least one IP's frame minute, so a single client cannot be starved by its own limits. The window is lost on hibernation, when the object has received nothing to count. It shapes spikes; the daily frame and SQL budgets still bound the day.
 
-`activity` is off by default and not advertised; typing then gets the unsupported-method path (notifications are ignored, requests get `unsupported`). With `ACTIVITY=true`: `activity` is a notification. Typing (`typing`, seconds, capped at 30) in a known room is relayed to every other authenticated connection as `{room_id, from, typing}` and never stored. `read_message_id` is dropped: the demo keeps no read cursors. A missing or unknown room drops the update; room existence comes from an in-memory cache refilled by listings, record broadcasts, and one bounded lookup per unknown ID.
+`activity` is off by default and not advertised; typing then gets the unsupported-method path (notifications are ignored, requests get `unsupported`). With `ACTIVITY=true`: `activity` is a notification. Typing (`typing`, seconds, capped at 30) in a known room (`general` without `room_id`) is relayed to the room's other members' connections as `{room_id, from, typing}` and never stored. `read_message_id` is dropped: the demo keeps no read cursors. `away` is accepted and ignored: the demo sends no push, and `away` is never delivered. An unknown room drops the update; room existence comes from an in-memory cache refilled by listings, room changes, and one bounded lookup per unknown ID.
 
 Some message types have their own per-user rate, counted across the user's connections in a rolling 60-second window whose events live in connection attachments (so they survive hibernation and need no SQL):
 
 | Type | Default per user per minute | Over the limit |
 | --- | ---: | --- |
-| `activity` (relayed typing) | 10 | Dropped. The sender's connection gets one `@server` message per window ([PROTOCOL.md Appendix A.1](../../PROTOCOL.md#a1-system-identities-and-scoped-notices)) saying typing is limited |
-| `room_list` | 6 | `retry_after` with the seconds until the oldest counted listing leaves the window |
+| `activity` (relayed typing) | 10 | Dropped. The sender's connection gets one `@private` notice per window ([PROTOCOL.md Appendix A.1](../../PROTOCOL.md#a1-system-identities-and-scoped-notices)) saying typing is limited |
+| `room_list` | 6 | `retry_after` with the seconds until the oldest counted listing leaves the window. The first `only_joined` listing after each authentication is not counted: it is how a client learns its rooms |
 
-The `@server` notice goes to the throttled connection only and is never logged. Its `message_id` and `log_id` still come from the server-wide sequence (one metered `log_state` write), so no logged record can reuse it. Posting quotas continue to cover every logged mutation (`message`, `room`, `reactions`, `me`).
+The `@private` notice goes to the throttled connection only, is never logged, and carries no `message_id` or `log_id`, so it needs no SQL. Posting quotas continue to cover every logged mutation (`message`, `room_set`, `reactions`, `me`) and a registered user's room joins and leaves.
 
 Every frame is charged to the IP and daily frame budgets before any other work (section 6). Each connection reserves frames in blocks of `frameLease` (10) and spends them from its attachment, so a frame carries a tenth of a reservation's SQL bookkeeping (section 7 allows durable block reservation). A block counts against the IP's frame minute and the daily frame budget when it is reserved, lives only in that connection's attachment so it is never granted twice, and is burned when the connection closes or the UTC day ends. A connection that sends a single frame costs what it did before blocks. Operations that do SQL work still reserve their own cost. Handlers read the attachment after the charge, so none writes back a copy with the block unspent. The frame is parsed before it is charged; parsing is bounded CPU work with no storage.
 
@@ -175,7 +178,7 @@ Implement protocol [§4.9](../../PROTOCOL.md#49-webauthn-authentication): `actio
 {"method":"auth","id":"a1","params":{"scheme":"webauthn","action":"register","step":"begin"}}
 ```
 
-The intermediate response is `{"id":"a1","result":{"challenge_id":"...","public_key":{...}}}`. `public_key` is JSON-encoded WebAuthn creation options, with binary fields represented as base64url; the client adapter converts them to browser API types. For `action: "login"`, return request options. An intermediate result does not authenticate the socket or trigger room announcements.
+The intermediate response is `{"id":"a1","result":{"challenge_id":"...","public_key":{...}}}`. `public_key` is JSON-encoded WebAuthn creation options, with binary fields represented as base64url; the client adapter converts them to browser API types. For `action: "login"`, return request options. An intermediate result does not authenticate the socket or start live delivery.
 
 ```json
 {"method":"auth","id":"a2","params":{"scheme":"webauthn","action":"register","step":"finish","challenge_id":"...","credential":{}}}
@@ -223,7 +226,7 @@ All applicable limits compose: passing one does not bypass another. Time means s
 | registered_identity_count | 10,000 | Persistent total |
 | auth_attempts_per_ip_minute | 10 | Begin/finish/guest/failed attempts |
 
-Posting includes message creates, edits, deletes, restores, moves, reaction changes, thread room creation and saves, and name changes. The `anonymous_*` rows apply to guest identities. Count only newly accepted operations against posting quotas; matching deduplicated retries do not post again. Invalid requests and rejected attempts still spend frame/read/verification budgets. Notifications receive no exemption.
+Posting includes message creates, edits, deletes, restores, moves, reaction changes, thread room creation and saves, name changes, and registered users' room joins and leaves (a guest's live in its connection and cost no posts). The `anonymous_*` rows apply to guest identities. Count only newly accepted operations against posting quotas; matching deduplicated retries do not post again. Invalid requests and rejected attempts still spend frame/read/verification budgets. Notifications receive no exemption.
 
 ### Payload and query bounds
 
@@ -264,9 +267,9 @@ The smaller frame limit is a documented demo exception to the protocol's advisor
 | frame_lease | 10 frames reserved per block, per connection |
 | activity_broadcasts_per_user_minute | 10 relayed typing updates |
 | room_list_requests_per_user_minute | 6 |
-| room_list_members | 20 connected users listed per room |
-| keepalive_seconds | 45, advertised; answered by the runtime, not counted as frames |
-| keepalive_timeout_seconds | 150 without a keepalive or frame, once one was sent |
+| room_list_members | 20 connected members listed per room |
+| ping_seconds | 45, advertised as `server.ping`; answered by the runtime, not counted as frames |
+| ping_timeout_seconds | 150 without a ping or frame, once one was sent |
 | processed_frames_per_day | 100,000 globally |
 | repeated_policy_violations | Close after 3 within 60 seconds; severe oversized/binary input closes immediately |
 
@@ -335,10 +338,11 @@ Suggested logical schema; physical layout may change to reduce measured costs:
 | room_state | Fixed room ID, last log ID, monotonic history floor, last commit time, metadata |
 | log_state | Server-wide last log ID, monotonic history floor F, last commit time |
 | rooms | Room ID, fixed parent, creation/current record log IDs, per-room head, intro message reference, bounded client fields; one top-level room plus at most 100 threads |
+| identity rooms | Each registered identity's joined room IDs (`identities.rooms_json`), pruned to existing rooms on each write; guests' live in connection attachments |
 | records | Room/log primary key, internal commit time, record kind, complete record JSON; a move is stored in both rooms |
 | message_state | Message ID primary key, current room, latest log ID, latest snapshot and author |
 | reaction_state | Message/user primary key, latest log ID, reacting identity, emoji set |
-| identities/credentials | Stable user ID, unique credential ID, public key, required verifier state, bounded name |
+| identities/credentials | Stable user ID, unique credential ID, public key, required verifier state, bounded name, joined rooms |
 | accepted_requests | User/request primary key, canonical method+params digest, original result, expiry |
 | resource_budgets | UTC day, charged/reserved reads/writes/frames/admissions/posts/registrations |
 | principal_limits | Bounded IP/user counters and rolling posting timestamps |
@@ -352,7 +356,7 @@ Store internal commit time for retention, distinct from the wire log ID. Make co
 
 ### Schema versions
 
-The schema version lives in `_meta` and the `maintenance` row. A new object creates the current schema (2) and seeds the `general` room's creation record. Stored data is never migrated: when the constructor finds a different schema version, older or newer, it wipes the whole object with `deleteAll()` (every SQLite table and key-value entry, so chat, identities, credentials, passkey sessions, limiter windows, and deduplication rows) under `blockConcurrencyWhile`, then creates a fresh schema. The demo is public and retains about a day of content, so a reset on schema changes is simpler and safer than upgrade code; passkeys must be registered again, and a token that outlives its session or identity is `denied`, which sends the client back to sign-in. To avoid replenishing platform usage already metered today, the current UTC day's resource-reservation row is read before the wipe and added back afterwards, together with the one-time 512/512 bootstrap reservation. Neither addition checks capacity, so a reset cannot fail on, or be blocked by, an exhausted budget; an exhausted day stays exhausted until UTC midnight. The accounting-unsafe latch is not carried: an operator deploy that resets storage is its recovery path. The log head is not preserved across a reset; new log IDs are commit-time milliseconds and so normally still exceed old ones, but every old record is gone, so clients reconnecting after a deploy must rebuild from the announced history bounds.
+The schema version lives in `_meta` and the `maintenance` row. A new object creates the current schema (3, which added each registered identity's joined rooms for protocol v5) and seeds the `general` room's creation record. Stored data is never migrated: when the constructor finds a different schema version, older or newer, it wipes the whole object with `deleteAll()` (every SQLite table and key-value entry, so chat, identities, credentials, passkey sessions, limiter windows, and deduplication rows) under `blockConcurrencyWhile`, then creates a fresh schema. The demo is public and retains about a day of content, so a reset on schema changes is simpler and safer than upgrade code; passkeys must be registered again, and a token that outlives its session or identity is `denied`, which sends the client back to sign-in. To avoid replenishing platform usage already metered today, the current UTC day's resource-reservation row is read before the wipe and added back afterwards, together with the one-time 512/512 bootstrap reservation. Neither addition checks capacity, so a reset cannot fail on, or be blocked by, an exhausted budget; an exhausted day stays exhausted until UTC midnight. The accounting-unsafe latch is not carried: an operator deploy that resets storage is its recovery path. The log head is not preserved across a reset; new log IDs are commit-time milliseconds and so normally still exceed old ones, but every old record is gone, so clients reconnecting after a deploy must rebuild from the listed history bounds.
 
 ### Deduplication
 
@@ -369,7 +373,7 @@ Retention replaces all earlier daily-reset/room-rotation ideas. Keep `general` u
 - Expire records by their internal nondecreasing commit time, not message creation ID. Commit times are nondecreasing in log order, so expiry is always a prefix of the one server-wide log.
 - Retain a current message while its latest record remains retained. Remove current state when its latest record expires. Tombstones and reaction sets follow the same rule; a move re-logs the moved message's reaction sets, refreshing them.
 - A recent edit can keep a message visible past 24 hours from creation. Its older creation/edit records may be removed; its latest complete snapshot is sufficient to reconstruct it.
-- Room records are current state, like messages: a room keeps being announced with its latest record (and that record's original `log_id`) after the record itself leaves the log. A thread room whose entire log has expired is removed and announced as removed.
+- Room records are current state, like messages: a room keeps being listed with its latest record (and that record's original `log_id`) after the record itself leaves the log. A thread room whose entire log has expired is removed, and its members get `room_update` `left`.
 - Physical row deletion is separate from logical visibility. History, edits, and lookups always enforce the published floor, including during partial cleanup.
 - Passkeys and global/principal budgets are independent of chat retention. Dedup uses its own 24-hour expiry.
 
@@ -391,11 +395,12 @@ inverted range is sent on the wire. The boundary never decreases: F is
 monotonic, and a room reports `null` only while F > H, so any later record in
 the room is at least F.
 
-Include both fields in every active room announcement and successful history
-result, without an extension advertisement:
+Include both fields in every room record the server sends (`room_list`,
+`room_update`) and every successful history result, without an extension
+advertisement:
 
 ```json
-{"method":"room","params":{"room_id":"general","log_id":"1789900000000","title":"General","latest_log_id":"1790000001000","history_log_id":"1789913600001"}}
+{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"1789900000000","title":"General","latest_log_id":"1790000001000","history_log_id":"1789913600001"}]}}
 ```
 
 ```json
@@ -405,11 +410,11 @@ result, without an extension advertisement:
 This empty page can represent an out-of-range or expired query; only a room
 whose retained log is empty uses `history_log_id: null`.
 
-After advancing F, announce removed thread rooms first (no storage access), then re-announce every room whose `history_log_id` changed, with the listing charged to the maintenance budget; a failed listing never suppresses committed removals. A cleanup job whose last batch reported more work (including thread rooms still awaiting removal) continues on its next run without the idle probe ending it. Attach both wire boundaries atomically with each history page's query snapshot; do not return entries evaluated under an older floor with a newer response floor. Capture response state synchronously without external awaits. Keep F monotonic on clients even if paginated responses arrive out of order.
+After advancing F, tell removed thread rooms' members first with `room_update` `left` (no storage access), then send every room whose `history_log_id` changed as `room_update` `updated` to the members of the room and of its parent, with the listing charged to the maintenance budget; a failed listing never suppresses committed removals. A cleanup job whose last batch reported more work (including thread rooms still awaiting removal) continues on its next run without the idle probe ending it. Attach both wire boundaries atomically with each history page's query snapshot; do not return entries evaluated under an older floor with a newer response floor. Capture response state synchronously without external awaits. Keep F monotonic on clients even if paginated responses arrive out of order.
 
 ### History queries
 
-Follow protocol [§4.1](../../PROTOCOL.md#41-history): inclusive after/before, forward oldest selection when after is present, backward newest otherwise, always return each array ascending. `room_id` is required; unknown rooms are `invalid_params`. Query only the intersection with the room's `[history_log_id, latest_log_id]`. `limit` counts records of every kind, and `first_id`/`last_id` span all kinds; results are partitioned into `rooms` (with the room's delivery fields), `entries`, and `reactions`, omitting empty `rooms`/`reactions`. An entirely expired range returns an empty result with F; do not invent pagination IDs. No compaction is required for this version.
+Follow protocol [§4.1](../../PROTOCOL.md#41-history): inclusive after/before, forward oldest selection when after is present, backward newest otherwise, always return each array ascending. Without `room_id` the default room `general` is paged; unknown rooms are `invalid_params`. A window with `after` equal to `before` returns exactly that record when it is retained, even when it is only in another room's log (a moved message's earlier snapshot), so `prev_log_id` links can be walked back; room records are returned only from their own room. Query only the intersection with the room's `[history_log_id, latest_log_id]`. `limit` counts records of every kind, and `first_id`/`last_id` span all kinds; results are partitioned into `rooms` (with the room's delivery fields), `entries`, and `reactions`, omitting empty `rooms`/`reactions`. An entirely expired range returns an empty result with F; do not invent pagination IDs. No compaction is required for this version.
 
 Select from the room's own log before the source-slice limit. With a byte cap, shrink the effective positive limit before selecting the final contiguous slice in the requested direction. Return its true first_id/last_id and more, accounting for entries omitted due to either count or byte cap. Each allowed snapshot must fit into at least one response with envelope overhead. Forward continuation is last_id+1, backward continuation first_id-1; never use string ordering or message IDs for pagination.
 
@@ -425,7 +430,7 @@ The implementing harness must add this behavior to the demo client:
 4. Before applying each page, inspect its F. If retention has overtaken the next unprocessed recovery position, discard the partial history replay and rebuild against the new floor while preserving the fixed head H and retained live entries buffered above it. Do not mark a silently truncated gap as recovered. Cancel or ignore obsolete in-flight requests by a local recovery generation.
 5. An increased floor within already processed coverage need not restart recovery, but must evict newly expired snapshots. Bound live/recovery buffers (1 MiB or 1,000 entries); on overflow, clear partial recovery and reconnect/recover with backoff.
 6. Each room's checkpoint is independent; threads are separate rooms. Eviction and asynchronous older pages must never resurrect snapshots below the current floor or overwrite a newer snapshot.
-7. Metadata re-announcements do not advance checkpoints or replace an active fixed recovery head by themselves. The floor only invalidates unavailable history.
+7. Room record updates (`room_update`, listings) do not advance checkpoints or replace an active fixed recovery head by themselves. The floor only invalidates unavailable history.
 
 Update clients to the base-protocol fields; clients using the previous wire contract are not guaranteed correct recovery. Include a visible demo notice that only roughly the last day is retained.
 
@@ -469,7 +474,7 @@ Use unit tests for pure logic and Cloudflare's Workers/Vitest integration for ru
 ### Protocol and sequencing
 
 - Minimal/JSON-RPC envelopes; valid/invalid IDs; parse failures; notifications without replies; unknown method/field behavior.
-- Server precedes auth; room precedes live messages; pipelined slow auth then message cannot overtake authentication.
+- Server precedes auth; pipelined slow auth then message cannot overtake authentication; a result reflects every notification sent before it (a `room_update` precedes the result of the request that caused it).
 - Equal-millisecond and backward-clock creates/edits strictly increase IDs; head survives empty-log cleanup/restart.
 - Concurrent sockets mutating the same room produce one ordered stream. Author spoofing fails. Edit/delete/restore follow replacement semantics and ownership.
 - Message extensions, embeds, tombstones, and immutable fields survive storage/replay correctly.

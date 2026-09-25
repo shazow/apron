@@ -53,7 +53,7 @@ function messageInput(clock: TestClock, requestId: string, params: Record<string
 }
 
 function logId(result: StoreMutationResult): bigint {
-	const value = result.broadcasts[0]?.params.log_id;
+	const value = result.broadcasts[0]?.params.log_id ?? result.room?.log_id;
 	if (typeof value !== "string") throw new Error("mutation did not produce a record");
 	return BigInt(value);
 }
@@ -148,12 +148,12 @@ it("returns inclusive, bounded forward and backward pages with true bounds", asy
 
 it("counts records of every kind toward limit and spans first_id/last_id across kinds", async () => {
 	await withStore("mixed-kinds", ROOMY, (store, clock) => {
-		const created = store.mutate(op(clock, "thread", "room", { parent_room_id: "general", title: "Mixed" }));
+		const created = store.mutate(op(clock, "thread", "room_set", { parent_room_id: "general", title: "Mixed" }));
 		const roomId = String(created.result.room_id);
 		const message = store.mutate(op(clock, "m1", "message", { room_id: roomId, body: { text: "first" } }));
 		const reaction = store.mutate(op(clock, "r1", "reactions", { message_id: message.result.message_id, emojis: ["👍"] }, "bob"));
 		const edit = store.mutate(op(clock, "m2", "message", { message_id: message.result.message_id, room_id: roomId, body: { text: "edited" } }));
-		const renamed = store.mutate(op(clock, "rename", "room", { room_id: roomId, title: "Renamed" }, "bob"));
+		const renamed = store.mutate(op(clock, "rename", "room_set", { room_id: roomId, title: "Renamed" }, "bob"));
 		const all = [created, message, reaction, edit, renamed].map((result) => String(logId(result)));
 
 		const first = store.history({ roomId, after: 0n, limit: 2, now: clock.value });
@@ -208,7 +208,7 @@ it("stops at a UTF-8 response byte cap without skipping a contiguous record", as
 
 it("rejects unknown rooms and returns a known empty thread's creation record", async () => {
 	await withStore("room-filters", {}, (store, clock) => {
-		const created = store.mutate(op(clock, "empty-thread", "room", { parent_room_id: "general", title: "No messages yet" }));
+		const created = store.mutate(op(clock, "empty-thread", "room_set", { parent_room_id: "general", title: "No messages yet" }));
 		const roomId = String(created.result.room_id);
 		store.mutate(messageInput(clock, "outside-thread", { body: { format: "plain", text: "outside the empty thread" } }));
 		const empty = store.history({ roomId, limit: 50, now: clock.value });
@@ -252,7 +252,7 @@ it("continues bounded cleanup while retaining recent edits and moves out of a th
 	await withStore("cleanup-continuation", { ...ROOMY, cleanupBatch: 2 }, (store, clock) => {
 		const root = store.mutate(messageInput(clock, "cleanup-root", { body: { format: "plain", text: "root-old" } }));
 		const rootId = String(root.result.message_id);
-		const thread = store.mutate(op(clock, "cleanup-thread", "room", { parent_room_id: "general", title: "Retained thread", intro_message: { message_id: rootId } }));
+		const thread = store.mutate(op(clock, "cleanup-thread", "room_set", { parent_room_id: "general", title: "Retained thread", intro_message: { message_id: rootId } }));
 		const threadId = String(thread.result.room_id);
 		const reply = store.mutate(op(clock, "cleanup-reply", "message", { room_id: threadId, body: { format: "plain", text: "reply-old" } }));
 		const replyId = String(reply.result.message_id);
@@ -299,9 +299,9 @@ it("continues bounded cleanup while retaining recent edits and moves out of a th
 
 it("removes thread rooms whose entire log expired and keeps rooms with retained records", async () => {
 	await withStore("thread-expiry", ROOMY, (store, clock, state) => {
-		const stale = String(store.mutate(op(clock, "stale", "room", { parent_room_id: "general", title: "Stale" })).result.room_id);
+		const stale = String(store.mutate(op(clock, "stale", "room_set", { parent_room_id: "general", title: "Stale" })).result.room_id);
 		store.mutate(op(clock, "stale-post", "message", { room_id: stale, body: { text: "old" } }));
-		const active = String(store.mutate(op(clock, "active", "room", { parent_room_id: "general", title: "Active" })).result.room_id);
+		const active = String(store.mutate(op(clock, "active", "room_set", { parent_room_id: "general", title: "Active" })).result.room_id);
 		clock.value += RETENTION_MS - 60_000;
 		const recent = store.mutate(op(clock, "active-post", "message", { room_id: active, body: { text: "recent" } }));
 		clock.value += 120_000;
@@ -328,7 +328,7 @@ it("removes thread rooms whose entire log expired and keeps rooms with retained 
 		// The released slot allows another thread under a one-thread ceiling.
 		const limited = new Store(state, { ...ROOMY, maxThreads: 2 }, clock.clock);
 		limited.initialize();
-		expect(limited.mutate(op(clock, "replacement", "room", { parent_room_id: "general", title: "Replacement" })).result.room_id).toBeTruthy();
+		expect(limited.mutate(op(clock, "replacement", "room_set", { parent_room_id: "general", title: "Replacement" })).result.room_id).toBeTruthy();
 	});
 });
 
@@ -407,7 +407,7 @@ it("finishes removing an expired thread room after a saturated batch", async () 
 	// Regression: the room was left over when the deletion pass filled the
 	// batch, and the next run's idle check ended the job before removing it.
 	await withStore("thread-expiry-saturated", { ...ROOMY, retentionMs: 60_000, cleanupBatch: 2, maxThreads: 1 }, (store, clock) => {
-		const threadId = String(store.mutate(op(clock, "thread", "room", { parent_room_id: "general", title: "T" })).result.room_id);
+		const threadId = String(store.mutate(op(clock, "thread", "room_set", { parent_room_id: "general", title: "T" })).result.room_id);
 		// Past the first hourly deadline; everything is older than retention.
 		clock.value += 2 * 60 * 60_000;
 		const removed: string[] = [];
@@ -423,16 +423,16 @@ it("finishes removing an expired thread room after a saturated batch", async () 
 		}
 		expect(removed).toEqual([threadId]);
 		expect(store.listRooms().map((room) => room.room_id)).toEqual(["general"]);
-		expect(store.mutate(op(clock, "thread-2", "room", { parent_room_id: "general", title: "T2" })).result.room_id).toBeTruthy();
+		expect(store.mutate(op(clock, "thread-2", "room_set", { parent_room_id: "general", title: "T2" })).result.room_id).toBeTruthy();
 	});
 });
 
 it("lists only rooms whose history_log_id moved, charged to maintenance", async () => {
 	await withStore("changed-rooms", ROOMY, (store, clock) => {
-		const stale = String(store.mutate(op(clock, "stale", "room", { parent_room_id: "general", title: "Stale" })).result.room_id);
+		const stale = String(store.mutate(op(clock, "stale", "room_set", { parent_room_id: "general", title: "Stale" })).result.room_id);
 		clock.value += RETENTION_MS - 60_000;
 		store.mutate(op(clock, "stale-post", "message", { room_id: stale, body: { text: "keeps the room" } }));
-		const fresh = String(store.mutate(op(clock, "fresh", "room", { parent_room_id: "general", title: "Fresh" })).result.room_id);
+		const fresh = String(store.mutate(op(clock, "fresh", "room_set", { parent_room_id: "general", title: "Fresh" })).result.room_id);
 		clock.value += 120_000;
 		const before = store.budget(clock.value);
 		const result = store.runCleanup(clock.value);

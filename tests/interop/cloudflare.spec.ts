@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
-import { composer, disablePasskeyAutofill, editMessage, reactionChip, reactTo, sendMessage, startThread, userIdOf, waitForMessage } from './test-helpers';
+import { composer, disablePasskeyAutofill, editMessage, openThread, reactionChip, reactTo, sendMessage, startThread, userIdOf, waitForMessage } from './test-helpers';
 
 // This exercises browser-generated credentials and the actual Workers verifier.
 // Runtime/storage policy cases live in servers/cloudflare-worker/test.
@@ -131,8 +131,20 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	await expect(reactionChip(reply, '🎉')).toHaveText('🎉1');
 	await expect(reactionChip(reply, '🎉')).toHaveAttribute('aria-pressed', 'true');
 	await page.getByRole('button', { name: 'Back to room', exact: true }).click();
-	await expect(page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`)).toContainText('verified returning owner');
+	const threadCard = page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
+	await expect(threadCard).toContainText('verified returning owner');
 	await expect(savedMessage).toHaveCount(0);
+	// A thread's members are those who joined it: leaving drops its row but
+	// keeps its card in General, and opening the card joins it again.
+	page.on('dialog', (dialog) => dialog.accept());
+	const row = page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+	await openThread(page, threadId);
+	await page.getByTestId('leave-room').click();
+	await expect(row).toHaveCount(0);
+	await expect(threadCard).toBeVisible();
+	await openThread(page, threadId);
+	await expect(page.getByRole('heading', { level: 1 })).toContainText('verified returning owner');
+	await expect(row).toHaveCount(1);
 });
 
 test('built frontend connects to the Worker and recovers retained history', async ({ page }) => {
@@ -223,7 +235,7 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 	}
 });
 
-test('Worker leaves typing off, lists rooms, colors guest avatars by user_id, and offers only connected users to mention', async ({ browser }) => {
+test('Worker leaves typing off, lists rooms, lets guests leave and rejoin General, colors guest avatars by user_id, and offers only connected users to mention', async ({ browser }) => {
 	const writer = await browser.newContext();
 	const reader = await browser.newContext();
 	try {
@@ -252,12 +264,18 @@ test('Worker leaves typing off, lists rooms, colors guest avatars by user_id, an
 		await expect(picker.getByRole('option')).toHaveCount(2);
 		await field.fill('');
 		await expect(picker).toHaveCount(0);
-		// room_list: every room is joined on the demo, so there is nothing to browse.
+		// room_list: a new guest has joined General, the demo's only top-level
+		// room, so there is nothing to browse.
 		await expect(pageB.getByTestId('room-list').locator('[data-room="general"]')).toBeVisible();
 		await pageB.waitForTimeout(500);
 		await expect(pageB.getByTestId('browse-rooms')).toHaveCount(0);
-		// Rooms are joined for good on the demo, so Leave is not offered.
-		await expect(pageB.getByTestId('leave-room')).toHaveCount(0);
+		// Leaving General makes it a room to browse and join again.
+		pageB.on('dialog', (dialog) => dialog.accept());
+		await pageB.getByTestId('leave-room').click();
+		await expect(pageB.getByTestId('room-list').locator('button[data-room="general"]')).toHaveCount(0);
+		await pageB.getByTestId('browse-rooms').click();
+		await pageB.getByTestId('room-directory').locator('[data-join="general"]').click();
+		await expect(pageB.getByRole('main', { name: 'Conversation' }).getByRole('heading', { name: 'General', exact: true })).toBeVisible();
 		// Placeholder avatars take their hue from the user_id, so two guests differ.
 		const hue = (page: typeof pageA) => page.locator('.ap-profile-me .ap-avatar').first().evaluate((element) => (element as HTMLElement).style.getPropertyValue('--avatar-hue'));
 		const [hueA, hueB] = [await hue(pageA), await hue(pageB)];

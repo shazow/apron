@@ -1,8 +1,8 @@
 # Public demo authentication and policy
 
-The demo speaks Apron protocol **4**, advertising `history`, `edit`, `rooms`,
-and `reactions`. `activity` (typing) is implemented but off unless the
-deployment sets `ACTIVITY=true`. History availability uses each room's `latest_log_id` and
+The demo speaks Apron protocol **5**, advertising `history`, `edit`, `rooms`,
+`reactions`, and `command`, and `server.ping` (45 seconds). `activity`
+(typing) is implemented but off unless the deployment sets `ACTIVITY=true`. History availability uses each room's `latest_log_id` and
 nullable `history_log_id`, without extension negotiation. See
 [history and recovery](../../../PROTOCOL.md#41-history) and the
 [retention implementation specification](../SPEC.md#9-rolling-history-and-base-protocol-availability).
@@ -21,21 +21,32 @@ IP attribution, quotas, or the fixed shared room. See the
 The implementation follows the current repository protocol. Local policy
 within it:
 
-- Rooms: every room is visible to every client. Only thread rooms under
-  `general` may be created (top-level rooms and nested threads are `denied`);
-  any participant may save a thread's `title`, `intro_message`, and `ext`, while
+- Rooms: every room is visible to every client, and a connection receives
+  deliveries only for the rooms its user has joined. A new guest or passkey
+  identity has joined `general`; posting to a room does not require joining it.
+  Only thread rooms under `general` may be created with `room_set` (top-level
+  rooms and nested threads are `denied`), which joins the creator; any
+  participant may save a thread's `title`, `intro_message`, and `ext`, while
   `general` is fixed. Threads always carry a title (`Thread` by default).
-  `room_join` re-sends a room's record; `room_leave` is `denied`. `room_list`
-  lists `general` or its threads; each room's `members` are the users
-  connected now (at most 20), since every room is visible and joined. A client
-  that sends the `{"method":"ping"}` keepalive every 45 seconds and then goes
-  quiet for 150 is disconnected, so a peer that vanished without closing is
-  not listed.
-- Activity (only with `ACTIVITY=true`): typing is relayed to every other
-  connection and never stored, at most 10 relays per user per minute; past that, updates are dropped and the
-  sender gets one `@server` message a minute saying so. Read cursors are
-  neither kept nor relayed.
-- Messages: author-only edit, delete, restore, and move. `reply_to` and
+  `room_join` and `room_leave` work for `general` and threads, and changes
+  arrive as `room_update` before the result. A guest's rooms last for its
+  connection; a registered identity keeps its rooms across connections, and its
+  joins and leaves count as posts. Joins and leaves are not announced with
+  `user` notifications. `room_list` takes the protocol's filters; each room's
+  `members` are the users connected now who have joined it (at most 20), and
+  `member_count` is left out. A client that sends the `{"method":"ping"}`
+  liveness ping every 45 seconds and then goes quiet for 150 is disconnected,
+  so a peer that vanished without closing is not listed.
+- Activity (only with `ACTIVITY=true`): typing is relayed to the room's other
+  members and never stored, at most 10 relays per user per minute; past that, updates are dropped and the
+  sender gets one `@private` notice a minute saying so. Read cursors are
+  neither kept nor relayed. `away` is accepted and ignored: the demo has no push.
+- Commands: `/help` replies with a `@private` notice; other commands are
+  `invalid_params`.
+- Messages: a request without `room_id` is in `general`. A new message with
+  empty text and no embeds is not logged and returns `{}`; an empty save is
+  `invalid_params` (delete instead). `body.mentions` is stored as sent, and
+  text is never parsed for mentions. Author-only edit, delete, restore, and move. `reply_to` and
   `intro_message` must name a retained message when set or changed; resubmitting
   an unchanged reference stays valid after its target expires, and expiration
   never invalidates an accepted snapshot. The server keeps references bare.
@@ -45,9 +56,12 @@ within it:
   unchanged set is accepted without a new record.
 - Load: the whole server processes at most 300 frames a minute. Past that,
   requests get `retry_after` and notifications are dropped; sockets stay open.
-- `me` renames registered users only; `name: ""` removes the name. `avatar`
-  and `ext` are ignored. A rename sends `user` notifications, as does signing
-  in on a guest's connection (`new` with the retired guest as `old`).
+- `me` renames registered users only; given fields replace, omitted ones stay,
+  and `name: ""` removes the name (announced as `name: ""`). `avatar` and `ext`
+  are ignored. A rename sends `user` notifications, as does signing in on a
+  guest's connection (`new` with the retired guest as `old`). History pages
+  carry `users` with registered authors' current names. A `user_id` or `name`
+  requested in `auth` is not honored.
 - Records: message snapshots and reaction sets carry `prev_log_id` when the
   previous record for the same key is still stored. Deletion does not redact
   earlier snapshots; they expire with the retention window.
@@ -84,9 +98,9 @@ but do consume frame and lookup resources.
 ## Demo policy metadata
 
 `server.params.ext.demo` describes retention and selected payload/posting policies,
-the keepalive interval (`keepalive_seconds`), and what the demo does not keep:
-`room_leave: false` (every room is joined for good) and `read_cursors: false`
-(read markers are dropped), so clients can skip sending them.
+and what the demo does not keep: `read_cursors: false` (read markers are
+dropped), so clients can skip sending them. The ping interval is the standard
+`server.params.ping`.
 The demo's 16 KiB frame policy is an explicit exception to the base protocol's
 advisory 256 KiB recommendation. Payload lengths count UTF-8 bytes. Errors use
 the base protocol codes; `retry_after` includes `data.retry_after`, whole
