@@ -4,8 +4,8 @@
   "name": "Reactions",
   "description": "react sends the user's complete emoji set for one message and resolves on the empty result; broadcasts replace per (message_id, user_id). Reactions follow a move through the server's destination re-log, [] clears, an unknown message is invalid_params, and a tombstone hides reactions.",
   "references": [
-    "PROTOCOL.md#d2-reactions",
-    "PROTOCOL.md#appendix-b--edit",
+    "PROTOCOL.md#45-reactions",
+    "PROTOCOL.md#42-edit",
     "PROTOCOL.md#11-envelope-and-replies"
   ],
   "variants": [

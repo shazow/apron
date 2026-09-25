@@ -42,7 +42,7 @@ export type MessageFormat = 'plain' | 'markdown';
 
 /**
  * One visible room (announced on this connection and not removed). Threads
- * are rooms with `parentRoomId` (PROTOCOL.md §3.4, §4.3).
+ * are rooms with `parentRoomId` (PROTOCOL.md §3.4, §4.3.4).
  */
 export interface RoomSnapshot {
 	id: string;

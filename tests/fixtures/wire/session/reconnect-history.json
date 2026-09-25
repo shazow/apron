@@ -5,8 +5,8 @@
   "description": "A fresh guest identity authenticates after transport loss. The client rebuilds its protocol view from the new connection: rooms are empty until announced again. Each room's records, floor and checkpoint are kept across the loss, so a re-announced room's recovery resumes after its checkpoint instead of paging the whole retained range, across message and reaction records, keeping the original sender and yielding each message once.",
   "references": [
     "PROTOCOL.md#32-authentication",
-    "PROTOCOL.md#appendix-a--history",
-    "PROTOCOL.md#d2-reactions"
+    "PROTOCOL.md#41-history",
+    "PROTOCOL.md#45-reactions"
   ],
   "variants": [
     {

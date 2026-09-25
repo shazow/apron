@@ -5,7 +5,7 @@
   "description": "createRoom sends only the fields it sets (a thread adds parent_room_id and a bare intro_message); updateRoom resubmits title, a bare intro_message, and ext from the latest record, never parent_room_id. Room records replace in full, a described top-level room is created, posted in, then updated, and a removal leaves the visible set.",
   "references": [
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#appendix-c--rooms",
+    "PROTOCOL.md#43-rooms",
     "PROTOCOL.md#35-messages"
   ],
   "variants": [

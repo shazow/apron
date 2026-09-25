@@ -5,7 +5,7 @@
   "description": "A newer snapshot from history replaces the message already loaded from live delivery.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#appendix-a--history"
+    "PROTOCOL.md#41-history"
   ],
   "variants": [
     {

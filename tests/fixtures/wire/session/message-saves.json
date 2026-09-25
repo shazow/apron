@@ -5,7 +5,7 @@
   "description": "Edit, move, and delete are saves built from the latest snapshot: they resubmit room_id, body (only text changed on edit), a bare reply_to, and ext unchanged, including a server-published ext change and \"__proto__\" keys. A move names the destination thread room; a delete omits body.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#appendix-b--edit",
+    "PROTOCOL.md#42-edit",
     "PROTOCOL.md#34-rooms"
   ],
   "variants": [

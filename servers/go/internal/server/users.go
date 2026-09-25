@@ -19,7 +19,7 @@ const (
 )
 
 // userState is everything the server keeps for one user_id across its
-// connections: the profile (§3.3), joined rooms (§3.4), request
+// connections: the profile (§3.3), joined rooms (§4.3.2), request
 // deduplication (§1.2), and push registrations (§4.7). Guest users
 // are retired when their last connection closes; passkey users persist.
 type userState struct {

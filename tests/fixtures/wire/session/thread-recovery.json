@@ -5,9 +5,9 @@
   "description": "Top-level rooms recover when announced; the thread room 103 loads only on loadRoom, as its own room with H = 107: its newest page first, then an older page on loadOlder. A move (log 104) appears in both rooms' history and re-homes the message whichever page arrives first. Thread pages mix room records, snapshots, and reactions (server limit 3); a live thread record above H is buffered.",
   "references": [
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#appendix-a--history",
-    "PROTOCOL.md#appendix-c--rooms",
-    "PROTOCOL.md#appendix-b--edit"
+    "PROTOCOL.md#41-history",
+    "PROTOCOL.md#43-rooms",
+    "PROTOCOL.md#42-edit"
   ],
   "variants": [
     {

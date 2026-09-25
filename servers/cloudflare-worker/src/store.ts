@@ -297,7 +297,7 @@ export interface Identity {
   tier?: Tier;
 }
 
-/** A flat, self-describing message snapshot (protocol v5 section 3.5). */
+/** A flat, self-describing message snapshot (protocol v4 section 3.5). */
 export interface MessageSnapshot {
   message_id: string;
   log_id: string;
@@ -311,7 +311,7 @@ export interface MessageSnapshot {
   prev_log_id?: string;
 }
 
-/** A room record plus this server's delivery fields (protocol v5 section 3.4). */
+/** A room record plus this server's delivery fields (protocol v4 section 3.4). */
 export interface RoomRecord {
   room_id: string;
   log_id: string;

@@ -1,5 +1,5 @@
 /**
- * HTTP side of embeds (PROTOCOL.md §4.6, §4.6.5): writing an upload or a
+ * HTTP side of embeds (PROTOCOL.md §4.6.3, §4.6.5): writing an upload or a
  * stream's content to its `write_url`, reading a live stream, and deciding
  * which embed URLs are safe to load. Media and streams load only from the chat
  * server's own origin; links may point anywhere `http(s)`.
@@ -31,7 +31,7 @@ const DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}
 
 /**
  * Media (images, video, audio) and streams the client may load: the chat
- * server's origin only (§4.6.1: clients SHOULD NOT load `og` media or
+ * server's origin only (§4.6.1, §4.6.5: clients SHOULD NOT load `og` media or
  * stream URLs from other origins), plus small inline images.
  */
 export function sameOriginMedia(value: unknown, origin: string | undefined): string | undefined {

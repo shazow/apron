@@ -6,8 +6,8 @@
   "references": [
     "PROTOCOL.md#11-envelope-and-replies",
     "PROTOCOL.md#12-retries-and-deduplication",
-    "PROTOCOL.md#appendix-b--edit",
-    "PROTOCOL.md#appendix-c--rooms"
+    "PROTOCOL.md#42-edit",
+    "PROTOCOL.md#43-rooms"
   ],
   "variants": [
     {
