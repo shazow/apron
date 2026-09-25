@@ -1,8 +1,11 @@
 # Go reference backend
 
 `cmd/aprond` serves the reference Apron backend: it implements every
-capability in `PROTOCOL.md` (protocol v4) except the informative appendices
-(G multiplexing, H WebRTC). State is in memory; restarting the process clears
+capability of protocol v4 except multiplexing
+([Appendix B.2](../../PROTOCOL.md#b2-multiplexing-envelope))
+and WebRTC
+([Appendix B.1](../../PROTOCOL.md#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
+`PROTOCOL.md` now describes v5, which it does not implement yet. State is in memory; restarting the process clears
 messages, identities, uploads, passkeys, and sessions.
 
 ```sh
@@ -171,7 +174,7 @@ without the embed.
   writer gets `413`); the server then publishes the kept text as `text` in
   place of `url`, and both URLs stop working. Saving the message without the
   embed ends the stream (the writer gets `410`).
-- **Avatars** (Appendix J.4): a message to room `@avatar` with one `upload`
+- **Avatars** ([PROTOCOL.md §4.6.6](../../PROTOCOL.md#466-avatars)): a message to room `@avatar` with one `upload`
   embed returns a write URL and is neither delivered nor logged. A PNG, JPEG,
   GIF, or WebP of at most 2 MiB becomes the sender's `avatar`, followed by a
   `user` notification; replacing or removing the avatar deletes the upload.
@@ -204,7 +207,7 @@ registration for a `url`. Registrations belong to the user, so they matter for
 passkey users; a guest's end with the guest.
 
 A new message wakes users who have no open connection when it mentions them
-(`@user_id`, Appendix J.3, outside Markdown code) or replies to one of their
+(`@user_id`, [PROTOCOL.md Appendix A.3](../../PROTOCOL.md#a3-mention-text), outside Markdown code) or replies to one of their
 messages: the server POSTs the push payload (the message without `log_id`,
 `format`, or `embeds`, text truncated to 1,000 characters) to each of their
 endpoints with `token` as bearer. Deliveries run in the background, refuse to
@@ -275,7 +278,7 @@ recovery are future work.
 ### Example WebAuthn exchange
 
 These examples define the Go server's bearer-token policy alongside the canonical
-protocol exchange (Appendix I). All steps use `auth` requests with fresh IDs
+protocol exchange ([PROTOCOL.md §4.9](../../PROTOCOL.md#49-webauthn-authentication)). All steps use `auth` requests with fresh IDs
 over the same WebSocket; no HTTP authentication endpoints are needed.
 
 | `params.action` and `params.step` | Other parameters | Result |

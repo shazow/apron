@@ -96,7 +96,7 @@
 	let pendingJoin = $state<string | undefined>();
 	/**
 	 * Where the New divider sits in the open pane: after your read cursor as it
-	 * was when the pane opened (Appendix D.1). It stays put while you read.
+	 * was when the pane opened (§4.4). It stays put while you read.
 	 */
 	let newDivider = $state<{ room: string; after?: string; fixed: boolean }>({ room: '', fixed: false });
 	/** Messages a thread is being started from, for the button's "Starting…". */
@@ -504,7 +504,7 @@
 		composer?.focus();
 	}
 
-	/** Loads a thread's history (Appendix A); a failure the client recorded is reported once. */
+	/** Loads a thread's history (§4.1); a failure the client recorded is reported once. */
 	function loadThread(roomId: string): void {
 		client?.loadRoom(roomId).catch((cause: unknown) => {
 			if (session.rooms.find((room) => room.id === roomId)?.recoveryError) feedback.error(cause, 'Unable to load thread');

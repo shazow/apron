@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// avatarRoomID is the room of the avatar upload convention (Appendix J.4): a
+// avatarRoomID is the room of the avatar upload convention (§4.6.6): a
 // message sent there is never delivered or logged.
 const avatarRoomID = "@avatar"
 
@@ -48,11 +48,11 @@ func (m *messageState) snapshot() map[string]any {
 }
 
 // saveMessage creates a message (no message_id) or saves an existing one
-// (Appendix B): every client field is replaced by the submitted state. A save
+// (§4.2): every client field is replaced by the submitted state. A save
 // naming a different room_id moves the message; the snapshot is logged in and
 // broadcast to both rooms, followed by a reactions record in the destination
 // when the message has reactions. Posting in a room the author has not joined
-// joins them first (Appendix C).
+// joins them first (§4.3.5).
 func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
@@ -215,7 +215,7 @@ func (s *Server) commitSnapshotLocked(m *messageState, snapshot map[string]any, 
 }
 
 // republishLocked publishes a server-made snapshot of a message, such as a
-// finished upload or stream (Appendix E): edit rewrites a copy of the
+// finished upload or stream (§4.6.3): edit rewrites a copy of the
 // current body, and nothing is published when it reports no change.
 func (s *Server) republishLocked(m *messageState, edit func(body map[string]any) bool) {
 	snapshot := m.snapshot()
@@ -230,7 +230,7 @@ func (s *Server) republishLocked(m *messageState, edit func(body map[string]any)
 
 // redactLocked rewrites a deleted message's earlier snapshots, and the
 // intro_message copies embedded in room records, into tombstones at their
-// original log_ids (Appendix B).
+// original log_ids (§4.2).
 func (s *Server) redactLocked(m *messageState) {
 	for _, record := range m.records {
 		record.rewrite(tombstone)
@@ -350,7 +350,7 @@ const (
 )
 
 // react replaces the caller's complete reaction set on one message
-// (Appendix D.2). Duplicates collapse; an unchanged set logs nothing.
+// (§4.5). Duplicates collapse; an unchanged set logs nothing.
 func (s *Server) react(c *client, req request) (any, bool, *rpcError) {
 	messageID, err := parseString(req.params, "message_id", true)
 	if err != nil {

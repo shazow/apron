@@ -9,7 +9,7 @@ const resolve: MentionResolver = (id) => {
 	return undefined;
 };
 
-describe('mentions (Appendix J.3)', () => {
+describe('mentions (Appendix A.3)', () => {
 	it('renders a known user_id with the latest name', () => {
 		expect(renderMarkdown('Handing this to @alice.', resolve)).toBe('<p>Handing this to <span class="ap-mention" data-user-id="alice" title="@alice">@Alice Chen</span>.</p>\n');
 	});

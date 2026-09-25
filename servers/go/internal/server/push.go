@@ -23,7 +23,7 @@ const (
 	maxConcurrentPushPOST = 8
 )
 
-// pushRegistration is one `relay` endpoint (Appendix F), keyed by its url.
+// pushRegistration is one `relay` endpoint (§4.7), keyed by its url.
 type pushRegistration struct {
 	userID string
 	kind   string
@@ -96,8 +96,8 @@ func (s *Server) checkPushURL(endpoint string) string {
 }
 
 // wakeLocked wakes users who have no connection when a new message mentions
-// them (Appendix J.3) or replies to one of their messages. Wake policy is
-// server-defined (Appendix F).
+// them (§3.5) or replies to one of their messages. Wake policy is
+// server-defined (§4.7).
 func (s *Server) wakeLocked(m *messageState, snapshot map[string]any) {
 	if len(s.pushes) == 0 {
 		return
@@ -137,7 +137,7 @@ func (s *Server) wakeLocked(m *messageState, snapshot map[string]any) {
 }
 
 // pushPayload is a message object without log_id, format, or embeds, with
-// its text truncated (Appendix F).
+// its text truncated (§4.7).
 func pushPayload(snapshot map[string]any) []byte {
 	value := map[string]any{
 		"message_id": snapshot["message_id"],
@@ -162,7 +162,7 @@ var (
 	inlineCode     = regexp.MustCompile("`[^`\n]*`")
 )
 
-// mentionedIDs finds `@id` mentions (Appendix J.3): not preceded by a letter
+// mentionedIDs finds `@id` mentions (Appendix A.3): not preceded by a letter
 // or digit, without trailing `.` or `-`, and outside Markdown code.
 func mentionedIDs(text string, markdown bool) []string {
 	if markdown {

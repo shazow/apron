@@ -9,11 +9,11 @@
 	const MENTION_MATCHES_MAX = 8;
 
 	interface Props {
-		/** The draft as sent: mentions are `@user_id` (Appendix J.3); the field shows them as name chips. */
+		/** The draft as sent: mentions are `@user_id` (Appendix A.3); the field shows them as name chips. */
 		value: string;
 		placeholder: string;
 		disabled: boolean;
-		/** Attachments and voice clips (cap `embed:upload`, Appendix E): each file goes out as an `upload` embed. */
+		/** Attachments and voice clips (cap `embed:upload`, §4.6.4): each file goes out as an `upload` embed. */
 		canUpload: boolean;
 		/** Who an `@` can name: the room's members, else its recent senders. */
 		people: MentionPerson[];
@@ -263,7 +263,7 @@
 		query = found.query;
 	}
 
-	/** Swaps the typed `@…` for a chip: the person's name on screen, `@user_id` on the wire (Appendix J.3). */
+	/** Swaps the typed `@…` for a chip: the person's name on screen, `@user_id` on the wire (Appendix A.3). */
 	function pick(person: MentionPerson): void {
 		if (!field) return;
 		const { parts, caret } = readDraft(field);

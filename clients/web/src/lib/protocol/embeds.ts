@@ -1,5 +1,5 @@
 /**
- * HTTP side of embeds (PROTOCOL.md Appendix E, K): writing an upload or a
+ * HTTP side of embeds (PROTOCOL.md §4.6.3, §4.6.5): writing an upload or a
  * stream's content to its `write_url`, reading a live stream, and deciding
  * which embed URLs are safe to load. Media and streams load only from the chat
  * server's own origin; links may point anywhere `http(s)`.
@@ -31,7 +31,7 @@ const DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}
 
 /**
  * Media (images, video, audio) and streams the client may load: the chat
- * server's origin only (Appendix E: clients SHOULD NOT load `og` media or
+ * server's origin only (§4.6.1, §4.6.5: clients SHOULD NOT load `og` media or
  * stream URLs from other origins), plus small inline images.
  */
 export function sameOriginMedia(value: unknown, origin: string | undefined): string | undefined {
@@ -42,7 +42,7 @@ export function sameOriginMedia(value: unknown, origin: string | undefined): str
 }
 
 /**
- * An avatar to show (Appendix E): `https:` URLs, small image data URLs, and
+ * An avatar to show (§4.6.6): `https:` URLs, small image data URLs, and
  * files the chat server hosts. Loaded as images only.
  */
 export function safeAvatar(value: unknown, origin: string | undefined): string | undefined {
@@ -59,7 +59,7 @@ export interface WriteProgress {
 }
 
 /**
- * Writes a file to an embed's `write_url` (Appendix E). Reports upload
+ * Writes a file to an embed's `write_url` (§4.6.3). Reports upload
  * progress where the platform can (XMLHttpRequest); resolves when the server
  * accepted the content.
  */
@@ -105,7 +105,7 @@ function writeError(status: number): string {
 }
 
 /**
- * Reads a live stream (Appendix K): `GET url` returns the kept text, then more
+ * Reads a live stream (§4.6.5): `GET url` returns the kept text, then more
  * as it arrives, and ends with the stream. `onText` receives the whole text
  * read so far on this connection; a reader that reconnects replaces what it
  * showed. Resolves when the stream ends.

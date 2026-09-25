@@ -3,7 +3,7 @@
 	import type { Embed } from '$lib/protocol/types';
 	import { directory } from '$lib/ui/directory.svelte';
 
-	/** A preview built only from the embed's `og` (Appendix E): site, title, description, and an image the chat server hosts. */
+	/** A preview built only from the embed's `og` (§4.6.1): site, title, description, and an image the chat server hosts. */
 	let { embed }: { embed: Embed } = $props();
 	let url = $derived(safeLink(embed.url));
 	let og = $derived(embed.og ?? {});

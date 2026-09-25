@@ -44,7 +44,7 @@
 		caps: MessageCaps;
 		onreply: () => void;
 		onjump: (id: string) => void;
-		/** A room mention was clicked (Appendix J.3). */
+		/** A room mention was clicked (Appendix A.3). */
 		onopenroom: (roomId: string) => void;
 		onedit: () => void;
 		onsave: (text: string) => void;
@@ -164,7 +164,7 @@
 </script>
 
 {#if system && !selecting}
-	<!-- A system identity (Appendix J.1): a quiet centered line, no avatar, actions or grouping. -->
+	<!-- A system identity (Appendix A.1): a quiet centered line, no avatar, actions or grouping. -->
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
 	<article data-timeline-item class="ap-msg ap-msg-system" data-message-id={event.message_id} tabindex="-1" onclick={click}>
 		<span class="ap-msg-system-who">{name}</span>

@@ -62,7 +62,7 @@
 		if (browseOpen) list();
 	}
 
-	/** Servers may announce only some threads; the rest come from `room_list` with the parent (Appendix C). */
+	/** Servers may announce only some threads; the rest come from `room_list` with the parent (§4.3.1). */
 	function showMoreThreads(parentRoomId: string): void {
 		moreThreadsFor = moreThreadsFor === parentRoomId ? undefined : parentRoomId;
 		if (moreThreadsFor) list(parentRoomId);

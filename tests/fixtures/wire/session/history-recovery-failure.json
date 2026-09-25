@@ -4,7 +4,7 @@
   "name": "History failure preserves live transitions",
   "description": "A room frame whose head passes the checkpoint starts a recovery from C + 1 (the server did not deliver 103-106 live). When a page fails (an error reply, or a result without valid metadata) the client publishes the pages it applied and the buffered live creation, edit, and deletion, without advancing the checkpoint. The next room frame retries with a full rebuild from the lower bound. The fixture server clamps pages to 3 records.",
   "references": [
-    "PROTOCOL.md#appendix-a--history",
+    "PROTOCOL.md#41-history",
     "PROTOCOL.md#11-envelope-and-replies"
   ],
   "variants": [

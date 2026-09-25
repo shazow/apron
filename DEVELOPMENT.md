@@ -65,7 +65,7 @@ Use `localhost` for the default passkey configuration; see
 
 ## Threads
 
-A thread is a room with a `parent_room_id` (PROTOCOL.md §3.4, Appendix C). The
+A thread is a room with a `parent_room_id` (PROTOCOL.md [§3.4](PROTOCOL.md#34-rooms), [§4.3.4](PROTOCOL.md#434-creating-and-editing)). The
 sidebar lists top-level rooms; the open room's threads are listed under it and
 shown as cards in its feed. Start a thread from any message in a room (Start
 thread in its toolbar; cap `rooms`): the client creates a room under the
@@ -101,7 +101,7 @@ is. Messages the server denies stay selected and the bar reports how many didn't
 move. Escape leaves select mode. Moved messages keep their reply references and
 reactions.
 
-Mentions follow the `@user_id` convention (PROTOCOL.md Appendix J.3): a
+Mentions follow the `@user_id` convention ([PROTOCOL.md Appendix A.3](PROTOCOL.md#a3-mention-text)): a
 known user renders as a chip with their current name, a room as a link, and
 unknown IDs as written, never inside code. A message that names you tints its
 row and pulses once when it arrives, and shows an `@` badge on a room you

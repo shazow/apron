@@ -5,8 +5,8 @@
   "description": "A deletion snapshot (no body) wins over the older content snapshot however they arrive. Reaction state for the tombstoned message is kept but not projected.",
   "references": [
     "PROTOCOL.md#2-identifiers",
-    "PROTOCOL.md#appendix-b--edit",
-    "PROTOCOL.md#d2-reactions"
+    "PROTOCOL.md#42-edit",
+    "PROTOCOL.md#45-reactions"
   ],
   "variants": [
     {

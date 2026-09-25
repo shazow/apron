@@ -13,14 +13,14 @@ import (
 const (
 	maxNameRunes = 64
 	// maxAvatarDataURLBytes bounds an avatar given inline as a data: URL;
-	// larger images go through an @avatar upload (Appendix J.4).
+	// larger images go through an @avatar upload (§4.6.6).
 	maxAvatarDataURLBytes = 64 << 10
 	maxDedupEntries       = 1024
 )
 
 // userState is everything the server keeps for one user_id across its
-// connections: the profile (§3.3), joined rooms (§3.4), request
-// deduplication (§1.2), and push registrations (Appendix F). Guest users
+// connections: the profile (§3.3), joined rooms (§4.3.2), request
+// deduplication (§1.2), and push registrations (§4.7). Guest users
 // are retired when their last connection closes; passkey users persist.
 type userState struct {
 	id     string
@@ -51,7 +51,7 @@ func newUserState(id, name string) *userState {
 }
 
 // from is the author identity carried in logged records: user_id and name.
-// Avatars and ext travel only in you, user, and members (Appendix E). Every
+// Avatars and ext travel only in you, user, and members (§4.6.6). Every
 // record by the user shares the returned map until the name changes, so it
 // must not be modified.
 func (u *userState) from() map[string]any {
@@ -135,7 +135,7 @@ func normalizeName(name string) string {
 
 var avatarDataURL = regexp.MustCompile(`^data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$`)
 
-// validAvatar accepts https: URLs and small image data: URLs (Appendix E).
+// validAvatar accepts https: URLs and small image data: URLs (§4.6.6).
 func validAvatar(value string) bool {
 	if strings.HasPrefix(value, "data:") {
 		return len(value) <= maxAvatarDataURLBytes && avatarDataURL.MatchString(value)

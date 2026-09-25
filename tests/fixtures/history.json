@@ -4,7 +4,7 @@
   "description": "Protocol v4 room and history availability boundaries, including a room whose history was discarded (null history_log_id). Records are flat snapshots; history results carry rooms, entries, and reactions arrays.",
   "references": [
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#appendix-a--history",
+    "PROTOCOL.md#41-history",
     "servers/cloudflare-worker/SPEC.md#9-rolling-history-and-base-protocol-availability"
   ],
   "cases": [

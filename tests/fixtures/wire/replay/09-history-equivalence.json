@@ -5,8 +5,8 @@
   "description": "One room log mixing room records, message snapshots, and reaction sets reaches the same state live, as one raw page, as two pages delivered newest-first (limit 5 counts records of every kind), and as a compacted page with folded reaction sets.",
   "references": [
     "PROTOCOL.md#2-identifiers",
-    "PROTOCOL.md#appendix-a--history",
-    "PROTOCOL.md#d2-reactions"
+    "PROTOCOL.md#41-history",
+    "PROTOCOL.md#45-reactions"
   ],
   "variants": [
     {

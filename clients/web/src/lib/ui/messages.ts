@@ -8,7 +8,7 @@ export function senderName(event: MessageRecord): string {
 	return directory.name(event.from);
 }
 
-/** Senders whose `user_id` starts with `@` are system identities (Appendix J.1), shown as quiet centered lines. */
+/** Senders whose `user_id` starts with `@` are system identities (Appendix A.1), shown as quiet centered lines. */
 export function isSystem(event: MessageRecord): boolean {
 	return event.from?.user_id?.startsWith('@') === true;
 }
@@ -61,7 +61,7 @@ export function isOwn(event: MessageRecord, me: Identity | undefined): boolean {
 	return Boolean(me && event.from?.user_id === me.user_id);
 }
 
-/** A message mentions you when its text names your `user_id` (Appendix J.3), outside code. Your own messages never ping you. */
+/** A message mentions you when its text names your `user_id` (§3.5), outside code. Your own messages never ping you. */
 export function mentionsMe(event: MessageRecord, me: Identity | undefined): boolean {
 	if (!me || isOwn(event, me) || event.deleted) return false;
 	return mentionedIds(textOf(event), event.body?.format === 'markdown').some((id) => directory.isMe(id) || id === me.user_id);

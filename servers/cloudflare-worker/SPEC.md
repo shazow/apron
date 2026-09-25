@@ -90,9 +90,9 @@ An illustrative initial announcement is:
 {"method":"server","params":{"protocol":4,"name":"apron-cloudflare-demo/3","caps":["history","edit","rooms","reactions"],"auth":["webauthn","token","guest"],"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"keepalive_seconds":45,"room_leave":false,"read_cursors":false}}}}
 ```
 
-`ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol Appendix I, without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
+`ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol [§4.9](../../PROTOCOL.md#49-webauthn-authentication), without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
 
-History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room announcements and history results, following protocol section 3.4 and Appendix A. Both are per room.
+History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room announcements and history results, following protocol [section 3.4](../../PROTOCOL.md#34-rooms) and [§4.1](../../PROTOCOL.md#41-history). Both are per room.
 
 After final authentication, reply with `result.you` (`user_id` and `name` only; the internal quota tier is private), then announce every room: `general` first, then each thread room, each as a complete room record with its `log_id` and current `latest_log_id` and `history_log_id`. Do not send room records to unauthenticated sockets. Establish every room's head and eligibility for live delivery at one serialization point.
 
@@ -101,7 +101,7 @@ After final authentication, reply with `result.you` (`user_id` and `name` only; 
 - Accept the minimal and JSON-RPC 2.0 envelopes. One text message contains exactly one object, not a batch array. Reject binary application messages.
 - IDs on the wire are strings. Errors not tied to a request (parse errors, invalid envelopes whose `id` cannot be determined) omit `id`.
 - Unknown request methods receive `unsupported`; unknown notifications are ignored. Valid notifications never receive result or error replies, but successful mutation notifications still cause broadcasts.
-- Ignore unknown envelope fields. Unknown top-level message and room fields are dropped (protocol section 1); extension data travels in `ext`, which is stored and returned unchanged. Never trust client-supplied `from`; reject client `log_id` on a save.
+- Ignore unknown envelope fields. Unknown top-level message and room fields are dropped (protocol [section 1](../../PROTOCOL.md#1-transport--framing)); extension data travels in `ext`, which is stored and returned unchanged. Never trust client-supplied `from`; reject client `log_id` on a save.
 - Process frames in arrival order per socket, including auth and later pipelined writes. External awaits and WebAuthn verification must not allow overtaking. Bound pending work instead of accumulating unlimited promises.
 - Coordinate mutation commit and broadcast scheduling globally within this DO. No live room log ID may be sent after a newer ID on the same connection.
 - Commit durable state before a success becomes externally observable. Use documented storage/output-gate behavior; do not disable it. A failed send to one socket must not roll back an accepted mutation or skip all remaining recipients.
@@ -134,7 +134,7 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 - Reactions (cap `reactions`): a request sets the caller's complete emoji set on one retained message; `[]` clears it and duplicates collapse. Emoji are non-empty strings of at most 64 UTF-8 bytes without control characters, at most 8 distinct per user per message, and at most 32 reacting users per message (calibrated ceilings 16 and 64). A set that equals the current one is accepted without a new record. Non-empty sets on a tombstone are `invalid_params`; clearing is allowed. Each change is a logged record in the message's current room. Reactions are mutations: they share the posting quotas and request deduplication below.
 - Reject empty text with no embeds as local policy. Accept plain and Markdown formats. Limit embeds to four within all byte budgets; store accepted URLs/content without backend fetching or rendering. Unknown embed kinds remain opaque. Client sanitization/sandboxing remains mandatory under the base protocol.
 - `me` changes the display name as a bounded, rate-limited identity operation for registered users; `name: ""` removes it (clients fall back to `user_id`), omitted fields are unchanged, and guests keep their assigned name (`denied`). The demo keeps no avatars or profile `ext`: `me` type-checks `avatar` and `ext` and then ignores them. No avatar downloads or automatic link previews.
-- A rename sends `user` (section 3.3): `you` to the user's other connections and `new` to every other connection. Signing in with a passkey or token on a guest's connection sends `new` with `old` (the retired guest) to every other connection.
+- A rename sends `user` ([PROTOCOL.md §3.3](../../PROTOCOL.md#33-identity)): `you` to the user's other connections and `new` to every other connection. Signing in with a passkey or token on a guest's connection sends `new` with `old` (the retired guest) to every other connection.
 - Message snapshots and single-set reaction records carry `prev_log_id` when an earlier record for the same key is still stored. Room records and the reaction record a move re-logs do not. The link is added after the snapshot size check. Deleted messages are not redacted.
 - `room_list` (cap `rooms`) returns room records with delivery fields: without `parent_room_id`, the top-level `general`; with it, that room's threads; an unknown parent is `invalid_params`. Every room is visible and joined, so each room's `members` is the same list: the users connected now, one entry each, at most 20. It reads the capped room table under the room-listing reservation and writes nothing.
 
@@ -148,7 +148,7 @@ Some message types have their own per-user rate, counted across the user's conne
 
 | Type | Default per user per minute | Over the limit |
 | --- | ---: | --- |
-| `activity` (relayed typing) | 10 | Dropped. The sender's connection gets one `@server` message per window (Appendix J.1) saying typing is limited |
+| `activity` (relayed typing) | 10 | Dropped. The sender's connection gets one `@server` message per window ([PROTOCOL.md Appendix A.1](../../PROTOCOL.md#a1-system-identities-and-scoped-notices)) saying typing is limited |
 | `room_list` | 6 | `retry_after` with the seconds until the oldest counted listing leaves the window |
 
 The `@server` notice goes to the throttled connection only and is never logged. Its `message_id` and `log_id` still come from the server-wide sequence (one metered `log_state` write), so no logged record can reuse it. Posting quotas continue to cover every logged mutation (`message`, `room`, `reactions`, `me`).
@@ -169,7 +169,7 @@ Guest identity lasts for that socket, including hibernation. This initial versio
 
 ### Canonical WebAuthn authentication
 
-Implement protocol Appendix I: `action` is `register` or `login`, `step` is `begin` or `finish`, and both steps require request IDs. Support discoverable passkeys; do not download a directory of all credentials to the client.
+Implement protocol [§4.9](../../PROTOCOL.md#49-webauthn-authentication): `action` is `register` or `login`, `step` is `begin` or `finish`, and both steps require request IDs. Support discoverable passkeys; do not download a directory of all credentials to the client.
 
 ```json
 {"method":"auth","id":"a1","params":{"scheme":"webauthn","action":"register","step":"begin"}}
@@ -409,7 +409,7 @@ After advancing F, announce removed thread rooms first (no storage access), then
 
 ### History queries
 
-Follow protocol Appendix A: inclusive after/before, forward oldest selection when after is present, backward newest otherwise, always return each array ascending. `room_id` is required; unknown rooms are `invalid_params`. Query only the intersection with the room's `[history_log_id, latest_log_id]`. `limit` counts records of every kind, and `first_id`/`last_id` span all kinds; results are partitioned into `rooms` (with the room's delivery fields), `entries`, and `reactions`, omitting empty `rooms`/`reactions`. An entirely expired range returns an empty result with F; do not invent pagination IDs. No compaction is required for this version.
+Follow protocol [§4.1](../../PROTOCOL.md#41-history): inclusive after/before, forward oldest selection when after is present, backward newest otherwise, always return each array ascending. `room_id` is required; unknown rooms are `invalid_params`. Query only the intersection with the room's `[history_log_id, latest_log_id]`. `limit` counts records of every kind, and `first_id`/`last_id` span all kinds; results are partitioned into `rooms` (with the room's delivery fields), `entries`, and `reactions`, omitting empty `rooms`/`reactions`. An entirely expired range returns an empty result with F; do not invent pagination IDs. No compaction is required for this version.
 
 Select from the room's own log before the source-slice limit. With a byte cap, shrink the effective positive limit before selecting the final contiguous slice in the requested direction. Return its true first_id/last_id and more, accounting for entries omitted due to either count or byte cap. Each allowed snapshot must fit into at least one response with envelope overhead. Forward continuation is last_id+1, backward continuation first_id-1; never use string ordering or message IDs for pagination.
 

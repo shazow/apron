@@ -42,7 +42,7 @@ export type MessageFormat = 'plain' | 'markdown';
 
 /**
  * One visible room (announced on this connection and not removed). Threads
- * are rooms with `parentRoomId` (PROTOCOL.md §3.4, Appendix C).
+ * are rooms with `parentRoomId` (PROTOCOL.md §3.4, §4.3.4).
  */
 export interface RoomSnapshot {
 	id: string;
@@ -92,16 +92,16 @@ export interface RoomSnapshot {
 	olderAvailable?: boolean;
 	/** A `loadOlder` request is in flight. */
 	loadingOlder?: boolean;
-	/** Your read cursor in this room (Appendix D.1), as the server last reported or you advanced it. */
+	/** Your read cursor in this room (§4.4), as the server last reported or you advanced it. */
 	readMessageId?: string;
-	/** The room's members from the latest `room_list` that listed it (Appendix C). */
+	/** The room's members from the latest `room_list` that listed it (§4.3.1). */
 	members?: Identity[];
 	/** The room's `latest_log_id` in that listing: whoever posted after it was around since. */
 	membersAsOf?: string;
 }
 
 /**
- * A visible room as `room_list` returns it (Appendix C): its record, its head,
+ * A visible room as `room_list` returns it (§4.3.1): its record, its head,
  * and its members. Listing a room does not join it.
  */
 export interface RoomListing {
@@ -115,7 +115,7 @@ export interface RoomListing {
 	joined: boolean;
 }
 
-/** A file this client is writing to an embed's `write_url` (Appendix E). */
+/** A file this client is writing to an embed's `write_url` (§4.6.3). */
 export interface UploadState {
 	name: string;
 	/** Fraction written, 0–1, once the write started. */
@@ -132,7 +132,7 @@ export interface PendingOperation {
 	createdAt: number;
 }
 
-/** A typing indicator shown for another user (Appendix D.1). */
+/** A typing indicator shown for another user (§4.4). */
 export interface TypingSnapshot {
 	room: string;
 	from: Identity;
@@ -209,7 +209,7 @@ export interface SendOptions {
 /**
  * Changes to a saved message. Absent keys keep the latest snapshot's value;
  * `null` removes `reply_to` or `ext`. Saves always resubmit every client field
- * (Appendix B).
+ * (§4.2).
  */
 export interface MessagePatch {
 	room_id?: string;
@@ -373,7 +373,7 @@ const PASSKEY_IDLE_POLL_MS = 50;
 /** The lowest possible log_id: the `after` bound when no lower bound is known. */
 const FIRST_LOG_ID = '1';
 const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'activity', 'embed:upload', 'embed:stream'];
-/** The room of the avatar upload convention (Appendix J.4). */
+/** The room of the avatar upload convention (§4.6.6). */
 export const AVATAR_ROOM = '@avatar';
 
 /**
@@ -403,14 +403,14 @@ export class ChatClient {
 	/** Latest user object per user_id, and whether it came from a profile (you, user, members) rather than a `from`. */
 	private readonly users = new Map<string, { identity: Identity; profile: boolean }>();
 	private readonly userAliases = new Map<string, string>();
-	/** Read cursors per room, per user (Appendix D.1). */
+	/** Read cursors per room, per user (§4.4). */
 	private readonly reads = new Map<string, Map<string, string>>();
 	private readonly uploads = new Map<string, UploadState>();
 	private readonly roomMembers = new Map<string, { members: Identity[]; asOf?: string }>();
 	/**
 	 * Rooms kept from a lost connection with their records, floors and
 	 * checkpoints. Hidden until announced again, when recovery resumes from the
-	 * checkpoint instead of paging all retained history (Appendix A).
+	 * checkpoint instead of paging all retained history (§4.1).
 	 */
 	private readonly retainedRooms = new Map<string, RoomState>();
 	private directory?: RoomListing[];
@@ -934,7 +934,7 @@ export class ChatClient {
 	 * message in any room and is sent as a bare reference.
 	 */
 	send(room: string, text: string, format: MessageFormat = 'plain', options: SendOptions = {}): OperationHandle<MessageResult> {
-		// The message ends this user's typing indicator for everyone (Appendix D.1),
+		// The message ends this user's typing indicator for everyone (§4.4),
 		// so no `typing: 0` needs to follow it.
 		this.sentTypingAt.delete(room);
 		const body: JsonObject = { text, format };
@@ -948,7 +948,7 @@ export class ChatClient {
 	}
 
 	/**
-	 * Saves a message (cap `edit`, Appendix B) from its latest stored snapshot:
+	 * Saves a message (cap `edit`, §4.2) from its latest stored snapshot:
 	 * every client field (`room_id`, `body`, bare `reply_to`, `ext`) is
 	 * resubmitted unless the patch changes it. `deleted: true` omits `body`.
 	 */
@@ -1047,8 +1047,8 @@ export class ChatClient {
 	}
 
 	/**
-	 * Sets your complete emoji set on a message (cap `reactions`, Appendix
-	 * D.2); `[]` clears it. The result is `{}`; the broadcast carries the state.
+	 * Sets your complete emoji set on a message (cap `reactions`,
+	 * §4.5); `[]` clears it. The result is `{}`; the broadcast carries the state.
 	 */
 	react(messageId: string, emojis: string[]): OperationHandle {
 		const request = this.enqueueRequest('reactions', { message_id: messageId, emojis: [...emojis] }, {
@@ -1078,7 +1078,7 @@ export class ChatClient {
 	}
 
 	/**
-	 * Creates a room (cap `rooms`, Appendix C); with `parentRoomId` it is a
+	 * Creates a room (cap `rooms`, §4.3.4); with `parentRoomId` it is a
 	 * thread, usually with the parent message that started it as
 	 * `introMessageId`. Resolves with the new `room_id`; the room record is
 	 * announced separately.
@@ -1127,7 +1127,7 @@ export class ChatClient {
 
 	/**
 	 * Reports typing in a room as an `activity` notification (cap `activity`,
-	 * Appendix D.1): `typing` seconds while active, `0` to stop. Sends nothing
+	 * §4.4): `typing` seconds while active, `0` to stop. Sends nothing
 	 * to a server without the cap.
 	 */
 	sendTyping(room: string, active: boolean): void {
@@ -1147,7 +1147,7 @@ export class ChatClient {
 	}
 
 	/**
-	 * Advances your read cursor in a room (cap `activity`, Appendix D.1) to a
+	 * Advances your read cursor in a room (cap `activity`, §4.4) to a
 	 * message, if that is further than the cursor already is. The server
 	 * syncs it to your other connections.
 	 */
@@ -1172,7 +1172,7 @@ export class ChatClient {
 	}
 
 	/**
-	 * Lists visible rooms (cap `rooms`, Appendix C): top-level rooms, or with
+	 * Lists visible rooms (cap `rooms`, §4.3.1): top-level rooms, or with
 	 * `parentRoomId` that room's threads, including ones never announced. The
 	 * result also lands in the snapshot's `directory` or `threadDirectory`, and
 	 * members become known users.
@@ -1256,7 +1256,7 @@ export class ChatClient {
 
 	/**
 	 * Posts a message with files attached as `upload` embeds (cap
-	 * `embed:upload`, Appendix E): the message goes out with one pending embed
+	 * `embed:upload`, §4.6.4): the message goes out with one pending embed
 	 * per file, then each file is written to the `write_url` the result lists.
 	 * `sent` settles with the message result; `uploaded` when every write has
 	 * finished. Progress and failures appear in the snapshot's `uploads`.
@@ -1269,7 +1269,7 @@ export class ChatClient {
 	}
 
 	/**
-	 * Uploads an image as your avatar (Appendix J.4): a message to room
+	 * Uploads an image as your avatar (§4.6.6): a message to room
 	 * `@avatar` with one upload embed. The server sets `avatar` and sends a
 	 * `user` notification once the image is written.
 	 */
@@ -1313,7 +1313,7 @@ export class ChatClient {
 	}
 
 	/**
-	 * Loads a room's history (Appendix A). Threads never recover
+	 * Loads a room's history (§4.1). Threads never recover
 	 * automatically: call this when one is opened. It pages from the room's
 	 * lower bound (or its previous load's checkpoint) up to the head known at
 	 * the call, and resolves after the last page. For a top-level room, which
@@ -1408,7 +1408,7 @@ export class ChatClient {
 
 	/**
 	 * Loads the page of a thread's history just before what is loaded, when a
-	 * newest-first load left older records (Appendix A, backward paging).
+	 * newest-first load left older records (§4.1, backward paging).
 	 */
 	async loadOlder(roomId: string): Promise<void> {
 		const room = this.rooms.get(roomId);
@@ -1494,7 +1494,7 @@ export class ChatClient {
 			this.stopKeepalive();
 			this.clearStableTimer();
 			// The protocol view is rebuilt from the next connection's announcements
-			// (PROTOCOL.md §3.4; see tests/fixtures/wire/session), but each room's
+			// (PROTOCOL.md §4.3.1; see tests/fixtures/wire/session), but each room's
 			// records and checkpoint are kept so it resumes where it stopped. The
 			// UI keeps the last authenticated view on screen meanwhile, keyed off
 			// disconnectedAt.
@@ -1904,7 +1904,7 @@ export class ChatClient {
 		for (const embedded of decoded.embedded) this.noteUser(embedded.from, 'history');
 		this.acceptLiveMessage(decoded.record, true);
 		for (const embedded of decoded.embedded) this.acceptLiveMessage(embedded, false);
-		// A new message from a user ends their typing indicator in that room (Appendix D.1).
+		// A new message from a user ends their typing indicator in that room (§4.4).
 		if (decoded.record.log_id === decoded.record.message_id) this.removeTyping(decoded.record.room_id, decoded.record.from.user_id);
 		this.emit();
 	}
@@ -2147,7 +2147,7 @@ export class ChatClient {
 	/**
 	 * After a lost connection: hide every room until the next connection
 	 * announces it, but keep its records, floor and checkpoint so it resumes
-	 * from there (Appendix A recovery from `C + 1`). Everything else scoped to
+	 * from there (§4.1 recovery from `C + 1`). Everything else scoped to
 	 * the connection is forgotten as in `discardProtocolView`.
 	 */
 	private suspendProtocolView(reason: string): void {
@@ -2207,7 +2207,7 @@ export class ChatClient {
 	}
 
 	/**
-	 * An `activity` broadcast (Appendix D.1): present fields change the user's
+	 * An `activity` broadcast (§4.4): present fields change the user's
 	 * transient state, absent ones leave it. `typing` seconds show or refresh
 	 * the indicator, `0` removes it. `read_message_id` moves that user's read
 	 * cursor forward; yours places the New divider.
@@ -2600,7 +2600,7 @@ function maxDefined(a: string | undefined, b: string | undefined): string | unde
 	return compareLogIds(a, b) >= 0 ? a : b;
 }
 
-/** A message's client fields (Appendix B), as a save would submit them. */
+/** A message's client fields (§4.2), as a save would submit them. */
 function messageClientFields(record: MessageRecord): JsonObject {
 	const fields: JsonObject = { room_id: record.room_id };
 	if (record.body !== undefined) fields.body = record.body;

@@ -9,7 +9,7 @@
 	import EmbedUpload from './EmbedUpload.svelte';
 
 	/**
-	 * One entry of `body.embeds` (Appendix E), rendered by its `kind`. An
+	 * One entry of `body.embeds` (§4.6), rendered by its `kind`. An
 	 * unknown kind renders from `og`, else as the fallback card — never an error.
 	 */
 	let { embed, upload }: { embed: Embed; upload?: UploadState } = $props();

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// maxListedMembers caps `members` in each room_list entry (Appendix C).
+// maxListedMembers caps `members` in each room_list entry (§4.3.1).
 const maxListedMembers = 100
 
 // roomState is a room's current record, its log, and its members. Every room,
@@ -26,7 +26,7 @@ type roomState struct {
 	latestID    int64
 	log         []*logRecord
 	members     map[string]*userState
-	// reads holds each member's latest read cursor (Appendix D.1).
+	// reads holds each member's latest read cursor (§4.4).
 	reads map[string]readCursor
 }
 
@@ -48,7 +48,7 @@ func (r *roomState) deliveryFields() map[string]any {
 
 // announcementFramesLocked renders a room's announcement followed by the read
 // cursors kept for it, which the server re-sends after announcing the room
-// (Appendix D.1).
+// (§4.4).
 func (s *Server) announcementFramesLocked(r *roomState) []any {
 	frames := []any{map[string]any{"method": "room", "params": s.roomParamsLocked(r)}}
 	for _, userID := range slices.Sorted(maps.Keys(r.reads)) {
@@ -130,7 +130,7 @@ func (s *Server) joinLocked(u *userState, r *roomState) {
 }
 
 // joinTreeLocked joins r and, recursively, its threads: joining a room joins
-// its threads (Appendix C). Parents precede their threads in frames.
+// its threads (§4.3.2). Parents precede their threads in frames.
 func (s *Server) joinTreeLocked(u *userState, r *roomState, frames *[]any) {
 	if u.joined[r.id] == nil {
 		u.joined[r.id] = r
@@ -202,7 +202,7 @@ func (s *Server) commitRoomLocked(roomID string, parent *roomState, fields map[s
 }
 
 // saveRoom creates a room (no room_id) or replaces an existing room's client
-// fields (Appendix C). parent_room_id is fixed at creation and ignored on
+// fields (§4.3.4). parent_room_id is fixed at creation and ignored on
 // updates. Any authenticated user may create rooms and threads and update any
 // room's client fields. Everyone joins a new top-level room; the members of
 // a room join its new threads, and so does the creator.
@@ -311,7 +311,7 @@ func (s *Server) threadTitleLocked(introID string) string {
 }
 
 // listRooms returns the visible top-level rooms, or one room's threads, each
-// as a room record with delivery fields and members (Appendix C). Listing a
+// as a room record with delivery fields and members (§4.3.1). Listing a
 // room does not join it.
 func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 	parentID, err := parseString(req.params, "parent_room_id", false)
@@ -401,7 +401,7 @@ func (s *Server) leaveRoom(c *client, req request) (any, bool, *rpcError) {
 	return result, true, nil
 }
 
-// history returns a window of one room's log (Appendix A). limit counts records
+// history returns a window of one room's log (§4.1). limit counts records
 // of every kind; the slice is partitioned into rooms, entries, and reactions.
 // The server retains all records and does not compact. Every room is visible,
 // so history needs no membership.
@@ -505,7 +505,7 @@ func parseLimit(params map[string]json.RawMessage, defaultLimit int) (int, *rpcE
 }
 
 // activity relays a user's typing and read cursor in a room to its members
-// (Appendix D.1). A read cursor must name a message and only advances; the
+// (§4.4). A read cursor must name a message and only advances; the
 // server keeps the latest per member and re-sends it after announcing the
 // room. A frame whose fields change nothing relays nothing.
 func (s *Server) activity(c *client, req request) (any, bool, *rpcError) {

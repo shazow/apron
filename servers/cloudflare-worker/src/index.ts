@@ -71,7 +71,7 @@ interface ConnectionAttachment {
 type ThrottledType = "activity" | "room_list";
 const THROTTLED_TYPES: readonly ThrottledType[] = ["activity", "room_list"];
 const THROTTLE_WINDOW_MS = 60_000;
-/** The system identity for server notices (Appendix J.1). */
+/** The system identity for server notices (Appendix A.1). */
 const SERVER_IDENTITY = { user_id: "@server", name: "Server" } as const;
 /**
  * The keepalive a client may send, byte for byte, and the runtime's answer.
@@ -82,7 +82,7 @@ const KEEPALIVE_REQUEST = '{"method":"ping"}';
 const KEEPALIVE_RESPONSE = '{"method":"pong"}';
 
 /**
- * A bearer session minted by a verified passkey login (protocol Appendix I,
+ * A bearer session minted by a verified passkey login (protocol §4.9,
  * session resume). Stored under a SHA-256 key so the plaintext token never
  * rests in storage. Kept in key-value storage rather than the SQL store: it is
  * throwaway state with its own expiry and needs no schema migration.
@@ -1260,7 +1260,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Typing (Appendix D.1), relayed to every other connection and never
+	 * Typing (§4.4), relayed to every other connection and never
 	 * stored. Read cursors are dropped: the demo neither keeps nor relays them.
 	 * At most `activityBroadcastsPerUserMinute` relays per user; past that the
 	 * update is dropped and the sender gets one `@server` notice per minute.
@@ -1290,7 +1290,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Rooms for discovery (Appendix C): the top-level rooms, or one room's
+	 * Rooms for discovery (§4.3.1): the top-level rooms, or one room's
 	 * threads. Every room is visible and joined, so `members` is everyone
 	 * connected now, capped; the list is the same for every room.
 	 */
@@ -1421,7 +1421,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	/**
 	 * Tells a throttled sender, once per window per user, with a `@server`
-	 * message (Appendix J.1) in the room they were active in. It goes to that
+	 * message (Appendix A.1) in the room they were active in. It goes to that
 	 * connection only and is never logged; its log_id still comes from the
 	 * server's sequence so no record can collide with it.
 	 */

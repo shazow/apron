@@ -4,10 +4,10 @@ The demo speaks Apron protocol **4**, advertising `history`, `edit`, `rooms`,
 and `reactions`. `activity` (typing) is implemented but off unless the
 deployment sets `ACTIVITY=true`. History availability uses each room's `latest_log_id` and
 nullable `history_log_id`, without extension negotiation. See
-[history and recovery](../../../PROTOCOL.md#appendix-a--history) and the
+[history and recovery](../../../PROTOCOL.md#41-history) and the
 [retention implementation specification](../SPEC.md#9-rolling-history-and-base-protocol-availability).
 
-WebAuthn uses the canonical [optional authentication scheme](../../../PROTOCOL.md#appendix-i--webauthn-authentication-optional),
+WebAuthn uses the canonical [optional authentication scheme](../../../PROTOCOL.md#49-webauthn-authentication),
 advertised through `auth: ["webauthn", "token", "guest"]` only on connections whose
 origin is in `RP_ORIGINS`. Other connections advertise `auth: ["guest"]`
 and reject WebAuthn requests. Guest user IDs begin with `guest_`. Server
@@ -60,11 +60,11 @@ ownership of guest messages. A registered identity must reconnect before
 switching identities.
 
 The canonical begin/finish exchange, JSON credential encoding, and verification
-rules are defined in protocol Appendix I. This demo limits challenges to 120
+rules are defined in protocol [§4.9](../../../PROTOCOL.md#49-webauthn-authentication). This demo limits challenges to 120
 seconds and requires user presence and verification. A new begin replaces the
 pending challenge without extending the initial 30-second authentication
 deadline. A matching finish attempt consumes the challenge even on failure.
-A verified login or registration returns a bearer `token` (protocol Appendix I,
+A verified login or registration returns a bearer `token` (protocol [§4.9](../../../PROTOCOL.md#49-webauthn-authentication),
 session resume). Presenting it with `scheme: "token"` on a later connection from
 the same origin resumes the registered identity without a ceremony; once less
 than half of its 12 hours remain, the resume renews it for another 12. The token
