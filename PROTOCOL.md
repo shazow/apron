@@ -302,7 +302,7 @@ Identity is server-authoritative: every message carries its author in `from`.
 `user_id` is required and stable. `name` is an optional display string;
 absent `name` falls back to `user_id`. `avatar` (Appendix E) and `ext` (§3.5)
 are optional. Every identity on the wire (`you`, `new`, `old`, `from`,
-`users`, RTC members) uses this shape, and servers MAY send only `user_id`.
+`members`, `users`, RTC members) uses this shape, and servers MAY send only `user_id`.
 Clients keep one user object per `user_id` and merge into it every one they
 receive, whichever frame carried it: a present field replaces the kept
 value, an empty value (`""`, `{}`) removes it, and a missing field leaves it
@@ -374,9 +374,9 @@ to its members:
   servers MAY skip them, such as in large rooms. The members a client
   learns this way are partial.
 
-Bots and agents are ordinary senders. Servers MAY mark kinds of users by a
-`user_id` convention, which `Name (@user_id)` shows, such as the `@` prefix
-for system identities (Appendix J.1).
+Bots and agents are ordinary senders. Servers MAY mark kinds of users by
+convention in `user_id`, `name`, or `ext`, such as the `@` prefix for system
+identities (Appendix J.1).
 
 ### 3.4 Rooms
 
@@ -531,6 +531,21 @@ Every server:
 6. Follows §1 for framing and retries and §2 for identifiers.
 
 The opening example is a complete session with a minimal server.
+
+A minimal client (informative):
+
+1. Authenticates with `auth` once `server` arrives, and posts with `message`
+   (§3.2, §3.5).
+2. Keeps each room's latest `room` record, dropping it on `removed: true`
+   (§3.4).
+3. Keeps each message's snapshot with the greatest `log_id`, from any
+   source, and renders tombstones (§2, §3.5).
+4. Merges user objects per `user_id`, and shows `Name (@user_id)` when two
+   users in a room share a name (§3.3).
+5. Renders `plain` and `markdown` text with raw HTML disabled, and a
+   fallback card for embed kinds it does not support (§3.5).
+6. Matches replies by `id`, acts on error codes, and ignores unknown
+   notifications and keys (§1).
 
 ---
 
@@ -817,10 +832,26 @@ Discovery and membership:
     ]
   }
 }
+// -> one room, with its members
+{"method": "room_list", "id": "c22", "params": {"room_id": "1724803312001"}}
+// <-
+{
+  "id": "c22", "result": {
+    "rooms": [
+      {
+        "room_id": "1724803312001", "log_id": "1724803312001",
+        "parent_room_id": "general", "title": "Deploy",
+        "latest_log_id": "1724803400000",
+        "member_count": 2,
+        "members": [{"user_id": "alice", "name": "Alice"}, {"user_id": "bob", "name": "Bob"}]
+      }
+    ]
+  }
+}
 // ->
-{"method": "room_join", "id": "c22", "params": {"room_id": "1724803312001"}}
+{"method": "room_join", "id": "c23", "params": {"room_id": "1724803312001"}}
 // ->
-{"method": "room_leave", "id": "c23", "params": {"room_id": "1724803312001"}}
+{"method": "room_leave", "id": "c24", "params": {"room_id": "1724803312001"}}
 ```
 
 - `room_list` returns room records (§3.4) for the visible rooms, most
@@ -830,6 +861,11 @@ Discovery and membership:
   MAY omit `member_count` by policy.
 - Servers MAY list only the most recently active rooms. A room left out is
   still visible and can be joined by its `room_id`.
+- Servers SHOULD accept `room_id`, which lists only that visible room and
+  adds `members`, its members as user objects (§3.3). Servers MAY truncate
+  `members`; `member_count` stays the total. `room_id` overrides
+  `parent_room_id`, and an unknown or invisible `room_id` is
+  `invalid_params`.
 - `room_list` has no "joined" flag: the rooms a user has joined are the
   ones announced to their connection (§3.4).
 - Posting in a visible room the user has not joined MAY join them to it:
@@ -1033,8 +1069,8 @@ show a placeholder. On success the server sets `url` to the file it hosts.
 **Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
 the user's name.
 
-- Servers send `avatar` in `you`, `user`, and `users` (§3.3), not in every
-  `from`.
+- Servers send `avatar` in `you`, `user`, `members`, and `users` (§3.3),
+  not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through an
   upload (Appendix J.4).
