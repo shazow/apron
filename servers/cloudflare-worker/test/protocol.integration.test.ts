@@ -74,26 +74,22 @@ async function until(peer: Awaited<ReturnType<typeof connect>>, match: (frame: F
 	}
 }
 
-async function authenticate(peer: Awaited<ReturnType<typeof connect>>, scheme = 'guest', extraCaps: string[] = []) {
+type Peer = Awaited<ReturnType<typeof connect>>;
+
+async function authenticate(peer: Peer, scheme = 'guest', extraCaps: string[] = []) {
 	const server = await peer.next();
 	expect(server.method).toBe('server');
-	expect(server.params.protocol).toBe(4);
-	expect(server.params.caps).toEqual(['history', 'edit', 'rooms', 'reactions', ...extraCaps]);
+	expect(server.params.protocol).toBe(5);
+	expect(server.params.caps).toEqual(['history', 'edit', 'rooms', 'reactions', 'command', ...extraCaps]);
 	expect(server.params.auth).toContain('webauthn');
+	expect(server.params.ping).toBe(45);
 	expect(server.params.extensions).toBeUndefined();
 	// Demo hints live under the standard ext object, not a top-level key.
 	expect(server.params.ext.demo.retention_seconds).toBeGreaterThan(0);
 	peer.send({ method: 'auth', id: 'auth', params: { scheme } });
 	const auth = await peer.next();
 	expect(auth.result.you.user_id).toMatch(/^guest_/);
-	// Every visible room is announced; general is first.
-	const room = await peer.next();
-	expect(room.method).toBe('room');
-	expect(room.params.room_id).toBe('general');
-	expect(room.params.title).toBe('General');
-	expect(room.params.log_id).toMatch(/^[1-9][0-9]*$/);
-	expect(room.params.latest_log_id).toMatch(/^[1-9][0-9]*$/);
-	expect(room.params.history_log_id).toMatch(/^[1-9][0-9]*$/);
+	// Rooms are not announced (§4.3.1): the client lists them.
 	return auth.result.you;
 }
 
@@ -109,10 +105,35 @@ async function configure(update: (config: ServerInternals['config']) => void): P
 	});
 }
 
-/** Skip further room announcements that precede the next request's reply. */
-async function reply(peer: Awaited<ReturnType<typeof connect>>, id: string): Promise<Frame> {
+/** Skip notifications that precede the next request's reply. */
+async function reply(peer: Peer, id: string): Promise<Frame> {
 	return (await until(peer, frame => frame.id === id)).frame;
 }
+
+/** Sends a request; its reply and the notifications that preceded it. */
+async function exchange(peer: Peer, id: string, method: string, params: unknown): Promise<{ frame: Frame; skipped: Frame[] }> {
+	peer.send({ id, method, params });
+	return until(peer, (frame) => frame.id === id);
+}
+
+/** Sends a request and returns its reply, skipping notifications before it. */
+async function request(peer: Peer, id: string, method: string, params: unknown): Promise<Frame> {
+	return (await exchange(peer, id, method, params)).frame;
+}
+
+let syncCounter = 0;
+/**
+ * The notifications a peer received before a round trip made now: a `me`
+ * without fields, which changes nothing. Frames are delivered in order, so
+ * anything sent to the peer before this call is among them.
+ */
+async function drain(peer: Peer): Promise<Frame[]> {
+	const id = `sync-${++syncCounter}`;
+	peer.send({ id, method: 'me', params: {} });
+	return (await until(peer, (frame) => frame.id === id)).skipped;
+}
+
+const ids = (rooms: Array<{ room_id: string }> | undefined) => (rooms ?? []).map((room) => room.room_id);
 
 it('admits clients without Origin as guests without advertising or allowing passkeys', async () => {
 	const peer = await connect(undefined, '/', null);
@@ -120,7 +141,6 @@ it('admits clients without Origin as guests without advertising or allowing pass
 		expect((await peer.next()).params.auth).toEqual(['guest']);
 		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
 		expect((await peer.next()).result.you.user_id).toMatch(/^guest_/);
-		await peer.next(); // Room announcement.
 		peer.send({ id: 'passkey', method: 'auth', params: { scheme: 'webauthn', action: 'register', step: 'begin' } });
 		expect((await peer.next()).error.code).toBe(-32001);
 	} finally { peer.close(); }
@@ -141,9 +161,9 @@ it('keeps server-owned state out of public protocol frames', async () => {
 		const auth = await peer.next();
 		publicFrames.push(auth);
 		expectPublicFrame(auth);
-		const room = await peer.next();
-		publicFrames.push(room);
-		expectPublicFrame(room);
+		const rooms = await request(peer, 'rooms', 'room_list', { only_joined: true });
+		publicFrames.push(rooms);
+		expectPublicFrame(rooms);
 
 		peer.send({ id: 'post', method: 'message', params: {
 			room_id: 'general', body: { text: 'disclosure regression' }, ext: { demo: { ipKey: 'client-controlled' } },
@@ -192,6 +212,27 @@ it('authenticates on the root WebSocket endpoint and still serves the homepage',
 		Upgrade: 'websocket', Origin: 'https://untrusted.example', 'CF-Connecting-IP': '192.0.2.240'
 	} });
 	expect(denied.status).toBe(403);
+});
+
+it('answers the liveness ping before and after authentication', async () => {
+	const peer = await connect();
+	try {
+		const server = await peer.next();
+		expect(server.params.ping).toBe(45);
+		// The exact bytes are answered by the runtime, before auth too (§1).
+		peer.socket.send('{"method":"ping"}');
+		expect(await peer.next()).toEqual({ method: 'pong' });
+		// Other spacing reaches the handler, which answers it as well.
+		peer.socket.send('{ "method": "ping" }');
+		expect(await peer.next()).toEqual({ method: 'pong' });
+		// A ping request is not the liveness ping: before auth it is denied.
+		peer.send({ id: 'ping-request', method: 'ping' });
+		expect((await peer.next()).error.code).toBe(-32001);
+		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
+		expect((await peer.next()).result.you.user_id).toMatch(/^guest_/);
+		peer.socket.send('{"method":"ping"}');
+		expect(await peer.next()).toEqual({ method: 'pong' });
+	} finally { peer.close(); }
 });
 
 it('commits once for canonical retries, passes ext through, and sends no reply to notifications', async () => {
@@ -260,7 +301,6 @@ it('pipelined guest auth precedes mutation and errors preserve identifiable IDs'
 		peer.send({ id: 'a', method: 'auth', params: { scheme: 'guest' } });
 		peer.send({ id: 'm', method: 'message', params: { room_id: 'general', body: { text: 'pipelined' } } });
 		expect((await peer.next()).id).toBe('a');
-		expect((await peer.next()).method).toBe('room');
 		expect((await peer.next()).id).toBe('m');
 		expect((await peer.next()).method).toBe('message');
 		peer.socket.send('{');
@@ -275,34 +315,63 @@ it('pipelined guest auth precedes mutation and errors preserve identifiable IDs'
 	} finally { peer.close(); }
 });
 
-// Tests below create thread rooms, which every later authentication announces.
+it('posts and pages the default room without room_id, and neither logs nor delivers an empty message', async () => {
+	const alice = await connect();
+	const bob = await connect();
+	try {
+		const aliceId = await authenticate(alice);
+		await authenticate(bob);
+		const posted = await request(alice, 'default', 'message', { body: { text: 'to the default room' } });
+		const snapshot = (await until(bob, (frame) => frame.method === 'message')).frame.params;
+		expect(snapshot).toMatchObject({ message_id: posted.result.message_id, room_id: 'general', from: aliceId });
+		const page = await request(bob, 'default-history', 'history', { after: snapshot.log_id });
+		expect(page.result.entries).toEqual([snapshot]);
+		// An empty new message: result `{}`, nothing logged or broadcast (§3.5).
+		for (const [id, params] of [['empty', { body: { text: '' } }], ['blank', { room_id: 'general', body: { embeds: [] } }]] as const) {
+			expect((await request(alice, id, 'message', params)).result).toEqual({});
+		}
+		expect((await request(alice, 'empty-missing-room', 'message', { room_id: 'missing', body: {} })).error.code).toBe(-32602);
+		expect((await drain(alice)).filter((frame) => frame.method === 'message')).toEqual([]);
+		expect((await drain(bob)).filter((frame) => frame.method === 'message')).toEqual([]);
+		const after = await request(bob, 'after-empty', 'history', { after: snapshot.log_id });
+		expect(after.result.entries).toEqual([snapshot]);
+	} finally { alice.close(); bob.close(); }
+});
 
-it('rejects requests without a room and operations guests may not perform', async () => {
+it('stores body.mentions as sent and never reads mentions out of text', async () => {
+	const peer = await connect();
+	try {
+		const you = await authenticate(peer);
+		await request(peer, 'plain', 'message', { body: { text: `@${you.user_id} hello @someone` } });
+		const plain = (await until(peer, (frame) => frame.method === 'message')).frame.params;
+		expect(plain.body.mentions).toBeUndefined();
+		await request(peer, 'listed', 'message', { body: { text: 'no at signs here', mentions: [you.user_id, 'bob', you.user_id] } });
+		const listed = (await until(peer, (frame) => frame.method === 'message')).frame.params;
+		// Duplicates collapse; users need not appear in text.
+		expect(listed.body.mentions).toEqual([you.user_id, 'bob']);
+		expect((await request(peer, 'bad-mentions', 'message', { body: { text: 'x', mentions: 'bob' } })).error.code).toBe(-32602);
+	} finally { peer.close(); }
+});
+
+it('rejects operations guests may not perform and the v4 room method', async () => {
 	// Three invalid requests within a minute close a socket, so spread them.
 	const peer = await connect();
 	const other = await connect();
 	try {
 		await authenticate(peer);
 		await authenticate(other);
-		peer.send({ id: 'no-room', method: 'message', params: { body: { text: 'where?' } } });
-		expect((await peer.next()).error.code).toBe(-32602);
-		peer.send({ id: 'no-room-history', method: 'history', params: { limit: 5 } });
-		expect((await peer.next()).error.code).toBe(-32602);
-		peer.send({ id: 'top-level', method: 'room', params: { title: 'Top level' } });
-		expect((await peer.next()).error.code).toBe(-32001);
-		peer.send({ id: 'leave', method: 'room_leave', params: { room_id: 'general' } });
-		expect((await peer.next()).error.code).toBe(-32001);
+		expect((await request(peer, 'top-level', 'room_set', { title: 'Top level' })).error.code).toBe(-32001);
 		// Guests keep their assigned name.
-		peer.send({ id: 'rename', method: 'me', params: { name: 'Ada' } });
-		expect((await peer.next()).error.code).toBe(-32001);
-		other.send({ id: 'unknown-history', method: 'history', params: { room_id: 'missing' } });
-		expect((await other.next()).error.code).toBe(-32602);
-		other.send({ id: 'join-missing', method: 'room_join', params: { room_id: 'missing' } });
-		expect((await other.next()).error.code).toBe(-32602);
+		expect((await request(peer, 'rename', 'me', { name: 'Ada' })).error.code).toBe(-32001);
+		// Rooms are no longer announced or saved with `room`.
+		expect((await request(peer, 'v4-room', 'room', { parent_room_id: 'general', title: 'Old' })).error.code).toBe(-32601);
+		expect((await request(other, 'unknown-history', 'history', { room_id: 'missing' })).error.code).toBe(-32602);
+		expect((await request(other, 'join-missing', 'room_join', { room_id: 'missing' })).error.code).toBe(-32602);
+		expect((await request(peer, 'leave-missing', 'room_leave', { room_id: 'missing' })).error.code).toBe(-32602);
 	} finally { peer.close(); other.close(); }
 });
 
-it('creates threads, moves messages into them, and delivers reactions to every client', async () => {
+it('creates threads with room_set, delivers only to joined rooms, and moves messages with their reactions', async () => {
 	const alice = await connect();
 	const bob = await connect();
 	try {
@@ -328,55 +397,109 @@ it('creates threads, moves messages into them, and delivers reactions to every c
 		bob.send({ id: 'react-missing', method: 'reactions', params: { message_id: '404', emojis: ['👍'] } });
 		expect((await reply(bob, 'react-missing')).error.code).toBe(-32602);
 
-		alice.send({ id: 'thread', method: 'room', params: { parent_room_id: 'general', title: 'Deploy', intro_message: { message_id: messageId } } });
-		const roomId = (await reply(alice, 'thread')).result.room_id;
-		const room = await both('room');
-		expect(room).toEqual({
+		// Creating a thread joins its creator: `joined` before the result, and
+		// `updated` to the parent's other members, who are not joined.
+		alice.send({ id: 'thread', method: 'room_set', params: { parent_room_id: 'general', title: 'Deploy', intro_message: { message_id: messageId } } });
+		const created = await until(alice, (frame) => frame.id === 'thread');
+		const roomId = created.frame.result.room_id;
+		const room = {
 			room_id: roomId, log_id: roomId, parent_room_id: 'general', title: 'Deploy',
 			intro_message: original, latest_log_id: roomId, history_log_id: roomId,
-		});
+		};
+		expect(created.skipped).toEqual([{ method: 'room_update', params: { joined: [room] } }]);
+		expect((await until(bob, (frame) => frame.method === 'room_update')).frame).toEqual({ method: 'room_update', params: { updated: [room] } });
+
+		// Posting does not require joining, and a poster who has not joined
+		// gets only the result.
+		const outside = await request(bob, 'outside', 'message', { room_id: roomId, body: { text: 'posted from outside' } });
+		expect(outside.result.message_id).toBeTruthy();
+		const inside = (await until(alice, (frame) => frame.method === 'message')).frame.params;
+		expect(inside).toMatchObject({ message_id: outside.result.message_id, room_id: roomId, from: bobId });
+		expect((await drain(bob)).filter((frame) => frame.method === 'message')).toEqual([]);
 
 		alice.send({ id: 'move', method: 'message', params: { message_id: messageId, room_id: roomId, body: { text: 'moved' }, reply_to: { message_id: messageId } } });
 		expect((await reply(alice, 'move')).error.code).toBe(-32602);
 		alice.send({ id: 'move-2', method: 'message', params: { message_id: messageId, room_id: roomId, body: { text: 'moved' } } });
 		expect((await reply(alice, 'move-2')).result).toEqual({ message_id: messageId });
+		// The move snapshot belongs to both rooms, so general's members get it;
+		// the reactions re-logged in the thread reach only its members.
 		const moved = await both('message');
 		expect(moved).toMatchObject({ message_id: messageId, room_id: roomId, from: aliceId, body: { text: 'moved' } });
-		const followed = await both('reactions');
+		const followed = (await until(alice, (frame) => frame.method === 'reactions')).frame.params;
 		expect(followed).toMatchObject({ message_id: messageId, room_id: roomId, reactions: [{ from: bobId, emojis: ['👍'] }] });
 		expect(BigInt(followed.log_id)).toBeGreaterThan(BigInt(moved.log_id));
+		expect((await drain(bob)).filter((frame) => frame.method === 'reactions')).toEqual([]);
 
-		bob.send({ id: 'general-history', method: 'history', params: { room_id: 'general', after: original.log_id } });
-		const general = (await reply(bob, 'general-history')).result;
+		// Every room is visible: history needs no membership.
+		const general = (await request(bob, 'general-history', 'history', { room_id: 'general', after: original.log_id })).result;
 		expect(general.entries.map((entry: any) => [entry.log_id, entry.room_id])).toEqual([[original.log_id, 'general'], [moved.log_id, roomId]]);
 		expect(general.reactions).toEqual([reaction]);
-		bob.send({ id: 'thread-history', method: 'history', params: { room_id: roomId } });
-		const thread = (await reply(bob, 'thread-history')).result;
+		const thread = (await request(bob, 'thread-history', 'history', { room_id: roomId })).result;
 		// History room records carry the room's current delivery fields.
 		expect(thread.rooms).toEqual([{ ...room, latest_log_id: followed.log_id }]);
-		expect(thread.entries).toEqual([moved]);
+		expect(thread.entries).toEqual([inside, moved]);
 		expect(thread.reactions).toEqual([followed]);
 		expect([thread.first_id, thread.last_id, thread.more]).toEqual([roomId, followed.log_id, false]);
 		expect([thread.latest_log_id, thread.history_log_id]).toEqual([followed.log_id, roomId]);
+		// A window bounded to one log_id returns that record, even the message's
+		// earlier snapshot that only general's log holds (§2, prev_log_id).
+		expect(moved.prev_log_id).toBe(original.log_id);
+		const earlier = (await request(bob, 'earlier', 'history', { room_id: roomId, after: moved.prev_log_id, before: moved.prev_log_id })).result;
+		expect(earlier.entries).toEqual([original]);
+		expect([earlier.first_id, earlier.last_id, earlier.more]).toEqual([original.log_id, original.log_id, false]);
 
-		bob.send({ id: 'rename', method: 'room', params: { room_id: roomId, title: 'Deploys', parent_room_id: 'ignored' } });
-		expect((await reply(bob, 'rename')).result).toEqual({ room_id: roomId });
-		const renamed = await both('room');
+		// Joining: `joined` to the joiner before `{}`.
+		const joined = await exchange(bob, 'join', 'room_join', { room_id: roomId });
+		expect(joined.frame.result).toEqual({});
+		expect(joined.skipped).toEqual([{ method: 'room_update', params: { joined: [{ ...room, intro_message: moved, latest_log_id: followed.log_id }] } }]);
+		// A second join re-sends the record to that connection only.
+		const again = await exchange(bob, 'join-again', 'room_join', { room_id: roomId });
+		expect(again.skipped.map((frame) => frame.method)).toEqual(['room_update']);
+
+		// Any participant may save a thread; `updated` reaches the room's and
+		// the parent's members, and the result follows it.
+		bob.send({ id: 'rename', method: 'room_set', params: { room_id: roomId, title: 'Deploys', parent_room_id: 'ignored' } });
+		const renamedReply = await until(bob, (frame) => frame.id === 'rename');
+		expect(renamedReply.frame.result).toEqual({ room_id: roomId });
+		const renamed = renamedReply.skipped.find((frame) => frame.method === 'room_update')!.params.updated[0];
 		expect(renamed).toMatchObject({ room_id: roomId, parent_room_id: 'general', title: 'Deploys' });
 		expect(renamed.intro_message).toBeUndefined();
+		expect((await until(alice, (frame) => frame.method === 'room_update')).frame.params).toEqual({ updated: [renamed] });
 
-		bob.send({ id: 'join', method: 'room_join', params: { room_id: roomId } });
-		expect((await reply(bob, 'join')).result).toEqual({});
-		expect((await bob.next())).toEqual({ method: 'room', params: renamed });
+		// Now a member, Bob receives the thread's messages.
+		await request(alice, 'in-thread', 'message', { room_id: roomId, body: { text: 'for members' } });
+		expect((await until(bob, (frame) => frame.method === 'message')).frame.params.body.text).toBe('for members');
+
+		// Leaving: `left` before `{}`, and deliveries stop.
+		const left = await exchange(bob, 'leave', 'room_leave', { room_id: roomId });
+		expect(left.frame.result).toEqual({});
+		expect(left.skipped).toEqual([{ method: 'room_update', params: { left: [{ room_id: roomId }] } }]);
+		expect((await request(bob, 'leave-again', 'room_leave', { room_id: roomId })).result).toEqual({});
+		await request(alice, 'after-leave', 'message', { room_id: roomId, body: { text: 'members only' } });
+		expect((await drain(bob)).filter((frame) => frame.method === 'message')).toEqual([]);
+
+		// Leaving general stops its deliveries too; posting there still works.
+		expect((await request(bob, 'leave-general', 'room_leave', { room_id: 'general' })).result).toEqual({});
+		await request(alice, 'general-after', 'message', { body: { text: 'bob is not here' } });
+		expect((await drain(bob)).filter((frame) => frame.method === 'message')).toEqual([]);
+		expect((await request(bob, 'post-anyway', 'message', { body: { text: 'posting without joining' } })).result.message_id).toBeTruthy();
+		expect((await drain(bob)).filter((frame) => frame.method === 'message')).toEqual([]);
+		const unjoined = (await request(bob, 'browse', 'room_list', { not_joined: true })).result;
+		expect(ids(unjoined.rooms)).toEqual(['general']);
+		expect(unjoined.joined).toBeUndefined();
+		expect((await request(bob, 'rejoin', 'room_join', { room_id: 'general' })).result).toEqual({});
 	} finally { alice.close(); bob.close(); }
 
-	// A later session is told about the thread right after general.
+	// A later session has joined only general and finds the thread by listing.
 	const late = await connect();
 	try {
 		await authenticate(late);
-		const announcement = await late.next();
-		expect(announcement.method).toBe('room');
-		expect(announcement.params.parent_room_id).toBe('general');
+		const mine = (await request(late, 'mine', 'room_list', { only_joined: true })).result;
+		expect(ids(mine.joined)).toEqual(['general']);
+		expect(mine.rooms).toBeUndefined();
+		const threads = (await request(late, 'threads', 'room_list', { parent_room_id: 'general', not_joined: true })).result;
+		expect(threads.rooms.every((room: { parent_room_id?: string }) => room.parent_room_id === 'general')).toBe(true);
+		expect(threads.rooms.length).toBeGreaterThan(0);
 	} finally { late.close(); }
 });
 
@@ -401,30 +524,34 @@ it('limits the frames the whole server processes in a minute without closing soc
 	try {
 		await authenticate(peer);
 		for (let index = 0; index < 3; index += 1) {
-			peer.send({ id: `list-${index}`, method: 'room_list', params: {} });
-			expect((await until(peer, (frame) => frame.id === `list-${index}`)).frame.result.rooms).toHaveLength(1);
+			expect((await request(peer, `sync-${index}`, 'me', {})).result.you).toBeTruthy();
 		}
-		peer.send({ id: 'busy', method: 'room_list', params: {} });
-		const busy = (await until(peer, (frame) => frame.id === 'busy')).frame.error;
+		const busy = (await request(peer, 'busy', 'me', {})).error;
 		expect(busy.code).toBe(-32002);
 		expect(busy.data.retry_after).toBeGreaterThan(0);
 		// The socket stays open and a later minute is served again.
 		await configure((config) => { config.limits.globalFramesPerMinute = 300; });
-		peer.send({ id: 'again', method: 'room_list', params: {} });
-		expect((await until(peer, (frame) => frame.id === 'again')).frame.result.rooms).toHaveLength(1);
+		expect((await request(peer, 'again', 'me', {})).result.you).toBeTruthy();
 	} finally { peer.close(); await configure((config) => { config.limits.globalFramesPerMinute = 300; }); }
 });
 
-it('with ACTIVITY on, relays typing without read cursors, throttles it per user, and tells only the sender once', async () => {
+it('with ACTIVITY on, relays typing to room members, accepts away, throttles per user, and tells only the sender once', async () => {
 	await configure((config) => { config.activityEnabled = true; });
 	const alice = await connect();
 	const bob = await connect();
+	const carol = await connect();
 	try {
 		const aliceId = await authenticate(alice, 'guest', ['activity']);
 		await authenticate(bob, 'guest', ['activity']);
-		alice.send({ method: 'activity', params: { room_id: 'general', typing: 99 } });
+		await authenticate(carol, 'guest', ['activity']);
+		// Carol has left general, so typing there is not relayed to her.
+		await request(carol, 'leave', 'room_leave', { room_id: 'general' });
+		// `away` is accepted and never delivered, with or without a room.
+		alice.send({ method: 'activity', params: { away: true } });
+		alice.send({ method: 'activity', params: { typing: 99 } });
 		const first = await until(bob, (frame) => frame.method === 'activity');
-		// Typing is capped by policy; the sender's own connection is not echoed.
+		// Typing is capped by policy, in the default room without room_id; the
+		// sender's own connection is not echoed.
 		expect(first.frame.params).toEqual({ room_id: 'general', from: aliceId, typing: 30 });
 		// A read cursor is neither kept nor relayed, and does not count.
 		alice.send({ method: 'activity', params: { room_id: 'general', read_message_id: '1' } });
@@ -437,54 +564,104 @@ it('with ACTIVITY on, relays typing without read cursors, throttles it per user,
 		// Ten per minute in total: the first, then nine of the eleven.
 		expect(relayed.map((frame) => frame.params.typing)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
 		const mine = await until(alice, (frame) => frame.id === 'after');
-		const notices = mine.skipped.filter((frame) => frame.method === 'message' && frame.params.from?.user_id === '@server');
+		const notices = mine.skipped.filter((frame) => frame.method === 'message' && frame.params.from?.user_id === '@private');
 		expect(notices).toHaveLength(1);
-		expect(notices[0].params).toMatchObject({ room_id: 'general', from: { user_id: '@server', name: 'Server' }, body: { format: 'plain' } });
-		expect(notices[0].params.message_id).toBe(notices[0].params.log_id);
+		// A private notice is never logged: no message_id or log_id (Appendix A.1).
+		expect(notices[0].params).toEqual({ room_id: 'general', from: { user_id: '@private', name: 'Only you' }, body: { text: expect.stringContaining('Typing'), format: 'plain' } });
 		expect(mine.skipped.filter((frame) => frame.method === 'activity')).toEqual([]);
-		// The notice is never logged, and later records still sort after it.
-		expect(BigInt(mine.frame.result.message_id)).toBeGreaterThan(BigInt(notices[0].params.log_id));
-		alice.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 50 } });
-		const history = await until(alice, (frame) => frame.id === 'history');
-		// History entries are flat message snapshots. The page holds Alice's post, so
-		// the check below is not passing on an empty or misread page.
-		const entries: Array<{ message_id: string; from?: { user_id: string } }> = history.frame.result.entries;
+		expect((await drain(carol)).filter((frame) => frame.method === 'activity')).toEqual([]);
+		const history = await request(alice, 'history', 'history', { room_id: 'general', limit: 50 });
+		const entries: Array<{ message_id: string; from?: { user_id: string } }> = history.result.entries;
 		expect(entries.some((entry) => entry.message_id === mine.frame.result.message_id)).toBe(true);
-		expect(entries.some((entry) => entry.from?.user_id === '@server' || entry.message_id === notices[0].params.message_id)).toBe(false);
-	} finally { alice.close(); bob.close(); await configure((config) => { config.activityEnabled = false; }); }
+		expect(entries.some((entry) => entry.from?.user_id?.startsWith('@'))).toBe(false);
+	} finally { alice.close(); bob.close(); carol.close(); await configure((config) => { config.activityEnabled = false; }); }
 });
 
-it('lists rooms and threads with the connected members, and throttles listing', async () => {
+it('answers /help with a private notice and rejects other commands without closing the socket', async () => {
+	const peer = await connect();
+	try {
+		await authenticate(peer);
+		const help = await exchange(peer, 'help', 'command', { body: { text: '/help' } });
+		expect(help.frame.result).toEqual({});
+		const notices = [...help.skipped, ...(await drain(peer))].filter((frame) => frame.method === 'message');
+		expect(notices).toHaveLength(1);
+		expect(notices[0].params).toEqual({
+			room_id: 'general', from: { user_id: '@private', name: 'Only you' },
+			body: { text: '- `/help`: list the commands you can use here', format: 'markdown' },
+		});
+		// Mistyped commands are ordinary errors, not policy violations.
+		for (let index = 0; index < 4; index += 1) {
+			const unknown = await request(peer, `unknown-${index}`, 'command', { room_id: 'general', body: { text: '/kick @someone' } });
+			expect(unknown.error).toMatchObject({ code: -32602, message: 'Unknown command /kick; try /help' });
+		}
+		expect((await request(peer, 'saved', 'command', { message_id: '1', body: { text: '/help' } })).error.code).toBe(-32602);
+		expect((await request(peer, 'still-open', 'me', {})).result.you).toBeTruthy();
+		// Commands are never logged.
+		const page = await request(peer, 'history', 'history', { limit: 50 });
+		expect(page.result.entries.some((entry: { body?: { text?: string } }) => entry.body?.text?.startsWith('/'))).toBe(false);
+	} finally { peer.close(); }
+});
+
+it('lists rooms by filter, most recently active first, with connected members, and throttles listing', async () => {
 	const alice = await connect();
 	const bob = await connect();
 	try {
 		const aliceId = await authenticate(alice);
 		const bobId = await authenticate(bob);
-		alice.send({ id: 'post', method: 'message', params: { room_id: 'general', body: { text: 'thread root' } } });
-		const post = await until(alice, (frame) => frame.id === 'post');
-		alice.send({ id: 'thread', method: 'room', params: { parent_room_id: 'general', title: 'Listed', intro_message: { message_id: post.frame.result.message_id } } });
-		const thread = (await until(alice, (frame) => frame.id === 'thread')).frame.result.room_id;
-
-		alice.send({ id: 'top', method: 'room_list', params: {} });
-		const top = (await until(alice, (frame) => frame.id === 'top')).frame.result.rooms;
-		expect(top.map((room: { room_id: string }) => room.room_id)).toEqual(['general']);
-		const members = top[0].members.map((member: { user_id: string }) => member.user_id);
-		expect(members).toEqual(expect.arrayContaining([aliceId.user_id, bobId.user_id]));
-		alice.send({ id: 'threads', method: 'room_list', params: { parent_room_id: 'general' } });
-		const threads = (await until(alice, (frame) => frame.id === 'threads')).frame.result.rooms;
-		expect(threads.map((room: { room_id: string }) => room.room_id)).toContain(thread);
-		expect(threads.find((room: { room_id: string }) => room.room_id === thread)).toMatchObject({ parent_room_id: 'general', title: 'Listed' });
-		alice.send({ id: 'missing', method: 'room_list', params: { parent_room_id: 'missing' } });
-		expect((await until(alice, (frame) => frame.id === 'missing')).frame.error.code).toBe(-32602);
-		// Six listings a minute per user; the seventh waits.
-		for (let index = 0; index < 3; index += 1) {
-			alice.send({ id: `list-${index}`, method: 'room_list', params: {} });
-			expect((await until(alice, (frame) => frame.id === `list-${index}`)).frame.result.rooms).toHaveLength(1);
+		const threadIds: string[] = [];
+		for (const title of ['Older', 'Newer']) {
+			const created = await request(alice, `thread-${title}`, 'room_set', { parent_room_id: 'general', title });
+			threadIds.push(created.result.room_id);
 		}
-		alice.send({ id: 'limited', method: 'room_list', params: {} });
-		const limited = (await until(alice, (frame) => frame.id === 'limited')).frame.error;
+		const [older, newer] = threadIds;
+		// Activity in the older thread makes it the most recently active.
+		await request(alice, 'bump', 'message', { room_id: older, body: { text: 'bump' } });
+		await request(bob, 'join', 'room_join', { room_id: newer });
+
+		// The first only_joined listing after auth is not throttled.
+		const mine = (await request(alice, 'mine', 'room_list', { only_joined: true })).result;
+		expect(mine.rooms).toBeUndefined();
+		expect(ids(mine.joined).slice(0, 2)).toEqual([older, newer]);
+		expect(ids(mine.joined)).toContain('general');
+		const general = mine.joined.find((room: { room_id: string }) => room.room_id === 'general');
+		expect(general.members.map((member: { user_id: string }) => member.user_id)).toEqual(expect.arrayContaining([aliceId.user_id, bobId.user_id]));
+		// Members are the connected users who joined; the total is not counted.
+		expect(mine.joined.find((room: { room_id: string }) => room.room_id === older).members).toEqual([aliceId]);
+		expect(general.member_count).toBeUndefined();
+
+		// Bob's threads: joined `newer`, and `older` to browse.
+		const threads = (await request(bob, 'threads', 'room_list', { parent_room_id: 'general' })).result;
+		expect(ids(threads.joined)).toEqual([newer]);
+		expect(ids(threads.rooms)).toContain(older);
+		expect(ids(threads.rooms)).not.toContain('general');
+		expect(threads.joined[0].members.map((member: { user_id: string }) => member.user_id).sort()).toEqual([aliceId.user_id, bobId.user_id].sort());
+		// Without parent_room_id, `rooms` holds only top-level rooms: Bob has none to join.
+		const top = (await request(bob, 'top', 'room_list', {})).result;
+		expect(ids(top.rooms)).toEqual([]);
+		expect(ids(top.joined)).toEqual(expect.arrayContaining(['general', newer]));
+		// One room, with its members.
+		const one = (await request(bob, 'one', 'room_list', { room_id: older })).result;
+		expect(ids(one.rooms)).toEqual([older]);
+		expect(one.joined).toEqual([]);
+		expect(one.rooms[0].members).toEqual([aliceId]);
+		// Only rooms with records after a position.
+		const since = (await request(alice, 'since', 'room_list', { only_joined: true, latest_log_id: one.rooms[0].latest_log_id })).result;
+		expect(ids(since.joined)).toEqual([]);
+		expect((await request(alice, 'missing', 'room_list', { room_id: 'missing' })).error.code).toBe(-32602);
+		expect((await request(alice, 'bad-flag', 'room_list', { only_joined: 'yes' })).error.code).toBe(-32602);
+
+		// Six listings a minute per user; the seventh waits. Alice has spent two
+		// (`since`, and `missing`, which still read storage); the first
+		// only_joined listing after auth was free, and a malformed one is not
+		// counted.
+		for (let index = 0; index < 4; index += 1) {
+			expect((await request(alice, `list-${index}`, 'room_list', { only_joined: true })).result.joined).toBeInstanceOf(Array);
+		}
+		const limited = (await request(alice, 'limited', 'room_list', { only_joined: true })).error;
 		expect(limited.code).toBe(-32002);
 		expect(limited.data.retry_after).toBeGreaterThan(0);
+		// Browsing top-level rooms from general needs no listing and is not limited.
+		expect((await request(alice, 'browse', 'room_list', { not_joined: true })).result).toEqual({ rooms: [] });
 	} finally { alice.close(); bob.close(); }
 });
 
@@ -520,15 +697,14 @@ it('lists only connected guests as members after others posted and left', async 
 			fresh.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 50 } });
 			const senders = (await until(fresh, (frame) => frame.id === 'history')).frame.result.entries.map((entry: { from?: { user_id: string } }) => entry.from?.user_id);
 			expect(senders).toEqual(expect.arrayContaining(gone));
-			fresh.send({ id: 'list', method: 'room_list', params: {} });
-			const members = (await until(fresh, (frame) => frame.id === 'list')).frame.result.rooms[0].members.map((member: { user_id: string }) => member.user_id);
+			const members = (await request(fresh, 'list', 'room_list', { room_id: 'general' })).result.joined[0].members.map((member: { user_id: string }) => member.user_id);
 			expect(members).toEqual(expect.arrayContaining([aliceId.user_id, freshId.user_id]));
 			for (const id of gone) expect(members).not.toContain(id);
 		} finally { fresh.close(); }
 	} finally { alice.close(); }
 });
 
-it('drops a quiet keepalive connection from room_list members and closes it', async () => {
+it('drops a connection that pinged and went quiet from room_list members and closes it', async () => {
 	const alice = await connect();
 	const bob = await connect();
 	const carol = await connect();
@@ -536,9 +712,9 @@ it('drops a quiet keepalive connection from room_list members and closes it', as
 		await authenticate(alice);
 		const bobId = await authenticate(bob);
 		const carolId = await authenticate(carol);
-		await configure((config) => { config.limits.keepaliveTimeoutSeconds = 1; });
+		await configure((config) => { config.limits.pingTimeoutSeconds = 1; });
 		const closed = new Promise<number>((resolve) => bob.socket.addEventListener('close', (event) => resolve(event.code)));
-		// The runtime answers the keepalive itself; it never reaches the handler.
+		// The runtime answers the ping itself; it never reaches the handler.
 		bob.socket.send('{"method":"ping"}');
 		expect(await until(bob, (frame) => frame.method === 'pong')).toMatchObject({ frame: { method: 'pong' } });
 		carol.socket.send('{"method":"ping"}');
@@ -549,20 +725,21 @@ it('drops a quiet keepalive connection from room_list members and closes it', as
 		await until(carol, (frame) => frame.method === 'pong');
 		await new Promise((resolve) => setTimeout(resolve, 500));
 
-		alice.send({ id: 'list', method: 'room_list', params: {} });
-		const listed = (await until(alice, (frame) => frame.id === 'list')).frame.result.rooms[0].members.map((member: { user_id: string }) => member.user_id);
+		const listed = (await request(alice, 'list', 'room_list', { room_id: 'general' })).result.joined[0].members.map((member: { user_id: string }) => member.user_id);
 		expect(listed).toContain(carolId.user_id);
 		expect(listed).not.toContain(bobId.user_id);
 		expect(await closed).toBe(1001);
-	} finally { alice.close(); bob.close(); carol.close(); await configure((config) => { config.limits.keepaliveTimeoutSeconds = 150; }); }
+	} finally { alice.close(); bob.close(); carol.close(); await configure((config) => { config.limits.pingTimeoutSeconds = 150; }); }
 });
 
-it('advertises the keepalive interval', async () => {
+it('advertises the ping interval and the demo policy hints', async () => {
 	const peer = await connect();
 	try {
 		const server = await peer.next();
-		expect(server.params.ext.demo.keepalive_seconds).toBe(45);
-		expect(server.params.ext.demo.room_leave).toBe(false);
+		expect(server.params.ping).toBe(45);
+		expect(server.params.ext.demo.keepalive_seconds).toBeUndefined();
+		// Leaving rooms is supported, so the demo no longer says otherwise.
+		expect(server.params.ext.demo.room_leave).toBeUndefined();
 		expect(server.params.ext.demo.read_cursors).toBe(false);
 	} finally { peer.close(); }
 });
@@ -584,6 +761,9 @@ it('links each changed record to the previous one with prev_log_id', async () =>
 		alice.send({ id: 'react-again', method: 'reactions', params: { message_id: messageId, emojis: ['👍', '🎉'] } });
 		const again = await until(alice, (frame) => frame.method === 'reactions');
 		expect(again.frame.params.prev_log_id).toBe(reacted.frame.params.log_id);
+		// Walking back: a window bounded to prev_log_id returns that snapshot.
+		const previous = await request(alice, 'previous', 'history', { after: edited.frame.params.prev_log_id, before: edited.frame.params.prev_log_id });
+		expect(previous.result.entries).toEqual([created.frame.params]);
 	} finally { alice.close(); }
 });
 

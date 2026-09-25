@@ -73,13 +73,13 @@ function errorCode(fn: () => unknown): string {
 }
 
 function logOf(result: StoreMutationResult): number {
-	const logId = result.broadcasts[0]?.params.log_id;
+	const logId = result.broadcasts[0]?.params.log_id ?? result.room?.log_id;
 	if (typeof logId !== "string") throw new Error("mutation produced no record");
 	return Number(logId);
 }
 
 function thread(store: Store, clock: TestClock, requestId: string, params: Record<string, unknown> = {}, userId = "alice"): string {
-	const created = store.mutate(op(clock, userId, requestId, "room", { parent_room_id: "general", title: "Thread", ...params }));
+	const created = store.mutate(op(clock, userId, requestId, "room_set", { parent_room_id: "general", title: "Thread", ...params }));
 	return String(created.result.room_id);
 }
 
@@ -88,7 +88,7 @@ it("allocates one strictly increasing log sequence across rooms, record kinds, a
 		const general = store.getRoomState();
 		const first = post(store, clock, "alice", "s1", { body: { text: "one" } });
 		expect(first.message?.message_id).toBe(first.message?.log_id);
-		const roomResult = store.mutate(op(clock, "alice", "s2", "room", { parent_room_id: "general", title: "Side" }));
+		const roomResult = store.mutate(op(clock, "alice", "s2", "room_set", { parent_room_id: "general", title: "Side" }));
 		const threadId = String(roomResult.result.room_id);
 		// Suggested convention: a room's ID is its creation log_id.
 		expect(roomResult.room?.log_id).toBe(threadId);
@@ -124,6 +124,8 @@ it("broadcasts flat self-describing snapshots and enforces replacement semantics
 				body: { text: "original", format: "plain", embeds: [] },
 				ext: { irc: { nick: "ada_" } },
 			},
+			// Delivered to the members of the room it is in.
+			rooms: ["general"],
 		});
 
 		const edited = post(store, clock, "alice", "m2", { message_id: messageId, body: { text: "replacement", format: "markdown" } });
@@ -138,7 +140,11 @@ it("broadcasts flat self-describing snapshots and enforces replacement semantics
 		expect(errorCode(() => post(store, clock, "alice", "born-deleted", { deleted: true }))).toBe("invalid_params");
 		expect(errorCode(() => post(store, clock, "alice", "log-id", { body: { text: "x" }, log_id: "1" }))).toBe("invalid_params");
 		expect(errorCode(() => post(store, clock, "alice", "bad-ext", { body: { text: "x" }, ext: ["not", "object"] }))).toBe("invalid_params");
-		expect(errorCode(() => store.mutate(op(clock, "alice", "no-room", "message", { body: { text: "x" } })))).toBe("invalid_params");
+		// Without room_id a message goes to the default room (§3.5).
+		expect(store.mutate(op(clock, "alice", "no-room", "message", { body: { text: "x" } })).message?.room_id).toBe("general");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "bad-room-type", "message", { room_id: 7, body: { text: "x" } })))).toBe("invalid_params");
+		// An empty save is refused by local policy; delete instead.
+		expect(errorCode(() => post(store, clock, "alice", "empty-save", { message_id: messageId, body: { text: "" } }))).toBe("invalid_params");
 		expect(errorCode(() => store.mutate(op(clock, "alice", "bad-room", "message", { room_id: "private", body: { text: "x" } })))).toBe("invalid_params");
 
 		const deleted = post(store, clock, "alice", "m3", { message_id: messageId, deleted: true, body: { text: "ignored" }, ext: { keep: true } });
@@ -198,29 +204,31 @@ it("creates only thread rooms and replaces their client fields on save", async (
 		const intro = post(store, clock, "alice", "intro", { body: { text: "Deploy chatter" } });
 		const introId = String(intro.result.message_id);
 
-		expect(errorCode(() => store.mutate(op(clock, "alice", "top", "room", { title: "Top level" })))).toBe("denied");
-		expect(errorCode(() => store.mutate(op(clock, "alice", "orphan", "room", { parent_room_id: "missing", title: "x" })))).toBe("invalid_params");
-		expect(errorCode(() => store.mutate(op(clock, "alice", "bad-title", "room", { parent_room_id: "general", title: 7 })))).toBe("invalid_params");
-		expect(errorCode(() => store.mutate(op(clock, "alice", "bad-intro", "room", { parent_room_id: "general", intro_message: { message_id: "404" } })))).toBe("invalid_params");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "top", "room_set", { title: "Top level" })))).toBe("denied");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "orphan", "room_set", { parent_room_id: "missing", title: "x" })))).toBe("invalid_params");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "bad-title", "room_set", { parent_room_id: "general", title: 7 })))).toBe("invalid_params");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "bad-intro", "room_set", { parent_room_id: "general", intro_message: { message_id: "404" } })))).toBe("invalid_params");
 
-		const created = store.mutate(op(clock, "bob", "create", "room", {
+		const created = store.mutate(op(clock, "bob", "create", "room_set", {
 			parent_room_id: "general", title: "Deploy", intro_message: { message_id: introId }, ext: { demo: { color: "blue" } },
 		}));
 		const roomId = String(created.result.room_id);
-		expect(created.broadcasts).toHaveLength(1);
-		expect(created.broadcasts[0].method).toBe("room");
+		// Room records are not broadcast; the runtime sends room_update.
+		expect(created.broadcasts).toEqual([]);
+		expect(created.created).toBe(true);
 		expect(created.room).toEqual({
 			room_id: roomId, log_id: roomId, parent_room_id: "general", title: "Deploy",
 			intro_message: intro.message,
 			ext: { demo: { color: "blue" } },
 			latest_log_id: roomId, history_log_id: roomId,
 		});
-		expect(errorCode(() => store.mutate(op(clock, "alice", "nested", "room", { parent_room_id: roomId, title: "Nested" })))).toBe("denied");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "nested", "room_set", { parent_room_id: roomId, title: "Nested" })))).toBe("denied");
 
 		// Any participant may save a thread's metadata; omitted fields are
 		// cleared, the server supplies a title, and parent_room_id is fixed.
-		const saved = store.mutate(op(clock, "alice", "save", "room", { room_id: roomId, parent_room_id: "elsewhere" }));
+		const saved = store.mutate(op(clock, "alice", "save", "room_set", { room_id: roomId, parent_room_id: "elsewhere" }));
 		expect(saved.result).toEqual({ room_id: roomId });
+		expect(saved.created).toBe(false);
 		expect(saved.room).toMatchObject({ room_id: roomId, parent_room_id: "general", title: "Thread" });
 		expect(saved.room?.intro_message).toBeUndefined();
 		expect(saved.room?.ext).toBeUndefined();
@@ -228,8 +236,8 @@ it("creates only thread rooms and replaces their client fields on save", async (
 		expect(saved.room?.latest_log_id).toBe(saved.room?.log_id);
 		expect(saved.room?.history_log_id).toBe(roomId);
 
-		expect(errorCode(() => store.mutate(op(clock, "alice", "general", "room", { room_id: "general", title: "Renamed" })))).toBe("denied");
-		expect(errorCode(() => store.mutate(op(clock, "alice", "unknown", "room", { room_id: "404", title: "x" })))).toBe("invalid_params");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "general", "room_set", { room_id: "general", title: "Renamed" })))).toBe("denied");
+		expect(errorCode(() => store.mutate(op(clock, "alice", "unknown", "room_set", { room_id: "404", title: "x" })))).toBe("invalid_params");
 
 		// Room records are logged in their own room.
 		const history = store.historyPage({ roomId, after: "0", limit: 50, now: clock.value });
@@ -267,6 +275,8 @@ it("moves a message into both rooms' logs and re-logs its reactions in the desti
 
 		const moved = post(store, clock, "alice", "move", { message_id: messageId, room_id: threadId, body: { text: "moved" } });
 		expect(moved.broadcasts.map((record) => record.method)).toEqual(["message", "reactions"]);
+		// A move belongs to both rooms; the re-logged reactions to the destination.
+		expect(moved.broadcasts.map((record) => record.rooms)).toEqual([["general", threadId], [threadId]]);
 		const snapshot = moved.broadcasts[0].params;
 		const reactions = moved.broadcasts[1].params;
 		expect(snapshot).toMatchObject({ message_id: messageId, room_id: threadId });
@@ -315,6 +325,7 @@ it("sets, clears, collapses, and deduplicates reactions", async () => {
 				log_id: set.broadcasts[0].params.log_id, message_id: messageId, room_id: "general",
 				reactions: [{ from: { user_id: "bob", name: "Bob" }, emojis: ["👍", "🎉"] }],
 			},
+			rooms: ["general"],
 		}]);
 
 		const retry = store.mutate(op(clock, "bob", "r1", "reactions", { emojis: ["👍", "🎉", "👍"], message_id: messageId }));
@@ -368,16 +379,16 @@ it("charges reactions and room changes against posting quotas and keeps accepted
 		const target = post(store, clock, "alice", "target", { body: { text: "one" } });
 		const reaction = store.mutate(op(clock, "alice", "react", "reactions", { message_id: target.result.message_id, emojis: ["👍"] }));
 		expect(reaction.broadcasts).toHaveLength(1);
-		const created = store.mutate(op(clock, "alice", "room", "room", { parent_room_id: "general", title: "Quota" }));
+		const created = store.mutate(op(clock, "alice", "room", "room_set", { parent_room_id: "general", title: "Quota" }));
 		const limited = (fn: () => unknown) => {
 			try { fn(); expect.unreachable(); }
 			catch (error) { expect(error).toBeInstanceOf(StoreError); expect((error as StoreError).code).toBe("retry_after"); }
 		};
 		limited(() => store.mutate(op(clock, "alice", "react-2", "reactions", { message_id: target.result.message_id, emojis: [] })));
-		limited(() => store.mutate(op(clock, "alice", "room-2", "room", { room_id: created.result.room_id, title: "Renamed" })));
+		limited(() => store.mutate(op(clock, "alice", "room-2", "room_set", { room_id: created.result.room_id, title: "Renamed" })));
 		limited(() => post(store, clock, "alice", "post-2", { body: { text: "two" } }));
 		// Accepted retries return their original result without a new charge.
-		expect(store.mutate(op(clock, "alice", "room", "room", { parent_room_id: "general", title: "Quota" })).result).toEqual(created.result);
+		expect(store.mutate(op(clock, "alice", "room", "room_set", { parent_room_id: "general", title: "Quota" })).result).toEqual(created.result);
 		expect(store.mutate(op(clock, "alice", "react", "reactions", { message_id: target.result.message_id, emojis: ["👍"] })).deduplicated).toBe(true);
 		clock.value += 61_000;
 		expect(store.mutate(op(clock, "alice", "react-3", "reactions", { message_id: target.result.message_id, emojis: [] })).broadcasts).toHaveLength(1);

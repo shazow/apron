@@ -47,9 +47,9 @@ Open `http://localhost:5173`. The development server proxies `/ws` to
 `127.0.0.1:8080`. Open another browser tab to chat with a second client.
 
 To use the Cloudflare backend locally, follow its secret setup and run
-`make dev-worker` instead of `make dev-server`. The worker still speaks
-protocol v4 while the web client and the Go server speak v5, so the client
-cannot list rooms there until the worker is updated. `make test-worker` runs its
+`make dev-worker` instead of `make dev-server`. The worker speaks protocol
+v5 like the web client and the Go server, within the demo's budgets and
+policies (only threads under `general` can be created). `make test-worker` runs its
 Workers runtime suite; `make test-worker-browser` tests browser passkeys against
 local Wrangler. The public demo has persistent passkeys and rolling history;
 its passkey registration creates a new identity instead of upgrading guest

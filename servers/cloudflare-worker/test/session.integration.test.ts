@@ -56,6 +56,17 @@ async function registerIdentity(userId: string, ipKey = 'session-test-ip'): Prom
 	});
 }
 
+/** Registers an identity that starts in the given rooms, as a guest registering on its connection does. */
+async function registerIdentityIn(userId: string, rooms: string[]): Promise<string[]> {
+	return runInDurableObject(stub(), async (instance) => {
+		const runtime = instance as unknown as { store: { registerIdentity(input: Record<string, unknown>): { rooms: string[] } } };
+		return runtime.store.registerIdentity({
+			userId, name: `Name of ${userId}`, userHandle: `handle-${userId}`, now: Date.now(), ipKey: `ip-${userId}`,
+			credential: { credentialId: `cred-${userId}`, userId, publicKey: 'AAAA', counter: 0 }, rooms,
+		}).rooms;
+	});
+}
+
 async function issueSession(userId: string, origin: string): Promise<string> {
 	return runInDurableObject(stub(), async (instance) => {
 		const runtime = instance as unknown as { issueSession(userId: string, origin: string, now: number): Promise<string> };
@@ -90,7 +101,6 @@ it('resumes a registered identity from a session token, renews it, and rejects b
 	expect(resumed.id).toBe('resume');
 	expect(resumed.result.you).toEqual(expect.objectContaining({ user_id: 'user_session_one', name: 'Name of user_session_one' }));
 	expect(resumed.result.token).toBe(token);
-	expect((await peer.next()).method).toBe('room');
 
 	// A registered connection cannot switch identities in place.
 	peer.send({ id: 'again', method: 'auth', params: { scheme: 'token', token } });
@@ -239,8 +249,11 @@ it('updates a registered name with me, declines avatar and ext, and treats name 
 	peer.send({ id: 'bad-avatar', method: 'me', params: { avatar: 7 } });
 	expect((await reply('bad-avatar')).error.code).toBe(-32602);
 	// An empty name removes it, so clients fall back to the user_id.
+	// It is announced as its empty value (§3.3).
 	peer.send({ id: 'clear', method: 'me', params: { name: '' } });
-	expect((await reply('clear')).result).toEqual({ you: { user_id: 'user_session_me' } });
+	expect((await reply('clear')).result).toEqual({ you: { user_id: 'user_session_me', name: '' } });
+	peer.send({ id: 'unchanged', method: 'me', params: {} });
+	expect((await reply('unchanged')).result).toEqual({ you: { user_id: 'user_session_me' } });
 	peer.close();
 
 	// The removal is durable: a later resume carries no name either.
@@ -369,4 +382,67 @@ it('does not count a closing connection against the per-user limit on resume', a
 	expect(replacement.reply.result.you.user_id).toBe(userId);
 	replacement.peer.close();
 	for (const peer of open) peer.close();
+});
+
+it('keeps a registered user\'s rooms across connections and names current users in history', async () => {
+	const userId = 'user_session_rooms';
+	// A registration keeps the rooms a guest had joined that still exist.
+	expect(await registerIdentityIn(userId, ['general', 'no-such-room'])).toEqual(['general']);
+	const token = await issueSession(userId, 'http://localhost:5173');
+	const until = async (peer: Awaited<ReturnType<typeof connect>>, match: (frame: Frame) => boolean): Promise<{ frame: Frame; skipped: Frame[] }> => {
+		const skipped: Frame[] = [];
+		for (;;) {
+			const frame = await peer.next();
+			if (match(frame)) return { frame, skipped };
+			skipped.push(frame);
+		}
+	};
+	const request = async (peer: Awaited<ReturnType<typeof connect>>, id: string, method: string, params: unknown) => {
+		peer.send({ id, method, params });
+		return until(peer, (frame) => frame.id === id);
+	};
+	const resume = async () => {
+		const peer = await connect();
+		await peer.next();
+		expect((await request(peer, 'resume', 'auth', { scheme: 'token', token })).frame.result.you.user_id).toBe(userId);
+		return peer;
+	};
+	const joinedIds = async (peer: Awaited<ReturnType<typeof connect>>) =>
+		(await request(peer, 'mine', 'room_list', { only_joined: true })).frame.result.joined.map((room: { room_id: string }) => room.room_id);
+	const tab = await resume();
+	const other = await resume();
+	const reader = await connect();
+	let threadId: string;
+	try {
+		await reader.next();
+		await request(reader, 'guest', 'auth', { scheme: 'guest' });
+		// Creating, leaving, and joining reach every connection of the user.
+		const created = await request(tab, 'thread', 'room_set', { parent_room_id: 'general', title: 'Kept' });
+		threadId = created.frame.result.room_id;
+		expect(created.skipped.map((frame) => frame.method)).toEqual(['room_update']);
+		expect((await until(other, (frame) => frame.method === 'room_update')).frame.params.joined[0].room_id).toBe(threadId);
+		const left = await request(tab, 'leave', 'room_leave', { room_id: threadId });
+		expect(left.skipped).toEqual([{ method: 'room_update', params: { left: [{ room_id: threadId }] } }]);
+		expect((await until(other, (frame) => frame.method === 'room_update')).frame.params).toEqual({ left: [{ room_id: threadId }] });
+		await request(other, 'join', 'room_join', { room_id: threadId });
+		expect((await until(tab, (frame) => frame.method === 'room_update')).frame.params.joined[0].room_id).toBe(threadId);
+
+		// History names each registered author by their current object.
+		const posted = await request(tab, 'post', 'message', { body: { text: 'before the rename' } });
+		await request(tab, 'rename', 'me', { name: 'Renamed later' });
+		const page = (await request(reader, 'history', 'history', { after: posted.frame.result.message_id })).frame.result;
+		expect(page.entries[0].from).toEqual({ user_id: userId, name: `Name of ${userId}` });
+		expect(page.users).toEqual([{ user_id: userId, name: 'Renamed later' }]);
+	} finally { tab.close(); other.close(); reader.close(); }
+
+	// A later connection has the same rooms, until the user leaves general.
+	const later = await resume();
+	try {
+		expect((await joinedIds(later)).sort()).toEqual(['general', threadId!].sort());
+		await request(later, 'leave-general', 'room_leave', { room_id: 'general' });
+	} finally { later.close(); }
+	const last = await resume();
+	try {
+		expect(await joinedIds(last)).toEqual([threadId!]);
+	} finally { last.close(); }
 });

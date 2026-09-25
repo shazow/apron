@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { AuthError, AuthTooLargeError, WebAuthnService, type ChallengeRecord, type CredentialRepository } from "./auth";
 import { isAllowedOrigin, loadConfig, type RuntimeConfig } from "./config";
-import { ACCOUNT_USAGE_POLICY, ADMISSION_BUDGET, MAX_FRAME_LEASE, MAX_TYPE_THROTTLE_PER_MINUTE } from "./budget";
+import { ACCOUNT_USAGE_POLICY, ADMISSION_BUDGET, MAX_FRAME_LEASE, MAX_THREAD_LIMIT, MAX_TYPE_THROTTLE_PER_MINUTE } from "./budget";
 import { fetchAccountUsage, type AccountUsageSnapshot } from "./account-usage";
 import { extractClientIp, hashIpKey, stripForwardingHeaders } from "./ip";
 import {
@@ -20,7 +20,7 @@ import {
 	type ProtocolError,
 	type RequestFrame,
 } from "./protocol";
-import { Store, StoreError, type Broadcast, type StoreConfig, type StoreMutationInput } from "./store";
+import { DEFAULT_JOINED_ROOMS, ROOM_ID, Store, StoreError, type Broadcast, type RoomRecord, type StoreConfig, type StoreMutationInput } from "./store";
 
 const OBJECT_NAME = "public-demo-v1";
 const INTERNAL_IP_HEADER = "X-Apron-Trusted-IP-Key";
@@ -60,10 +60,21 @@ interface ConnectionAttachment {
 	frameTimes: number[];
 	/** Per-type throttle events from this connection, oldest first (budget.ts). */
 	throttles?: Partial<Record<ThrottledType, number[]>>;
-	/** When this connection last got a `@server` throttle notice, per type. */
+	/** When this connection last got a `@private` throttle notice, per type. */
 	notices?: Partial<Record<ThrottledType, number>>;
 	/** Frames this connection has already reserved and not yet spent, for one UTC day. */
 	frameLease?: { day: string; remaining: number };
+	/**
+	 * The rooms this connection's user has joined (§4.3.2), which it receives
+	 * deliveries for. Set at authentication and kept equal across the user's
+	 * connections; a registered user's are also stored with the identity.
+	 */
+	rooms?: string[];
+	/**
+	 * Whether an `only_joined` listing has been answered since authentication.
+	 * The first one is not throttled: it is how a client learns its rooms.
+	 */
+	listedJoined?: boolean;
 	closing?: boolean;
 }
 
@@ -71,15 +82,20 @@ interface ConnectionAttachment {
 type ThrottledType = "activity" | "room_list";
 const THROTTLED_TYPES: readonly ThrottledType[] = ["activity", "room_list"];
 const THROTTLE_WINDOW_MS = 60_000;
-/** The system identity for server notices (Appendix A.1). */
-const SERVER_IDENTITY = { user_id: "@server", name: "Server" } as const;
+/** The system identity for notices to one user only, never logged (Appendix A.1). */
+const PRIVATE_IDENTITY = { user_id: "@private", name: "Only you" } as const;
 /**
- * The keepalive a client may send, byte for byte, and the runtime's answer.
- * Both are notifications with unknown methods, which the other side ignores
- * (section 1), so a client can send it to any server.
+ * The liveness ping clients send every `server.ping` seconds, byte for byte,
+ * and its answer (§1). The runtime answers it without waking the object.
  */
-const KEEPALIVE_REQUEST = '{"method":"ping"}';
-const KEEPALIVE_RESPONSE = '{"method":"pong"}';
+const PING_REQUEST = '{"method":"ping"}';
+const PING_RESPONSE = '{"method":"pong"}';
+/** Joined room IDs a connection attachment may carry: every room, with slack for removals in flight. */
+const MAX_ATTACHED_ROOMS = 2 * (MAX_THREAD_LIMIT + 1);
+/** The commands this server provides (§4.8), as `/help` lists them. */
+const COMMANDS: ReadonlyArray<{ name: string; usage: string; help: string }> = [
+	{ name: "help", usage: "/help", help: "list the commands you can use here" },
+];
 
 /**
  * A bearer session minted by a verified passkey login (protocol §4.9,
@@ -220,6 +236,10 @@ function connectionAttachment(socket: WebSocketConnection): ConnectionAttachment
 			...(typeof attachment.name === "string" ? { name: attachment.name } : {}),
 			...(typeof attachment.origin === "string" ? { origin: attachment.origin } : {}),
 			...(challenge ? { challenge } : {}),
+			...(Array.isArray(attachment.rooms) ? {
+				rooms: attachment.rooms.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 64).slice(0, MAX_ATTACHED_ROOMS),
+			} : {}),
+			...(attachment.listedJoined ? { listedJoined: true } : {}),
 			authDeadline: typeof attachment.authDeadline === "number" ? attachment.authDeadline : 0,
 			pendingFrames: typeof attachment.pendingFrames === "number" ? attachment.pendingFrames : 0,
 			pendingBytes: typeof attachment.pendingBytes === "number" ? attachment.pendingBytes : 0,
@@ -359,6 +379,11 @@ function identityOf(attachment: ConnectionAttachment): IdentityShape | null {
 	return { user_id: attachment.userId, ...(attachment.name ? { name: attachment.name } : {}), tier: attachment.tier };
 }
 
+/** A `room_update` notification (§4.3.3) with one field. */
+function roomUpdate(field: "joined" | "updated" | "left", ...records: unknown[]): Record<string, unknown> {
+	return { method: "room_update", params: { [field]: records } };
+}
+
 // Browsers hide failed WebSocket handshake responses. An explicit, read-only
 // HTTP probe on the same URL exposes capacity errors without admitting a socket.
 function isConnectionStatus(request: Request): boolean {
@@ -461,7 +486,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		// Answered by the runtime without waking the object or reaching
 		// webSocketMessage; the time of the last answer tells a live peer from
 		// one that vanished without a close frame (see isStale).
-		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE));
+		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_REQUEST, PING_RESPONSE));
 		if (this.store.requiresReset()) {
 			// Stored data from another schema version is wiped, not migrated. The
 			// input gate holds every event until the fresh schema exists.
@@ -623,22 +648,21 @@ export class ApronDemoServer extends DurableObject<Env> {
 		} catch {
 			// A metered maintenance failure is deferred. Do not spin an alarm loop.
 			// The floor may already be durable even if a physical deletion failed,
-			// so re-announce every room below.
+			// so send every room's current record below.
 		}
-		// Committed removals need no store access; announce them before any
+		// Committed removals need no store access; tell their members before any
 		// listing that could fail on an exhausted budget.
-		for (const roomId of result?.removed_rooms ?? []) {
-			this.noteRoom(roomId, false);
-			this.broadcast({ method: "room", params: { room_id: roomId, removed: true } });
-		}
+		const removed = result?.removed_rooms ?? [];
+		for (const roomId of removed) this.noteRoom(roomId, false);
+		if (removed.length) this.removeRooms(removed);
 		if (!result || result.history_floor !== result.previous_floor) {
 			try {
-				// Only rooms whose history_log_id moved need a new announcement.
+				// Only rooms whose history_log_id moved need a new record.
 				const rooms = this.store.listRooms(nowMs(), {
 					maintenance: true,
 					...(result ? { changedSinceFloor: Number(result.previous_floor) } : {}),
 				});
-				for (const room of rooms) this.broadcast({ method: "room", params: room });
+				this.announceUpdated(rooms);
 			} catch { /* announcement also requires capacity; clients see the floor on their next history page */ }
 		}
 		await this.rescheduleAlarm();
@@ -657,10 +681,12 @@ export class ApronDemoServer extends DurableObject<Env> {
 		return {
 			method: "server",
 			params: {
-				protocol: 4,
-				name: "apron-cloudflare-demo/3",
-				caps: ["history", "edit", "rooms", "reactions", ...(this.config.activityEnabled ? ["activity"] : [])],
+				protocol: 5,
+				name: "apron-cloudflare-demo/4",
+				caps: ["history", "edit", "rooms", "reactions", "command", ...(this.config.activityEnabled ? ["activity"] : [])],
 				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["guest"],
+				// Answered by the runtime without waking the object (see PING_REQUEST).
+				ping: limits.pingSeconds,
 				ext: {
 					demo: {
 						retention_seconds: limits.retentionSeconds,
@@ -672,10 +698,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 						registered_posts_per_minute: limits.registeredPostsPerMinute,
 						server_frames_per_minute: limits.globalFramesPerMinute,
 						room_list_per_minute: limits.roomListRequestsPerUserMinute,
-						// Send KEEPALIVE_REQUEST this often to stay listed as connected.
-						keepalive_seconds: limits.keepaliveSeconds,
-						// Every room is joined for good: `room_leave` is always denied.
-						room_leave: false,
 						// `read_message_id` in `activity` is dropped: no read cursors are kept.
 						read_cursors: false,
 						// With `activity`, typing is relayed; read cursors are neither kept nor relayed.
@@ -835,8 +857,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "message":
 				await this.handleMessage(socket, attachment, request);
 				return;
-			case "room":
-				await this.handleRoom(socket, attachment, request);
+			case "room_set":
+				await this.handleRoomSet(socket, attachment, request);
 				return;
 			case "room_join":
 				await this.handleRoomJoin(socket, attachment, request);
@@ -858,6 +880,15 @@ export class ApronDemoServer extends DurableObject<Env> {
 			case "room_list":
 				await this.handleRoomList(socket, attachment, request);
 				return;
+			case "command":
+				await this.handleCommand(socket, attachment, request);
+				return;
+			case "ping":
+				// The exact ping bytes are answered by the runtime; a ping with other
+				// spacing reaches here and is answered too, before auth as well (§1).
+				if (request.id !== undefined) break;
+				this.send(socket, JSON.parse(PING_RESPONSE));
+				return;
 		}
 		if (request.id === undefined) return;
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
@@ -878,13 +909,18 @@ export class ApronDemoServer extends DurableObject<Env> {
 		const params = request.params;
 		const scheme = requiredString(params, "scheme");
 		if (scheme === "guest") {
+			// A requested `name` or `user_id` is not honored: guests are
+			// `guest_` plus a random ID, never reissued, with a generated name
+			// they keep (§3.2 lets the server assign identity).
 			const userId = randomId("guest");
 			attachment.tier = "anonymous";
 			attachment.userId = userId;
 			attachment.name = `Guest ${userId.slice(-6)}`.slice(0, Math.min(this.config.limits.maxNameCodePoints, this.config.limits.maxNameBytes));
+			// A new guest has joined the default room (§3.4).
+			attachment.rooms = [...DEFAULT_JOINED_ROOMS];
+			delete attachment.listedJoined;
 			writeAttachment(socket, attachment);
 			this.reply(socket, request, { you: publicIdentity(attachment) });
-			this.announceAuthenticated(socket, attachment);
 			await this.rescheduleAlarm();
 			return;
 		}
@@ -929,7 +965,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 				return identity ? { user_id: identity.userId, name: identity.name, tier: "registered" } : null;
 			},
 			registerCredential: (input) => {
-				const identity = this.store.registerIdentity(input);
+				// A guest registering on its connection keeps the rooms it had joined.
+				const identity = this.store.registerIdentity({ ...input, ...(attachment.tier === "anonymous" && attachment.rooms ? { rooms: attachment.rooms } : {}) });
 				return { user_id: identity.userId, name: identity.name, tier: "registered" };
 			},
 			updateCredentialCounter: (credentialId, counter) => this.store.updateCredentialCounter(credentialId, counter),
@@ -949,11 +986,21 @@ export class ApronDemoServer extends DurableObject<Env> {
 		attachment.tier = "registered";
 		attachment.userId = finished.identity.user_id;
 		attachment.name = finished.identity.name;
+		attachment.rooms = this.registeredRooms(socket, finished.identity.user_id);
+		delete attachment.listedJoined;
 		writeSessionAttachment(socket, attachment);
 		this.reply(socket, request, { you: publicIdentity(attachment), token });
 		if (guest) this.announceUser(socket, publicIdentity(attachment), guest);
-		this.announceAuthenticated(socket, attachment);
 		await this.rescheduleAlarm();
+	}
+
+	/**
+	 * A registered user's joined rooms for a connection it is authenticating:
+	 * those of its other live connections, which are kept current, or else the
+	 * ones stored with the identity.
+	 */
+	private registeredRooms(socket: WebSocketConnection, userId: string): string[] {
+		return this.liveRoomsOf(userId, socket) ?? this.store.getIdentity(userId)?.rooms ?? [...DEFAULT_JOINED_ROOMS];
 	}
 
 	private assertRegisteredCapacity(socket: WebSocketConnection, userId: string): void {
@@ -1022,10 +1069,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 		attachment.tier = "registered";
 		attachment.userId = identity.userId;
 		attachment.name = identity.name;
+		attachment.rooms = this.liveRoomsOf(identity.userId, socket) ?? identity.rooms;
+		delete attachment.listedJoined;
 		writeSessionAttachment(socket, attachment);
 		this.reply(socket, request, { you: publicIdentity(attachment), token });
 		if (guest) this.announceUser(socket, publicIdentity(attachment), guest);
-		this.announceAuthenticated(socket, attachment);
 		await this.rescheduleAlarm();
 	}
 
@@ -1115,24 +1163,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 		return attachment?.origin ?? null;
 	}
 
-	private announceAuthenticated(socket: WebSocketConnection, attachment: ConnectionAttachment): void {
-		try {
-			// Every room is visible to every authenticated client.
-			for (const room of this.store.listRooms(nowMs())) {
-				this.noteRoom(room.room_id, true);
-				this.send(socket, { method: "room", params: room });
-			}
-		} catch {
-			// A session without its initial room boundaries cannot safely receive live records.
-			this.closePolicy(socket, attachment, 1013, "History temporarily unavailable; reconnect later");
-		}
-	}
-
 	private async handleHistory(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before loading history" } satisfies ProtocolError;
 		if (attachment.historyInFlight >= this.config.limits.concurrentHistoryPerConnection) throw { name: "retry_after", message: "History request already in progress", data: { retry_after: 1 } } satisfies ProtocolError;
 		const params = request.params;
-		const roomId = requiredString(params, "room_id");
+		// Without room_id, history pages the default room (§4.1). Every room is
+		// visible, so any room's history may be read without joining it.
+		const roomId = optionalString(params, "room_id");
 		const after = asDecimalId(params.after, "after");
 		const before = asDecimalId(params.before, "before");
 		const limit = positiveIntParam(params, "limit");
@@ -1140,7 +1177,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		writeAttachment(socket, attachment);
 		try {
 			const page = this.store.history({
-				roomId,
+				...(roomId !== undefined ? { roomId } : {}),
 				after,
 				before,
 				limit: limit ?? this.config.limits.historyDefaultLimit,
@@ -1160,9 +1197,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Profile update (section 3.3). Only registered users may change their
-	 * name; `name: ""` removes it, so the user falls back to `user_id`. The demo
-	 * keeps no avatars or profile ext, so `avatar` and `ext` are declined.
+	 * Profile update (section 3.3): a given field replaces its value, an
+	 * omitted one is unchanged, and an empty one removes it. Only registered
+	 * users may change their name; `name: ""` removes it, so the user falls
+	 * back to `user_id`. The demo keeps no avatars or profile ext, so `avatar`
+	 * and `ext` are type-checked and declined.
 	 */
 	private async handleMe(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
@@ -1195,15 +1234,17 @@ export class ApronDemoServer extends DurableObject<Env> {
 				}
 			}
 			const current = connectionAttachment(socket);
-			if (current) this.reply(socket, request, { you: publicIdentity(current) });
-			// Section 3.3: `you` to the user's other connections, `new` to everyone
-			// else, since every connection shares every room on this demo.
-			if (!result.deduplicated && current) this.announceUser(socket, publicIdentity(current));
+			if (!current) return;
+			// A removed name is announced as its empty value (§3.3).
+			const you = current.name ? publicIdentity(current) : { user_id: identity.user_id, name: "" };
+			this.reply(socket, request, { you });
+			// Section 3.3: `you` to the user's other connections, `new` to everyone else.
+			if (!result.deduplicated) this.announceUser(socket, you);
 		});
 	}
 
 	/** Shared path for logged mutations: dedup, quotas, commit, reply, broadcast. */
-	private async commitAndBroadcast(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame, method: "message" | "room" | "reactions", action: string): Promise<void> {
+	private async commitAndBroadcast(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame, method: "message" | "reactions", action: string): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: `Authenticate before ${action}` } satisfies ProtocolError;
 		const input: StoreMutationInput = {
@@ -1226,7 +1267,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	private async handleMessage(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before posting" } satisfies ProtocolError;
-		requiredString(request.params, "room_id");
+		// Without room_id a message goes to the default room (§3.5). Posting does
+		// not require joining; a poster who has not joined gets only the result.
+		optionalString(request.params, "room_id");
 		// Server-owned fields are ignored on input (PROTOCOL.md §2).
 		delete request.params.log_id;
 		delete request.params.from;
@@ -1236,110 +1279,284 @@ export class ApronDemoServer extends DurableObject<Env> {
 		await this.commitAndBroadcast(socket, attachment, request, "message", "posting");
 	}
 
-	private async handleRoom(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
-		await this.commitAndBroadcast(socket, attachment, request, "room", "changing rooms");
-	}
-
 	private async handleReactions(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		await this.commitAndBroadcast(socket, attachment, request, "reactions", "reacting");
 	}
 
-	/** Every room is visible to everyone; joining re-sends its announcement. */
-	private async handleRoomJoin(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
-		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before joining rooms" } satisfies ProtocolError;
-		const roomId = requiredString(request.params, "room_id");
-		const room = this.store.getRoom(roomId, nowMs());
-		if (!room) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
-		this.reply(socket, request, {});
-		this.send(socket, { method: "room", params: room });
-	}
-
-	private async handleRoomLeave(_socket: WebSocketConnection, attachment: ConnectionAttachment, _request: RequestFrame): Promise<void> {
-		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before leaving rooms" } satisfies ProtocolError;
-		throw { name: "denied", message: "Every demo room stays visible to all clients" } satisfies ProtocolError;
+	/**
+	 * `room_set` (§4.3.4): creates a thread under `general`, which joins its
+	 * creator, or replaces a thread's client fields. The change arrives as a
+	 * `room_update` before the result: `joined` to the creator's connections,
+	 * `updated` to the members of the room and of its parent (and the editor).
+	 */
+	private async handleRoomSet(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		const identity = identityOf(attachment);
+		if (!identity) throw { name: "denied", message: "Authenticate before changing rooms" } satisfies ProtocolError;
+		await this.runMutation(async () => {
+			const result = this.store.mutate({
+				userId: identity.user_id, tier: identity.tier, ipKey: attachment.ipKey,
+				requestId: request.id, method: "room_set", now: nowMs(), params: request.params, identity,
+			});
+			const room = result.room;
+			if (room && !result.deduplicated) {
+				this.noteRoom(room.room_id, true);
+				const scope = [room.room_id, ...(room.parent_room_id !== undefined ? [room.parent_room_id] : [])];
+				if (result.created) {
+					this.setRooms(identity.user_id, [...(this.liveRoomsOf(identity.user_id) ?? []), room.room_id]);
+					this.sendToUser(identity.user_id, roomUpdate("joined", room));
+					this.deliver(roomUpdate("updated", room), scope, (state) => state.userId !== identity.user_id);
+				} else {
+					this.deliver(roomUpdate("updated", room), scope, (state) => state.userId !== identity.user_id);
+					this.sendToUser(identity.user_id, roomUpdate("updated", room));
+				}
+			}
+			this.reply(socket, request, result.result);
+		});
 	}
 
 	/**
-	 * Typing (§4.4), relayed to every other connection and never
-	 * stored. Read cursors are dropped: the demo neither keeps nor relays them.
-	 * At most `activityBroadcastsPerUserMinute` relays per user; past that the
-	 * update is dropped and the sender gets one `@server` notice per minute.
+	 * `room_join` (§4.3.2): every connection of the user receives the room's
+	 * deliveries from now on and a `room_update` `joined`, sent before the
+	 * result. Joining a room already joined re-sends its record to this
+	 * connection only. A registered user's rooms are stored with the identity,
+	 * so a change counts as a post; a guest's live in its connection.
+	 */
+	private async handleRoomJoin(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		const identity = identityOf(attachment);
+		if (!identity) throw { name: "denied", message: "Authenticate before joining rooms" } satisfies ProtocolError;
+		const roomId = requiredString(request.params, "room_id");
+		const room = this.store.getRoom(roomId, nowMs());
+		this.noteRoom(roomId, room !== null);
+		if (!room) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
+		const current = attachment.rooms ?? [];
+		if (current.includes(roomId)) {
+			this.send(socket, roomUpdate("joined", room));
+			this.reply(socket, request, {});
+			return;
+		}
+		const rooms = identity.tier === "registered"
+			? this.store.changeMembership({ userId: identity.user_id, ipKey: attachment.ipKey, roomId, join: true, now: nowMs() }).rooms
+			: [...current, roomId];
+		this.setRooms(identity.user_id, rooms);
+		this.sendToUser(identity.user_id, roomUpdate("joined", room));
+		this.reply(socket, request, {});
+	}
+
+	/**
+	 * `room_leave` (§4.3.2): the user's connections stop receiving the room's
+	 * deliveries and get a `room_update` `left`, sent before the result. The
+	 * room stays visible and can be joined again. Leaving a room not joined
+	 * changes nothing.
+	 */
+	private async handleRoomLeave(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		const identity = identityOf(attachment);
+		if (!identity) throw { name: "denied", message: "Authenticate before leaving rooms" } satisfies ProtocolError;
+		const roomId = requiredString(request.params, "room_id");
+		if (!this.roomExists(roomId)) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
+		const current = attachment.rooms ?? [];
+		if (!current.includes(roomId)) {
+			this.reply(socket, request, {});
+			return;
+		}
+		const rooms = identity.tier === "registered"
+			? this.store.changeMembership({ userId: identity.user_id, ipKey: attachment.ipKey, roomId, join: false, now: nowMs() }).rooms
+			: current.filter((id) => id !== roomId);
+		this.setRooms(identity.user_id, rooms);
+		this.sendToUser(identity.user_id, roomUpdate("left", { room_id: roomId }));
+		this.reply(socket, request, {});
+	}
+
+	/**
+	 * Activity (§4.4). Typing is relayed to the room's other members and never
+	 * stored; without room_id it is in the default room. Read cursors are
+	 * dropped: the demo neither keeps nor relays them. `away` is accepted and
+	 * ignored, since the demo has no push; it is never delivered. At most
+	 * `activityBroadcastsPerUserMinute` relays per user; past that the update
+	 * is dropped and the sender gets one `@private` notice per minute.
 	 */
 	private async handleActivity(socket: WebSocketConnection, request: RequestFrame): Promise<void> {
 		const attachment = connectionAttachment(socket);
 		const identity = attachment ? publicIdentity(attachment) : null;
 		if (!attachment || !identity) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
-		const roomId = request.params.room_id;
-		if (typeof roomId !== "string" || roomId.length === 0 || roomId.length > 64) throw { name: "invalid_params", message: "room_id must be a room" } satisfies ProtocolError;
 		const typing = request.params.typing;
 		if (typing !== undefined && (typeof typing !== "number" || !Number.isFinite(typing) || typing < 0)) {
 			throw { name: "invalid_params", message: "typing must be a non-negative number of seconds" } satisfies ProtocolError;
 		}
+		const roomId = request.params.room_id ?? ROOM_ID;
+		if (typing !== undefined && (typeof roomId !== "string" || roomId.length === 0 || roomId.length > 64)) {
+			throw { name: "invalid_params", message: "room_id must be a room" } satisfies ProtocolError;
+		}
 		if (request.id !== undefined) this.reply(socket, request, {});
-		if (typing === undefined || !this.roomExists(roomId)) return;
+		if (typing === undefined || typeof roomId !== "string" || !this.roomExists(roomId)) return;
 		const now = nowMs();
 		const limit = this.config.limits.activityBroadcastsPerUserMinute;
 		if (!this.takeThrottle(socket, identity.user_id, "activity", limit, now)) {
-			await this.noticeThrottled(socket, identity.user_id, "activity", roomId, now,
+			this.noticeThrottled(socket, identity.user_id, "activity", roomId, now,
 				`Typing updates are limited to ${limit} per minute, so others may not see you typing for a moment.`);
 			return;
 		}
 		const seconds = Math.min(Math.floor(typing), this.config.limits.activityMaxTypingSeconds);
 		const frame = { method: "activity", params: { room_id: roomId, from: identity, typing: seconds } };
-		this.broadcast(frame, undefined, socket);
+		this.deliver(frame, [roomId], undefined, socket);
 	}
 
 	/**
-	 * Rooms for discovery (§4.3.1): the top-level rooms, or one room's
-	 * threads. Every room is visible and joined, so `members` is everyone
-	 * connected now, capped; the list is the same for every room.
+	 * `room_list` (§4.3.1): rooms matching the filters, `joined` (every match,
+	 * never truncated) and `rooms` (visible rooms not joined: top-level ones,
+	 * or with `parent_room_id` that room's threads), each most recently active
+	 * first. Each room's `members` are the users connected now who have joined
+	 * it, at most `roomListMembers`; `member_count` is omitted, since the demo
+	 * does not count members who are not connected. At most
+	 * `roomListRequestsPerUserMinute` listings per user, except the first
+	 * `only_joined` listing after authentication.
 	 */
 	private async handleRoomList(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: "Authenticate before listing rooms" } satisfies ProtocolError;
-		const parent = optionalString(request.params, "parent_room_id");
-		const now = nowMs();
-		const retry = this.throttleRetry(identity.user_id, "room_list", this.config.limits.roomListRequestsPerUserMinute, now);
-		if (retry !== undefined) throw { name: "retry_after", message: "Room listing limited", data: { retry_after: retry } } satisfies ProtocolError;
-		const rooms = this.store.listRooms(now);
-		this.takeThrottle(socket, identity.user_id, "room_list", Number.MAX_SAFE_INTEGER, now);
-		for (const room of rooms) this.noteRoom(room.room_id, true);
-		if (parent !== undefined && !rooms.some((room) => room.room_id === parent)) throw { name: "invalid_params", message: "Unknown parent_room_id" } satisfies ProtocolError;
-		const members = this.connectedMembers();
-		this.reply(socket, request, {
-			rooms: rooms
-				.filter((room) => (parent === undefined ? room.parent_room_id === undefined : room.parent_room_id === parent))
-				.map((room) => ({ ...room, members })),
-		});
-	}
-
-	/** Everyone authenticated and connected, one entry per user, capped. */
-	private connectedMembers(): Array<{ user_id: string; name?: string }> {
-		this.closeStale(nowMs());
-		const members = new Map<string, { user_id: string; name?: string }>();
-		for (const peer of this.ctx.getWebSockets()) {
-			const state = connectionAttachment(peer as WebSocketConnection);
-			const identity = state && !state.closing ? publicIdentity(state) : null;
-			if (!identity || members.has(identity.user_id)) continue;
-			members.set(identity.user_id, identity);
-			if (members.size >= this.config.limits.roomListMembers) break;
+		const params = request.params;
+		const flag = (name: string): boolean => {
+			const value = params[name];
+			if (value !== undefined && typeof value !== "boolean") throw { name: "invalid_params", message: `${name} must be a boolean` } satisfies ProtocolError;
+			return value === true;
+		};
+		const onlyJoined = flag("only_joined");
+		const notJoined = flag("not_joined");
+		const parent = optionalString(params, "parent_room_id");
+		const roomId = optionalString(params, "room_id");
+		const since = asDecimalId(params.latest_log_id, "latest_log_id");
+		const joinedIds = new Set(attachment.rooms ?? []);
+		const result: { joined?: RoomRecord[]; rooms?: RoomRecord[] } = {};
+		if (!notJoined) result.joined = [];
+		if (!onlyJoined) result.rooms = [];
+		// Unjoined top-level rooms: `general` is the only one, so a user in it
+		// has none, and the answer needs no storage or listing allowance.
+		if (notJoined && parent === undefined && roomId === undefined && joinedIds.has(ROOM_ID)) {
+			this.reply(socket, request, result);
+			return;
 		}
-		return [...members.values()];
+		const now = nowMs();
+		const exempt = onlyJoined && !attachment.listedJoined && parent === undefined && roomId === undefined;
+		if (exempt) {
+			attachment.listedJoined = true;
+			writeAttachment(socket, attachment);
+		} else {
+			const retry = this.throttleRetry(identity.user_id, "room_list", this.config.limits.roomListRequestsPerUserMinute, now);
+			if (retry !== undefined) throw { name: "retry_after", message: "Room listing limited", data: { retry_after: retry } } satisfies ProtocolError;
+			// Counted before the storage read, so a listing of an unknown room counts too.
+			this.takeThrottle(socket, identity.user_id, "room_list", Number.MAX_SAFE_INTEGER, now);
+		}
+		let candidates: RoomRecord[];
+		if (roomId !== undefined) {
+			const room = this.store.getRoom(roomId, now);
+			this.noteRoom(roomId, room !== null);
+			if (!room) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
+			candidates = [room];
+		} else {
+			const rooms = this.store.listRooms(now);
+			for (const room of rooms) this.noteRoom(room.room_id, true);
+			if (parent !== undefined && !rooms.some((room) => room.room_id === parent)) throw { name: "invalid_params", message: "Unknown parent_room_id" } satisfies ProtocolError;
+			candidates = rooms.filter((room) => parent === undefined ? true : room.parent_room_id === parent);
+		}
+		const members = this.connectedMembers();
+		const byActivity = (a: RoomRecord, b: RoomRecord) => Number(b.latest_log_id) - Number(a.latest_log_id) || Number(b.log_id) - Number(a.log_id);
+		for (const room of candidates.sort(byActivity)) {
+			if (since !== undefined && Number(room.latest_log_id) <= Number(since)) continue;
+			const entry = { ...room, members: members.get(room.room_id) ?? [] };
+			if (joinedIds.has(room.room_id)) result.joined?.push(entry);
+			// Without parent_room_id, unjoined threads are left to their parent's listing.
+			else if (roomId !== undefined || parent !== undefined || room.parent_room_id === undefined) result.rooms?.push(entry);
+		}
+		this.reply(socket, request, this.boundedListing(result));
 	}
 
 	/**
-	 * Whether a connection's peer has gone quiet: it has sent the keepalive,
-	 * but neither that nor any frame within the timeout. The runtime cannot
-	 * ping, so a peer that vanished without a close frame (sleep, a network
-	 * change) otherwise stays connected until the edge gives up on it. A
-	 * connection that never sent the keepalive is never judged stale.
+	 * Keeps a listing within the history response cap: `joined` is never
+	 * truncated, so embedded intro snapshots become bare references first, and
+	 * then `members` are left out (§4.3.1 lets servers omit them).
+	 */
+	private boundedListing(result: { joined?: RoomRecord[]; rooms?: RoomRecord[] }): Record<string, unknown> {
+		const limit = this.config.limits.historyMaxResponseBytes;
+		const fits = () => utf8Bytes(jsonString(result)) + 1_024 <= limit;
+		if (fits()) return result;
+		const each = (fn: (room: RoomRecord & { members?: unknown }) => void) => {
+			for (const room of [...(result.joined ?? []), ...(result.rooms ?? [])]) fn(room);
+		};
+		each((room) => {
+			const intro = room.intro_message;
+			if (intro && typeof intro.message_id === "string") room.intro_message = { message_id: intro.message_id };
+		});
+		if (!fits()) each((room) => { delete room.members; });
+		return result;
+	}
+
+	/**
+	 * `command` (§4.8): never logged, broadcast, or saved. The demo provides
+	 * `/help`, which replies with a `@private` notice listing the commands. An
+	 * unknown command is an error the client shows; it is not a policy
+	 * violation, since people mistype.
+	 */
+	private async handleCommand(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
+		const params = request.params;
+		for (const name of ["message_id", "deleted"]) {
+			if (params[name] !== undefined) throw { name: "invalid_params", message: `A command has no ${name}; send it as a message instead` } satisfies ProtocolError;
+		}
+		const roomId = optionalString(params, "room_id") ?? ROOM_ID;
+		const body = objectParam(params, "body");
+		if (!body) throw { name: "invalid_params", message: "Missing body" } satisfies ProtocolError;
+		const text = optionalString(body, "text") ?? "";
+		if (!this.roomExists(roomId)) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
+		const line = text.trim();
+		const name = line.startsWith("/") ? line.slice(1).split(/\s/, 1)[0].toLowerCase() : "";
+		if (!COMMANDS.some((command) => command.name === name)) {
+			const message = line.startsWith("/") ? `Unknown command /${name}; try /help` : "A command starts with /; try /help";
+			this.fail(socket, request, { name: "invalid_params", message: message.slice(0, 200) });
+			return;
+		}
+		this.reply(socket, request, {});
+		this.send(socket, {
+			method: "message",
+			params: {
+				room_id: roomId,
+				from: { ...PRIVATE_IDENTITY },
+				body: { text: COMMANDS.map((command) => `- \`${command.usage}\`: ${command.help}`).join("\n"), format: "markdown" },
+			},
+		});
+	}
+
+	/**
+	 * Each room's members connected now: users who have joined it, one entry
+	 * each, at most `roomListMembers` per room.
+	 */
+	private connectedMembers(): Map<string, Array<{ user_id: string; name?: string }>> {
+		this.closeStale(nowMs());
+		const members = new Map<string, Map<string, { user_id: string; name?: string }>>();
+		for (const peer of this.ctx.getWebSockets()) {
+			const state = connectionAttachment(peer as WebSocketConnection);
+			const identity = state && !state.closing ? publicIdentity(state) : null;
+			if (!identity) continue;
+			for (const roomId of state!.rooms ?? []) {
+				let listed = members.get(roomId);
+				if (!listed) members.set(roomId, listed = new Map());
+				if (listed.size < this.config.limits.roomListMembers) listed.set(identity.user_id, identity);
+			}
+		}
+		return new Map([...members].map(([roomId, listed]) => [roomId, [...listed.values()]]));
+	}
+
+	/**
+	 * Whether a connection's peer has gone quiet: it has sent the liveness
+	 * ping, but neither that nor any frame within the timeout. The runtime
+	 * cannot ping, so a peer that vanished without a close frame (sleep, a
+	 * network change) otherwise stays connected until the edge gives up on it.
+	 * A connection that never pinged is never judged stale.
 	 */
 	private isStale(socket: WebSocket, now: number): boolean {
 		const pinged = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime();
 		if (pinged === undefined) return false;
 		const frames = connectionAttachment(socket as WebSocketConnection)?.frameTimes ?? [];
 		const heard = Math.max(pinged, frames[frames.length - 1] ?? 0);
-		return heard <= now - this.config.limits.keepaliveTimeoutSeconds * 1_000;
+		return heard <= now - this.config.limits.pingTimeoutSeconds * 1_000;
 	}
 
 	/**
@@ -1362,7 +1579,12 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (closed) console.log(JSON.stringify({ event: "stale_connections_closed", closed, sockets: sockets.length }));
 	}
 
-	/** Sends a profile change (section 3.3): `you` to the user's other connections, `new` (and `old`) to the rest. */
+	/**
+	 * Sends a profile change (section 3.3): `you` to the user's other
+	 * connections, `new` (and `old`) to the rest, since every user can share
+	 * `general`. Joins and leaves are not announced with `user` (§4.3.2 lets
+	 * servers skip them); room listings show who is connected in each room.
+	 */
 	private announceUser(origin: WebSocketConnection, identity: { user_id: string; name?: string } | null, old?: { user_id: string; name?: string } | null): void {
 		if (!identity) return;
 		for (const peer of this.ctx.getWebSockets()) {
@@ -1370,7 +1592,72 @@ export class ApronDemoServer extends DurableObject<Env> {
 			if (socket === origin) continue;
 			const state = connectionAttachment(socket);
 			const own = state?.userId === identity.user_id;
-			this.broadcast({ method: "user", params: own ? { you: identity } : { new: identity, ...(old ? { old } : {}) } }, socket);
+			this.deliverTo(socket, { method: "user", params: own ? { you: identity } : { new: identity, ...(old ? { old } : {}) } });
+		}
+	}
+
+	/** Authenticated, open connections of one user. */
+	private connectionsOf(userId: string, except?: WebSocketConnection): WebSocketConnection[] {
+		return this.ctx.getWebSockets().filter((peer) => {
+			if (peer === except || !openSocket(peer)) return false;
+			const state = connectionAttachment(peer as WebSocketConnection);
+			return !!state && !state.closing && state.userId === userId && (state.tier === "anonymous" || state.tier === "registered");
+		}) as WebSocketConnection[];
+	}
+
+	/** The rooms a user's other live connections have joined, if any is connected. */
+	private liveRoomsOf(userId: string, except?: WebSocketConnection): string[] | undefined {
+		for (const peer of this.connectionsOf(userId, except)) {
+			const rooms = connectionAttachment(peer)?.rooms;
+			if (rooms) return [...rooms];
+		}
+		return undefined;
+	}
+
+	/** Sets a user's joined rooms on every one of their connections. */
+	private setRooms(userId: string, rooms: readonly string[]): void {
+		const unique = [...new Set(rooms)].slice(0, MAX_ATTACHED_ROOMS);
+		for (const peer of this.connectionsOf(userId)) {
+			const state = connectionAttachment(peer);
+			if (!state) continue;
+			state.rooms = [...unique];
+			writeAttachment(peer, state);
+		}
+	}
+
+	/** Sends a frame to every connection of one user. */
+	private sendToUser(userId: string, value: unknown): void {
+		for (const peer of this.connectionsOf(userId)) this.deliverTo(peer, value);
+	}
+
+	/**
+	 * Removed thread rooms (their entire log expired): their members leave
+	 * them and are told with `room_update` `left` (§4.3.3).
+	 */
+	private removeRooms(roomIds: readonly string[]): void {
+		const removed = new Set(roomIds);
+		for (const ws of this.ctx.getWebSockets()) {
+			const socket = ws as WebSocketConnection;
+			const state = connectionAttachment(socket);
+			if (!state?.rooms?.some((id) => removed.has(id))) continue;
+			const left = state.rooms.filter((id) => removed.has(id));
+			state.rooms = state.rooms.filter((id) => !removed.has(id));
+			writeAttachment(socket, state);
+			this.deliverTo(socket, { method: "room_update", params: { left: left.map((room_id) => ({ room_id })) } });
+		}
+	}
+
+	/**
+	 * Rooms whose delivery fields changed, such as a raised `history_log_id`,
+	 * as `room_update` `updated` to the members of each room and of its parent.
+	 */
+	private announceUpdated(rooms: readonly RoomRecord[]): void {
+		if (!rooms.length) return;
+		for (const ws of this.ctx.getWebSockets()) {
+			const socket = ws as WebSocketConnection;
+			const joined = new Set(connectionAttachment(socket)?.rooms ?? []);
+			const relevant = rooms.filter((room) => joined.has(room.room_id) || (room.parent_room_id !== undefined && joined.has(room.parent_room_id)));
+			if (relevant.length) this.deliverTo(socket, { method: "room_update", params: { updated: relevant } });
 		}
 	}
 
@@ -1420,12 +1707,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Tells a throttled sender, once per window per user, with a `@server`
-	 * message (Appendix A.1) in the room they were active in. It goes to that
-	 * connection only and is never logged; its log_id still comes from the
-	 * server's sequence so no record can collide with it.
+	 * Tells a throttled sender, once per window per user, with a `@private`
+	 * notice (Appendix A.1) in the room they were active in. It goes to that
+	 * connection only, is never logged, and carries no message_id or log_id.
 	 */
-	private async noticeThrottled(socket: WebSocketConnection, userId: string, type: ThrottledType, roomId: string, now: number, text: string): Promise<void> {
+	private noticeThrottled(socket: WebSocketConnection, userId: string, type: ThrottledType, roomId: string, now: number, text: string): void {
 		for (const peer of this.ctx.getWebSockets()) {
 			const state = connectionAttachment(peer as WebSocketConnection);
 			if (state?.userId === userId && (state.notices?.[type] ?? 0) > now - THROTTLE_WINDOW_MS) return;
@@ -1434,16 +1720,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (!state) return;
 		state.notices = { ...state.notices, [type]: now };
 		writeAttachment(socket, state);
-		let logId: string;
-		try {
-			logId = this.store.allocateUnloggedLogId(now);
-		} catch {
-			return; // A notice is a courtesy; without capacity the update is still dropped.
-		}
-		this.broadcast({
+		this.deliverTo(socket, {
 			method: "message",
-			params: { message_id: logId, log_id: logId, room_id: roomId, from: { ...SERVER_IDENTITY }, body: { text, format: "plain" } },
-		}, socket);
+			params: { room_id: roomId, from: { ...PRIVATE_IDENTITY }, body: { text, format: "plain" } },
+		});
 	}
 
 	private async runMutation(fn: () => Promise<void>): Promise<void> {
@@ -1466,27 +1746,36 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Broadcast one committed record. Every authenticated client sees every
-	 * room, so a moved message's snapshot reaches both rooms' viewers in one
+	 * Delivers one committed record to the members of the rooms it belongs to
+	 * (§3.4): a moved message's snapshot reaches both rooms' members in one
 	 * frame, delivered once per connection (section 3.5).
 	 */
 	private broadcastRecord(record: Broadcast): void {
-		if (record.method === "room" && typeof record.params.room_id === "string") this.noteRoom(record.params.room_id, true);
-		this.broadcast({ method: record.method, params: record.params });
+		this.deliver({ method: record.method, params: record.params }, record.rooms);
 	}
 
-	/** Sends to every authenticated connection, or only to `only`, or to all but `except`. */
-	private broadcast(value: unknown, only?: WebSocketConnection, except?: WebSocketConnection): void {
+	/**
+	 * Sends to every authenticated connection whose user has joined one of
+	 * `rooms` and passes `filter`, except `except`.
+	 */
+	private deliver(value: unknown, rooms: readonly string[], filter?: (state: ConnectionAttachment) => boolean, except?: WebSocketConnection): void {
 		for (const ws of this.ctx.getWebSockets()) {
 			const socket = ws as WebSocketConnection;
-			if ((only && socket !== only) || socket === except) continue;
-			const attachment = connectionAttachment(socket);
-			if (!attachment || attachment.closing || (attachment.tier !== "anonymous" && attachment.tier !== "registered")) continue;
-			if (!this.send(socket, value)) {
-				attachment.closing = true;
-				writeAttachment(socket, attachment);
-				try { socket.close(1011, "Delivery failed; reconnect to recover"); } catch { /* closed */ }
-			}
+			if (socket === except) continue;
+			const state = connectionAttachment(socket);
+			if (!state?.rooms?.some((id) => rooms.includes(id)) || (filter && !filter(state))) continue;
+			this.deliverTo(socket, value);
+		}
+	}
+
+	/** Sends to one connection if it is authenticated; a failed send closes it so its client recovers. */
+	private deliverTo(socket: WebSocketConnection, value: unknown): void {
+		const attachment = connectionAttachment(socket);
+		if (!attachment || attachment.closing || (attachment.tier !== "anonymous" && attachment.tier !== "registered")) return;
+		if (!this.send(socket, value)) {
+			attachment.closing = true;
+			writeAttachment(socket, attachment);
+			try { socket.close(1011, "Delivery failed; reconnect to recover"); } catch { /* closed */ }
 		}
 	}
 

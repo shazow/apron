@@ -133,8 +133,8 @@ function validateLimits(limits: Limits): void {
 	if (limits.roomListMembers > budget.MAX_ROOM_LIST_MEMBERS || limits.roomListMembers > limits.openConnections) {
 		fail("room_list members exceed the calibrated bound");
 	}
-	if (limits.keepaliveTimeoutSeconds < 2 * limits.keepaliveSeconds) {
-		fail("the keepalive timeout must outlast a missed keepalive");
+	if (limits.pingTimeoutSeconds < 2 * limits.pingSeconds) {
+		fail("the ping timeout must outlast a missed ping");
 	}
 	if (limits.globalPostsPerMinute > budget.MAX_GLOBAL_POSTS_PER_MINUTE || limits.globalPostsPerDay > budget.MAX_GLOBAL_POSTS_PER_DAY || limits.globalPostsPerMinute > limits.globalPostsPerDay) {
 		fail("global posting policy exceeds the demo ceiling");

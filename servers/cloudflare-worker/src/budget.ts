@@ -56,7 +56,7 @@ export interface Limits {
 	globalFramesPerMinute: number;
 	/**
 	 * Per-type throttles, counted per user across their connections. Activity
-	 * over its limit is dropped and the sender gets one `@server` notice per
+	 * over its limit is dropped and the sender gets one `@private` notice per
 	 * window; other requests over theirs are answered with `retry_after`.
 	 */
 	activityBroadcastsPerUserMinute: number;
@@ -70,19 +70,23 @@ export interface Limits {
 	 * block is burned when the connection closes or the UTC day ends.
 	 */
 	frameLease: number;
-	/** Users listed as `members` of each room in a `room_list` result: those connected now. */
+	/**
+	 * Users listed as `members` of each room in a `room_list` result: those
+	 * connected now who have joined it.
+	 */
 	roomListMembers: number;
 	/**
-	 * How often a client that opts in sends the keepalive frame. The runtime
-	 * answers it without waking the object, so it costs no frame budget.
+	 * Seconds between client liveness pings, advertised as `server.ping`
+	 * (protocol §1). The runtime answers the ping without waking the object,
+	 * so it costs no frame budget.
 	 */
-	keepaliveSeconds: number;
+	pingSeconds: number;
 	/**
-	 * A connection that has sent a keepalive is stale once this long passes
-	 * with no keepalive or frame. It is closed before `members` are listed and
-	 * before connections are counted for admission.
+	 * A connection that has pinged is stale once this long passes with no
+	 * ping or frame. It is closed before `members` are listed and before
+	 * connections are counted for admission.
 	 */
-	keepaliveTimeoutSeconds: number;
+	pingTimeoutSeconds: number;
 	sqlWritesPerDay: number;
 	sqlReadsPerDay: number;
 	foregroundWritesPerDay: number;
@@ -156,8 +160,8 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	activityMaxTypingSeconds: 30,
 	frameLease: 10,
 	roomListMembers: 20,
-	keepaliveSeconds: 45,
-	keepaliveTimeoutSeconds: 150,
+	pingSeconds: 45,
+	pingTimeoutSeconds: 150,
 	sqlWritesPerDay: 80_000,
 	sqlReadsPerDay: 3_000_000,
 	foregroundWritesPerDay: 60_000,
@@ -219,8 +223,8 @@ export const MAX_GLOBAL_FRAMES_PER_MINUTE = 1_000;
 export const MAX_TYPE_THROTTLE_PER_MINUTE = 60;
 // A block counts against the IP's frame minute all at once.
 export const MAX_FRAME_LEASE = 20;
-// Every room in a listing carries the members list, so it multiplies the
-// response by the thread ceiling.
+// Every room in a listing carries its members list, so it multiplies the
+// response by the thread ceiling (listings past the response cap leave it out).
 export const MAX_ROOM_LIST_MEMBERS = 50;
 export const MAX_SQL_WRITES = DEFAULT_LIMITS.sqlWritesPerDay;
 export const MAX_SQL_READS = DEFAULT_LIMITS.sqlReadsPerDay;

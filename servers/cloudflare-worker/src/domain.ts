@@ -24,6 +24,8 @@ export interface StoredIdentity {
 	name: string;
 	userHandle: string;
 	credentialCount: number;
+	/** Rooms the identity has joined (protocol §4.3.2), kept across connections. */
+	rooms: string[];
 }
 
 export interface DedupRecord {
@@ -56,6 +58,7 @@ export interface AuthStore {
 		credential: StoredCredential;
 		now: number;
 		ipKey: string;
+		rooms?: readonly string[];
 	}): StoredIdentity;
 	updateCredentialCounter(credentialId: string, counter: number): void;
 	countIdentities(): number;

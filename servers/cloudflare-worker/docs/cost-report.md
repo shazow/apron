@@ -61,7 +61,6 @@ upper bounds can be compared with the measured worst case.
 | History quota reservation | 15 | 15 | 72 | 24 | accepted |
 | Frame reservation (one frame) | 15 | 15 | 28 | 24 | accepted |
 | Frame block (10 frames) | 11 | 10 | 64 | 24 | accepted |
-| Unlogged `@server` notice log ID | 5 | 2 | 12 | 12 | accepted |
 | Connection admission reservation | 16 | 15 | 72 | 40 | accepted |
 | Identity registration | 24 | 23 | 136 | 72 | accepted |
 | Credential lookup | 3 | 1 | 16 | 8 | accepted |
@@ -77,7 +76,7 @@ upper bounds can be compared with the measured worst case.
 | Message move with one reaction set | 25 | 30 | 280 | 280 | accepted |
 | Registered name mutation | 21 | 17 | 280 | 280 | accepted |
 | History page | 10 | 1 | 264 | 40 | accepted |
-| Room state announcement | 4 | 1 | 24 | 8 | accepted |
+| Room record lookup (`general`) | 4 | 1 | 24 | 8 | accepted |
 | Room join lookup | 4 | 1 | 24 | 8 | accepted |
 | Room listing (representative matrix) | 7 | 1 | 444 | 8 | accepted |
 | Admission snapshot | 5 | 1 | 40 | 24 | accepted |
@@ -105,6 +104,45 @@ re-logged all 64 sets in one 92,693-byte reaction record and measured 214/156
 against its 280/280 reservation; the record still fit one history response.
 The per-message cap is what bounds this move: without it, the re-logged set
 count would be limited only by posting quotas.
+
+## Protocol v5 operations
+
+Measured on 2026-09-25 with the same operation matrix after the protocol v5
+changes (schema 3, which stores each registered identity's joined rooms). These
+figures include the credit-back and the 96-write floor described above, so
+they are the current ones; the operations not listed here did not change.
+
+| Operation | Observed reads | Observed writes | Reserved reads | Reserved writes |
+| --- | ---: | ---: | ---: | ---: |
+| Identity registration (prunes its starting rooms) | 26 | 24 | 237 | 72 |
+| Message create with request ID | 33 | 37 | 280 | 120 |
+| Empty new message (not logged or charged) | 4 | 2 | 16 | 8 |
+| Thread room create by a registered user (stores the membership) | 33 | 28 | 280 | 120 |
+| Thread room save | 21 | 19 | 280 | 120 |
+| Registered room leave | 18 | 14 | 173 | 72 |
+| Registered room join | 15 | 9 | 173 | 72 |
+| Registered room join at the 100-thread ceiling | 126 | 24 | 173 | 72 |
+| History page with `users` for its registered authors | 12 | 2 | 264 | 40 |
+| Room listing (representative matrix) | 8 | 2 | 444 | 8 |
+
+- Rooms are no longer announced at authentication. The client's first
+  `only_joined` `room_list` after it takes the same room-listing reservation
+  the announcements did, and is exempt from the listing throttle, so a
+  reconnect costs what it did. Listing unjoined top-level rooms while joined to
+  `general` needs no SQL.
+- A guest's joins and leaves live in its connection attachment and write
+  nothing; a join reads the room record (24/8). A registered user's rooms are
+  stored with the identity: each change is one identity-row update, reserved as
+  64 reads plus the capped rooms table (101 rows, read to prune rooms that no
+  longer exist) and 64 writes, and it counts as a post. A join or leave that
+  changes nothing writes nothing.
+- Registration prunes the rooms the new identity starts with against the same
+  capped table, which is why its read reservation grew by 101 rows.
+- History pages look up the current names of at most 50 registered authors and
+  reactors with one primary-key lookup each (`users`); guests cannot rename,
+  so their `from` is already current.
+- `@private` throttle notices and `/help` replies carry no `log_id`, so they need
+  no SQL (the v4 `@server` notice reserved 12/12 to advance the log sequence).
 
 For the three-day traffic sample, the operation rows were:
 
@@ -145,14 +183,15 @@ typing minute. Read-cursor updates, which the demo drops, cost the same per
 frame. The per-user relay limit (10 a minute) and the frame limits (60 per
 connection and 120 per IP a minute) bound a single sender.
 
-A throttled sender's `@server` notice advances the log sequence without a
-record: 12 reserved writes, at most once per user per minute. `room_list`
-reuses the room-listing reservation (444 reads, 8 writes) and adds no writes;
-its members come from connection attachments.
+A throttled sender's `@private` notice is sent to that connection only, at
+most once per user per minute, and needs no SQL. `room_list` reuses the
+room-listing reservation (444 reads, 8 writes) and adds no writes; its members
+come from connection attachments.
 
-The keepalive (`{"method":"ping"}` every 45 seconds, from clients that opt in)
-is answered by `setWebSocketAutoResponse`: it never wakes the object or reaches
-`webSocketMessage`, so it uses no duration, frame budget, or SQL. Incoming
+The liveness ping (`{"method":"ping"}` every `server.ping` = 45 seconds, from
+clients that support it) is answered by `setWebSocketAutoResponse`: it never
+wakes the object or reaches `webSocketMessage`, so it uses no duration, frame
+budget, or SQL. A ping with other spacing is an ordinary frame. Incoming
 WebSocket messages count as Durable Object requests at 20:1, so 100 connections
 that ping all day add about 9,600 requests (under 10% of the 100,000 daily
 allowance). Pings are not rate limited by the demo; a client flooding them can
@@ -258,7 +297,9 @@ needed. The cleanup source selection explicitly uses `records_retention_idx`
 for the strict commit-time cutoff, then `records_log_idx` for the bounded
 physical delete. The move's reaction read and the room listing sort at most
 the capped per-message reaction sets and the capped room table respectively;
-the thread-room expiry check in cleanup scans that same capped table.
+the thread-room expiry check in cleanup, and the pruning of a registered
+identity's stored rooms, scan that same capped table. History `users` look up
+identities by primary key.
 
 ## Schema reset
 

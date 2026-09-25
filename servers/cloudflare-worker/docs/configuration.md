@@ -163,7 +163,7 @@ The numeric rows are grouped by their unit and enforcement scope:
   `pendingFramesPerConnection`, `repeatedPolicyViolations`, `cleanupBatch`,
   `threadLimit`, `reactionUsersPerMessage`, `reactionEmojisPerUser`,
   `limiterRecordCap`, `frameLease`, `roomListMembers`,
-  `activityMaxTypingSeconds`, `keepaliveSeconds`, `keepaliveTimeoutSeconds`
+  `activityMaxTypingSeconds`, `pingSeconds` (advertised as `server.ping`), `pingTimeoutSeconds`
   (seconds; the timeout must be at least twice the interval).
 - Rolling minute budgets: `historyRequestsPerUserMinute`,
   `historyRequestsPerIpMinute`, `anonymousPostsPerMinute`,
@@ -231,8 +231,8 @@ The numeric rows are grouped by their unit and enforcement scope:
 | `activityMaxTypingSeconds` | 30 |
 | `frameLease` | 10 |
 | `roomListMembers` | 20 |
-| `keepaliveSeconds` | 45 |
-| `keepaliveTimeoutSeconds` | 150 |
+| `pingSeconds` | 45 |
+| `pingTimeoutSeconds` | 150 |
 | `sqlWritesPerDay` | 80000 |
 | `sqlReadsPerDay` | 3000000 |
 | `foregroundWritesPerDay` | 60000 |

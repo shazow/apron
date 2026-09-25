@@ -4,9 +4,10 @@ A single SQLite Durable Object serves the permanent `general` room and its
 thread rooms over hibernating WebSockets. The backend supports guest access,
 discoverable passkeys, complete-snapshot history, message
 replacement/deletion/restoration/moves, thread rooms, emoji reactions, and a
-rolling retention floor. It speaks protocol 4 with `history`, `edit`, `rooms`,
-and `reactions` (typing through `activity` is built in but off; set
-`ACTIVITY=true` to advertise it); see [authentication and policy](docs/policy.md) and [the
+rolling retention floor. It speaks protocol 5 with `history`, `edit`, `rooms`,
+`reactions`, and `command` (`/help` only), and advertises liveness pings
+(typing through `activity` is built in but off; set `ACTIVITY=true` to
+advertise it); see [authentication and policy](docs/policy.md) and [the
 implementation specification](SPEC.md).
 
 See the [configuration reference](docs/configuration.md) for all policy variables
@@ -83,18 +84,25 @@ socket.onmessage = ({ data }) => {
   if (frame.method === 'server') {
     socket.send(JSON.stringify({ id: 'guest', method: 'auth', params: { scheme: 'guest' } }));
   } else if (frame.id === 'guest' && frame.result) {
+    socket.send(JSON.stringify({ id: 'rooms', method: 'room_list', params: { only_joined: true } }));
     socket.send(JSON.stringify({ id: 'history', method: 'history', params: { room_id: 'general' } }));
   }
 };
+// Stay listed as connected: ping every `server.params.ping` seconds.
+setInterval(() => socket.send('{"method":"ping"}'), 45_000);
 ```
 
-Use the protocol's `message`, `room`, and `reactions` requests to exercise
-posting, editing, deletion/restoration, moves, threads, and reactions;
-`room_list` lists rooms and threads with the users connected now, up to 6
-times a minute per user. The whole server processes at most 300 frames a
+Use the protocol's `message`, `room_set`, `room_join`, `room_leave`, and
+`reactions` requests to exercise posting, editing, deletion/restoration, moves,
+threads, membership, and reactions. A new guest has joined `general`, and
+receives only the rooms it has joined; posting to a room does not require
+joining it. `room_list` lists joined rooms and rooms to join with the members
+connected now, up to 6 times a minute per user (the first `only_joined`
+listing after authentication is free), and `room_update` reports changes.
+The whole server processes at most 300 frames a
 minute; past that, requests get `retry_after` and the socket stays open. The demo
-only creates thread rooms: `room` requests need `parent_room_id: "general"`,
-and `general` itself cannot be edited or left. This is a shared public room, not
+only creates thread rooms: `room_set` creations need `parent_room_id: "general"`,
+and `general` itself cannot be edited. This is a shared public room, not
 an isolated sandbox: test messages are visible to others, guest ownership lasts
 only for the socket, and IP/resource quotas and retention still apply. Changing
 frontend origins does not give an IP a fresh allowance. Honor `retry_after`.
@@ -113,15 +121,18 @@ is retained. Hourly cleanup normally exposes 24–25 hours; quota exhaustion may
 delay physical deletion. The `general` room ID and the log head never rotate.
 Recent edits can keep old messages visible. Rooms keep their current record
 after its log entry expires; a thread room whose whole log has expired is
-removed (announced with `removed: true`), which frees its slot under the
+removed (its members get `room_update` `left`), which frees its slot under the
 100-thread ceiling.
 This is not secure erasure, and says nothing about provider backups or copies
 on clients.
 
-Guest identities last only for their socket, including hibernation. A
-reconnect receives a new guest identity, so earlier guest messages cannot
-be edited or deduplicated across that reconnect. A passkey creates a separate,
-stable registered identity; it does not inherit guest message ownership.
+Guest identities last only for their socket, including hibernation, and so do
+the rooms a guest has joined. A
+reconnect receives a new guest identity, joined to `general` only, so earlier
+guest messages cannot be edited or deduplicated across that reconnect. A
+passkey creates a separate, stable registered identity that keeps its rooms
+across connections (starting with the guest's); it does not inherit guest
+message ownership.
 Passkeys require authentication on each new connection and do not prevent
 multiple registrations by one person.
 
@@ -129,7 +140,8 @@ Guest posting is shared by IP (native IPv6 grouped by /64): five accepted
 mutations per rolling minute and 100 per UTC day. Registered users receive
 20/minute and 500/day, subject to the common IP and global limits. NAT users
 share allowances. Creates, edits, deletion, restoration, moves, reaction
-changes, and thread room creation or edits all consume posting quota.
+changes, thread room creation or edits, and a registered user's room joins and
+leaves all consume posting quota.
 Matching accepted request retries consume lookup and frame resources, but do
 not post again. Request deduplication lasts 24 hours.
 
@@ -229,7 +241,7 @@ For direct Wrangler production commands, always pass
    Wrangler deployment workflow. Do not rename or recreate the production
    object to work around a quota or schema issue. Stored data is not migrated
    between schema versions: a deploy that changes the storage schema resets the
-   demo on the object's first wake (see
+   demo on the object's first wake (the protocol v5 release moved to schema 3; see
    [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
    identities, sessions, and limiter windows are deleted; users must register
    their passkeys again, and saved session tokens fall back to sign-in. Only the
