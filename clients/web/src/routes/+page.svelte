@@ -42,6 +42,13 @@
 
 	/** How long a jump waits for its target to render (a thread's history may still be loading). */
 	const JUMP_WAIT_MS = 4000;
+	/**
+	 * Opening a room renders its newest items first, enough to fill the pane,
+	 * and the older ones a chunk per frame after that paints, so switching
+	 * rooms shows the room without waiting for its whole history to render.
+	 */
+	const FIRST_PAINT_ITEMS = 40;
+	const REVEAL_CHUNK_ITEMS = 60;
 	/** How long a members listing stays current when the mention picker opens. */
 	const MEMBERS_FRESH_MS = 15_000;
 	/** The shortest gap between listings made because the pane has no members. */
@@ -104,6 +111,10 @@
 	/** Where the last scroll event, or automatic scroll to the latest item, left the list. */
 	let lastScrollTop: number | undefined;
 	let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Oldest timeline items not rendered yet (see FIRST_PAINT_ITEMS). */
+	let hiddenItems = $state(0);
+	let revealFrame = 0;
+	let revealTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let snapshot = $derived(session.snapshot);
 	/** The top-level room open in the pane (or behind the open thread). */
@@ -116,6 +127,7 @@
 	let messages = $derived(timelineMessages(paneRoom));
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
 	let timeline = $derived(activeThread ? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames, moreReplies: Boolean(threadRoom?.olderAvailable) }) : buildRoomTimeline({ messages, threads }));
+	let shownTimeline = $derived(hiddenItems > 0 ? timeline.slice(Math.min(hiddenItems, timeline.length)) : timeline);
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members, paneRoom?.membersAsOf));
 	let typingNames = $derived(snapshot.typing
@@ -341,6 +353,7 @@
 		return () => {
 			if (typingTimer) clearTimeout(typingTimer);
 			if (highlightTimer) clearTimeout(highlightTimer);
+			stopRevealing();
 			if (floatingDayTimer) clearTimeout(floatingDayTimer);
 			feedback.dispose();
 			mentions.dispose();
@@ -431,6 +444,43 @@
 		mentions.clearRoom(roomId);
 		if (thread) mentions.clearRoom(thread);
 		stickToBottom = true;
+		// A thread opens at its intro, at the top, so it renders whole.
+		revealFrom(thread ? 0 : timeline.length - FIRST_PAINT_ITEMS);
+	}
+
+	/** Renders the timeline from `hidden` items in, then reveals the older ones after each paint. */
+	function revealFrom(hidden: number): void {
+		stopRevealing();
+		hiddenItems = Math.max(0, hidden);
+		if (hiddenItems > 0) scheduleReveal();
+	}
+
+	function scheduleReveal(): void {
+		revealFrame = requestAnimationFrame(() => {
+			revealFrame = 0;
+			revealTimer = setTimeout(revealChunk, 0);
+		});
+	}
+
+	async function revealChunk(): Promise<void> {
+		revealTimer = undefined;
+		const scroller = messageScroll;
+		const height = scroller?.scrollHeight ?? 0;
+		const top = scroller?.scrollTop ?? 0;
+		hiddenItems = Math.max(0, hiddenItems - REVEAL_CHUNK_ITEMS);
+		if (hiddenItems > 0) scheduleReveal();
+		await tick();
+		// Older items land above: keep the reader's place unless the pane follows the latest.
+		if (!scroller || messageScroll !== scroller || stickToBottom) return;
+		scroller.scrollTop = top + (scroller.scrollHeight - height);
+		lastScrollTop = scroller.scrollTop;
+	}
+
+	function stopRevealing(): void {
+		if (revealFrame) cancelAnimationFrame(revealFrame);
+		if (revealTimer) clearTimeout(revealTimer);
+		revealFrame = 0;
+		revealTimer = undefined;
 	}
 
 	/** Opens a room, or a thread under it, switching the top-level room first when it differs. */
@@ -645,6 +695,7 @@
 			openDestination(destination.room, destination.thread);
 			stickToBottom = false;
 		}
+		revealFrom(0);
 		const node = await renderedMessage(id);
 		if (!node) return;
 		stickToBottom = false;
@@ -947,7 +998,7 @@
 						<p>{activeThread ? 'Reply below to continue the thread.' : `Start the conversation in ${activeRoom.title}.`}</p>
 					</div>
 				{:else}
-					{#each timeline as item (item.key)}
+					{#each shownTimeline as item (item.key)}
 						{#if item.kind === 'date'}
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.label}</span></div>
 						{:else if item.kind === 'replies'}
