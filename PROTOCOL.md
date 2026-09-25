@@ -10,13 +10,14 @@ The protocol is incremental. The mandatory core (§3) is all a minimal
 implementation needs, about a hundred lines. Everything else is an optional
 capability: §4 lists them, the appendices specify them.
 
-A first exchange. After the WebSocket opens, the server announces itself
-and accepts authentication. The client sends messages; the server broadcasts
-them to every client in the room, including the sender.
+A first exchange. After the WebSocket opens, the server announces itself and
+accepts authentication, and the client lists the rooms it has joined. The
+client sends messages; the server broadcasts them to every client in the
+room, including the sender.
 
 ```jsonc
-// <- server greeting with auth schemes
-{"method": "server", "params": {"protocol": 5, "auth": ["guest", "token"]}}
+// <- server greeting with capabilities and auth schemes
+{"method": "server", "params": {"protocol": 5, "caps": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -24,11 +25,17 @@ them to every client in the room, including the sender.
 // <- assigned identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
 
-// -> post a message to the server's default room
-{"method": "message", "id": "c2", "params": {"body": {"text": "Hello"}}}
+// -> joined rooms
+{"method": "room_list", "id": "c2", "params": {"only_joined": true}}
+
+// <- one room
+{"id": "c2", "result": {"joined": [{"room_id": "general", "title": "General"}]}}
+
+// -> post a message
+{"method": "message", "id": "c3", "params": {"room_id": "general", "body": {"text": "Hello"}}}
 
 // <- confirmation
-{"id": "c2", "result": {"message_id": "1724803200042"}}
+{"id": "c3", "result": {"message_id": "1724803200042"}}
 
 // <- broadcast to everyone in the room
 {
@@ -526,7 +533,9 @@ Every server:
    a `message_id` when cap `edit` is absent; ignores unknown notifications.
 6. Follows §1 for framing and retries and §2 for identifiers.
 
-The opening example is a complete session with a minimal server.
+The opening example is a complete session with a server that has cap
+`rooms`. A minimal server skips `room_list`: its client posts without
+`room_id` and learns the room from the broadcast.
 
 A minimal client (informative):
 
