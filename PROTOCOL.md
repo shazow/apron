@@ -630,7 +630,7 @@ lacks a cap falls back as below:
 | `history`      | page and recover a room's log                                | session-only scrollback      | [§4.1](#41-history)        |
 | `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | [§4.2](#42-edit)           |
 | `rooms`        | `room_list`, `room_join`, `room_leave`, `room_set`, updates  | one default room, no threads | [§4.3](#43-rooms)          |
-| `activity`     | typing, read markers, away, and mute                         | no typing or read indicators | [§4.4](#44-activity)       |
+| `activity`     | typing, read markers, and away                               | no typing or read indicators | [§4.4](#44-activity)       |
 | `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | [§4.5](#45-reactions)      |
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | [§4.6.4](#464-embedupload) |
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.5](#465-embedstream) |
@@ -1014,10 +1014,10 @@ receive the broadcast; the result is the confirmation.
 
 Cap `activity`. A client reports changes to its activity as a
 notification: typing and how far it has read in a room, and optionally
-whether anyone is attending the connection and what the user has muted.
+whether anyone is attending the connection.
 Each present field updates that state; absent fields leave it unchanged.
 Activity is not part of the append-only log. Servers MAY drop `typing` and
-`read_message_id`, but apply the latest `away` and `mute` they support.
+`read_message_id`, but apply the latest `away` if they support it.
 
 ```jsonc
 // -> start typing
@@ -1028,9 +1028,6 @@ Activity is not part of the append-only log. Servers MAY drop `typing` and
 {"method": "activity", "params": {"room_id": "general", "read_message_id": "1724803312050"}}
 // -> nobody is attending this connection, such as an unfocused tab
 {"method": "activity", "params": {"away": true}}
-// -> no notifications from general for 8 hours; then none from anywhere
-{"method": "activity", "params": {"room_id": "general", "mute": 28800}}
-{"method": "activity", "params": {"mute": 3600}}
 // <- (broadcast)
 {
   "method": "activity", "params": {
@@ -1055,15 +1052,7 @@ Activity is not part of the append-only log. Servers MAY drop `typing` and
   false`, `typing`, `read_message_id`, or a `message` from that connection, or
   the connection closing; fetching history does not end it. Servers MAY hold
   back unlogged frames, such as typing, from away connections, and use it to
-  decide pushes ([§4.7](#47-push)).
-- `mute` (optional, seconds): the user wants no notifications from the
-  room named by `room_id`, or from every room without one, for that long.
-  `0` clears it. Each scope is set and cleared on its own: clearing the
-  all-rooms mute leaves a muted room muted. What muting holds back, such as
-  whether mentions still notify, is server policy; servers MAY cap the
-  duration.
-- `away` is never delivered. Servers keep `mute` and send it only to the
-  user's own connections, with the seconds remaining, so devices agree.
+  decide pushes ([§4.7](#47-push)). `away` is never delivered.
 - There is no presence system.
 
 ### 4.5 `reactions`
@@ -1307,8 +1296,9 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
 - Suggested convention: wake a user only for rooms they have joined ([§4.3.2](#432-membership)),
-  when every connection of theirs is away or gone ([§4.4](#44-activity)) and neither
-  that room nor all rooms are muted for them. Servers MAY wait briefly first
+  when every connection of theirs is away or gone ([§4.4](#44-activity)) and they have
+  not muted the room by server policy, such as a `/mute` command
+  ([§4.8](#48-command)). Servers MAY wait briefly first
   and skip the push if the user's `read_message_id` has passed the message.
 
 ```json
@@ -1343,15 +1333,15 @@ happens to it:
   `@private` to the sender, `@room` to the room, `@server` to everyone.
   Effects arrive as the frames they cause, such as `room_update`.
 - Retries follow [§1.2](#12-retries-and-deduplication), so a retried command does not run twice.
-- Commands are for what a server provides beyond this spec. Which exist,
-  their arguments, and who may use them are server policy.
+- Commands are for what a server provides beyond this spec, such as
+  `/mute` with the server's own notification rules. Which exist, their
+  arguments, and who may use them are server policy.
 - Servers that support commands SHOULD provide `/help`, replying with a
   `@private` notice that lists the commands available to the sender, with
   their arguments and what they do.
 - Clients MAY handle commands that match a request themselves, such as
   `/nick` as `me`, `/topic` as `room_set`, `/join` as `room_join`, `/leave`
-  as `room_leave`, and `/mute` as `activity`, and send the rest as
-  `command`.
+  as `room_leave`, and send the rest as `command`.
 
 ```jsonc
 // -> remove a user from the room; mentions name the target
