@@ -455,7 +455,8 @@ carry it ([§4.3](#43-rooms)):
 ```
 
 `server`: assigned by the server, ignored on input. `client`: supplied by the
-client, replaced whole by a save. `delivery`: this client's view, not logged.
+client, replaced whole by a save. `delivery`: this client's view, not logged;
+clients always take the latest values, even if `log_id` did not change.
 
 | field                     | set by   | meaning                                                                           |
 |---------------------------|----------|-----------------------------------------------------------------------------------|
