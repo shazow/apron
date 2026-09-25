@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -58,7 +59,7 @@ type Config struct {
 	// https://chat.example) of write, file, and stream URLs. Empty derives it
 	// from each WebSocket request's Host header.
 	PublicURL string
-	// MaxUploadBytes bounds one upload; MaxAvatarBytes bounds an @avatar upload.
+	// MaxUploadBytes bounds one upload; MaxAvatarBytes bounds a /avatar upload.
 	MaxUploadBytes int64
 	MaxAvatarBytes int64
 	// UploadStartTimeout is how long an unused write URL stays valid.
@@ -161,7 +162,37 @@ const (
 type logRecord struct {
 	id   int64
 	kind recordKind
-	raw  json.RawMessage
+	// author is the user_id of a message's author, or of the one user whose
+	// set a reactions record carries, for history's users (§4.1).
+	author string
+	raw    json.RawMessage
+}
+
+// users returns the user_ids whose objects a history page carries for the
+// record: its author, or every user of a reactions record holding several
+// sets.
+func (r *logRecord) users() []string {
+	switch {
+	case r.kind == kindRoom:
+		return nil
+	case r.author != "":
+		return []string{r.author}
+	case r.kind == kindReactions:
+		var value struct {
+			Reactions []struct {
+				From struct {
+					UserID string `json:"user_id"`
+				} `json:"from"`
+			} `json:"reactions"`
+		}
+		_ = json.Unmarshal(r.raw, &value)
+		ids := make([]string, len(value.Reactions))
+		for i, set := range value.Reactions {
+			ids[i] = set.From.UserID
+		}
+		return ids
+	}
+	return nil
 }
 
 // newLogRecord encodes value. Values hold only JSON-decoded data and
@@ -184,6 +215,12 @@ func (r *logRecord) rewrite(edit func(value map[string]any)) {
 	edit(value)
 	r.raw, _ = json.Marshal(value)
 }
+
+// pingFrame is the exact client liveness ping (§1); pongFrame answers it.
+var (
+	pingFrame = []byte(`{"method":"ping"}`)
+	pongFrame = json.RawMessage(`{"method":"pong"}`)
+)
 
 // notification renders a frame once, for sending to many connections.
 func notification(method string, params any) json.RawMessage {
@@ -221,16 +258,23 @@ type client struct {
 	origin   string
 	ceremony *passkeyCeremony
 	token    [32]byte
+	// away reports that nobody is attending the connection (§4.4). Guarded
+	// by server.mu.
+	away bool
 	// closing is set once the final batch is queued; later frames are dropped.
 	closing atomic.Bool
+	// pinged is set by the first liveness ping (§1); lastFrame is when the
+	// latest frame arrived, in Unix nanoseconds.
+	pinged    atomic.Bool
+	lastFrame atomic.Int64
 }
 
 // outboundBatch keeps a sequence of protocol frames together in the writer's
-// queue while each frame is still written as its own WebSocket message. This
-// lets authentication announce an arbitrary number of rooms and threads without
-// consuming one queue slot per announcement or interleaving another broadcast
-// between the announcements. A batch with closeReason is the connection's last:
-// the writer closes the connection after writing it.
+// queue while each frame is still written as its own WebSocket message, such
+// as a room_list result and the read cursors that follow it, without
+// consuming one queue slot per frame or interleaving another broadcast between
+// them. A batch with closeReason is the connection's last: the writer closes
+// the connection after writing it.
 type outboundBatch struct {
 	frames      [][]byte
 	closeReason string
@@ -248,7 +292,10 @@ type Server struct {
 	messages  map[string]*messageState
 	clients   map[*client]struct{}
 	// users holds every live identity: connected guests and passkey users.
-	users       map[string]*userState
+	users map[string]*userState
+	// usedIDs holds every user_id ever assigned, lowercased, so none is
+	// reissued (§3.3).
+	usedIDs     map[string]bool
 	guestNumber uint64
 	embedNumber uint64
 	embeds      map[string]*embedState
@@ -273,6 +320,7 @@ func New(config Config) *Server {
 		messages:    make(map[string]*messageState),
 		clients:     make(map[*client]struct{}),
 		users:       make(map[string]*userState),
+		usedIDs:     make(map[string]bool),
 		embeds:      make(map[string]*embedState),
 		writes:      make(map[string]*embedState),
 		pushes:      make(map[string]*pushRegistration),
@@ -288,6 +336,8 @@ func New(config Config) *Server {
 	return s
 }
 
+// defaultRoomID is the seeded room that requests without room_id address
+// (§3.5, §4.1) and that new guests join.
 const defaultRoomID = "general"
 
 // Handler returns the HTTP handler serving /ws, /healthz, the upload, file,
@@ -424,6 +474,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			_ = ws.Close(websocket.StatusUnsupportedData, "text frames required")
 			return
 		}
+		c.lastFrame.Store(time.Now().UnixNano())
+		// The liveness ping has fixed bytes, answered without parsing (§1).
+		if bytes.Equal(payload, pingFrame) {
+			c.pong()
+			continue
+		}
 		s.processFrame(c, payload)
 	}
 }
@@ -448,10 +504,11 @@ func (s *Server) serverParams() map[string]any {
 		authSchemes = []string{"webauthn", "token", "guest"}
 	}
 	params := map[string]any{
-		"protocol": 4,
-		"name":     "apron-go/0.5",
-		"caps":     []string{"history", "edit", "rooms", "reactions", "activity", "embed:upload", "embed:stream"},
+		"protocol": 5,
+		"name":     "apron-go/0.6",
+		"caps":     []string{"history", "edit", "rooms", "reactions", "activity", "embed:upload", "embed:stream", "command"},
 		"auth":     authSchemes,
+		"ping":     max(1, int(s.config.PingInterval/time.Second)),
 		"ext": map[string]any{"apron-go": map[string]any{
 			"max_frame_bytes":           s.config.ReadLimit,
 			"max_history_limit":         maxHistoryPageSize,
@@ -500,15 +557,25 @@ func (c *client) writeLoop() {
 	}
 }
 
+// pingLoop pings at the WebSocket level, which finds dead transports, and
+// closes a connection whose client sent liveness pings (§1) and then fell
+// silent for three intervals: its page is frozen or gone even if the socket
+// is not. Three intervals leave room for background timer throttling.
 func (c *client) pingLoop() {
-	ticker := time.NewTicker(c.server.config.PingInterval)
+	config := c.server.config
+	ticker := time.NewTicker(config.PingInterval)
 	defer ticker.Stop()
+	silence := 3*config.PingInterval + config.PingTimeout
 	for {
 		select {
 		case <-c.done:
 			return
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), c.server.config.PingTimeout)
+			if c.pinged.Load() && time.Since(time.Unix(0, c.lastFrame.Load())) > silence {
+				c.stopConnection()
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), config.PingTimeout)
 			err := c.ws.Ping(ctx)
 			cancel()
 			if err != nil {
@@ -517,6 +584,12 @@ func (c *client) pingLoop() {
 			}
 		}
 	}
+}
+
+// pong answers a liveness ping, before authentication too (§1).
+func (c *client) pong() {
+	c.pinged.Store(true)
+	c.enqueue(pongFrame)
 }
 
 func (c *client) stopConnection() {
@@ -587,15 +660,18 @@ func (c *client) sendError(req request, err *rpcError) {
 }
 
 // operation is a request handler. When it succeeds and has already queued its
-// own reply (to order it before broadcasts), it reports replied.
+// own reply, it reports replied. Handlers whose results describe state queue
+// them while holding s.mu, so that a result reflects every notification sent
+// before it on the connection (§1).
 type operation func(s *Server, c *client, req request) (result any, replied bool, err *rpcError)
 
 func (s *Server) operations() map[string]operation {
 	ops := map[string]operation{
 		"me":         (*Server).updateProfile,
 		"message":    (*Server).saveMessage,
+		"command":    (*Server).command,
 		"history":    (*Server).history,
-		"room":       (*Server).saveRoom,
+		"room_set":   (*Server).setRoom,
 		"room_list":  (*Server).listRooms,
 		"room_join":  (*Server).joinRoom,
 		"room_leave": (*Server).leaveRoom,
@@ -623,6 +699,11 @@ func (s *Server) processFrame(c *client, payload []byte) {
 		return
 	}
 
+	if req.method == "ping" && !req.hasID {
+		// A ping with other spacing or keys is still a ping.
+		c.pong()
+		return
+	}
 	if req.method == "auth" {
 		if _, err := s.authenticate(c, req); err != nil && req.hasID {
 			c.sendError(req, err)

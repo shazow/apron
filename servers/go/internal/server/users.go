@@ -13,7 +13,7 @@ import (
 const (
 	maxNameRunes = 64
 	// maxAvatarDataURLBytes bounds an avatar given inline as a data: URL;
-	// larger images go through an @avatar upload (§4.6.6).
+	// larger images go through a /avatar upload (§4.6.6).
 	maxAvatarDataURLBytes = 64 << 10
 	maxDedupEntries       = 1024
 )
@@ -27,7 +27,7 @@ type userState struct {
 	name   string
 	avatar string
 	ext    map[string]any
-	// avatarEmbed is the hosted @avatar upload behind avatar, if any.
+	// avatarEmbed is the hosted /avatar upload behind avatar, if any.
 	avatarEmbed *embedState
 
 	// fromValue caches from(); it is cleared when the name changes.
@@ -143,6 +143,34 @@ func validAvatar(value string) bool {
 	return strings.HasPrefix(value, "https://") && len(value) <= 2048 && !strings.ContainsAny(value, " \t\r\n\"'<>")
 }
 
+// requestableUserID is the shape of a user_id a guest may request: a
+// mentionable ID (Appendix A.3) that starts with a letter, so it never looks
+// like a system identity or a log_id-derived room_id.
+var requestableUserID = regexp.MustCompile(`^[A-Za-z](?:[A-Za-z0-9_.-]{0,62}[A-Za-z0-9_])?$`)
+
+// assignUserIDLocked honors a requested user_id when it has the requestable
+// shape and was never assigned, ignoring case, nor names a room; otherwise
+// it assigns the next unused guest_<n> (§3.2).
+func (s *Server) assignUserIDLocked(requested string) string {
+	claim := func(id string) bool {
+		key := strings.ToLower(id)
+		if s.usedIDs[key] || s.rooms[id] != nil {
+			return false
+		}
+		s.usedIDs[key] = true
+		return true
+	}
+	if requestableUserID.MatchString(requested) && claim(requested) {
+		return requested
+	}
+	for {
+		s.guestNumber++
+		if id := fmt.Sprintf("guest_%d", s.guestNumber); claim(id) {
+			return id
+		}
+	}
+}
+
 func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -166,6 +194,10 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	if err != nil {
 		return nil, err
 	}
+	requested, err := parseString(req.params, "user_id", false)
+	if err != nil {
+		return nil, err
+	}
 	if c.user != nil {
 		result := map[string]any{"you": c.user.profile()}
 		if req.hasID {
@@ -173,53 +205,41 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 		}
 		return result, nil
 	}
-	s.guestNumber++
-	user := newUserState(fmt.Sprintf("guest_%d", s.guestNumber), normalizeName(name))
+	user := newUserState(s.assignUserIDLocked(requested), normalizeName(name))
 	s.users[user.id] = user
-	s.joinDefaultRoomsLocked(user)
+	// A new guest joins the default room, so their room list is not empty;
+	// the client lists it with room_list rather than being sent it.
+	s.addMemberLocked(user, s.rooms[defaultRoomID])
 	return s.switchUserLocked(c, req, user, nil), nil
 }
 
 // switchUserLocked makes user the connection's identity and replies with
-// extra fields beside `you`, followed by room announcements (§3.2, §3.3).
-// When the identity changes, rooms only the old identity had joined are
-// removed. A guest identity left without connections is retired; others who
-// shared a room with it learn of the change through a `user` notification.
+// extra fields beside `you` (§3.2, §3.3). Rooms are not announced: the client
+// lists them. A guest identity left without connections is retired; others
+// who shared a room with it learn of the change through a `user`
+// notification with `new` and `old`.
 func (s *Server) switchUserLocked(c *client, req request, user *userState, extra map[string]any) map[string]any {
 	previous := c.user
 	result := map[string]any{"you": user.profile()}
 	maps.Copy(result, extra)
-	frames := make([]any, 0, 1+len(s.roomOrder))
-	if req.hasID {
-		frames = append(frames, response(req.id, req.full, result))
-	}
 	if previous != user {
 		if previous != nil {
-			for _, roomID := range s.roomOrder {
-				if previous.joined[roomID] != nil && user.joined[roomID] == nil {
-					frames = append(frames, map[string]any{"method": "room", "params": map[string]any{"room_id": roomID, "removed": true}})
-				}
-			}
 			delete(previous.clients, c)
 		}
 		c.user = user
 		user.clients[c] = struct{}{}
 	}
-	for _, roomID := range s.roomOrder {
-		if r := user.joined[roomID]; r != nil {
-			frames = append(frames, s.announcementFramesLocked(r)...)
-		}
+	if req.hasID {
+		c.sendResult(req, result)
 	}
-	c.enqueueBatch(frames...)
 	if previous != nil && previous != user && len(previous.clients) == 0 && previous.passkey == nil {
-		old := previous.profile()
-		frame := map[string]any{"method": "user", "params": map[string]any{"new": user.profile(), "old": old}}
+		frame := notification("user", map[string]any{"new": user.profile(), "old": previous.profile()})
 		for _, other := range s.sharersLocked(previous) {
 			if other != user {
 				other.send(frame)
 			}
 		}
-		s.retireLocked(previous)
+		s.retireLocked(previous, false)
 	}
 	return result
 }
@@ -233,13 +253,20 @@ func (s *Server) detachLocked(c *client) {
 	delete(user.clients, c)
 	c.user = nil
 	if len(user.clients) == 0 && user.passkey == nil {
-		s.retireLocked(user)
+		s.retireLocked(user, true)
 	}
 }
 
-// retireLocked removes a guest identity for good. Its user_id is never
-// reissued; its records keep it (§3.3).
-func (s *Server) retireLocked(u *userState) {
+// retireLocked removes a guest identity for good, leaving every room. Its
+// user_id is never reissued; its records keep it (§3.3). With announce, those
+// who shared a room with it receive `user` with `old` alone.
+func (s *Server) retireLocked(u *userState, announce bool) {
+	if announce {
+		frame := notification("user", map[string]any{"old": map[string]any{"user_id": u.id}})
+		for _, other := range s.sharersLocked(u) {
+			other.send(frame)
+		}
+	}
 	for _, r := range u.joined {
 		delete(r.members, u.id)
 		delete(r.reads, u.id)
@@ -252,6 +279,17 @@ func (s *Server) retireLocked(u *userState) {
 	}
 	s.setAvatarEmbedLocked(u, nil)
 	delete(s.users, u.id)
+}
+
+// attending reports whether any connection of the user is not away (§4.4).
+// Callers hold s.mu.
+func (u *userState) attending() bool {
+	for c := range u.clients {
+		if !c.away {
+			return true
+		}
+	}
+	return false
 }
 
 // send queues a frame to every connection of the user.
@@ -280,23 +318,38 @@ func (s *Server) sharersLocked(u *userState) []*userState {
 }
 
 // notifyProfileLocked sends a `user` notification after a profile change:
-// `you` to the user's other connections and `new` to everyone who shares a
-// room with them (§3.3).
-func (s *Server) notifyProfileLocked(u *userState, except *client) {
-	you := map[string]any{"method": "user", "params": map[string]any{"you": u.profile()}}
+// `you` to the user's connections other than except, and `new` to everyone
+// who shares a room with them (§3.3). removed lists fields the change
+// removed, announced as empty values.
+func (s *Server) notifyProfileLocked(u *userState, except *client, removed ...string) {
+	profile := withRemoved(u.profile(), removed)
+	you := notification("user", map[string]any{"you": profile})
 	for c := range u.clients {
 		if c != except {
 			c.enqueue(you)
 		}
 	}
-	others := notification("user", map[string]any{"new": u.profile()})
+	others := notification("user", map[string]any{"new": profile})
 	for _, other := range s.sharersLocked(u) {
 		other.send(others)
 	}
 }
 
-// updateProfile applies a `me` request (§3.3). Given fields replace the
-// current ones, omitted fields stay, and an empty value removes the field.
+// withRemoved adds each removed field to a profile as its empty value.
+func withRemoved(profile map[string]any, removed []string) map[string]any {
+	for _, field := range removed {
+		if field == "ext" {
+			profile[field] = map[string]any{}
+		} else {
+			profile[field] = ""
+		}
+	}
+	return profile
+}
+
+// updateProfile applies a `me` request (§3.3): a given field replaces the
+// current value, an omitted one stays, and an empty value ("" or {}) removes
+// the field, which the result and notifications carry as that empty value.
 // Names are trimmed and capped; avatars must be https: URLs or small image
 // data: URLs, or the current avatar unchanged.
 func (s *Server) updateProfile(c *client, req request) (any, bool, *rpcError) {
@@ -319,28 +372,39 @@ func (s *Server) updateProfile(c *client, req request) (any, bool, *rpcError) {
 	defer s.mu.Unlock()
 	u := c.user
 	if hasAvatar && avatar != "" && avatar != u.avatar && !validAvatar(avatar) {
-		return nil, false, invalidParams("avatar must be an https: URL or a data:image URL of at most %d bytes; upload larger images to room @avatar", maxAvatarDataURLBytes)
+		return nil, false, invalidParams("avatar must be an https: URL or a data:image URL of at most %d bytes; upload larger images with /avatar", maxAvatarDataURLBytes)
 	}
 	before := u.profile()
+	var removed []string
 	if hasName {
 		u.name = normalizeName(name)
 		u.fromValue = nil
+		if u.name == "" {
+			removed = append(removed, "name")
+		}
 	}
 	if hasAvatar && avatar != u.avatar {
 		s.setAvatarEmbedLocked(u, nil)
 		u.avatar = avatar
 	}
+	if hasAvatar && avatar == "" {
+		removed = append(removed, "avatar")
+	}
 	if ext != nil {
 		u.ext = ext
 		if len(ext) == 0 {
 			u.ext = nil
+			removed = append(removed, "ext")
 		}
 	}
-	result := map[string]any{"you": u.profile()}
-	if !jsonEqual(before, result["you"]) {
-		s.notifyProfileLocked(u, c)
+	result := map[string]any{"you": withRemoved(u.profile(), removed)}
+	if !jsonEqual(before, u.profile()) {
+		s.notifyProfileLocked(u, c, removed...)
 	}
-	return result, false, nil
+	if req.hasID {
+		c.sendResult(req, result)
+	}
+	return result, true, nil
 }
 
 func jsonEqual(a, b any) bool {

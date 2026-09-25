@@ -179,7 +179,6 @@ func registerTestPasskey(t *testing.T, c *testClient, a *testAuthenticator) map[
 	t.Helper()
 	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	guest := passkeyResult(t, c.read(t))["you"].(map[string]any)["user_id"]
-	c.read(t)
 	options := passkeyResult(t, passkeyCall(t, c, "register-start", "register", "begin", nil))
 	publicKey := passkeyPublicKey(t, options)
 	selection, ok := publicKey["authenticatorSelection"].(map[string]any)
@@ -190,7 +189,6 @@ func registerTestPasskey(t *testing.T, c *testClient, a *testAuthenticator) map[
 	if result["you"].(map[string]any)["user_id"] != guest {
 		t.Fatal("registration changed guest identity")
 	}
-	c.read(t)
 	return result
 }
 
@@ -212,7 +210,6 @@ func TestPasskeyRegistrationLoginAndSession(t *testing.T) {
 	credential := a.assertion(t, options, testPasskeyOrigin, "localhost", 0x05)
 	finish := map[string]any{"credential": credential}
 	loggedIn := passkeyResult(t, passkeyCall(t, other, "finish", "login", "finish", finish))
-	other.read(t)
 	if loggedIn["you"].(map[string]any)["user_id"] != identity {
 		t.Fatal("login changed identity")
 	}
@@ -221,7 +218,6 @@ func TestPasskeyRegistrationLoginAndSession(t *testing.T) {
 	resumed := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	token := loggedIn["token"].(string)
 	result := passkeyResult(t, passkeyCall(t, resumed, "resume", "token", "", map[string]any{"token": token}))
-	resumed.read(t)
 	if result["you"].(map[string]any)["user_id"] != identity {
 		t.Fatal("resume changed identity")
 	}
@@ -230,7 +226,6 @@ func TestPasskeyRegistrationLoginAndSession(t *testing.T) {
 	_ = resumed.ws.Close(websocket.StatusNormalClosure, "signed out")
 	reconnected := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	result = passkeyResult(t, passkeyCall(t, reconnected, "resume", "token", "", map[string]any{"token": token}))
-	reconnected.read(t)
 	if result["you"].(map[string]any)["user_id"] != identity {
 		t.Fatal("reconnect changed identity")
 	}
@@ -244,7 +239,6 @@ func TestPasskeyRegistrationLoginAndSession(t *testing.T) {
 	app.mu.Unlock()
 	renewed := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	result = passkeyResult(t, passkeyCall(t, renewed, "resume", "token", "", map[string]any{"token": token}))
-	renewed.read(t)
 	if result["token"] != token {
 		t.Fatalf("resume did not return the presented token: %#v", result["token"])
 	}
@@ -276,7 +270,6 @@ func TestAddingPasskeyPreservesStoredNickname(t *testing.T) {
 			registered := registerTestPasskey(t, owner, original)
 			other := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 			passkeyResult(t, passkeyCall(t, other, "resume", "token", "", map[string]any{"token": registered["token"]}))
-			other.read(t)
 			rename := func() {
 				owner.write(t, map[string]any{"method": "me", "id": "rename", "params": map[string]any{"name": "Updated nickname"}})
 				result := passkeyResult(t, owner.read(t))
@@ -299,7 +292,6 @@ func TestAddingPasskeyPreservesStoredNickname(t *testing.T) {
 			result := passkeyResult(t, passkeyCall(t, other, "finish", "register", "finish", map[string]any{
 				"credential": additional.registration(t, options, testPasskeyOrigin),
 			}))
-			other.read(t)
 			assertIdentity := func(result map[string]any) {
 				t.Helper()
 				you := result["you"].(map[string]any)
@@ -315,7 +307,6 @@ func TestAddingPasskeyPreservesStoredNickname(t *testing.T) {
 				result := passkeyResult(t, passkeyCall(t, fresh, "login-finish", "login", "finish", map[string]any{
 					"credential": authenticator.assertion(t, options, testPasskeyOrigin, "localhost", 0x05),
 				}))
-				fresh.read(t)
 				assertIdentity(result)
 			}
 		})
@@ -355,7 +346,6 @@ func TestPasskeyRejectsInvalidProofs(t *testing.T) {
 	passkeyResult(t, passkeyCall(t, c, "current", "login", "finish", map[string]any{
 		"challenge_id": second["challenge_id"], "credential": current,
 	}))
-	c.read(t)
 	other := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	passkeyDenied(t, passkeyCall(t, other, "cross-connection", "login", "finish", map[string]any{
 		"challenge_id": first["challenge_id"], "credential": proof,
@@ -379,7 +369,6 @@ func TestPasskeyRejectsInvalidRegistration(t *testing.T) {
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	passkeyResult(t, c.read(t))
-	c.read(t)
 	a := newTestAuthenticator(t)
 	options := passkeyResult(t, passkeyCall(t, c, "begin", "register", "begin", nil))
 	proof := a.registration(t, options, "https://evil.example")
@@ -405,7 +394,6 @@ func TestPasskeyNotificationsDoNotRunCeremonies(t *testing.T) {
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	passkeyResult(t, c.read(t))
-	c.read(t)
 	a := newTestAuthenticator(t)
 	options := passkeyResult(t, passkeyCall(t, c, "begin", "register", "begin", nil))
 	proof := a.registration(t, options, testPasskeyOrigin)
@@ -421,7 +409,6 @@ func TestPasskeyNotificationsDoNotRunCeremonies(t *testing.T) {
 	if result["you"].(map[string]any)["user_id"] == "" {
 		t.Fatalf("registration result lost identity: %#v", result)
 	}
-	c.read(t)
 }
 
 func TestPasskeyCanonicalMalformedFields(t *testing.T) {
@@ -429,7 +416,6 @@ func TestPasskeyCanonicalMalformedFields(t *testing.T) {
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	passkeyResult(t, c.read(t))
-	c.read(t)
 
 	// Canonical actions require a valid step and reject unknown action names.
 	for id, params := range map[string]map[string]any{
@@ -486,6 +472,18 @@ func TestSignInReplacesGuestAndDeduplicatesPerUser(t *testing.T) {
 	switcher.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
 	guest := passkeyResult(t, switcher.read(t))["you"]
 	switcher.drain(t)
+	// Each guest joins general, whose members see the join.
+	for _, joiner := range []*testClient{observer, switcher} {
+		joined := owner.notification(t, "user")
+		if joined["room_id"] != "general" || joined["new"] == nil {
+			t.Fatalf("join notification: %#v", joined)
+		}
+		if joiner == switcher {
+			if seen := observer.notification(t, "user"); !reflect.DeepEqual(seen, map[string]any{"room_id": "general", "new": guest}) {
+				t.Fatalf("observer join notification: %#v", seen)
+			}
+		}
+	}
 
 	// Signing in replaces the guest identity, which is retired; others who
 	// shared a room with it learn the new identity and the old one.

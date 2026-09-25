@@ -1,12 +1,13 @@
 # Go reference backend
 
-`cmd/aprond` serves the reference Apron backend: it implements every
-capability of protocol v4 except multiplexing
+`cmd/aprond` serves the reference Apron backend: it implements protocol v5
+([PROTOCOL.md](../../PROTOCOL.md)), every capability and liveness ping, but
+not the designs under consideration, multiplexing
 ([Appendix B.2](../../PROTOCOL.md#b2-multiplexing-envelope))
 and WebRTC
 ([Appendix B.1](../../PROTOCOL.md#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
-`PROTOCOL.md` now describes v5, which it does not implement yet. State is in memory; restarting the process clears
-messages, identities, uploads, passkeys, and sessions.
+State is in memory; restarting the process clears messages, identities,
+uploads, passkeys, and sessions.
 
 ```sh
 go run ./cmd/aprond
@@ -20,12 +21,11 @@ Defaults:
   `/streams/<embed_id>/<secret>`
 - WebSocket origins: `localhost`, `127.0.0.1`, and `::1` during development
 - capabilities: `history`, `edit`, `rooms`, `reactions`, `activity`,
-  `embed:upload`, `embed:stream`; push kind `relay` (`server.push`)
+  `embed:upload`, `embed:stream`, `command`; push kind `relay`
+  (`server.push`); `server.ping`: 30 seconds
 - `server.ext["apron-go"]`: frame, history, upload, avatar, and stream limits
-- seeded room: `general` (title `General`)
-- authentication: WebAuthn passkeys, bearer-token resume, and `guest`; guest
-  user IDs are `guest_<n>` from a server-wide counter and honor an optional
-  requested `name`
+- seeded default room: `general` (title `General`)
+- authentication: WebAuthn passkeys, bearer-token resume, and `guest`
 - passkey RP ID: `localhost`; frontend origins: `http://localhost:5173` and
   `http://localhost:8080`
 
@@ -50,6 +50,16 @@ Flags:
   [`cmd/apron-hammer`](cmd/apron-hammer/README.md) load-tests the server and
   reads it to report heap and goroutines.
 
+## Connections and liveness
+
+The server answers the liveness ping `{"method":"ping"}` with
+`{"method":"pong"}`, before authentication too; the exact bytes are answered
+without parsing, and a `ping` notification with other spacing is answered as
+well. It also pings at the WebSocket level every 30 seconds and closes a
+connection that does not answer within ten. A connection that sent liveness
+pings and then sent nothing for three ping intervals plus the timeout
+(100 seconds) is closed: its page is frozen or gone.
+
 ## Log and history
 
 Every change is a record in one append-only log with a single server-wide
@@ -64,57 +74,89 @@ none). Nothing is compacted or discarded, so each room's `history_log_id` is
 the `log_id` of its creation record and `latest_log_id` is the newest record in
 that room's log.
 
-`history` returns a window of one room's log partitioned into `rooms`,
-`entries`, and `reactions` (always present, possibly empty). `limit` (default
-100, clamped to 1000) counts records of every kind, and `first_id`/`last_id`
-span all of them. Every room is visible, so any user may page any room's
-history, joined or not.
+`history` returns a window of one room's log, `general`'s without `room_id`,
+partitioned into `rooms`, `entries`, and `reactions` (always present, possibly
+empty). `limit` (default 100, clamped to 1000) counts records of every kind,
+and `first_id`/`last_id` span all of them. `users` holds the current user
+objects of the page's authors and reactors, since `from` keeps the name at
+posting time. A window bounded to one `log_id` (`after` equal to `before`)
+returns exactly that record, even when it is no longer in the room's log (a
+moved message's earlier snapshot), so `prev_log_id` walks a message's edits
+back. Every room is visible, so any user may page any room's history, joined
+or not.
 
 ## Identity and profiles
 
-`me` updates the caller's profile: a given `name` is trimmed and capped at 64
-characters, `""` removes it; `avatar` must be an `https:` URL or a
-`data:image/{png,jpeg,gif,webp};base64,` URL of at most 64 KiB (`""` removes
-it); `ext` replaces the profile extension object (`{}` removes it). Profiles
-(`you`, `user`, `members`) carry `avatar` and `ext`; `from` in records carries
-only `user_id` and `name` at posting time.
+`auth` with scheme `guest` assigns `guest_<n>` from a server-wide counter and
+honors an optional requested `name`. A requested `user_id` is honored when it
+starts with a letter, uses only `[A-Za-z0-9_.-]` (ending in a letter, digit,
+or `_`; at most 64 characters), names no room, and was never assigned,
+ignoring case; otherwise the guest gets the next unused `guest_<n>`. No
+`user_id` is ever reissued.
+
+`me` merges into the caller's profile: a given field replaces its value, an
+omitted field is unchanged, and an empty value removes it. `name` is trimmed
+and capped at 64 characters; `avatar` must be an `https:` URL or a
+`data:image/{png,jpeg,gif,webp};base64,` URL of at most 64 KiB; `ext`
+replaces the profile extension object. The result's `you` and the `user`
+notifications carry removed fields as their empty values (`""`, `{}`).
+Complete user objects (`you`, `user`, `users`) carry `avatar` and `ext`;
+`from` in records carries only `user_id` and `name` at posting time.
 
 A profile change sends `user` with `you` to the user's other connections and
 with `new` to everyone who shares a room with them. When a sign-in replaces a
-guest identity on a connection, the guest is retired: the connection's
-announced rooms switch to the signed-in user's, and those who shared a room
-with the guest receive `user` with `new` and `old`. Guests are also retired
-when their last connection closes; their user IDs are never reissued, while
-passkey users keep their profile, rooms, and push registrations across
-connections.
+guest identity on a connection, the guest is retired, and those who shared a
+room with it receive `user` with `new` and `old`. A guest whose last
+connection closes is retired too: it leaves every room, and those who shared
+a room with it receive `user` with `old` alone. Passkey users keep their
+profile, rooms, and push registrations across connections.
 
 ## Rooms, threads, and membership
 
-A thread is a room with `parent_room_id`. `room` without `room_id` creates a
-room (optional `parent_room_id`, `title`, `intro_message`, `ext`); with
-`room_id` it replaces every client field except `parent_room_id`, which is
-fixed at creation. Omitted fields are cleared. Both return `{"room_id": ...}`.
-Any authenticated user may create top-level rooms or threads (nested threads
-are allowed) and update any room. A thread saved without a title is titled
-from the first line of its intro message, or `Thread`. `intro_message` is
-stored as a reference and announced with the referenced message's snapshot
-embedded.
+Every room is visible to every user. Rooms are never announced: after `auth`
+the client lists them with `room_list`. A connection receives records only
+for the rooms its user has joined. A new guest has joined `general`.
 
-Every room is visible to every user; the rooms a user has joined are the ones
-announced to their connections, and records are delivered only to members:
+- `room_list` answers with `joined` (every joined room at any depth, never
+  truncated) and `rooms` (visible unjoined rooms: top-level ones, or with
+  `parent_room_id` that room's threads, at most the 200 most recently
+  active), each most recently active first. Filters: `only_joined` and
+  `not_joined` leave out `rooms` or `joined`; `parent_room_id` lists that
+  room's threads; `room_id` lists one room and overrides `parent_room_id`;
+  `latest_log_id` keeps rooms whose `latest_log_id` is greater. Each room
+  carries `member_count` and up to 100 `members` as `{user_id}`, whose
+  complete objects are in the result's `users`. Unknown rooms are
+  `invalid_params`. After the result, the server sends the read cursors it
+  keeps for the listed rooms as `activity`: every member's for a joined room,
+  only the caller's own for another.
+- `room_join` and `room_leave` take a `room_id` and return `{}`. Joining sends
+  `room_update` `joined` with the room record to the user's connections and
+  `user` with `room_id` and `new` to the room's members; joining a room
+  already joined re-sends its record to the calling connection only. Leaving
+  sends `room_update` `left` and `user` with `room_id` and `old` to the
+  remaining members, plus `user` with `old` alone to members who no longer
+  share any room with the user. Joining or leaving a room does not affect its
+  threads, and no `@room` messages are posted for joins and leaves.
+- `room_set` without `room_id` creates a room (optional `parent_room_id`,
+  `title`, `intro_message`, `ext`) and joins only its creator, whose
+  connections receive `room_update` `joined`; a new thread goes to the
+  parent's other members as `room_update` `updated`, without joining them.
+  With `room_id` it replaces every client field except `parent_room_id`,
+  which is fixed at creation, and omitted fields are cleared; the edit goes as
+  `room_update` `updated` to the room's members, to the parent's members for a
+  thread, and to the editor. Both return `{"room_id": ...}` after the
+  `room_update`. Any authenticated user may create top-level rooms or threads
+  (nested threads are allowed) and edit any room. A thread saved without a
+  title is titled from the first line of its intro message, or `Thread`.
+  `intro_message` is stored as a reference, and room records embed the
+  referenced message's current snapshot.
+- Posting does not require joining: a poster who has not joined gets the
+  result but not the broadcast.
 
-- A new user joins every room. Everyone joins a new top-level room, and the
-  members of a room join its new threads (as does the creator).
-- `room_join` joins a room and its threads and announces them; on a room
-  already joined it re-announces it to the calling connection. `room_leave`
-  leaves a room and its threads, sending `removed: true` for each.
-- Posting in a room not joined joins it first: the room is announced, then
-  the message is delivered.
-- `room_list` returns the top-level rooms, or with `parent_room_id` that
-  room's threads, as room records with delivery fields and `members` (at most
-  100 profiles), whether joined or not.
-
-Rooms are announced in creation order, so parents precede their threads.
+Notifications that change membership are sent before the result of the
+request that caused them, and every result is queued while the state it
+describes is locked, so a result reflects every notification before it: a
+`room_list` sent after `room_leave` never lists the room.
 
 ## Messages
 
@@ -122,11 +164,15 @@ Message notifications and history entries are flat snapshots:
 `{message_id, log_id, prev_log_id?, room_id, from, body?, reply_to?, deleted?, ext?}`.
 `message` creates a message when `message_id` is absent and, when it is
 present, replaces every client field (`room_id`, `body`, `reply_to`, `deleted`,
-`ext`) with the submitted state. `from` is assigned from the authenticated
-connection and preserved across edits; server fields in requests are ignored,
-and unknown top-level keys are dropped (extension data belongs in `ext`, which
-is passed through unchanged). Edits, deletion, and moves require the creating
-identity. A missing `body.format` means `plain`.
+`ext`) with the submitted state. Without `room_id` the message goes to
+`general`; an unknown `room_id` is `invalid_params`. A new message with no
+`text` and no `embeds` is neither logged nor broadcast, and its result is
+`{}`. `body.mentions` must be an array of at most 256 non-empty strings.
+`from` is assigned from the authenticated connection and preserved across
+edits; server fields in requests are ignored, and unknown top-level keys are
+dropped (extension data belongs in `ext`, which is passed through unchanged).
+Edits, deletion, and moves require the creating identity. A missing
+`body.format` means `plain`. Posting to a room does not join it.
 
 Deletion is a save with `deleted: true` and yields a tombstone without `body`.
 The server then redacts the message: its earlier snapshots, and copies of them
@@ -174,10 +220,10 @@ without the embed.
   writer gets `413`); the server then publishes the kept text as `text` in
   place of `url`, and both URLs stop working. Saving the message without the
   embed ends the stream (the writer gets `410`).
-- **Avatars** ([PROTOCOL.md §4.6.6](../../PROTOCOL.md#466-avatars)): a message to room `@avatar` with one `upload`
-  embed returns a write URL and is neither delivered nor logged. A PNG, JPEG,
-  GIF, or WebP of at most 2 MiB becomes the sender's `avatar`, followed by a
-  `user` notification; replacing or removing the avatar deletes the upload.
+- **Avatars** ([PROTOCOL.md §4.6.6](../../PROTOCOL.md#466-avatars)): the `/avatar` command with one `upload`
+  embed returns a write URL. A PNG, JPEG, GIF, or WebP of at most 2 MiB
+  becomes the sender's `avatar`, followed by a `user` notification; replacing
+  or removing the avatar deletes the upload.
 
 ## Reactions
 
@@ -189,13 +235,37 @@ clears, and a request that leaves the set unchanged logs nothing. Unknown
 messages, non-string or empty entries, entries over 64 bytes, and more than 20
 distinct emoji per user are `invalid_params`.
 
+## Commands
+
+`command` ([PROTOCOL.md §4.8](../../PROTOCOL.md#48-command)) takes the params of a new message, in
+`general` without `room_id`, and is never logged, broadcast, or saved;
+`message_id` and `deleted` are `invalid_params`, as are text that does not
+start with `/` and unknown commands (`Unknown command /foo; try /help`).
+Mentions in commands notify no one. Commands:
+
+- `/help` returns `{}` and sends the calling connection a `@private` notice
+  (`from: {user_id: "@private", name: "Only you"}`, Markdown, no `message_id`
+  or `log_id`, not logged) in the command's room, listing the commands the
+  sender may use there.
+- `/avatar` with exactly one `upload` embed returns
+  `{"embeds": [{embed_id, kind, write_url}]}`; see Avatars above.
+- `/kick @user [reason]` removes the one user named in `body.mentions` from
+  the room. Only the room's creator may kick (`denied` otherwise, so nobody
+  can kick in `general`). The target receives `room_update` `left`, the
+  remaining members `user` with `room_id` and `old`, and the room a logged
+  `@room` message (`from: {user_id: "@room", name: <room title>}`), such as
+  `@guest_3 was removed by @guest_1: spamming`.
+
 ## Activity
 
-`activity` relays `typing` (seconds; `0` stops) and `read_message_id` to the
-room's members. A read cursor must name an existing message and only moves
-forward; the server keeps each user's latest cursor per room and re-sends the
-room's cursors after announcing it. A frame that changes nothing relays
-nothing.
+`activity` relays `typing` (seconds; `0` stops) and `read_message_id` in a
+room (`general` without `room_id`) to the room's members. A read cursor must
+name an existing message and only moves forward; the server keeps each
+user's latest cursor per room and sends it after `room_list` lists the room.
+A frame that changes nothing relays nothing. `away` (boolean) marks the
+sending connection as unattended; it is never delivered, and ends with
+`away: false`, `typing`, `read_message_id`, a `message` or `command` from
+that connection, or the connection closing.
 
 ## Push
 
@@ -206,9 +276,11 @@ again replaces it; a user may hold ten. `push_unregister` removes the caller's
 registration for a `url`. Registrations belong to the user, so they matter for
 passkey users; a guest's end with the guest.
 
-A new message wakes users who have no open connection when it mentions them
-(`@user_id`, [PROTOCOL.md Appendix A.3](../../PROTOCOL.md#a3-mention-text), outside Markdown code) or replies to one of their
-messages: the server POSTs the push payload (the message without `log_id`,
+A new message wakes the users listed in `body.mentions` and the author of the
+message it replies to; an edit wakes only the users it adds to
+`body.mentions`. Text is never parsed for mentions. A user is woken only for
+rooms they have joined, and only when every connection of theirs is away or
+gone. The server POSTs the push payload (the message without `log_id`,
 `format`, or `embeds`, text truncated to 1,000 characters) to each of their
 endpoints with `token` as bearer. Deliveries run in the background, refuse to
 connect to loopback, private, and link-local addresses, and a relay answering
@@ -284,9 +356,9 @@ over the same WebSocket; no HTTP authentication endpoints are needed.
 | `params.action` and `params.step` | Other parameters | Result |
 | --- | --- | --- |
 | `action: "register", step: "begin"` | None; current connection must be authenticated | `{challenge_id, public_key}` creation options |
-| `action: "register", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room announcements |
+| `action: "register", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` |
 | `action: "login", step: "begin"` | None | `{challenge_id, public_key}` discoverable request options |
-| `action: "login", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` followed by room announcements |
+| `action: "login", step: "finish"` | `challenge_id`, `credential`: browser credential JSON | `{you, token}` |
 
 Bearer resumption uses the separate `token` authentication scheme:
 `{"scheme":"token","token":"..."}`. Dropping the token and reconnecting

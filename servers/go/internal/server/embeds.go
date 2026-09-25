@@ -37,7 +37,7 @@ type embedState struct {
 	id   string
 	kind string
 	// messageID is the message the embed belongs to; avatarFor is set instead
-	// for an @avatar upload (§4.6.6).
+	// for a /avatar upload (§4.6.6).
 	messageID string
 	avatarFor *userState
 	baseURL   string
@@ -260,25 +260,6 @@ func replaceEmbed(body map[string]any, id string, update func(map[string]any)) b
 		return true
 	}
 	return false
-}
-
-// uploadAvatarLocked handles a message to room @avatar (§4.6.6): one
-// upload embed whose file becomes the sender's avatar. The message is
-// neither delivered nor logged.
-func (s *Server) uploadAvatarLocked(c *client, req request, body map[string]any) (any, bool, *rpcError) {
-	embeds := asList(body["embeds"])
-	if len(embeds) != 1 || embeds[0].(map[string]any)["kind"] != "upload" {
-		return nil, false, invalidParams("A message to %s carries exactly one upload embed", avatarRoomID)
-	}
-	messageID := formatID(s.nextIDLocked())
-	s.embedNumber++
-	e := s.newWriteLocked(c, fmt.Sprintf("embed_%d", s.embedNumber), "upload", "")
-	e.avatarFor = c.user
-	result := map[string]any{
-		"message_id": messageID,
-		"embeds":     []any{map[string]any{"embed_id": e.id, "kind": "upload", "write_url": e.baseURL + writePath + e.token}},
-	}
-	return result, false, nil
 }
 
 // setAvatarEmbedLocked records the hosted upload behind a user's avatar,

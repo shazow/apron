@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -95,30 +93,39 @@ func (s *Server) checkPushURL(endpoint string) string {
 	return ""
 }
 
-// wakeLocked wakes users who have no connection when a new message mentions
-// them (§3.5) or replies to one of their messages. Wake policy is
-// server-defined (§4.7).
-func (s *Server) wakeLocked(m *messageState, snapshot map[string]any) {
-	if len(s.pushes) == 0 {
+// wakeLocked pushes a message snapshot to the users it newly mentions
+// (§3.5) and, for a new message, to the author of the message it replies to.
+// previous is the snapshot the save replaced, nil for a new message: an edit
+// wakes only the users it adds to body.mentions. Wake policy is
+// server-defined (§4.7); this server follows the suggested convention and
+// wakes a user only for rooms they have joined, when every connection of
+// theirs is away or gone (§4.4).
+func (s *Server) wakeLocked(m *messageState, snapshot, previous map[string]any) {
+	if len(s.pushes) == 0 || snapshot["deleted"] == true {
 		return
 	}
 	targets := make(map[string]bool)
 	body, _ := snapshot["body"].(map[string]any)
-	text, _ := body["text"].(string)
-	format, _ := body["format"].(string)
-	for _, id := range mentionedIDs(text, format == "markdown") {
+	for _, id := range mentions(body) {
 		targets[id] = true
 	}
-	if ref, ok := snapshot["reply_to"].(map[string]any); ok {
-		if target := s.messages[ref["message_id"].(string)]; target != nil {
-			targets[target.owner] = true
+	if previous == nil {
+		if ref, ok := snapshot["reply_to"].(map[string]any); ok {
+			if target := s.messages[ref["message_id"].(string)]; target != nil {
+				targets[target.owner] = true
+			}
+		}
+	} else {
+		previousBody, _ := previous["body"].(map[string]any)
+		for _, id := range mentions(previousBody) {
+			delete(targets, id)
 		}
 	}
 	delete(targets, m.owner)
 	var payload []byte
 	for _, registration := range s.pushes {
 		user := s.users[registration.userID]
-		if !targets[registration.userID] || user == nil || len(user.clients) > 0 {
+		if !targets[registration.userID] || user == nil || user.joined[m.roomID] == nil || user.attending() {
 			continue
 		}
 		if payload == nil {
@@ -154,39 +161,6 @@ func pushPayload(snapshot map[string]any) []byte {
 	}
 	payload, _ := json.Marshal(value)
 	return payload
-}
-
-var (
-	mentionPattern = regexp.MustCompile(`@(@?[A-Za-z0-9_.-]+)`)
-	fencedCode     = regexp.MustCompile("(?s)(^|\n)(```|~~~).*?(\n(```|~~~)|$)")
-	inlineCode     = regexp.MustCompile("`[^`\n]*`")
-)
-
-// mentionedIDs finds `@id` mentions (Appendix A.3): not preceded by a letter
-// or digit, without trailing `.` or `-`, and outside Markdown code.
-func mentionedIDs(text string, markdown bool) []string {
-	if markdown {
-		text = fencedCode.ReplaceAllString(text, "\n")
-		text = inlineCode.ReplaceAllString(text, " ")
-	}
-	var ids []string
-	for _, match := range mentionPattern.FindAllStringSubmatchIndex(text, -1) {
-		if start := match[0]; start > 0 {
-			previous, _ := utf8.DecodeLastRuneInString(text[:start])
-			if isWordRune(previous) {
-				continue
-			}
-		}
-		id := strings.TrimRight(text[match[2]:match[3]], ".-")
-		if id != "" && id != "@" {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
-func isWordRune(r rune) bool {
-	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
 // pushDeliverer POSTs push payloads in the background with bounded
