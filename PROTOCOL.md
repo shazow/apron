@@ -337,9 +337,11 @@ Servers announce a removed field as its empty value:
 
 After authentication, the server MAY send a `user` notification at any time,
 such as after a rename, a profile change, or an authentication change. It
-carries exactly one of `you`, sent to the user's own connections, or `new`,
-sent to others who share a room with the user. When `user_id` changes, `old`
-optionally carries the previous user object:
+carries `you`, sent to the user's own connections, or `new` and `old`, sent
+to others who share a room with the user. `new` alone is the user's current
+object, `old` alone says the user is gone, and both together say `user_id`
+changed. With `room_id`, `new` alone announces the user joining that room
+and `old` alone leaving it, sent to its members:
 
 ```jsonc
 // <- to the user's own connections
@@ -353,6 +355,9 @@ optionally carries the previous user object:
     "old": {"user_id": "guest_1234", "name": "Ada L"}
   }
 }
+// <- to the members of general: Ada joined, then left
+{"method": "user", "params": {"room_id": "general", "new": {"user_id": "ada", "name": "Ada"}}}
+{"method": "user", "params": {"room_id": "general", "old": {"user_id": "ada"}}}
 ```
 
 - `you` replaces the connection's identity. If its `user_id` changes, the
@@ -363,6 +368,9 @@ optionally carries the previous user object:
   leaving and `new` as a user joining, or MAY alias `old.user_id` to the new
   identity for past and later records.
 - Servers SHOULD NOT reissue a retired `user_id` to another user.
+- Joins and leaves are sent as they happen, never as a member list, and
+  servers MAY skip them, such as in large rooms. The members a client
+  learns this way are partial.
 
 Bots and agents are ordinary senders; nothing distinguishes them.
 
@@ -825,7 +833,8 @@ Discovery and membership:
   post is `denied`.
 - `room_join` and `room_leave` return `{}`. A join announces the room; a
   leave, or losing visibility, sends `removed: true`. A room left but still
-  visible stays in `room_list`.
+  visible stays in `room_list`. The room's other members MAY be told with
+  `user` and `room_id` (§3.3).
 - Members of a room receive announcements of its new threads. Joining an
   unannounced thread announces it.
 - Visibility and membership are server policy.
@@ -1244,7 +1253,8 @@ that ignore `token` remain conforming.
 such as `@server` for the server itself or `@sfu` for a media server
 (Appendix H). Servers SHOULD NOT assign them to users. They carry an ordinary
 `from` and render like any sender, so clients unaware of the convention
-still work; clients MAY style them as system messages.
+still work; clients MAY style them as system messages. Servers MAY post
+notices such as joins and leaves this way when they should stay in history.
 
 ```json
 {
