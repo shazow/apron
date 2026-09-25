@@ -307,9 +307,7 @@ Clients keep one user object per `user_id` and merge into it every one they
 receive, whichever frame carried it: a present field replaces the kept
 value, an empty value (`""`, `{}`) removes it, and a missing field leaves it
 unchanged, so an object with only `user_id` changes nothing. Clients render
-every message with the kept object. Whether history carries a user's name
-from posting time or their current one is server policy; the protocol
-guarantees neither.
+every message with the kept object.
 
 Clients SHOULD show a user as `Name (@user_id)` where space allows, and
 MUST when another user in the same room shares the name, so no one can pass
@@ -320,8 +318,11 @@ without looking its author up.
 
 A result MAY carry `users`, complete user objects, each user once, for the
 identities elsewhere in it, such as a history page's authors. Clients merge
-them like any other user object; clients that ignore them lose only what
-`from` leaves out, such as avatars.
+them like any other user object, after the rest of the result, so `users`
+wins over an older `from` in the same result. Clients that ignore them lose
+only what `from` leaves out, such as avatars. A `from` in history may carry
+the name from posting time; servers that send those SHOULD send the users'
+current objects in `users`.
 
 A `me` request updates the user's own profile after authentication, by the
 same rule: fields given replace their current values, fields omitted stay
@@ -653,7 +654,8 @@ and never incorporate changes after the slice. Compacted and uncompacted pages
 yield the same terminal state.
 
 **Replay** follows §2. No earlier state is needed to apply a record, and
-order across the arrays is irrelevant.
+order across the arrays is irrelevant. `users` holds current user objects
+for the page (§3.3) and is merged after the records.
 
 **Recovery**, per room:
 
