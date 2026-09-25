@@ -6,18 +6,60 @@ an ecosystem of many Apron Chat apps and servers that can speak with each
 other: local bridges to other protocols, coding harnesses, internal message
 rooms.
 
-The protocol is incremental. The mandatory core (§3) is all a minimal
+The protocol is incremental. The mandatory core ([§3](#3-core)) is all a minimal
 implementation needs, about a hundred lines. Everything else is an optional
-capability: §4 lists them, the appendices specify them.
+capability: [§4](#4-capabilities) lists and specifies them.
 
-A first exchange. After the WebSocket opens, the server announces itself,
-accepts authentication, and announces visible rooms. The client sends
-messages; the server broadcasts them to every client in the room, including
-the sender.
+Contents:
+
+- [1. Transport & framing](#1-transport--framing)
+  - [1.1 Envelope and replies](#11-envelope-and-replies)
+  - [1.2 Retries and deduplication](#12-retries-and-deduplication)
+- [2. Identifiers](#2-identifiers)
+- [3. Core](#3-core)
+  - [3.1 `server` frame](#31-server-frame)
+  - [3.2 Authentication](#32-authentication)
+  - [3.3 Identity](#33-identity)
+  - [3.4 Rooms](#34-rooms)
+  - [3.5 Messages](#35-messages)
+  - [3.6 Core conformance checklist](#36-core-conformance-checklist)
+- [4. Capabilities](#4-capabilities)
+  - [4.1 `history`](#41-history)
+  - [4.2 `edit`](#42-edit)
+  - [4.3 `rooms`](#43-rooms)
+    - [4.3.1 Listing](#431-listing)
+    - [4.3.2 Membership](#432-membership)
+    - [4.3.3 Updates](#433-updates)
+    - [4.3.4 Creating and editing](#434-creating-and-editing)
+    - [4.3.5 Posting](#435-posting)
+  - [4.4 `activity`](#44-activity)
+  - [4.5 `reactions`](#45-reactions)
+  - [4.6 Embeds and avatars](#46-embeds-and-avatars)
+    - [4.6.1 OpenGraph metadata (`og`)](#461-opengraph-metadata-og)
+    - [4.6.2 Embed identity](#462-embed-identity)
+    - [4.6.3 Writes](#463-writes)
+    - [4.6.4 `embed:upload`](#464-embedupload)
+    - [4.6.5 `embed:stream`](#465-embedstream)
+    - [4.6.6 Avatars](#466-avatars)
+  - [4.7 Push](#47-push)
+  - [4.8 `command`](#48-command)
+  - [4.9 WebAuthn authentication](#49-webauthn-authentication)
+- [Appendix A — Conventions (informative)](#appendix-a--conventions-informative)
+  - [A.1 System identities and scoped notices](#a1-system-identities-and-scoped-notices)
+  - [A.2 Field naming](#a2-field-naming)
+  - [A.3 Mention text](#a3-mention-text)
+- [Appendix B — Under consideration](#appendix-b--under-consideration)
+  - [B.1 WebRTC: signaling for audio, video, and peer-to-peer connections](#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)
+  - [B.2 Multiplexing envelope](#b2-multiplexing-envelope)
+
+A first exchange. After the WebSocket opens, the server announces itself and
+accepts authentication, and the client lists the rooms it has joined. The
+client sends messages; the server broadcasts them to every client in the
+room, including the sender.
 
 ```jsonc
-// <- server greeting with auth schemes
-{"method": "server", "params": {"protocol": 4, "auth": ["guest", "token"]}}
+// <- server greeting with capabilities and auth schemes
+{"method": "server", "params": {"protocol": 5, "caps": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -25,14 +67,17 @@ the sender.
 // <- assigned identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
 
-// <- visible rooms
-{"method": "room", "params": {"room_id": "general", "title": "General"}}
+// -> joined rooms
+{"method": "room_list", "id": "c2", "params": {"only_joined": true}}
+
+// <- one room
+{"id": "c2", "result": {"joined": [{"room_id": "general", "title": "General"}]}}
 
 // -> post a message
-{"method": "message", "id": "c2", "params": {"room_id": "general", "body": {"text": "Hello"}}}
+{"method": "message", "id": "c3", "params": {"room_id": "general", "body": {"text": "Hello"}}}
 
 // <- confirmation
-{"id": "c2", "result": {"message_id": "1724803200042"}}
+{"id": "c3", "result": {"message_id": "1724803200042"}}
 
 // <- broadcast to everyone in the room
 {
@@ -47,7 +92,7 @@ the sender.
 - Client request `id` corresponds to server reply `id`.
 - `message_id` is a stable message identifier for its lifetime.
 - `log_id` identifies one change. The protocol is built around an append-only
-  log: every change to a room, message, or reaction is a record in it (§2).
+  log: every change to a room, message, or reaction is a record in it ([§2](#2-identifiers)).
 
 ---
 
@@ -62,21 +107,27 @@ the sender.
   `error`), minus the `"jsonrpc": "2.0"` key.
 - Unknown keys MUST be ignored and MAY be dropped, so a JSON-RPC 2.0 client
   can talk to an Apron server unchanged, but it should not expect the
-  `jsonrpc` key in replies. Extension data goes in `ext` (§3.5).
+  `jsonrpc` key in replies. Extension data goes in `ext` ([§3.5](#35-messages)).
 - Servers MAY process requests concurrently and reply in any order. A client
   that needs one request applied before another waits for the first reply.
+- On one connection, a result reflects every notification sent before it, so
+  clients apply frames in arrival order: an older result never follows a
+  notification of a change it does not include.
 - Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications.
 - Frame size: implementations SHOULD accept frames up to 256 KiB and MAY
   reject larger requests with `error/too_large`; oversized notifications may
   be dropped. The limit is advisory.
-- There is no application-level heartbeat; on WebSocket, liveness uses
-  ping/pong.
+- Liveness: a server MAY advertise `ping` ([§3.1](#31-server-frame)). Clients that support it
+  then send exactly `{"method":"ping"}` at that interval, fixed bytes so
+  servers can answer without parsing, and the server answers
+  `{"method":"pong"}`, before authentication too. A server MAY close a
+  connection that pinged and then stopped.
 
 ### 1.1 Envelope and replies
 
-Requests carry a string `id` (§2); frames with a `method` and no `id` are
+Requests carry a string `id` ([§2](#2-identifiers)); frames with a `method` and no `id` are
 notifications.
 
 ```jsonc
@@ -163,14 +214,14 @@ All IDs are strings.
 
 - Decimal string of Unix epoch milliseconds, e.g. `"1724803200042"`.
 - One strictly increasing sequence per server, covering every record: room
-  records (§3.4), message snapshots (§3.5), reaction sets (Appendix D).
+  records ([§3.4](#34-rooms)), message snapshots ([§3.5](#35-messages)), reaction sets ([§4.5](#45-reactions)).
 - Value is the commit time, or the previous `log_id + 1` if the clock has not
   advanced past it.
 - Clients MAY use it as a timestamp (this is the only one).
 - Positive, below `2^53`, compared numerically. Clients MAY parse as integers.
 - Unique within one server only; namespacing across servers is client-defined.
 - A room's log is the subsequence of records that touch that room
-  (Appendix A).
+  ([§4.1](#41-history)).
 - Reference generator: `str(max(unix_epoch_ms(), last_id + 1))`.
 
 **`message_id`** — permanent identity of a message.
@@ -193,15 +244,12 @@ All IDs are strings.
   source (live, history, embedded) or arrival order.
 - `log_id` and other server fields are ignored on input.
 - A record MAY carry `prev_log_id`, the `log_id` of the previous record for
-  the same key. It links changes backward even when that record is no longer
-  retained (Appendix A); there is no lookup by `log_id`.
-- Suggested convention: if a client already has the record that
-  `prev_log_id` names, it can diff the two to see exactly what changed. If
-  its copy is older than that, it missed at least one change in between. A
-  message whose `prev_log_id` equals its `message_id` has changed exactly
-  once since it was created.
+  the same key. A client can fetch that record with `history` bounded to it
+  (`after` and `before` both equal to it, [§4.1](#41-history)), and so walk a message's
+  edits back one at a time, as far as the server retains them.
 
-**Opaque IDs** — `room_id`, `user_id`, `session_id`, and request `id`.
+**Opaque IDs** — `room_id`, `user_id`, `embed_id`, `session_id`, and request
+`id`.
 
 - Arbitrary strings minted by whichever side creates them; `room_id` and
   `user_id` are server-assigned.
@@ -209,14 +257,14 @@ All IDs are strings.
   same user. They identify operations, not log positions.
 - Suggested convention: use a room's creation `log_id` as its `room_id`.
 - Suggested convention: keep `room_id`s distinct from `user_id`s, so
-  `@mentions` are unambiguous. (Appendix J.3)
+  `@mentions` are unambiguous ([Appendix A.3](#a3-mention-text)).
 
 ---
 
 ## 3. Core
 
 Every server implements this section; a minimal server implements only this
-section. Optional features are advertised through capabilities (§4).
+section. Optional features are advertised through capabilities ([§4](#4-capabilities)).
 
 ### 3.1 `server` frame
 
@@ -226,7 +274,7 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 4,
+    "protocol": 5,
     "name": "impl-name/1.0",
     "caps": ["history", "edit"],
     "auth": ["token"]
@@ -235,16 +283,17 @@ frame, unprompted. There is no client hello.
 ```
 
 - `protocol`: required integer, incremented with each revision of this spec.
-  Current value `4`. Implementations make a best effort to interoperate
+  Current value `5`. Implementations make a best effort to interoperate
   across versions; mismatched optional features degrade to their fallbacks
-  (§4).
+  ([§4](#4-capabilities)).
 - `name`: optional implementation/version string.
-- `caps`: array of capability strings (§4), default `[]`.
-- `auth`: required nonempty array of supported authentication schemes (§3.2),
+- `caps`: array of capability strings ([§4](#4-capabilities)), default `[]`.
+- `auth`: required nonempty array of supported authentication schemes ([§3.2](#32-authentication)),
   in server preference order.
-- `ext`: optional extension metadata (§3.5), such as implementation limits.
+- `ext`: optional extension metadata ([§3.5](#35-messages)), such as implementation limits.
 - `push`: optional object of supported push kinds; its presence enables push
-  (Appendix F).
+  ([§4.7](#47-push)).
+- `ping`: optional positive integer, the seconds between client pings ([§1](#1-transport--framing)).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
@@ -270,18 +319,18 @@ content.
 
 - `guest`: no credentials; the server assigns identity. Suggested
   convention: `guest_` plus a global counter, such as `guest_1234`, so
-  retired IDs are never reissued (§3.3).
+  retired IDs are never reissued ([§3.3](#33-identity)).
 - `token`: bearer string. The reference default.
-- `webauthn`: optional passkey scheme (Appendix I).
+- `webauthn`: optional passkey scheme ([§4.9](#49-webauthn-authentication)).
 
 Except for `webauthn`, servers MAY accept `auth` regardless of `scheme` and
 ignore credentials under guest-access policies. Token validation,
 identity assignment, and privilege policy are implementation-defined.
 
-`name` is an optional requested display name, valid with any scheme; the
-server MAY comply, decline, or alter it, and `you.name` is the answer.
-Clients MUST NOT supply `user_id`: identity is server-assigned. `client` is
-an optional free-form implementation string for debugging.
+`name` and `user_id` are optional requests, valid with any scheme; `you`
+is what the server assigned. Servers SHOULD NOT give out a previously used
+`user_id` without authenticating its owner. `client` is an optional
+free-form implementation string for debugging.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
 other requests get `denied` and other notifications are ignored.
@@ -294,35 +343,59 @@ Identity is server-authoritative: every message carries its author in `from`.
 "from": {"user_id": "alice", "name": "Alice"}
 ```
 
-`user_id` is required and stable. `name` is an optional display string;
-absent `name` falls back to `user_id`. `avatar` (Appendix E) and `ext` (§3.5)
-are optional. Every identity on the wire (`you`, `from`, `members`, RTC
-members) uses this shape, and servers MAY send only `user_id`. Clients keep
-the latest user object they receive for each `user_id`, whichever frame
-carried it, and render every message with it. Whether history carries a
-user's name from posting time or their current one is server policy; the
-protocol guarantees neither.
+`user_id` is required and stable. `name` is an optional display string; absent
+`name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)) and `ext` ([§3.5](#35-messages)) are
+optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
+`users`, RTC members) uses this shape, and servers MAY send only `user_id`.
+Clients keep one user object per `user_id` and merge into it every one they
+receive, whichever frame carried it, except an older `from` (below): a present
+field replaces the kept value, an empty value (`""`, `{}`) removes it, and a
+missing field leaves it unchanged, so an object with only `user_id` changes
+nothing. Clients render every message with the kept object.
 
-- Suggested convention: servers include `name` in `from`, so clients can
-  render messages from users who are no longer members.
+A message's `from` describes its author as of the message's `message_id`,
+and later snapshots of the message MAY keep it unchanged. Clients remember
+the position of each kept object: a merged `from` sets it to its message's
+`message_id`, and any other user object (`you`, `user`, `members`, `users`)
+to the greatest `log_id` the client has received. Clients merge a `from` only
+when its `message_id` is greater, so an edited, moved, or quoted old message
+does not bring back an old name.
 
-A `me` request updates the user's own profile after authentication. Fields
-given replace their current values, fields omitted stay unchanged, and an
-empty value (`""`, `{}`) removes the field. `name`, `avatar`, and `ext` are
-settable; the server MAY comply, decline, or alter any of them:
+Clients SHOULD show a user as `Name (@user_id)` where space allows, and
+MUST when another user in the same room shares the name, so no one can pass
+as someone else.
+
+Servers SHOULD include `name` in `from`, so clients can render any message
+without looking its author up.
+
+A result MAY carry `users`, complete user objects, each user once, for the
+identities elsewhere in it, such as a history page's authors. Clients merge
+them like any other user object, after the rest of the result, so `users`
+wins over every `from` in the same result. Clients that ignore them lose what
+`from` leaves out, such as avatars, and names changed since the newest
+message they have. Servers whose `from` keeps the name from posting time
+SHOULD send the users' current objects in `users` with history pages.
+
+A `me` request updates the user's own profile after authentication, by the
+same rule: fields given replace their current values, fields omitted stay
+unchanged, and an empty value removes the field. `name`, `avatar`, and
+`ext` are settable; the server MAY comply, decline, or alter any of them.
+Servers announce a removed field as its empty value:
 
 ```jsonc
 // -> rename and remove the avatar; ext is untouched
 {"method": "me", "id": "c2", "params": {"name": "Alice ⚙", "avatar": ""}}
 // <-
-{"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙"}}}
+{"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙", "avatar": ""}}}
 ```
 
 After authentication, the server MAY send a `user` notification at any time,
 such as after a rename, a profile change, or an authentication change. It
-carries exactly one of `you`, sent to the user's own connections, or `new`,
-sent to others who share a room with the user. When `user_id` changes, `old`
-optionally carries the previous user object:
+carries `you`, sent to the user's own connections, or `new` and `old`, sent
+to others who share a room with the user. `new` alone is the user's current
+object, `old` alone says the user no longer shares any room with the
+recipient, and both together say `user_id` changed. With `room_id`, they
+announce joins and leaves ([§4.3.2](#432-membership)):
 
 ```jsonc
 // <- to the user's own connections
@@ -339,78 +412,74 @@ optionally carries the previous user object:
 ```
 
 - `you` replaces the connection's identity. If its `user_id` changes, the
-  connection now acts as the new identity: the server re-announces the rooms
-  visible to it, removing those no longer visible (§3.4), and clients
-  re-derive per-user state such as their own reactions (Appendix D).
-- Logged records keep the old `user_id`. Clients MAY treat `old` as a user
-  leaving and `new` as a user joining, or MAY alias `old.user_id` to the new
-  identity for past and later records.
+  connection now acts as the new identity: it receives deliveries for the
+  new identity's rooms ([§3.4](#34-rooms)), and clients re-derive per-user state such as
+  their room list ([§4.3.1](#431-listing)) and their own reactions ([§4.5](#45-reactions)).
+- After a `user_id` change, logged records keep the old `user_id`; clients
+  MAY alias it to the new identity.
 - Servers SHOULD NOT reissue a retired `user_id` to another user.
 
-Bots and agents are ordinary senders; nothing distinguishes them.
-
-- Suggested convention: `@`-prefixed `user_id`s such as `@server` are system
-  identities (Appendix J).
+Bots and agents are ordinary senders. Servers MAY mark kinds of users by
+convention in `user_id`, `name`, or `ext`, such as the `@` prefix for system
+identities ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
 
 ### 3.4 Rooms
 
-A room is a log with a server-chosen `room_id`. Announced rooms are the ones
-this connection receives deliveries for. After authentication, servers
-SHOULD announce the rooms the user has joined (every visible room, for
-servers without membership), and MUST announce a room before delivering
-anything in it. Servers MAY announce only recently active threads; the rest
-are found with `room_list` (Appendix C). A minimal server may announce just
-one room.
+A room is a log with a server-chosen `room_id`. Every message names its room
+([§3.5](#35-messages)). A server without cap `rooms` MAY have a single room: clients learn
+its `room_id` from the messages in it, and title any room they know nothing
+more about by its `room_id`. Listing, joining, creating, and threads are cap
+`rooms` ([§4.3](#43-rooms)).
+
+A connection receives deliveries for the rooms its user has joined: every
+room, on servers without membership. Posting does not require joining
+([§3.5](#35-messages)).
+
+A **room record** describes one room, as `room_list` and `room_update`
+carry it ([§4.3](#43-rooms)):
 
 ```json
 {
-  "method": "room", "params": {
-    "room_id": "general", "log_id": "1724800000000", "title": "General",
-    "intro_message": {
-      "message_id": "1724800000001", "log_id": "1724800000001", "room_id": "general",
-      "from": {"user_id": "alice", "name": "Alice"},
-      "body": {"text": "Ops chatter: deploys, alerts, *incidents*.", "format": "markdown"}
-    },
-    "latest_log_id": "1724803200042", "history_log_id": "1724800000000"
-  }
+  "room_id": "general", "log_id": "1724800000000", "title": "General",
+  "intro_message": {
+    "message_id": "1724800000001", "log_id": "1724800000001", "room_id": "general",
+    "from": {"user_id": "alice", "name": "Alice"},
+    "body": {"text": "Ops chatter: deploys, alerts, *incidents*.", "format": "markdown"}
+  },
+  "latest_log_id": "1724803200042", "history_log_id": "1724800000000"
 }
 ```
 
 `server`: assigned by the server, ignored on input. `client`: supplied by the
-client, replaced whole by a save. `delivery`: this client's view, not logged.
+client, replaced whole by a save. `delivery`: this client's view, not logged;
+clients always take the latest values, even if `log_id` did not change.
 
-| field            | set by   | meaning                                                           |
-|------------------|----------|-------------------------------------------------------------------|
-| `room_id`        | server   | required                                                          |
-| `log_id`         | server   | position of this room record (§2)                                 |
-| `prev_log_id`    | server   | optional; this room's previous record (§2)                        |
-| `parent_room_id` | client   | optional; fixed at creation; marks a thread (Appendix C)          |
-| `title`          | client   | optional plain string; absent falls back to `room_id`             |
-| `intro_message`  | client   | optional message object (§3.5): the room's description or summary |
-| `ext`            | client   | optional opaque extension data (§3.5)                             |
-| `latest_log_id`  | delivery | greatest `log_id` in the room's log                               |
-| `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none   |
-| `removed`        | delivery | `true` when the room leaves the announced set                     |
+| field                     | set by   | meaning                                                                           |
+|---------------------------|----------|-----------------------------------------------------------------------------------|
+| `room_id`                 | server   | required                                                                          |
+| `log_id`                  | server   | position of this room record ([§2](#2-identifiers))                               |
+| `prev_log_id`             | server   | optional; this room's previous record ([§2](#2-identifiers))                      |
+| `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing)) |
+| `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
+| `intro_message`           | client   | optional message object ([§3.5](#35-messages)): the room's description or summary |
+| `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
+| `latest_log_id`           | delivery | greatest `log_id` in the room's log                                               |
+| `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
+| `member_count`, `members` | delivery | optional, in `room_list` only ([§4.3.1](#431-listing))                            |
 
-A `room` frame is a complete room record (§2); omitted fields are cleared.
-Delivery fields describe this client's view and are not logged. A removal
-carries only `room_id` and `removed`:
-
-```json
-{"method": "room", "params": {"room_id": "general", "removed": true}}
-```
+A room record is complete ([§2](#2-identifiers)); omitted fields are cleared, except
+`member_count` and `members`.
 
 `intro_message` is a message like any other. Servers SHOULD embed its
-snapshot in announcements so clients can render it without history; editing
-it is an ordinary message save (Appendix B). `log_id`, `latest_log_id`, and
+snapshot in room records so clients can render it without history; editing
+it is an ordinary message save ([§4.2](#42-edit)). `log_id`, `latest_log_id`, and
 `history_log_id` are REQUIRED when cap `history` is advertised and OPTIONAL
-otherwise; Appendix A defines their use.
+otherwise; [§4.1](#41-history) defines their use.
 
 Threads are rooms with a `parent_room_id`. Clients that ignore the field
 render them as ordinary rooms; clients that understand it group them under
 the parent and MAY collapse or hide them. Servers set `title` on threads so
-both render. Creating, listing, joining, and leaving rooms requires cap
-`rooms` (Appendix C).
+both render.
 
 ### 3.5 Messages
 
@@ -440,14 +509,14 @@ object as an authoritative **snapshot** at one log position.
 
 | field         | set by | meaning                                               |
 |---------------|--------|-------------------------------------------------------|
-| `message_id`  | server | permanent ID (§2)                                     |
-| `log_id`      | server | position of this snapshot in the log (§2)             |
-| `prev_log_id` | server | optional; this message's previous snapshot (§2)       |
-| `from`        | server | author identity (§3.3), preserved across changes      |
-| `room_id`     | client | the room the message is in; required on requests      |
-| `body`        | client | `text`, `format`, `embeds`                            |
+| `message_id`  | server | permanent ID ([§2](#2-identifiers))                                     |
+| `log_id`      | server | position of this snapshot in the log ([§2](#2-identifiers))             |
+| `prev_log_id` | server | optional; this message's previous snapshot ([§2](#2-identifiers))       |
+| `from`        | server | author identity ([§3.3](#33-identity)), preserved across changes      |
+| `room_id`     | client | the room the message is in; omitted, the default room |
+| `body`        | client | `text`, `format`, `embeds`, `mentions`                |
 | `reply_to`    | client | optional message object naming the message replied to |
-| `deleted`     | client | tombstone marker, default false (Appendix B)          |
+| `deleted`     | client | tombstone marker, default false ([§4.2](#42-edit))          |
 | `ext`         | client | optional object of namespaced, opaque extension data  |
 
 **Extensions.** `ext` carries data the spec does not define, keyed by
@@ -458,25 +527,32 @@ namespace:
 ```
 
 Clients need not parse `ext`, and MUST send it back unchanged when saving a
-message (Appendix B) or room (Appendix C) unless they mean to change it.
+message ([§4.2](#42-edit)) or room ([§4.3.4](#434-creating-and-editing)) unless they mean to change it.
 Data that must survive other clients' saves belongs in `ext`, not in unknown
 top-level keys. Servers MAY limit `ext` or normalize or reject any field by
 local policy.
 
 - `body` is required on creation. `text` defaults to `""`; `format` ∈
-  `"plain" | "markdown"`, default `"plain"`; `embeds` defaults to `[]`.
+  `"plain" | "markdown"`, default `"plain"`; `embeds` and `mentions`
+  default to `[]`.
   Both formats are mandatory to render. Markdown is CommonMark with fenced
   code blocks as the baseline rich-content path. Clients MUST disable raw
   HTML in Markdown or sanitize it under the same allowlist as HTML embeds
-  (Appendix E). Clients MUST render embeds of unknown `kind` from `og` if
+  ([§4.6](#46-embeds-and-avatars)). Clients MUST render embeds of unknown `kind` from `og` if
   present, otherwise as a labeled fallback card (kind name, plus `url` or
   plain `text` if present).
-- Suggested convention: mention users as `@user_id` in `body.text`
-  (Appendix J.3).
+- `mentions` lists the `user_id`s the message mentions; see **Mentions**
+  below.
+- A request without `room_id` posts to the server's default room, and the
+  snapshot names it. Posting does not require joining the room; servers MAY
+  deny it by policy (`denied`). An unknown or invisible `room_id` is
+  `invalid_params`.
+- A new message with no `text` and no `embeds` SHOULD be neither logged nor
+  broadcast; its result is then `{}`.
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
-  confirmation; the broadcast MAY arrive before or after it, and a
-  deduplicated retry (§1.2) produces no broadcast.
-- **Snapshots replace** under the replay rule (§2), including for messages
+  confirmation; the broadcast, delivered to the room's members, MAY arrive
+  before or after it, and a deduplicated retry ([§1.2](#12-retries-and-deduplication)) produces no broadcast.
+- **Snapshots replace** under the replay rule ([§2](#2-identifiers)), including for messages
   the client has not loaded. Servers MAY publish a snapshot of any message at
   any time, such as edits, deletions, and moves of older messages. Support is
   mandatory regardless of cap `edit`.
@@ -489,65 +565,113 @@ local policy.
   itself; it MAY be in another room. Invalid references are `invalid_params`.
 - On a live connection, servers deliver each room's snapshots in ascending
   `log_id`, and each snapshot once per connection.
+- A `message` notification without `message_id` is a transient notice, such
+  as a private system notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)): clients render it but never
+  install it as a snapshot.
+
+**Mentions.** A message lists the users it mentions in `body.mentions`, and
+usually shows each one in `body.text` as `@` followed by the `user_id`
+([Appendix A.3](#a3-mention-text)):
+
+```json
+"body": {
+  "text": "@guest_1234 can you check `@property` in https://example.com/@bob?",
+  "format": "markdown",
+  "mentions": ["guest_1234"]
+}
+```
+
+- `mentions` alone decides who is mentioned: servers ([§4.7](#47-push)) and clients
+  treat as mentioned only the users it lists, whatever `text` contains.
+  Servers never parse `text` to find mentions.
+- An edit ([§4.2](#42-edit)) mentions only the users it adds to `mentions`; users
+  already listed are not mentioned again.
+- Composers add a user to `mentions` when the user picks them, and insert
+  `@user_id` in `text`.
+- Mentions that notify a whole room are not defined.
 
 ### 3.6 Core conformance checklist
 
 Every server:
 
-1. Sends a `server` frame on connect (§3.1).
-2. Accepts at least one `auth` scheme and replies with `you` (§3.2).
-3. Announces at least one `room` (§3.4).
-4. Accepts `message` creation: replies with `message_id`, then broadcasts the
-   snapshot to the room (§3.5).
+1. Sends a `server` frame on connect ([§3.1](#31-server-frame)).
+2. Accepts at least one `auth` scheme and replies with `you` ([§3.2](#32-authentication)).
+3. Accepts `message` without `room_id` into its default room ([§3.5](#35-messages)).
+4. Accepts `message` creation: replies with `message_id` and broadcasts the
+   snapshot to the room ([§3.5](#35-messages)).
 5. Replies `error/unsupported` to unknown requests, including `message` with
    a `message_id` when cap `edit` is absent; ignores unknown notifications.
-6. Follows §1 for framing and retries and §2 for identifiers.
+6. Follows [§1](#1-transport--framing) for framing and retries and [§2](#2-identifiers) for identifiers.
 
-The opening example is a complete session with a minimal server.
+The opening example is a complete session with a server that has cap
+`rooms`. A minimal server skips `room_list`: its client posts without
+`room_id` and learns the room from the broadcast.
+
+A minimal client (informative):
+
+1. Authenticates with `auth` once `server` arrives, and posts with `message`
+   ([§3.2](#32-authentication), [§3.5](#35-messages)).
+2. Groups messages by `room_id`, titling a room by its `room_id` unless it
+   knows its record ([§3.4](#34-rooms)).
+3. Keeps each message's snapshot with the greatest `log_id`, from any
+   source, and renders tombstones ([§2](#2-identifiers), [§3.5](#35-messages)).
+4. Merges user objects per `user_id`, skipping a `from` older than the kept
+   object, and shows `Name (@user_id)` when two users in a room share a name ([§3.3](#33-identity)).
+5. Renders `plain` and `markdown` text with raw HTML disabled, and a
+   fallback card for embed kinds it does not support ([§3.5](#35-messages)).
+6. Matches replies by `id`, acts on error codes, and ignores unknown
+   notifications and keys ([§1](#1-transport--framing)).
 
 ---
 
 ## 4. Capabilities
 
 `server.caps` advertises optional requests. Capabilities advertise support,
-not authorization; servers still apply local policy per request. Clients
-ignore caps they do not recognize. Absence of a cap obligates the client to
-the fallback:
+not authorization; servers still apply local policy per request. Each is
+designed to degrade gracefully when missing, with nothing to negotiate:
+clients ignore caps they do not recognize, unknown methods get
+`unsupported` and unknown keys are ignored ([§1](#1-transport--framing)), and a client whose server
+lacks a cap falls back as below:
 
-| cap            | adds                                                         | fallback                     | spec       |
-|----------------|--------------------------------------------------------------|------------------------------|------------|
-| `history`      | page and recover a room's log                                | session-only scrollback      | Appendix A |
-| `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | Appendix B |
-| `rooms`        | `room` create/update, `room_list`, `room_join`, `room_leave` | fixed room list, no threads  | Appendix C |
-| `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | Appendix D |
-| `activity`     | typing indicators and read markers                           | no typing or read indicators | Appendix D |
-| `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | Appendix E |
-| `embed:stream` | live-streamed text in a message                              | post the finished text       | Appendix K |
+| cap            | adds                                                         | fallback                     | spec                       |
+|----------------|--------------------------------------------------------------|------------------------------|----------------------------|
+| `history`      | page and recover a room's log                                | session-only scrollback      | [§4.1](#41-history)        |
+| `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | [§4.2](#42-edit)           |
+| `rooms`        | `room_list`, `room_join`, `room_leave`, `room_set`, updates  | one default room, no threads | [§4.3](#43-rooms)          |
+| `activity`     | typing, read markers, and away                               | no typing or read indicators | [§4.4](#44-activity)       |
+| `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | [§4.5](#45-reactions)      |
+| `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | [§4.6.4](#464-embedupload) |
+| `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.5](#465-embedstream) |
+| `command`      | commands from client to server, such as `/kick`              | no commands                  | [§4.8](#48-command)        |
 
-Features without a cap: other embeds are body content (Appendix E); push
-follows `server.push` (Appendix F).
+Features without a cap: other embeds are body content ([§4.6](#46-embeds-and-avatars)); push
+follows `server.push` ([§4.7](#47-push)), passkeys `server.auth` ([§4.9](#49-webauthn-authentication)), and liveness
+`server.ping` ([§1](#1-transport--framing)).
 
 - Suggested convention: third-party extension caps use an `ext:` prefix,
   such as `ext:irc`.
 
-Four frame idioms cover everything logged or announced:
+Six frame idioms cover everything logged or announced:
 
-- **Records** (`room`, `message`): complete state at a `log_id` (§2).
+- **Records** (room records, `message`): complete state at a `log_id` ([§2](#2-identifiers)).
 - **Per-user state** (`reactions`): `from` plus the user's complete state for
-  a scope; newest wins per user. Logged (§2).
+  a scope; newest wins per user. Logged ([§2](#2-identifiers)).
 - **Activity** (`activity`): `from` plus changes to the user's transient
   state; present fields update it and absent fields leave it unchanged. Not
   part of the append-only log.
-- **Announcements** (`server`, `user`, `rtc`): unlogged, re-sent in full;
-  each replaces the last.
+- **Announcements** (`server`, `rtc`): unlogged, re-sent in full; each
+  replaces the last.
+- **Room updates** (`room_update`): unlogged changes to the user's rooms,
+  never a full list ([§4.3.3](#433-updates)).
+- **Users** (`user`, and every user object): unlogged; each merges into the
+  kept object, except a `from` older than it ([§3.3](#33-identity)).
 
----
-
-## Appendix A — `history`
+### 4.1 `history`
 
 Stateless window query over a room's **log**. `rooms` holds room records
-(§3.4), `entries` message snapshots (§3.5), and `reactions` reaction sets
-(Appendix D): one log, partitioned by kind.
+([§3.4](#34-rooms)), `entries` message snapshots ([§3.5](#35-messages)), and `reactions` reaction sets
+([§4.5](#45-reactions)): one log, partitioned by kind. Without `room_id`, it pages the default
+room ([§3.5](#35-messages)).
 
 ```jsonc
 // ->
@@ -573,6 +697,10 @@ Stateless window query over a room's **log**. `rooms` holds room records
         "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
       }
     ],
+    "users": [
+      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
+      {"user_id": "carol", "name": "Carol"}
+    ],
     "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
     "latest_log_id": "1724806800000", "history_log_id": "1724800000000"
   }
@@ -580,7 +708,7 @@ Stateless window query over a room's **log**. `rooms` holds room records
 ```
 
 **Membership.** A record belongs to every room its message is in just before
-or after it, so a move (Appendix B) appears in both rooms. Room records
+or after it, so a move ([§4.2](#42-edit)) appears in both rooms. Room records
 belong to their own room. Earlier history of a moved message stays in the
 source room.
 
@@ -598,10 +726,10 @@ source room.
 - Continue forward with `after = last_id + 1`, backward with
   `before = first_id - 1`, computed numerically and encoded as strings.
   Never derive continuation from compacted records.
-- Each array is ascending by `log_id`.
+- `rooms`, `entries`, and `reactions` are each ascending by `log_id`.
 
 **Availability.** Every result includes `latest_log_id` and `history_log_id`
-(§3.4), captured consistently with the page. They describe the room, not the
+([§3.4](#34-rooms)), captured consistently with the page. They describe the room, not the
 page. Retention may advance between requests; inspect each response before
 applying it. A resource rejection is an error, not an empty result.
 
@@ -620,15 +748,18 @@ removals replay. Retained records keep their original `log_id`s and contents
 and never incorporate changes after the slice. Compacted and uncompacted pages
 yield the same terminal state.
 
-**Replay** follows §2. No earlier state is needed to apply a record, and
-order across the arrays is irrelevant.
+**Replay** follows [§2](#2-identifiers). No earlier state is needed to apply a record, and
+order across the arrays is irrelevant. `users` holds current user objects
+for the page ([§3.3](#33-identity)) and is merged after the records.
 
 **Recovery**, per room:
 
-1. When live delivery starts, record `H = latest_log_id` and buffer live
-   records above H.
+1. When live delivery starts, after authentication or on joining, buffer
+   live records for the room. Take `H` as its `latest_log_id`, from its room
+   record ([§4.3.1](#431-listing)) or a `history` page, and keep the buffered records
+   above H.
 2. Page forward with `before: H`, from `after: C + 1` given a checkpoint C,
-   otherwise from the start, until `more: false`.
+   otherwise from `after: history_log_id`, until `more: false`.
 3. Apply the buffered records. The checkpoint is now H.
 
 If a response's effective lower bound passes the next position you need,
@@ -636,12 +767,10 @@ history was discarded: clear the room's state and restart from that bound.
 Clients recover each room they display independently; threads are separate
 rooms and load when opened.
 
----
-
-## Appendix B — `edit`
+### 4.2 `edit`
 
 A `message` request carrying an existing `message_id` **saves** that message:
-it replaces every client field (§3.5) with the submitted state. Omitted
+it replaces every client field ([§3.5](#35-messages)) with the submitted state. Omitted
 fields are removed; objects and arrays are replaced whole; `null` has no
 deletion meaning. Clients MUST resubmit every client field they want kept,
 including `room_id`, `body`, `reply_to`, and `ext`. The server preserves
@@ -674,9 +803,9 @@ MAY differ from the submitted state.
 
 **Move.** A save with a different `room_id` moves the message. The
 destination MUST exist and be visible to the caller. The snapshot is
-delivered to both rooms (Appendix A), and clients re-home the message rather
+delivered to both rooms ([§4.1](#41-history)), and clients re-home the message rather
 than treating it as deleted. If the message has reactions, the server then
-logs one reactions record (Appendix D) in the destination carrying every
+logs one reactions record ([§4.5](#45-reactions)) in the destination carrying every
 non-empty set, so reactions follow the message.
 
 ```jsonc
@@ -714,41 +843,160 @@ server MUST omit it from the tombstone. `deleted: true` on creation is
 Clients render tombstones and hide their reactions.
 
 **Redaction.** Earlier snapshots of a deleted message still hold its content.
-A server MAY rewrite them, and embedded copies of them (§3.5), into
+A server MAY rewrite them, and embedded copies of them ([§3.5](#35-messages)), into
 tombstones at their original `log_id`s. This is the only permitted rewrite
 of a logged record. Replay reaches the same terminal state either way;
 clients holding the old content drop it on the new tombstone.
 
----
+### 4.3 `rooms`
 
-## Appendix C — `rooms`
+Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
+share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
+`room_set` are requests; `room_update` is a notification. Visibility and
+membership are server policy.
 
-`room` is bidirectional, like `message`. A client request without `room_id`
-creates a room; with `room_id` it replaces the client fields (§3.4) other
-than `parent_room_id`, which is fixed at creation; omitted fields are
-cleared. Both return `{"room_id": "..."}` and broadcast the new room record
-(§3.4).
+#### 4.3.1 Listing
+
+`room_list` answers with the rooms matching its filters, as
+room records ([§3.4](#34-rooms)) in two arrays: `joined`, rooms the user has joined, and
+`rooms`, visible rooms the user has not joined. Listing never joins.
+
+```jsonc
+// -> my rooms, threads included
+{"method": "room_list", "id": "c20", "params": {"only_joined": true}}
+// <-
+{
+  "id": "c20", "result": {
+    "joined": [
+      {
+        "room_id": "general", "log_id": "1724800000000", "title": "General",
+        "latest_log_id": "1724803500000", "history_log_id": "1724800000000",
+        "member_count": 12
+      },
+      {
+        "room_id": "1724803312001", "log_id": "1724803312001",
+        "parent_room_id": "general", "title": "Deploy", "intro_message": {...},
+        "latest_log_id": "1724803400000", "history_log_id": "1724803312001",
+        "member_count": 2,
+        "members": [{"user_id": "alice"}, {"user_id": "bob"}]
+      }
+    ],
+    "users": [
+      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
+      {"user_id": "bob", "name": "Bob"}
+    ]
+  }
+}
+// -> reconnecting: only my rooms with activity since a position
+{"method": "room_list", "id": "c21", "params": {"only_joined": true, "latest_log_id": "1724803450000"}}
+// -> general's threads I have not joined
+{"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "not_joined": true}}
+// -> one room, with its members
+{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001"}}
+```
+
+Every filter is optional:
+
+- `only_joined` and `not_joined` let the server leave out `rooms` or
+  `joined`, respectively.
+- `parent_room_id` lists only that room's threads. Without it, `joined`
+  holds joined rooms at every depth, threads included, and `rooms` only
+  top-level rooms.
+- `room_id` lists only that visible room, such as for its members. It
+  overrides `parent_room_id`; an unknown or invisible `room_id` is
+  `invalid_params`. Servers SHOULD accept it.
+- `latest_log_id` lists only rooms whose `latest_log_id` is greater. A room
+  joined or left since then may be missing from such a result; a client
+  that needs its full membership lists with `only_joined` alone.
+
+A result lists rooms matching its filters, most recently active first.
+`joined` lists every match and is never truncated; servers MAY list only
+the most recently active of `rooms`, and a room left out is still visible
+and can be joined.
+
+Each room carries `member_count`, how many users have joined it, and
+`members`, user objects ([§3.3](#33-identity)): either complete, or `user_id` only with the
+complete objects in the result's `users`. Servers MAY truncate or omit
+`members` and MAY omit `member_count`, which stays the total. A client given
+no `members` learns a room's members from its history and from joins ([§4.3.2](#432-membership)).
+
+#### 4.3.2 Membership
+
+`room_join` and `room_leave` take only a `room_id` and
+return `{}`. Joining subscribes: every connection of the user receives
+deliveries for the joined room, and under the suggested wake rule only
+joined rooms notify ([§4.7](#47-push)).
+An unknown or invisible `room_id` is `invalid_params`; the server MAY deny
+either by policy.
+
+The room's other members MAY be told with a `user` notification ([§3.3](#33-identity))
+carrying `room_id`: `new` alone announces a join, `old` alone a leave. They
+are sent as they happen, never as a member list, and servers MAY skip them,
+such as in large rooms; the members a client learns this way are partial.
+
+```jsonc
+// ->
+{"method": "room_join", "id": "c24", "params": {"room_id": "1724803399000"}}
+// ->
+{"method": "room_leave", "id": "c25", "params": {"room_id": "1724803312001"}}
+// <- to the members of general, when Ada joins it and later leaves
+{"method": "user", "params": {"room_id": "general", "new": {"user_id": "ada", "name": "Ada"}}}
+{"method": "user", "params": {"room_id": "general", "old": {"user_id": "ada"}}}
+```
+
+#### 4.3.3 Updates
+
+`room_update` tells the user's connections what changed, never
+the full list:
+
+- `joined`: room records of rooms the user joined, on any connection, by
+  creating them, or by the server's doing.
+- `left`: `[{room_id}]` of rooms the user is no longer in: left, removed,
+  no longer visible, or deleted.
+- `updated`: room records that are new or changed while membership is not:
+  an edit to a joined room, or a new thread in one.
+
+```jsonc
+// <- after the join above
+{"method": "room_update", "params": {"joined": [{"room_id": "1724803399000", "parent_room_id": "general", "title": "Incident", ...}]}}
+// <- after the leave above
+{"method": "room_update", "params": {"left": [{"room_id": "1724803312001"}]}}
+// <- a joined room was renamed
+{"method": "room_update", "params": {"updated": [{"room_id": "general", "log_id": "1724803600000", "title": "General (ops)", ...}]}}
+```
+
+#### 4.3.4 Creating and editing
+
+`room_set` without `room_id` creates a room and
+joins the creator; with `room_id` it replaces the client fields ([§3.4](#34-rooms))
+other than `parent_room_id`, which is fixed at creation, and omitted fields
+are cleared. Both return `{"room_id": "..."}`, and the change arrives as a
+`room_update`.
 
 ```jsonc
 // -> start a thread on an existing message
 {
-  "method": "room", "id": "c20", "params": {
+  "method": "room_set", "id": "c26", "params": {
     "parent_room_id": "general", "title": "Deploy",
     "intro_message": {"message_id": "1724803200042"}
   }
 }
 // <-
-{"id": "c20", "result": {"room_id": "1724803312001"}}
-// <- (broadcast; the server embedded the intro snapshot)
+{"id": "c26", "result": {"room_id": "1724803312001"}}
+// <- to the creator; the server embedded the intro snapshot
 {
-  "method": "room", "params": {
-    "room_id": "1724803312001", "log_id": "1724803312001",
-    "parent_room_id": "general", "title": "Deploy",
-    "intro_message": {
-      "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
-      "from": {...}, "body": {...}
-    },
-    "latest_log_id": "1724803312001", "history_log_id": "1724803312001"
+  "method": "room_update", "params": {
+    "joined": [
+      {
+        "room_id": "1724803312001", "log_id": "1724803312001",
+        "parent_room_id": "general", "title": "Deploy",
+        "intro_message": {
+          "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
+          "from": {...}, "body": {...}
+        },
+        "latest_log_id": "1724803312001", "history_log_id": "1724803312001"
+      }
+    ]
   }
 }
 ```
@@ -757,64 +1005,27 @@ cleared. Both return `{"room_id": "..."}` and broadcast the new room record
   server policy.
 - `intro_message` is a bare reference on input. It MAY live in any room; for
   a thread it is usually the parent-room message that started it. Its text is
-  updated by saving that message (Appendix B), not by `room`. A described
-  top-level room takes two steps: create it, post the description in it, then
-  `room` with `room_id` and `intro_message`.
+  updated by saving that message ([§4.2](#42-edit)), not by `room_set`. A
+  described top-level room takes three steps: create it, post the description
+  in it, then `room_set` with `room_id` and `intro_message`.
 - The server MAY adjust or supply metadata by policy. Unknown `room_id`,
   unknown `parent_room_id`, or invalid types are `invalid_params`;
   unauthorized requests are `denied`.
 
-Discovery and membership:
+#### 4.3.5 Posting
 
-```jsonc
-// -> list a room's threads; omit parent_room_id for top-level rooms
-{"method": "room_list", "id": "c21", "params": {"parent_room_id": "general"}}
-// <-
-{
-  "id": "c21", "result": {
-    "rooms": [
-      {
-        "room_id": "1724803312001", "log_id": "1724803312001",
-        "parent_room_id": "general", "title": "Deploy",
-        "intro_message": {...},
-        "latest_log_id": "1724803400000",
-        "members": [{"user_id": "alice", "name": "Alice", "avatar": "https://..."}]
-      }
-    ]
-  }
-}
-// ->
-{"method": "room_join", "id": "c22", "params": {"room_id": "1724803312001"}}
-// ->
-{"method": "room_leave", "id": "c23", "params": {"room_id": "1724803312001"}}
-```
+Posting in a room does not require joining it ([§3.5](#35-messages)). The server MAY
+deny the post, or MAY join the poster. A poster who has not joined does not
+receive the broadcast; the result is the confirmation.
 
-- `room_list` returns room records (§3.4) for the visible rooms, each with
-  `members`, a list of user objects (§3.3). With `parent_room_id` it lists
-  that room's threads, including ones never announced. Listing a room does
-  not start deliveries. Servers MAY omit or truncate `members` by policy.
-- `room_list` has no "joined" flag: the rooms a user has joined are the
-  ones announced to their connection (§3.4).
-- Posting in a visible room the user has not joined MAY join them to it:
-  the server announces the room, then delivers the message. Otherwise the
-  post is `denied`.
-- `room_join` and `room_leave` return `{}`. A join announces the room; a
-  leave, or losing visibility, sends `removed: true`. A room left but still
-  visible stays in `room_list`.
-- Members of a room receive announcements of its new threads. Joining an
-  unannounced thread announces it.
-- Visibility and membership are server policy.
+### 4.4 `activity`
 
----
-
-## Appendix D — Activity and reactions
-
-### D.1 `activity`
-
-Cap `activity`. A client reports changes to its activity in one room, as a
-notification: typing, and how far it has read. Each present field updates
-that user's state; absent fields leave it unchanged. Activity is not part of
-the append-only log, and servers MAY drop it.
+Cap `activity`. A client reports changes to its activity as a
+notification: typing and how far it has read in a room, and optionally
+whether anyone is attending the connection.
+Each present field updates that state; absent fields leave it unchanged.
+Activity is not part of the append-only log. Servers MAY drop `typing` and
+`read_message_id`, but apply the latest `away` if they support it.
 
 ```jsonc
 // -> start typing
@@ -823,6 +1034,8 @@ the append-only log, and servers MAY drop it.
 {"method": "activity", "params": {"room_id": "general", "typing": 0}}
 // -> advance the read cursor
 {"method": "activity", "params": {"room_id": "general", "read_message_id": "1724803312050"}}
+// -> nobody is attending this connection, such as an unfocused tab
+{"method": "activity", "params": {"away": true}}
 // <- (broadcast)
 {
   "method": "activity", "params": {
@@ -839,11 +1052,18 @@ the append-only log, and servers MAY drop it.
   moves back.
 - Delivery is server policy: to the room, which shows read receipts, or only
   to the user's own connections, which syncs read cursors across devices.
-- Servers MAY keep each user's latest `read_message_id` per room and re-send
-  it after announcing the room.
+- Servers MAY keep each user's latest `read_message_id` per room and send
+  it to the user's connections after they list the room ([§4.3.1](#431-listing)).
+- `away` (optional): `true` when nobody is attending this connection, such as
+  an unfocused tab, a backgrounded app, or a connection opened to fetch after
+  a push. It applies to the sending connection only and ends with `away:
+  false`, `typing`, `read_message_id`, or a `message` from that connection, or
+  the connection closing; fetching history does not end it. Servers MAY hold
+  back unlogged frames, such as typing, from away connections, and use it to
+  decide pushes ([§4.7](#47-push)). `away` is never delivered.
 - There is no presence system.
 
-### D.2 `reactions`
+### 4.5 `reactions`
 
 Cap `reactions`. A client sets its own complete set of emoji on one message;
 omitted emoji are removed and `[]` clears. The server logs the change with a
@@ -866,9 +1086,9 @@ broadcast carries the state.
 
 - The request names only the message. The logged record carries the room the
   message was in at that moment, which may differ from its current room
-  after a move (Appendix A).
+  after a move ([§4.1](#41-history)).
 - The notification's `reactions` array holds one element per user. Live
-  broadcasts carry one; compacted history records (Appendix A) MAY carry
+  broadcasts carry one; compacted history records ([§4.1](#41-history)) MAY carry
   several. Each element replaces that user's set on that message.
 - Clients keep state per `(message_id, user_id)` and derive the aggregate:
   counts per emoji, who reacted, and whether `you.user_id` did. They tolerate
@@ -879,18 +1099,16 @@ broadcast carries the state.
   message or per user, all `invalid_params`. An unknown `message_id` is
   `invalid_params`. A request that leaves state unchanged MAY produce no
   change.
-- Retries follow §1.2. Push wake-ups for reactions are server policy.
+- Retries follow [§1.2](#12-retries-and-deduplication). Push wake-ups for reactions are server policy.
 
----
+### 4.6 Embeds and avatars
 
-## Appendix E — Embeds, uploads, and avatars
-
-**Embeds.** `body.embeds` holds rich content in display order; `kind` selects
+`body.embeds` holds rich content in display order; `kind` selects
 the renderer. Unknown kinds render from `og`, or else the fallback card
-(§3.5).
+([§3.5](#35-messages)).
 
 ```json
-{"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/embed_1240"}
+{"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/Qm7xk2…"}
 {"embed_id": "embed_1241", "kind": "iframe", "url": "https://backend:8443/term/abc", "height": 300}
 {"embed_id": "embed_1242", "kind": "html", "html": "<table>…</table>"}
 ```
@@ -903,9 +1121,11 @@ the renderer. Unknown kinds render from `og`, or else the fallback card
 - `html`: sanitize with an allowlist sanitizer (e.g. DOMPurify) before
   insertion, regardless of source. Servers make no safety promises about
   content flowing through them.
-- `upload` is below; `stream` is Appendix K.
+- `upload` is [§4.6.4](#464-embedupload), and `stream` is [§4.6.5](#465-embedstream).
 
-**`og`.** Any embed MAY carry `og`, an [OpenGraph](https://ogp.me/)
+#### 4.6.1 OpenGraph metadata (`og`)
+
+Any embed MAY carry `og`, an [OpenGraph](https://ogp.me/)
 description of its content as JSON: property names without the `og:`
 prefix, with structured properties nested (`og:image:width` becomes
 `image.width`).
@@ -913,12 +1133,12 @@ prefix, with structured properties nested (`og:image:width` becomes
 ```json
 "og": {
   "title": "before.png",
-  "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180, "alt": "Dashboard before the fix"}
+  "image": {"url": "https://chat.example/f/Zr8Tq1…/thumb", "type": "image/webp", "width": 320, "height": 180, "alt": "Dashboard before the fix"}
 }
 ```
 
-- Clients render kinds they support natively and MAY draw the rest from
-  `og`: `title`, `description`, `site_name`, and `image`, `video`, and
+- Clients render kinds they support natively and draw the rest from `og`
+  ([§3.5](#35-messages)): `title`, `description`, `site_name`, and `image`, `video`, and
   `audio` (each with `url`, `type`, `width`, `height`, `alt`). They ignore
   other properties.
 - `og.image` is a preview to show, `og.video` and `og.audio` are what a
@@ -928,7 +1148,9 @@ prefix, with structured properties nested (`og:image:width` becomes
   host or proxy the media it references and set its dimensions. Clients
   SHOULD NOT load `og` media from other origins.
 
-**Embed identity.** Servers that advertise any `embed:*` cap assign each
+#### 4.6.2 Embed identity
+
+Servers that advertise any `embed:*` cap assign each
 embed an opaque `embed_id`; other servers MAY store embeds as given.
 
 - A save keeps an embed by sending it back with its `embed_id`. An embed
@@ -940,11 +1162,14 @@ embed an opaque `embed_id`; other servers MAY store embeds as given.
 - Content the server hosts for an embed belongs to that message. When the
   embed is removed or the message is deleted or redacted, servers SHOULD
   delete the content.
-- Suggested convention: `embed_` plus a server-wide counter, such as
-  `embed_1234`.
+- Anyone with a URL the server hosts can fetch it, so servers SHOULD make
+  these URLs unguessable, such as with a random path segment, not just the
+  `embed_id`.
 
-**Writes.** New `upload` and `stream` embeds take their content over HTTP.
-The `message` result lists them, in request order:
+#### 4.6.3 Writes
+
+New `upload` and `stream` embeds take their content over HTTP.
+The `message` or `command` ([§4.8](#48-command)) result lists them, in request order:
 
 ```jsonc
 // -> the sender attaches a file
@@ -966,10 +1191,10 @@ The `message` result lists them, in request order:
 {"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}
 {
   "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
-  "url": "https://chat.example/f/embed_1235",
+  "url": "https://chat.example/f/Zr8Tq1…",
   "og": {
     "title": "before.png",
-    "image": {"url": "https://chat.example/f/embed_1235/thumb", "type": "image/webp", "width": 320, "height": 180}
+    "image": {"url": "https://chat.example/f/Zr8Tq1…/thumb", "type": "image/webp", "width": 320, "height": 180}
   }
 }
 ```
@@ -978,9 +1203,12 @@ The `message` result lists them, in request order:
   `write_url` is a credential and expires if unused.
 - The server finishes each write exactly once: on success it publishes a
   snapshot with the embed completed; if the write never starts in time or
-  fails, it publishes a snapshot without the embed.
+  fails, it publishes a snapshot without the embed. For a command, the server
+  acts on the finished write instead, such as setting an avatar ([§4.6.6](#466-avatars)).
 
-**`upload`** (cap `embed:upload`). The sender gives an optional `title`, such
+#### 4.6.4 `embed:upload`
+
+Cap `embed:upload`. The sender gives an optional `title`, such
 as the file name. While `url` is absent the upload is pending, and clients
 show a placeholder. On success the server sets `url` to the file it hosts.
 
@@ -989,23 +1217,61 @@ show a placeholder. On success the server sets `url` to the file it hosts.
   gave, such as `og.image.alt`.
 - Without `og`, clients show a file card: `title` linking to `url`.
 
-**Avatars.** A user object (§3.3) MAY carry `avatar`, an image shown beside
+#### 4.6.5 `embed:stream`
+
+Cap `embed:stream`. A message can carry live text that the sender writes over
+HTTP while readers watch it grow. Stream embeds follow the embed identity
+([§4.6.2](#462-embed-identity)) and write ([§4.6.3](#463-writes)) rules.
+
+```jsonc
+// -> the embed in a message request; the result and write follow §4.6.3
+{"kind": "stream", "format": "terminal"}
+// sender: foo 2>&1 | curl -T - <write_url>
+// <- the embed as broadcast: live at its url, then finished with the kept text
+{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/p3Wn9d…"}
+{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
+```
+
+- `format` names how to render the text; default `"plain"`, shown as is with
+  line breaks kept. Clients MAY support other formats natively, such as
+  `"markdown"` (rendered under [§3.5](#35-messages)'s rules) or `"terminal"`, and render
+  unknown formats as plain.
+- Write: the sender sends UTF-8 text as a streaming HTTP request body to
+  `write_url`. The end of the body ends the stream.
+- Read: `GET url` returns the text the server has kept, continues as more
+  arrives, and ends when the stream does. A reader that reconnects replaces
+  what it has shown with the new response.
+- Finish: when the stream ends, the server publishes a snapshot whose embed
+  carries the kept text as `text` in place of `url`, and both URLs stop
+  working. A sender with cap `edit` MAY save the message without the embed
+  first, which ends the stream.
+- How much text the server keeps, size and time limits, and the grace period
+  after a writer disconnects are server policy. At a limit, the server ends
+  the stream and keeps the trailing text.
+- `url` is served by the chat server; clients SHOULD NOT connect to stream
+  URLs on other origins.
+
+#### 4.6.6 Avatars
+
+A user object ([§3.3](#33-identity)) MAY carry `avatar`, an image shown beside
 the user's name.
 
-- Servers send `avatar` in `you`, `user`, and `members`, not in every `from`.
+- Servers send `avatar` in `you`, `user`, `members`, and `users` ([§3.3](#33-identity)),
+  not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
-  `data:image/{png,jpeg,gif,webp};base64,` URLs; larger images go through an
-  upload (Appendix J.4).
+  `data:image/{png,jpeg,gif,webp};base64,` URLs. A larger image goes through
+  an upload (caps `command` and `embed:upload`): a `/avatar` command ([§4.8](#48-command))
+  with one `upload` embed asks the server to use that file as the sender's
+  avatar. The result carries the write URL, and the server sets `avatar` and
+  sends `user` ([§3.3](#33-identity)) when the upload completes.
 - Clients own their security boundary and choose which sources to load; they
   MAY ignore any avatar. Load values only as images, never as documents, and
   bind or escape them rather than interpolating them into HTML.
 - Without a usable avatar, clients draw a placeholder such as initials.
 
----
+### 4.7 Push
 
-## Appendix F — Push
-
-`server.push` (§3.1) maps each supported push kind to its public
+`server.push` ([§3.1](#31-server-frame)) maps each supported push kind to its public
 configuration. Its presence enables `push_register` and `push_unregister`.
 
 ```jsonc
@@ -1023,7 +1289,7 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 
 - `kind` names a key of `server.push`; the other fields are specific to that
   kind. Unknown kinds are `invalid_params`. Third-party kinds use the `ext:`
-  prefix (§4).
+  prefix ([§4](#4-capabilities)).
 - `url` is required and identifies the registration. Registering the same
   `url` again replaces it; `push_unregister` removes it. Clients SHOULD
   register on each connection.
@@ -1031,10 +1297,15 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   bearer. Delivery beyond that POST (APNs/FCM, coalescing) is the relay's
   concern; native apps use a relay run by their vendor. Other kinds define
   their own delivery outside this spec.
-- Every kind delivers the same payload: a message object (§3.5) without
+- Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
   `log_id`, so clients render it but never install it as a snapshot. `body`
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
+- Suggested convention: wake a user only for rooms they have joined ([§4.3.2](#432-membership)),
+  when every connection of theirs is away or gone ([§4.4](#44-activity)) and they have
+  not muted the room by server policy, such as a `/mute` command
+  ([§4.8](#48-command)). Servers MAY wait briefly first
+  and skip the push if the user's `read_message_id` has passed the message.
 
 ```json
 {
@@ -1048,51 +1319,235 @@ Registered endpoints are client-supplied URLs the server will POST to, an
 SSRF vector into the server's network. Servers SHOULD accept only `https`
 endpoints resolving to non-internal addresses.
 
----
+### 4.8 `command`
 
-## Appendix G — Multiplexing envelope (informative)
+Cap `command`. A `command` request sends an instruction to the server. It
+takes the same params as creating a message ([§3.5](#35-messages)) and differs only in what
+happens to it:
 
-Multiple logical protocol connections can share one physical WebSocket via an
-aggregator that proxies backends. This envelope is outside the core protocol.
-
-A mux endpoint wraps every core frame in an envelope with an opaque
-connection ID:
-
-```json
-{"conn_id": "b1", "frame": {"method": "message", "id": "c3", "params": {"room_id": "general", "body": {}}}}
-```
-
-Each `conn_id` carries an independent core session. Frame ordering is
-preserved per `conn_id`, not across them. Control uses unwrapped frames:
+- `body.text` is the command line as the user typed it, slash included; the
+  server parses it. Clients send composer text that starts with `/` as a
+  `command`, and text that starts with `//` as a message starting with `/`.
+- A command is never logged, broadcast, or saved, and has no `message_id`.
+  `message_id` and `deleted` are `invalid_params`.
+- `mentions`, `reply_to`, and `embeds` are arguments. Mentioned users are
+  not notified.
+- The result is `{}`, or `{"embeds": [...]}` with write URLs for new
+  `upload` embeds ([§4.6.3](#463-writes)). A failure is an ordinary error whose
+  `message` the client shows.
+- The server replies, when it needs to, with system notices ([Appendix A.1](#a1-system-identities-and-scoped-notices)):
+  `@private` to the sender, `@room` to the room, `@server` to everyone.
+  Effects arrive as the frames they cause, such as `room_update`.
+- Retries follow [§1.2](#12-retries-and-deduplication), so a retried command does not run twice.
+- Commands are for what a server provides beyond this spec, such as
+  `/mute` with the server's own notification rules. Which exist, their
+  arguments, and who may use them are server policy.
+- Servers that support commands SHOULD provide `/help`, replying with a
+  `@private` notice that lists the commands available to the sender, with
+  their arguments and what they do.
+- Clients MAY handle commands that match a request themselves, such as
+  `/nick` as `me`, `/topic` as `room_set`, `/join` as `room_join`, `/leave`
+  as `room_leave`, and send the rest as `command`.
 
 ```jsonc
-// ->
-{"type": "conn_open", "conn_id": "b1", "url": "wss://backend.example/ws"}
+// -> remove a user from the room; mentions name the target
+{
+  "method": "command", "id": "c30", "params": {
+    "room_id": "general",
+    "body": {"text": "/kick @guest_1234 spamming", "mentions": ["guest_1234"]}
+  }
+}
 // <-
-{"type": "conn_ready", "conn_id": "b1"}
+{"id": "c30", "result": {}}
+// <- to the room
+{
+  "method": "message", "params": {
+    "message_id": "1724803900001", "log_id": "1724803900001", "room_id": "general",
+    "from": {"user_id": "@room", "name": "General"},
+    "body": {"text": "@guest_1234 was removed by @alice: spamming"}
+  }
+}
+// <- to guest_1234's connections
+{"method": "room_update", "params": {"left": [{"room_id": "general"}]}}
+
+// -> answer an agent's permission prompt by replying to it
+{
+  "method": "command", "id": "c31", "params": {
+    "room_id": "agent", "reply_to": {"message_id": "1724803900000"},
+    "body": {"text": "/approve"}
+  }
+}
+// <- or, from a user without the right
+{"id": "c31", "error": {"code": -32001, "message": "Only the session owner can approve"}}
+
+// -> list the available commands
+{"method": "command", "id": "c32", "params": {"room_id": "general", "body": {"text": "/help"}}}
 // <-
-{"type": "conn_error", "conn_id": "b1", "code": "unreachable", "message": "..."}
-// <- or ->
-{"type": "conn_close", "conn_id": "b1"}
+{"id": "c32", "result": {}}
+// <- to the sender only
+{
+  "method": "message", "params": {
+    "room_id": "general",
+    "from": {"user_id": "@private", "name": "Only you"},
+    "body": {
+      "text": "- `/kick @user [reason]`: remove someone from this room\n- `/avatar` with an image: set your avatar",
+      "format": "markdown"
+    }
+  }
+}
+
+// -> set an avatar from an upload (§4.6.6)
+{
+  "method": "command", "id": "c33", "params": {
+    "body": {"text": "/avatar", "embeds": [{"kind": "upload", "title": "me.png"}]}
+  }
+}
+// <-
+{
+  "id": "c33", "result": {
+    "embeds": [{"embed_id": "embed_1300", "kind": "upload", "write_url": "https://chat.example/w/9c1e…"}]
+  }
+}
 ```
 
-`conn_id` is chosen by the opener, unique per socket. After `conn_ready`, the
-backend's `server` frame arrives wrapped, first on that `conn_id`.
-`conn_close` from either side ends the logical connection. The aggregator
-forwards inner frames unparsed and holds only the `conn_id`↔upstream mapping;
-backends remain authoritative, and frames may be encrypted end to end.
-Aggregator authentication is deployment-defined.
+### 4.9 WebAuthn authentication
+
+Servers advertising `webauthn` in `server.params.auth` MUST use this
+exchange; no separate capability is needed.
+
+Both steps are `auth` requests with string IDs and `scheme: "webauthn"`. Use
+`action: "register"` to create a credential or `action: "login"` to sign in,
+unchanged between steps. Notifications do not run ceremonies.
+
+| Step     | Additional request fields                      | Successful result                                        |
+|----------|------------------------------------------------|----------------------------------------------------------|
+| `begin`  | `step: "begin"`                                | `challenge_id` (opaque), `public_key` (WebAuthn options) |
+| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` ([§3.3](#33-identity))                                             |
+
+`public_key` holds creation options for registration or request options for
+login, in standard
+[WebAuthn JSON](https://www.w3.org/TR/webauthn-3/#sctn-parseCreationOptionsFromJSON)
+with binary fields as unpadded base64url. Clients pass them to
+`navigator.credentials.create` or `.get` and return the credential in
+`finish`. Registration MUST require discoverable credentials; login omits
+`allowCredentials` or sends an empty array. Both require user verification.
+
+Challenges MUST be unpredictable, expiring, and bound to the connection,
+action, RP ID, allowed origin, and any proposed registration identity. Keep
+one pending ceremony per connection: a new begin replaces it, disconnect
+invalidates it, and a matching finish consumes it even on failure. Servers
+MUST perform
+[WebAuthn verification](https://www.w3.org/TR/webauthn-3/#sctn-rp-operations)
+before recording credentials or authenticating.
+
+Only a verified finish returns `you`. Begin
+or failure does not change existing authentication. Registration
+eligibility and reauthentication permission are server policy. Malformed
+fields are `invalid_params`; invalid challenges, failed verification, or
+policy rejection are `denied`.
+
+**Session resume (optional).** A server that also advertises `token` MAY
+include `token` in a verified `finish` result. The client MAY present it on
+later connections with `scheme: "token"` to resume the identity without a new
+ceremony; the result MAY carry a replacement `token`, superseding the
+presented one. Servers MUST bind such tokens to the ceremony's allowed
+origin, MUST expire them, and reject unknown, expired, or mismatched tokens
+with `denied`. Lifetime, renewal, and revocation are server policy. Clients
+that ignore `token` remain conforming.
 
 ---
 
-## Appendix H — Out-of-band channels: WebRTC (informative)
+## Appendix A — Conventions (informative)
+
+### A.1 System identities and scoped notices
+
+`user_id`s beginning with `@` are reserved for server-controlled identities,
+such as `@sfu` for a media server ([Appendix B.1](#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
+them to users. They carry an ordinary `from` and render like any sender, so
+clients unaware of the convention still work; clients MAY style them as
+system messages.
+
+Three of them tell the receiver who else got the message:
+
+| `from.user_id` | received by                   | logged | for example                                  |
+|----------------|-------------------------------|--------|---------------------------------------------|
+| `@server`      | every user on the server      | yes    | maintenance notices, announcements           |
+| `@room`        | every member of the room      | yes    | joins and leaves, removals, poll results     |
+| `@private`     | only this user                | no     | welcomes, command replies, errors, reminders |
+
+- `room_id` is where the message is shown. A notice about no room in
+  particular goes in room `@server`, which every user receives without
+  joining; clients unaware of it show it as a room of its own. Room IDs
+  beginning with `@` are reserved for such server-defined rooms.
+- `@private` messages are not logged and carry neither `log_id` nor
+  `message_id`. Like push payloads ([§4.7](#47-push)), clients render them but
+  never install them as snapshots, and they are not in history. A private
+  notice that should last belongs in a room of its own.
+
+```jsonc
+// <- to everyone on the server
+{
+  "method": "message", "params": {
+    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "@server",
+    "from": {"user_id": "@server", "name": "Server"},
+    "body": {"text": "Maintenance at 17:00 UTC."}
+  }
+}
+// <- to everyone in general
+{
+  "method": "message", "params": {
+    "message_id": "1724803500002", "log_id": "1724803500002", "room_id": "general",
+    "from": {"user_id": "@room", "name": "General"},
+    "body": {"text": "@guest_1234 joined"}
+  }
+}
+// <- to the new member only, shown in general
+{
+  "method": "message", "params": {
+    "room_id": "general",
+    "from": {"user_id": "@private", "name": "Only you"},
+    "body": {"text": "Welcome to General! Deploy chatter goes in threads."}
+  }
+}
+```
+
+### A.2 Field naming
+
+Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
+`embed_id`, `parent_room_id`, `session_id`). Embedded objects use descriptive
+names (`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id`
+keeps its name. Extensions and future methods should follow the same pattern.
+
+### A.3 Mention text
+
+In `body.text`, a mention ([§3.5](#35-messages)) usually appears as `@` followed by an ID:
+
+- The ID is an optional `@` then a run of `[A-Za-z0-9_.-]`, not preceded by
+  a letter or digit, so `foo@bar.com` is not one. Trailing `.` and `-` are
+  not part of it. Servers that want users and rooms to be mentionable mint
+  IDs from that set, such as `guest_1234`. System identities ([A.1](#a1-system-identities-and-scoped-notices)) take a
+  second `@`, as in `@@server`.
+- How `text` renders is up to the client. Clients MAY show an `@id` naming
+  a known user with the user's latest display name ([§3.3](#33-identity)), such as a chip,
+  and one naming a room as a link to the room, wherever their formatting
+  allows. When an ID names both a user and a room, clients treat it as a
+  user. Unknown IDs render as written.
+
+---
+
+## Appendix B — Under consideration
+
+Designs that are not yet part of the protocol, kept here so implementations
+can experiment and converge on them.
+
+### B.1 WebRTC: signaling for audio, video, and peer-to-peer connections
 
 Planned capability `rtc`: the socket carries signaling; media travels out of
 band. Future channels (screenshare, documents, file transfer) should reuse
 the pattern: a server-announced session with authoritative membership, a join
 request returning connection configuration, and an opaque relay frame.
 
-**Sessions** are announcements (§4):
+**Sessions** are announcements ([§4](#4-capabilities)):
 
 ```jsonc
 // <-
@@ -1151,157 +1606,42 @@ handles loss and renegotiation.
 
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
 only relays; clients SHOULD soft-cap participants. A future cap `rtc.sfu`
-adds a media server joining as member `@sfu` (Appendix J), with which
+adds a media server joining as member `@sfu` ([Appendix A.1](#a1-system-identities-and-scoped-notices)), with which
 clients negotiate a single PeerConnection.
 
 **Exclusions.** Mute and camera state are derivable from media streams.
 Invite/ring/reject state machines are covered by an `rtc` frame plus a push
 notification. Recording and transcoding are server-side.
 
----
+### B.2 Multiplexing envelope
 
-## Appendix I — WebAuthn authentication (optional)
+Multiple logical protocol connections can share one physical WebSocket via an
+aggregator that proxies backends. This envelope is outside the core protocol.
 
-Servers advertising `webauthn` in `server.params.auth` MUST use this
-exchange; no separate capability is needed.
-
-Both steps are `auth` requests with string IDs and `scheme: "webauthn"`. Use
-`action: "register"` to create a credential or `action: "login"` to sign in,
-unchanged between steps. Notifications do not run ceremonies.
-
-| Step     | Additional request fields                      | Successful result                                        |
-|----------|------------------------------------------------|----------------------------------------------------------|
-| `begin`  | `step: "begin"`                                | `challenge_id` (opaque), `public_key` (WebAuthn options) |
-| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` (§3.3)                                             |
-
-`public_key` holds creation options for registration or request options for
-login, in standard
-[WebAuthn JSON](https://www.w3.org/TR/webauthn-3/#sctn-parseCreationOptionsFromJSON)
-with binary fields as unpadded base64url. Clients pass them to
-`navigator.credentials.create` or `.get` and return the credential in
-`finish`. Registration MUST require discoverable credentials; login omits
-`allowCredentials` or sends an empty array. Both require user verification.
-
-Challenges MUST be unpredictable, expiring, and bound to the connection,
-action, RP ID, allowed origin, and any proposed registration identity. Keep
-one pending ceremony per connection: a new begin replaces it, disconnect
-invalidates it, and a matching finish consumes it even on failure. Servers
-MUST perform
-[WebAuthn verification](https://www.w3.org/TR/webauthn-3/#sctn-rp-operations)
-before recording credentials or authenticating.
-
-Only a verified finish returns `you`, followed by room announcements. Begin
-or failure does not change existing authentication. Registration
-eligibility and reauthentication permission are server policy. Malformed
-fields are `invalid_params`; invalid challenges, failed verification, or
-policy rejection are `denied`.
-
-**Session resume (optional).** A server that also advertises `token` MAY
-include `token` in a verified `finish` result. The client MAY present it on
-later connections with `scheme: "token"` to resume the identity without a new
-ceremony; the result MAY carry a replacement `token`, superseding the
-presented one. Servers MUST bind such tokens to the ceremony's allowed
-origin, MUST expire them, and reject unknown, expired, or mismatched tokens
-with `denied`. Lifetime, renewal, and revocation are server policy. Clients
-that ignore `token` remain conforming.
-
----
-
-## Appendix J — Conventions (informative)
-
-### J.1 System identities
-
-`user_id`s beginning with `@` are reserved for server-controlled identities,
-such as `@server` for the server itself or `@sfu` for a media server
-(Appendix H). Servers SHOULD NOT assign them to users. They carry an ordinary
-`from` and render like any sender, so clients unaware of the convention
-still work; clients MAY style them as system messages.
+A mux endpoint wraps every core frame in an envelope with an opaque
+connection ID:
 
 ```json
-{
-  "method": "message", "params": {
-    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
-    "from": {"user_id": "@server", "name": "Server"},
-    "body": {"text": "Maintenance at 17:00 UTC."}
-  }
-}
+{"conn_id": "b1", "frame": {"method": "message", "id": "c3", "params": {"room_id": "general", "body": {}}}}
 ```
 
-### J.2 Field naming
-
-Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
-`embed_id`, `parent_room_id`, `session_id`). Embedded objects use descriptive
-names (`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id`
-keeps its name. Extensions and future methods should follow the same pattern.
-
-### J.3 Mentions
-
-Mentions need no protocol support: they are plain text that clients and
-servers interpret by this convention. A mention is `@` followed by a
-`user_id` or `room_id` in `body.text`:
-
-```json
-"body": {"text": "@guest_1234 can you check the deploy?"}
-```
-
-- The ID is an optional `@` then a run of `[A-Za-z0-9_.-]`, not
-  preceded by a letter or digit, so `foo@bar.com` is not a mention. Trailing
-  `.` and `-` are not part of it. In Markdown, code spans and code blocks
-  contain no mentions.
-- Servers that want users and rooms to be mentionable mint IDs from that
-  set, such as `guest_1234`. System identities (J.1) take a second `@`, as in
-  `@@server`.
-- Clients render a user mention with the user's latest display name (§3.3),
-  such as a chip, and MAY highlight mentions of `you`. A room mention links
-  to the room. When an ID names both a user and a room, clients treat it as
-  a user. Unknown IDs render as written.
-- Composers insert `@user_id` when the user picks a person, for example from
-  `members` (Appendix C).
-- Servers MAY apply the same rule to wake mentioned users (Appendix F).
-- Mentions that notify a whole room are not defined.
-
-### J.4 Avatar uploads
-
-Avatar uploads need no protocol support beyond `embed:upload`: they are an
-ordinary message that servers interpret by this convention. A message sent
-to room `@avatar` with one `upload` embed asks the server to use that file
-as the sender's avatar. The server returns the write URL as usual, sets
-`avatar` and sends `user` (§3.3) when the upload completes, and neither
-delivers nor logs the message. Servers without the convention reject the
-unknown room as `invalid_params`.
-
----
-
-## Appendix K — `embed:stream`
-
-Cap `embed:stream`. A message can carry live text that the sender writes over
-HTTP while readers watch it grow. Stream embeds follow Appendix E's embed
-identity and write rules.
+Each `conn_id` carries an independent core session. Frame ordering is
+preserved per `conn_id`, not across them. Control uses unwrapped frames:
 
 ```jsonc
-// -> the embed in a message request; the result and write follow Appendix E
-{"kind": "stream", "format": "terminal"}
-// sender: foo 2>&1 | curl -T - <write_url>
-// <- the embed as broadcast: live at its url, then finished with the kept text
-{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/embed_1234"}
-{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
+// ->
+{"type": "conn_open", "conn_id": "b1", "url": "wss://backend.example/ws"}
+// <-
+{"type": "conn_ready", "conn_id": "b1"}
+// <-
+{"type": "conn_error", "conn_id": "b1", "code": "unreachable", "message": "..."}
+// <- or ->
+{"type": "conn_close", "conn_id": "b1"}
 ```
 
-- `format` names how to render the text; default `"plain"`, shown as is with
-  line breaks kept. Clients MAY support other formats natively, such as
-  `"markdown"` (rendered under §3.5's rules) or `"terminal"`, and render
-  unknown formats as plain.
-- Write: the sender sends UTF-8 text as a streaming HTTP request body to
-  `write_url`. The end of the body ends the stream.
-- Read: `GET url` returns the text the server has kept, continues as more
-  arrives, and ends when the stream does. A reader that reconnects replaces
-  what it has shown with the new response.
-- Finish: when the stream ends, the server publishes a snapshot whose embed
-  carries the kept text as `text` in place of `url`, and both URLs stop
-  working. A sender with cap `edit` MAY save the message without the embed
-  first, which ends the stream.
-- How much text the server keeps, size and time limits, and the grace period
-  after a writer disconnects are server policy. At a limit, the server ends
-  the stream and keeps the trailing text.
-- `url` is served by the chat server; clients SHOULD NOT connect to stream
-  URLs on other origins.
+`conn_id` is chosen by the opener, unique per socket. After `conn_ready`, the
+backend's `server` frame arrives wrapped, first on that `conn_id`.
+`conn_close` from either side ends the logical connection. The aggregator
+forwards inner frames unparsed and holds only the `conn_id`↔upstream mapping;
+backends remain authoritative, and frames may be encrypted end to end.
+Aggregator authentication is deployment-defined.
