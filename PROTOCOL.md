@@ -244,13 +244,9 @@ All IDs are strings.
   source (live, history, embedded) or arrival order.
 - `log_id` and other server fields are ignored on input.
 - A record MAY carry `prev_log_id`, the `log_id` of the previous record for
-  the same key. It links changes backward even when that record is no longer
-  retained ([§4.1](#41-history)); there is no lookup by `log_id`.
-- Suggested convention: if a client already has the record that
-  `prev_log_id` names, it can diff the two to see exactly what changed. If
-  its copy is older than that, it missed at least one change in between. A
-  message whose `prev_log_id` equals its `message_id` has changed exactly
-  once since it was created.
+  the same key. A client can fetch that record with `history` bounded to it
+  (`after` and `before` both equal to it, [§4.1](#41-history)), and so walk a message's
+  edits back one at a time, as far as the server retains them.
 
 **Opaque IDs** — `room_id`, `user_id`, `embed_id`, `session_id`, and request
 `id`.
