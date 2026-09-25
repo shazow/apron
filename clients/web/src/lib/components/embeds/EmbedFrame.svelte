@@ -3,7 +3,7 @@
 	import type { Embed } from '$lib/protocol/types';
 
 	/**
-	 * A backend-served live view (Appendix E): sandboxed with scripts but never
+	 * A backend-served live view (§4.6): sandboxed with scripts but never
 	 * same-origin, no referrer, `height` clamped to iframe-max-h. It stays a
 	 * paused placeholder until the viewer loads it.
 	 */

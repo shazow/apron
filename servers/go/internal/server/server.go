@@ -154,7 +154,7 @@ const (
 // logRecord is one committed change: raw is the complete wire object
 // (including log_id) as it was at commit time, kept as JSON, which history
 // and broadcasts send as is and which costs far less memory than decoded
-// maps. Only redaction (Appendix B) rewrites a record; raw is replaced, never
+// maps. Only redaction (§4.2) rewrites a record; raw is replaced, never
 // modified, so a reader may hold it after releasing s.mu. A record is
 // referenced from the log of every room it belongs to, so a move snapshot
 // appears in both the source and destination room logs.

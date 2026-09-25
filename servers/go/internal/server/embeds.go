@@ -20,7 +20,7 @@ import (
 	"unicode/utf8"
 )
 
-// HTTP paths for embed content (Appendix E, K). Write URLs carry a one-time
+// HTTP paths for embed content (§4.6.3, §4.6.5). Write URLs carry a one-time
 // token; file and stream URLs carry the embed_id and an unguessable secret,
 // since HTTP requests are not authenticated.
 const (
@@ -37,7 +37,7 @@ type embedState struct {
 	id   string
 	kind string
 	// messageID is the message the embed belongs to; avatarFor is set instead
-	// for an @avatar upload (Appendix J.4).
+	// for an @avatar upload (§4.6.6).
 	messageID string
 	avatarFor *userState
 	baseURL   string
@@ -74,7 +74,7 @@ func (e *embedState) streamURL() string {
 	return e.baseURL + streamPath + e.id + "/" + e.secret
 }
 
-// resolveEmbedsLocked applies embed identity (Appendix E) to a submitted
+// resolveEmbedsLocked applies embed identity (§4.6.2) to a submitted
 // body. An embed with embed_id keeps that embed of the current snapshot, with
 // its kind and server-owned fields restored from the server's records; one
 // without is new and gets an embed_id, and a new upload or stream embed gets
@@ -188,7 +188,7 @@ func (s *Server) newWriteLocked(c *client, id, kind, messageID string) *embedSta
 }
 
 // releaseEmbedsLocked deletes the hosted content of embeds a save removed
-// from the current snapshot (Appendix E); a nil body, as for a tombstone,
+// from the current snapshot (§4.6.2); a nil body, as for a tombstone,
 // removes every embed.
 func (s *Server) releaseEmbedsLocked(current map[string]any, body map[string]any) {
 	if current == nil {
@@ -228,7 +228,7 @@ func (s *Server) removeEmbedLocked(id string) {
 }
 
 // failWriteLocked finishes a write that never started or failed: the embed is
-// published out of its message (Appendix E).
+// published out of its message (§4.6.3).
 func (s *Server) failWriteLocked(e *embedState) {
 	if m := s.messages[e.messageID]; m != nil {
 		s.republishLocked(m, func(body map[string]any) bool {
@@ -262,7 +262,7 @@ func replaceEmbed(body map[string]any, id string, update func(map[string]any)) b
 	return false
 }
 
-// uploadAvatarLocked handles a message to room @avatar (Appendix J.4): one
+// uploadAvatarLocked handles a message to room @avatar (§4.6.6): one
 // upload embed whose file becomes the sender's avatar. The message is
 // neither delivered nor logged.
 func (s *Server) uploadAvatarLocked(c *client, req request, body map[string]any) (any, bool, *rpcError) {
@@ -411,7 +411,7 @@ func avatarType(contentType string) bool {
 }
 
 // describeUpload builds the og the server sets on a finished upload
-// (Appendix E): image for a preview, or video or audio to play. Other files
+// (§4.6.4): image for a preview, or video or audio to play. Other files
 // have none, so clients show a file card.
 func describeUpload(e *embedState, data []byte) map[string]any {
 	media := map[string]any{"url": e.fileURL(), "type": e.contentType}
@@ -490,7 +490,7 @@ func (s *Server) lookupEmbedLocked(path string) *embedState {
 }
 
 // writeStream copies the request body into a stream until it ends: the body
-// ends, a limit is reached, or the embed is removed (Appendix K).
+// ends, a limit is reached, or the embed is removed (§4.6.5).
 func (s *Server) writeStream(w http.ResponseWriter, r *http.Request, e *embedState) {
 	// The reply may come before the body ends, as when the stream is removed.
 	controller := http.NewResponseController(w)

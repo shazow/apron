@@ -22,7 +22,7 @@ export interface TimelineState {
 	order: readonly string[];
 	/**
 	 * Aggregated reactions per `message_id`, present only for messages that are
-	 * not tombstones and have at least one non-empty set (Appendix D.2).
+	 * not tombstones and have at least one non-empty set (§4.5).
 	 */
 	reactions: Readonly<Record<string, ReactionSummary[]>>;
 }
@@ -297,7 +297,7 @@ export interface DecodedRecords {
 }
 
 /**
- * Decode every record in a history result (Appendix A): room records, message
+ * Decode every record in a history result (§4.1): room records, message
  * snapshots, reaction sets, and embedded snapshots. Records are not filtered by
  * the requested room: a move snapshot carries its destination `room_id`.
  */

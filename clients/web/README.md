@@ -48,7 +48,7 @@ person's initials sit on a muted tint whose hue is hashed from their `user_id`,
 so the same person has the same color on every client. Senders whose `user_id`
 starts with `@` render as quiet system lines.
 
-Mentions follow the `@user_id` convention (Appendix J.3). Typing `@` in the
+Mentions follow the `@user_id` convention ([PROTOCOL.md Appendix A.3](../../PROTOCOL.md#a3-mention-text)). Typing `@` in the
 composer opens the mention picker over the room's recent senders and its
 `room_list` members, filtered by name or ID: arrows move, Tab or Enter picks,
 Escape dismisses. A picked person becomes a chip showing their name, and a
@@ -100,7 +100,7 @@ palette, and reactions show as chips under the message: emoji and count,
 highlighted when one is yours, with a tooltip naming who reacted. Clicking a
 chip toggles your reaction. Tombstones show no reactions.
 
-Embeds render by kind, in the design system's components (Appendix E):
+Embeds render by kind, in the design system's components ([PROTOCOL.md §4.6](../../PROTOCOL.md#46-embeds-and-avatars)):
 
 - **Uploads** (cap `embed:upload`): the composer's paperclip and microphone send
   files and voice clips as `upload` embeds with whatever is in the field, then
@@ -130,7 +130,7 @@ are stored in local storage, and the last few backends are listed under the
 form. The profile bar at the foot of the sidebar edits your handle, which is
 sent with the protocol `me` request after authentication; the editor shows
 what the server actually kept. With `embed:upload` it also sets your avatar:
-the image is uploaded as a message to room `@avatar` (Appendix J.4), and the
+the image is uploaded as a message to room `@avatar` ([PROTOCOL.md §4.6.6](../../PROTOCOL.md#466-avatars)), and the
 server applies it with a `user` notification; **Remove** sends `me` with
 `avatar: ""`.
 
@@ -158,7 +158,7 @@ automatically replace them with a guest identity. Signing out clears the stored
 credentials and reconnects as a guest. The Go example's sessions are in memory
 and are lost on backend restart.
 
-The WebAuthn exchange follows [Appendix I of the protocol](../../PROTOCOL.md#appendix-i--webauthn-authentication-optional):
+The WebAuthn exchange follows [§4.9 of the protocol](../../PROTOCOL.md#49-webauthn-authentication):
 both registration and login use `action` plus `step: "begin"` or
 `step: "finish"`, with the server's `challenge_id` and `public_key` and the
 browser's standard JSON credential representation. The implementation details

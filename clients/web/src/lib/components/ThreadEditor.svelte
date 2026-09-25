@@ -19,7 +19,7 @@
 	let error = $state<string | undefined>();
 
 	/**
-	 * Saves the title with `room` (Appendix C); the intro message and `ext`
+	 * Saves the title with `room` (§4.3.4); the intro message and `ext`
 	 * are resubmitted unchanged. The next `room` frame is the truth, since a
 	 * server may alter or decline.
 	 */

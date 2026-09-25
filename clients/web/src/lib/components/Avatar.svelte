@@ -4,7 +4,7 @@
 	import { avatarHue, initials } from '$lib/ui/messages';
 
 	/**
-	 * An image when the user object carries a usable avatar (Appendix E: `https:`,
+	 * An image when the user object carries a usable avatar (§4.6.6: `https:`,
 	 * small image data URLs, or files the chat server hosts), else initials on a
 	 * tint whose hue comes from the `user_id`, so people are told apart at a
 	 * glance. Without an ID the placeholder keeps the design system's denim.

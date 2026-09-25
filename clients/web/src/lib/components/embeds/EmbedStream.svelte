@@ -8,7 +8,7 @@
 	const RECONNECT_MS = 2000;
 
 	/**
-	 * Live text (cap `embed:stream`, Appendix K): while the embed carries `url`
+	 * Live text (cap `embed:stream`, §4.6.5): while the embed carries `url`
 	 * the text grows as `GET url` streams it, and a reconnect replaces what was
 	 * shown; once a snapshot carries `text` instead, it is finished. Streams
 	 * load only from the chat server's origin. `terminal` text is shown as a

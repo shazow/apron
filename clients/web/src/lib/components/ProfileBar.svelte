@@ -37,7 +37,7 @@
 	let avatarInput = $state<HTMLInputElement | undefined>();
 	let you = $derived(session.you);
 	let avatar = $derived(directory.avatar(you));
-	/** Avatars are uploaded to room `@avatar` (Appendix J.4), which needs cap `embed:upload`. */
+	/** Avatars are uploaded to room `@avatar` (§4.6.6), which needs cap `embed:upload`. */
 	let canUploadAvatar = $derived(session.snapshot.capabilities['embed:upload']);
 	let snapshot = $derived(session.snapshot);
 	let connected = $derived(snapshot.status === 'connected');

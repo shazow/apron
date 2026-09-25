@@ -2,7 +2,7 @@ import type { MentionPerson } from '$lib/protocol/markdown';
 
 /**
  * A composer draft: text and mention chips. A chip shows a person's name but
- * is sent as `@user_id` (Appendix J.3), so the wire text is what a reader's
+ * is sent as `@user_id` (Appendix A.3), so the wire text is what a reader's
  * client resolves, whatever the person is called by then.
  */
 export type DraftPart = string | { id: string };

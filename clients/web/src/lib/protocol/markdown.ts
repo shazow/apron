@@ -5,7 +5,7 @@ const parser = new Parser();
 const renderer = new HtmlRenderer({ safe: true, softbreak: '<br />' });
 
 /**
- * What an `@id` mention names (Appendix J.3): a known user, rendered with
+ * What an `@id` mention names (Appendix A.3): a known user, rendered with
  * their latest name, or a room, rendered as a link to it. Unknown IDs render
  * as written.
  */
@@ -26,7 +26,7 @@ export interface MentionPerson {
 }
 
 /**
- * `@` then an optional second `@` (system identities, J.1) and a run of
+ * `@` then an optional second `@` (system identities, Appendix A.1) and a run of
  * `[A-Za-z0-9_.-]`, not preceded by a letter or digit. Trailing `.` and `-`
  * are not part of the ID.
  */
@@ -42,7 +42,7 @@ export function renderPlain(source: string, resolve?: MentionResolver): string {
 	return chipText(escapeHtml(source), resolve);
 }
 
-/** Every ID a body mentions (J.3), outside Markdown code spans and blocks. */
+/** Every ID a body mentions (Appendix A.3), outside Markdown code spans and blocks. */
 export function mentionedIds(source: string, markdown: boolean): string[] {
 	const ids: string[] = [];
 	const collect: MentionResolver = (id) => {

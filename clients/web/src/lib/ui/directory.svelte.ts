@@ -6,7 +6,7 @@ import type { Identity } from '$lib/protocol/types';
 /**
  * Who and where names refer to on the active backend: the latest user object
  * per `user_id` (§3.3), followed through renames, room titles for `@room_id`
- * mentions (Appendix J.3), and the chat server's origin, the only one embed
+ * mentions (Appendix A.3), and the chat server's origin, the only one embed
  * media and streams load from. Every message renders its sender from here,
  * so a rename or a new avatar shows on old messages too.
  */
@@ -54,7 +54,7 @@ class Directory {
 		return this.you !== undefined && userIn(this.users, { user_id: userId }).user_id === this.you.user_id;
 	}
 
-	/** Resolves `@id` (J.3): a known user wins over a room with the same ID; unknown IDs stay text. */
+	/** Resolves `@id` (Appendix A.3): a known user wins over a room with the same ID; unknown IDs stay text. */
 	readonly resolve: MentionResolver = (id) => {
 		const known = this.users.users[id] ?? (this.users.userAliases[id] !== undefined ? this.person({ user_id: id }) : undefined);
 		if (known) return { kind: 'user', id, name: known.name || known.user_id, me: this.isMe(id) };

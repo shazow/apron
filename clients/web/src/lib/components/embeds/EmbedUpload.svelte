@@ -5,7 +5,7 @@
 	import { directory } from '$lib/ui/directory.svelte';
 
 	/**
-	 * A file someone uploaded (cap `embed:upload`, Appendix E). Pending while
+	 * A file someone uploaded (cap `embed:upload`, §4.6.4). Pending while
 	 * `url` is absent — with progress on the sender's side — then drawn from
 	 * `og`: a video player, an audio player, an image, or else a file card.
 	 */

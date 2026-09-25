@@ -32,7 +32,7 @@ export interface MessageBody extends JsonObject {
 	embeds?: Embed[];
 }
 
-/** OpenGraph description of an embed (Appendix E): `og:` prefix dropped, structured properties nested. */
+/** OpenGraph description of an embed (§4.6.1): `og:` prefix dropped, structured properties nested. */
 export interface OpenGraph extends JsonObject {
 	title?: string;
 	description?: string;
@@ -51,7 +51,7 @@ export interface OpenGraphMedia extends JsonObject {
 }
 
 /**
- * One entry of `body.embeds` (Appendix E). `kind` picks the renderer:
+ * One entry of `body.embeds` (§4.6). `kind` picks the renderer:
  * `upload` (a file the server hosts; pending while `url` is absent), `stream`
  * (live text at `url`, finished with `text`), `iframe`, `html`, and any other
  * kind from `og` or as a fallback card.
@@ -104,7 +104,7 @@ export interface RoomRecord extends JsonObject {
 	ext?: JsonObject;
 }
 
-/** One user's complete emoji set on one message at one `log_id` (Appendix D.2). */
+/** One user's complete emoji set on one message at one `log_id` (§4.5). */
 export interface ReactionSet {
 	log_id: string;
 	message_id: string;
@@ -268,7 +268,7 @@ export function decodeRoom(value: unknown): { record: RoomRecord; embedded: Mess
 	return { record, embedded, delivery };
 }
 
-/** Decode a `reactions` record into one reaction set per element (Appendix D.2). */
+/** Decode a `reactions` record into one reaction set per element (§4.5). */
 export function decodeReactions(value: unknown): ReactionSet[] {
 	if (!isJsonObject(value) || !isLogId(value.log_id) || !isLogId(value.message_id) || !Array.isArray(value.reactions)) return [];
 	const sets: ReactionSet[] = [];

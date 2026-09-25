@@ -1,5 +1,5 @@
 /**
- * Terminal output for `terminal` stream embeds (Appendix K): what a program
+ * Terminal output for `terminal` stream embeds (§4.6.5): what a program
  * printed as it would look on screen. Carriage returns and backspaces move the
  * cursor so progress lines overwrite themselves, erase-in-line clears, SGR
  * sets colors and emphasis, and every other escape sequence is dropped rather

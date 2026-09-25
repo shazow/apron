@@ -40,7 +40,7 @@ describe('transport reconnects', () => {
 		expect(snapshot.authenticated).toBe(false);
 		expect(snapshot.disconnectedAt).toBe(dropped);
 		// Rooms and identity are rebuilt from the next connection's announcements
-		// (PROTOCOL.md §3.4); the UI holds its own copy meanwhile.
+		// (PROTOCOL.md §4.3.1); the UI holds its own copy meanwhile.
 		expect(snapshot.rooms).toEqual([]);
 		expect(snapshot.you).toBeUndefined();
 		expect(snapshot.server).toBeUndefined();
