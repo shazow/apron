@@ -1565,9 +1565,9 @@ happens to it:
 {"id": "c31", "error": {"code": -32001, "message": "Only the session owner can approve"}}
 
 // -> list the available commands
-{"method": "command", "id": "c33", "params": {"room_id": "general", "body": {"text": "/help"}}}
+{"method": "command", "id": "c32", "params": {"room_id": "general", "body": {"text": "/help"}}}
 // <-
-{"id": "c33", "result": {}}
+{"id": "c32", "result": {}}
 // <- to the sender only
 {
   "method": "message", "params": {
@@ -1582,13 +1582,13 @@ happens to it:
 
 // -> set an avatar from an upload (J.4)
 {
-  "method": "command", "id": "c32", "params": {
+  "method": "command", "id": "c33", "params": {
     "body": {"text": "/avatar", "embeds": [{"kind": "upload", "title": "me.png"}]}
   }
 }
 // <-
 {
-  "id": "c32", "result": {
+  "id": "c33", "result": {
     "embeds": [{"embed_id": "embed_1300", "kind": "upload", "write_url": "https://chat.example/w/9c1e…"}]
   }
 }
