@@ -349,10 +349,18 @@ Identity is server-authoritative: every message carries its author in `from`.
 optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
 `users`, RTC members) uses this shape, and servers MAY send only `user_id`.
 Clients keep one user object per `user_id` and merge into it every one they
-receive, whichever frame carried it: a present field replaces the kept value,
-an empty value (`""`, `{}`) removes it, and a missing field leaves it
-unchanged, so an object with only `user_id` changes nothing. Clients render
-every message with the kept object.
+receive, whichever frame carried it, except an older `from` (below): a present
+field replaces the kept value, an empty value (`""`, `{}`) removes it, and a
+missing field leaves it unchanged, so an object with only `user_id` changes
+nothing. Clients render every message with the kept object.
+
+A message's `from` describes its author as of the message's `message_id`,
+and later snapshots of the message MAY keep it unchanged. Clients remember
+the position of each kept object: a merged `from` sets it to its message's
+`message_id`, and any other user object (`you`, `user`, `members`, `users`)
+to the greatest `log_id` the client has received. Clients merge a `from` only
+when its `message_id` is greater, so an edited, moved, or quoted old message
+does not bring back an old name.
 
 Clients SHOULD show a user as `Name (@user_id)` where space allows, and
 MUST when another user in the same room shares the name, so no one can pass
@@ -364,10 +372,10 @@ without looking its author up.
 A result MAY carry `users`, complete user objects, each user once, for the
 identities elsewhere in it, such as a history page's authors. Clients merge
 them like any other user object, after the rest of the result, so `users`
-wins over an older `from` in the same result. Clients that ignore them lose
-only what `from` leaves out, such as avatars. A `from` in history may carry
-the name from posting time; servers that send those SHOULD send the users'
-current objects in `users`.
+wins over every `from` in the same result. Clients that ignore them lose what
+`from` leaves out, such as avatars, and names changed since the newest
+message they have. Servers whose `from` keeps the name from posting time
+SHOULD send the users' current objects in `users` with history pages.
 
 A `me` request updates the user's own profile after authentication, by the
 same rule: fields given replace their current values, fields omitted stay
@@ -607,8 +615,8 @@ A minimal client (informative):
    knows its record ([§3.4](#34-rooms)).
 3. Keeps each message's snapshot with the greatest `log_id`, from any
    source, and renders tombstones ([§2](#2-identifiers), [§3.5](#35-messages)).
-4. Merges user objects per `user_id`, and shows `Name (@user_id)` when two
-   users in a room share a name ([§3.3](#33-identity)).
+4. Merges user objects per `user_id`, skipping a `from` older than the kept
+   object, and shows `Name (@user_id)` when two users in a room share a name ([§3.3](#33-identity)).
 5. Renders `plain` and `markdown` text with raw HTML disabled, and a
    fallback card for embed kinds it does not support ([§3.5](#35-messages)).
 6. Matches replies by `id`, acts on error codes, and ignores unknown
@@ -656,7 +664,7 @@ Six frame idioms cover everything logged or announced:
 - **Room updates** (`room_update`): unlogged changes to the user's rooms,
   never a full list ([§4.3.3](#433-updates)).
 - **Users** (`user`, and every user object): unlogged; each merges into the
-  kept object ([§3.3](#33-identity)).
+  kept object, except a `from` older than it ([§3.3](#33-identity)).
 
 ### 4.1 `history`
 
