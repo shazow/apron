@@ -2,9 +2,9 @@
 
 `cmd/aprond` serves the reference Apron backend: it implements every
 capability of protocol v4 except multiplexing
-([Appendix B](../../PROTOCOL.md#appendix-b--multiplexing-envelope-informative))
+([Appendix B.2](../../PROTOCOL.md#b2-multiplexing-envelope))
 and WebRTC
-([Appendix C.1](../../PROTOCOL.md#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
+([Appendix B.1](../../PROTOCOL.md#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
 `PROTOCOL.md` now describes v5, which it does not implement yet. State is in memory; restarting the process clears
 messages, identities, uploads, passkeys, and sessions.
 
