@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "replay",
   "name": "Live, raw, paged, and compacted history converge",
   "description": "One room log mixing room records, message snapshots, and reaction sets reaches the same state live, as one raw page, as two pages delivered newest-first (limit 5 counts records of every kind), and as a compacted page with folded reaction sets.",
@@ -12,13 +12,13 @@
     {
       "name": "live",
       "steps": [
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":"100"}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":"100"}]}}},
         {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}},
         {"receive":{"method":"message","params":{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"second"}}}},
         {"receive":{"method":"reactions","params":{"log_id":"103","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]}}},
         {"receive":{"method":"message","params":{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}}},
         {"receive":{"method":"reactions","params":{"log_id":"105","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉","👍"]}]}}},
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"106","title":"General","ext":{"example.org":{"topic":"deploys"}},"latest_log_id":"106","history_log_id":"100"}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"106","title":"General","ext":{"example.org":{"topic":"deploys"}},"latest_log_id":"106","history_log_id":"100"}]}}},
         {"receive":{"method":"reactions","params":{"log_id":"107","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":[]}]}}},
         {"receive":{"method":"reactions","params":{"log_id":"108","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"alice"},"emojis":["👀"]}]}}}
       ]

@@ -55,6 +55,8 @@ body { margin: 0; font-family: var(--font-sans); font-size: 15px; line-height: 2
 .ap-msg-main { min-width: 0; }
 .ap-msg-head { display: flex; align-items: baseline; gap: var(--space-2); }
 .ap-msg-sender { font-weight: 600; }
+.ap-msg-handle { font-size: 13px; line-height: 18px; font-weight: 400; color: var(--ink-muted); overflow-wrap: anywhere; }
+.ap-msg-compact .ap-msg-handle { margin-right: var(--space-2); }
 .ap-msg-meta { display: inline-flex; gap: var(--space-2); font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 .ap-msg-text { overflow-wrap: anywhere; }
 .ap-msg-text p { margin: 0; }
@@ -141,6 +143,8 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 .ap-composer-field::placeholder { color: var(--ink-muted); }
 .ap-composer-field:focus-visible { outline: 0; }
 .ap-composer-disabled { opacity: .6; }
+.ap-composer-cmdtag { flex: none; align-self: flex-end; display: inline-flex; align-items: center; height: 28px; box-sizing: border-box; padding: 0 var(--space-2); border-radius: var(--radius-full); background: var(--bg-300); color: var(--ink-muted); font-size: 13px; line-height: 18px; font-weight: 500; }
+.ap-composer-cmd .ap-composer-field { font-family: var(--font-mono); font-size: 13px; }
 
 /* RoomItem */
 .ap-room { font: inherit; display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: 7px var(--space-3); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink-muted); text-align: left; cursor: pointer; }
@@ -354,6 +358,7 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 .ap-msg-system-who { font-weight: 600; color: var(--ink-muted); }
 .ap-msg-system-body .ap-msg-text { color: var(--ink); }
 .ap-msg-system-time { font-size: 11px; font-variant-numeric: tabular-nums; }
+.ap-msg-private { border: 1px dashed var(--line-strong); border-radius: var(--radius-md); }
 
 /* Embeds v4 — upload (pending / image / video / audio / file), stream, og card */
 .ap-embed-figure { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }

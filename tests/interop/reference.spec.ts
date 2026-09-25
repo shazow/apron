@@ -1,6 +1,6 @@
 import { deflateSync } from 'node:zlib';
 import { expect, test, type Page } from '@playwright/test';
-import { composer, messageAction, openChat, sendMessage, setDisplayName, startThread, userIdOf, waitForMessage } from './test-helpers';
+import { composer, messageAction, messageByText, openChat, openThread, sendMessage, setDisplayName, startThread, userIdOf, waitForMessage } from './test-helpers';
 
 /** The dev server proxies the Go server, so URLs the server mints use this host and load same-origin. */
 const PROXIED_WS = 'ws://127.0.0.1:5173/ws';
@@ -190,34 +190,77 @@ test.describe('reference features against the Go server', () => {
 		}
 	});
 
+	test('runs commands from the composer, with their replies and errors shown only to you', async ({ page }) => {
+		await openChat(page);
+		const field = composer(page);
+		const run = page.getByRole('button', { name: 'Run command', exact: true });
+		await field.fill('/help');
+		await expect(page.getByTestId('command-tag')).toHaveText('Command');
+		await run.click();
+		await expect(field).toHaveText('');
+		// The server's reply is a @private notice: never stored, marked as yours alone.
+		const help = page.getByTestId('notice').filter({ hasText: '/avatar' }).last();
+		await expect(help).toBeVisible();
+		await expect(help).toHaveClass(/ap-msg-private/);
+		await expect(help).toContainText('Only you');
+		await expect(help).not.toHaveAttribute('data-message-id');
+
+		// A failed command shows its error the same way and gives the draft back.
+		await field.fill('/frobnicate now');
+		await run.click();
+		await expect(page.getByTestId('notice').filter({ hasText: 'Unknown command' }).last()).toBeVisible();
+		await expect(field).toHaveText('/frobnicate now');
+
+		// `//` posts a message that starts with one slash.
+		const token = `slash-${Date.now().toString(36)}`;
+		await field.fill(`//${token} is a path`);
+		await expect(page.getByTestId('command-tag')).toHaveCount(0);
+		await page.getByRole('button', { name: 'Send message', exact: true }).click();
+		const posted = await waitForMessage(page, `/${token} is a path`);
+		await expect(posted).not.toContainText(`//${token}`);
+
+		// `/nick` is the client's own: a `me` request. The header then shows Name (@user_id).
+		const handle = `nick-${Date.now().toString(36)}`;
+		await field.fill(`/nick ${handle}`);
+		await run.click();
+		await expect(page.getByRole('button', { name: new RegExp(`^Your profile on .*: ${handle}\\.`) })).toBeVisible();
+		const id = await userIdOf(page);
+		// The earlier message renders with the latest name; notices above it began its group.
+		await expect(posted.locator('.ap-msg-sender')).toHaveText(handle);
+		await expect(posted.getByTestId('sender-handle')).toHaveText(`@${id}`);
+		await expect(messageByText(page, `/${token} is a path`)).toBeVisible();
+	});
+
 	test('leaves and rejoins rooms and threads from room_list', async ({ page }) => {
 		await openChat(page);
 		const token = `rooms-${Date.now().toString(36)}`;
 		await sendMessage(page, `${token} root`);
 		const threadId = await startThread(page, await waitForMessage(page, `${token} root`));
 		page.on('dialog', (dialog) => dialog.accept());
-		// Nothing left to join yet: no Browse rooms, and no More threads… under General.
-		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
-		await expect(page.getByTestId('more-threads')).toHaveCount(0);
-		await expect(page.getByTestId('browse-rooms')).toHaveCount(0);
-		await page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
+		const row = page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
+		const card = page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
 
-		// Leaving a thread removes it; More threads… lists it again to join.
+		// Leaving a thread removes its row; its card stays in the room, and More threads… lists it to join.
 		await page.getByTestId('leave-room').click();
-		await expect(page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`)).toHaveCount(0);
+		await expect(row).toHaveCount(0);
+		await expect(card).toBeVisible();
 		await page.getByTestId('more-threads').click();
 		await page.locator(`[data-join="${threadId}"]`).click();
 		await expect(page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"][aria-current="page"]`)).toHaveCount(1);
 		await page.getByRole('button', { name: 'Back to room', exact: true }).click();
 
-		// Leaving General leaves every room; Browse rooms joins it again.
+		// Threads are rooms of their own: leaving General keeps the thread, listed on its own.
 		await page.getByTestId('leave-room').click();
-		await expect(page.getByTestId('room-list')).toContainText('No rooms yet.');
+		await expect(page.getByTestId('room-list').locator(`button[data-room="general"]`)).toHaveCount(0);
+		await expect(page.getByTestId('room-list').locator(`button[data-room="${threadId}"]`)).toBeVisible();
 		await page.getByTestId('browse-rooms').click();
+		await expect(page.getByTestId('room-directory')).toContainText('Most active rooms');
 		await page.getByTestId('room-directory').locator('[data-join="general"]').click();
 		await expect(page.getByRole('main', { name: 'Conversation' }).getByRole('heading', { name: 'General', exact: true })).toBeVisible();
-		// Joining General joins its threads again: the root shows as its thread's card.
-		await expect(page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`)).toBeVisible();
+		// The thread is still joined: its row is back under General, beside its card.
+		await expect(card).toBeVisible();
+		await expect(row).toBeVisible();
+		await openThread(page, threadId);
 	});
 
 	test('marks where you stopped reading with a New divider and links room mentions', async ({ browser }) => {
@@ -233,7 +276,7 @@ test.describe('reference features against the Go server', () => {
 			const threadId = await startThread(pageA, await waitForMessage(pageA, `${token} seen`));
 
 			// The reader goes to the thread; what arrives in General meanwhile is new to them.
-			await pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`).click();
+			await openThread(pageB, threadId);
 			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
 			await sendMessage(pageA, `${token} unread in @general`);
 			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mentionedIds, renderMarkdown, renderPlain, type MentionResolver } from './markdown';
+import { renderMarkdown, renderPlain, type MentionResolver } from './markdown';
 
 const resolve: MentionResolver = (id) => {
 	if (id === 'alice') return { kind: 'user', id, name: 'Alice Chen' };
@@ -39,11 +39,6 @@ describe('mentions (Appendix A.3)', () => {
 		expect(renderPlain('<b>@alice</b>', resolve)).toBe('&lt;b&gt;<span class="ap-mention" data-user-id="alice" title="@alice">@Alice Chen</span>&lt;/b&gt;');
 		expect(renderMarkdown('@alice is here')).toBe('<p>@alice is here</p>\n');
 	});
-
-	it('lists mentioned IDs outside code', () => {
-		expect(mentionedIds('@alice, `@bob` and @carol.', true)).toEqual(['alice', 'carol']);
-		expect(mentionedIds('@alice, `@bob`', false)).toEqual(['alice', 'bob']);
-	});
 });
 
 describe('line breaks', () => {
@@ -60,6 +55,5 @@ describe('rendering the same source again', () => {
 		expect(renderMarkdown(source, resolve)).toContain('@Alice Chen');
 		expect(renderMarkdown(source, (id) => (id === 'alice' ? { kind: 'user', id, name: 'Alice Park' } : undefined))).toContain('@Alice Park');
 		expect(renderMarkdown(source)).toBe('<p>Handing <strong>this</strong> to @alice.</p>\n');
-		expect(mentionedIds(source, true)).toEqual(['alice']);
 	});
 });

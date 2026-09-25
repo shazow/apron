@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "replay",
   "name": "Creation snapshot",
   "description": "A flat, self-describing creation snapshot (log_id == message_id) installs a message in its room, whether it arrives live or in a history page.",

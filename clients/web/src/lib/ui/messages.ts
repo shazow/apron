@@ -1,4 +1,4 @@
-import { mentionedIds, type MentionPerson } from '$lib/protocol/markdown';
+import type { MentionPerson } from '$lib/protocol/markdown';
 import { compareLogIds } from '$lib/protocol/reducer';
 import { isJsonObject, type Embed, type Identity, type MessageRecord } from '$lib/protocol/types';
 import { directory } from './directory.svelte';
@@ -61,10 +61,19 @@ export function isOwn(event: MessageRecord, me: Identity | undefined): boolean {
 	return Boolean(me && event.from?.user_id === me.user_id);
 }
 
-/** A message mentions you when its text names your `user_id` (§3.5), outside code. Your own messages never ping you. */
+/** The `user_id`s a message mentions: `body.mentions` (§3.5), whatever its text shows. */
+export function mentionsOf(event: MessageRecord): string[] {
+	const mentions = event.body?.mentions;
+	return Array.isArray(mentions) ? mentions.filter((id): id is string => typeof id === 'string') : [];
+}
+
+/**
+ * A message mentions you when `body.mentions` lists your `user_id` (§3.5),
+ * never because its text happens to name you. Your own messages never ping you.
+ */
 export function mentionsMe(event: MessageRecord, me: Identity | undefined): boolean {
 	if (!me || isOwn(event, me) || event.deleted) return false;
-	return mentionedIds(textOf(event), event.body?.format === 'markdown').some((id) => directory.isMe(id) || id === me.user_id);
+	return mentionsOf(event).some((id) => id === me.user_id || directory.isMe(id));
 }
 
 /**

@@ -12,6 +12,14 @@ export function draftText(parts: DraftPart[]): string {
 	return parts.map((part) => (typeof part === 'string' ? part : `@${part.id}`)).join('');
 }
 
+/**
+ * The users a draft mentions (§3.5): one `user_id` per chip, in order. A
+ * chip deleted from the text takes its mention with it.
+ */
+export function draftMentions(parts: DraftPart[]): string[] {
+	return [...new Set(parts.filter((part): part is { id: string } => typeof part !== 'string').map((part) => part.id))];
+}
+
 /** Merges adjacent text and drops empty text, so equal drafts compare equal. */
 export function normalizeDraft(parts: DraftPart[]): DraftPart[] {
 	const out: DraftPart[] = [];

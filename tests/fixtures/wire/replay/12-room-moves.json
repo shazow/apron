@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "replay",
   "name": "Moves re-home messages between a room and its thread",
   "description": "A save with a different room_id moves the message into thread room 110 (a room with parent_room_id). The move snapshot is in both rooms' history; the message is re-homed, never deleted, and older source-room snapshots and reaction records cannot pull it back. Reactions follow the message.",
@@ -14,12 +14,12 @@
     {
       "name": "live",
       "steps": [
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":"100"}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"100","history_log_id":"100"}]}}},
         {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}}},
         {"receive":{"method":"message","params":{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}}}},
         {"receive":{"method":"reactions","params":{"log_id":"103","message_id":"102","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}}},
         {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]}]}]}},
-        {"receive":{"method":"room","params":{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},"latest_log_id":"110","history_log_id":"110"}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},"latest_log_id":"110","history_log_id":"110"}]}}},
         {"receive":{"method":"message","params":{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"}}}},
         {"expect":{"rooms":[{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Deploy","intro_message":{"message_id":"101"},"messages":[{"message_id":"102","log_id":"111","room_id":"110","from":{"user_id":"bob"},"body":{"text":"on it"},"reply_to":{"message_id":"101"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]}]},{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}]}]}},
         {"receive":{"method":"reactions","params":{"log_id":"112","message_id":"102","room_id":"110","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}}},

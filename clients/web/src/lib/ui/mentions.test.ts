@@ -6,13 +6,17 @@ import { MentionTracker } from './mentions.svelte';
 
 const me = { user_id: 'guest_me', name: 'sam' };
 
-const mention = (id: number, roomId: string): MessageRecord => ({
-	message_id: String(id), log_id: String(id), room_id: roomId, from: { user_id: 'ada' }, body: { text: `@guest_me look ${id}` }
+const mention = (id: number, roomId: string, log = id): MessageRecord => ({
+	message_id: String(id), log_id: String(log), room_id: roomId, from: { user_id: 'ada' }, body: { text: `@guest_me look ${id}`, mentions: ['guest_me'] }
+});
+
+const plain = (id: number, roomId: string, text: string, log = id): MessageRecord => ({
+	message_id: String(id), log_id: String(log), room_id: roomId, from: { user_id: 'ada' }, body: { text }
 });
 
 function room(id: string, messages: MessageRecord[], fields: Partial<RoomSnapshot> = {}): RoomSnapshot {
 	const timeline = { ...createTimeline(id), events: Object.fromEntries(messages.map((event) => [event.message_id, event])), order: messages.map((event) => event.message_id) };
-	return { id, title: id, timeline, recovering: false, loaded: true, loading: false, ...fields };
+	return { id, title: id, timeline, recovering: false, loaded: true, loading: false, notices: [], ...fields };
 }
 
 describe('mention tracking', () => {
@@ -43,6 +47,25 @@ describe('mention tracking', () => {
 		// Opening the thread clears its badge; the parent keeps its own until it is opened.
 		tracker.clearRoom('t1');
 		expect(tracker.byRoom).toEqual({ general: 1 });
+		tracker.dispose();
+	});
+
+	it('goes by body.mentions alone, and pings an edit that adds you', () => {
+		const tracker = new MentionTracker();
+		tracker.observe([room('general', [], { latestLogId: '10' })], me, 'elsewhere', true);
+		// Text that names you is not a mention; a listed mention need not be in the text.
+		const quiet = plain(20, 'general', 'thanks @guest_me');
+		const listed: MessageRecord = { ...plain(21, 'general', 'thanks everyone'), body: { text: 'thanks everyone', mentions: ['guest_me'] } };
+		tracker.observe([room('general', [quiet, listed])], me, 'elsewhere', true);
+		expect(tracker.pinged).toEqual(['21']);
+		expect(tracker.byRoom).toEqual({ general: 1 });
+		// An edit that adds you pings once; editing again does not.
+		const edited: MessageRecord = { ...mention(20, 'general', 30) };
+		tracker.observe([room('general', [edited, listed])], me, 'elsewhere', true);
+		expect(tracker.pinged).toEqual(['21', '20']);
+		tracker.observe([room('general', [mention(20, 'general', 31), listed])], me, 'elsewhere', true);
+		expect(tracker.arrived).toBe(2);
+		expect(tracker.byRoom).toEqual({ general: 2 });
 		tracker.dispose();
 	});
 });

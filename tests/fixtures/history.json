@@ -1,7 +1,7 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "history",
-  "description": "Protocol v4 room and history availability boundaries, including a room whose history was discarded (null history_log_id). Records are flat snapshots; history results carry rooms, entries, and reactions arrays.",
+  "description": "Protocol v5 room and history availability boundaries, including a room whose history was discarded (null history_log_id). `room` is the room record as `room_list` lists it, delivery fields included. Records are flat snapshots; history results carry rooms, entries, and reactions arrays.",
   "references": [
     "PROTOCOL.md#34-rooms",
     "PROTOCOL.md#41-history",
@@ -11,14 +11,11 @@
     {
       "name": "discarded-history",
       "room": {
-        "method": "room",
-        "params": {
-          "room_id": "general",
-          "log_id": "1790000000000",
-          "title": "General",
-          "latest_log_id": "1790000000500",
-          "history_log_id": null
-        }
+        "room_id": "general",
+        "log_id": "1790000000000",
+        "title": "General",
+        "latest_log_id": "1790000000500",
+        "history_log_id": null
       },
       "history": {
         "id": "h0",
@@ -39,14 +36,11 @@
     {
       "name": "empty-page-retains-room-boundary",
       "room": {
-        "method": "room",
-        "params": {
-          "room_id": "general",
-          "log_id": "1789913600001",
-          "title": "General",
-          "latest_log_id": "1790000001000",
-          "history_log_id": "1789913600001"
-        }
+        "room_id": "general",
+        "log_id": "1789913600001",
+        "title": "General",
+        "latest_log_id": "1790000001000",
+        "history_log_id": "1789913600001"
       },
       "history": {
         "id": "h1",
@@ -69,13 +63,10 @@
     {
       "name": "floor-advances-with-old-message-id-retained",
       "room": {
-        "method": "room",
-        "params": {
-          "room_id": "general",
-          "log_id": "600",
-          "latest_log_id": "900",
-          "history_log_id": "850"
-        }
+        "room_id": "general",
+        "log_id": "600",
+        "latest_log_id": "900",
+        "history_log_id": "850"
       },
       "entries": [
         {

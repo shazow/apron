@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "replay",
   "name": "Arrays are replaced in full",
   "description": "Arrays in a snapshot replace the previous array; elements are never merged by index.",

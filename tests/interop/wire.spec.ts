@@ -5,20 +5,24 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { ChatClient, type RoomSnapshot } from '../../clients/web/src/lib/protocol/client';
+import { ChatClient, DEFAULT_ROOM_ID, type RoomSnapshot } from '../../clients/web/src/lib/protocol/client';
 
 type ObjectValue = Record<string, unknown>;
 type Step =
 	| { receive: ObjectValue }
 	| { request: { as: string; match: ObjectValue } }
 	| { reply: { to: string; result?: ObjectValue; error?: ObjectValue } }
-	| { send: { as: string; room: string; text: string; format: 'plain' | 'markdown'; reply_to?: string } }
+	| { send: { as: string; room?: string; text: string; format: 'plain' | 'markdown'; reply_to?: string; mentions?: string[] } }
+	| { command: { as: string; room?: string; text: string; mentions?: string[] } }
 	| { editMessage: { as: string; message_id: string; text: string } }
 	| { moveMessage: { as: string; message_id: string; room: string } }
 	| { deleteMessage: { as: string; message_id: string } }
 	| { react: { as: string; message_id: string; emojis: string[] } }
 	| { createRoom: { as: string; parent_room_id?: string; title?: string; intro_message_id?: string } }
 	| { updateRoom: { as: string; room: string; title?: string | null; intro_message_id?: string | null } }
+	| { joinRoom: { as: string; room: string } }
+	| { leaveRoom: { as: string; room: string } }
+	| { listRooms: { as: string; parent_room_id?: string } }
 	| { loadRoom: { as: string; room: string } }
 	| { loadOlder: { as: string; room: string } }
 	| { disconnect: true }
@@ -31,8 +35,8 @@ interface Fixture {
 	expected: ObjectValue;
 }
 
-const MUTATIONS = new Set(['message', 'room', 'reactions']);
-const OPERATIONS = ['send', 'editMessage', 'moveMessage', 'deleteMessage', 'react', 'createRoom', 'updateRoom', 'loadRoom', 'loadOlder'];
+const MUTATIONS = new Set(['message', 'command', 'room_set', 'room_join', 'room_leave', 'reactions']);
+const OPERATIONS = ['send', 'command', 'editMessage', 'moveMessage', 'deleteMessage', 'react', 'createRoom', 'updateRoom', 'joinRoom', 'leaveRoom', 'listRooms', 'loadRoom', 'loadOlder'];
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(directory, '../..');
@@ -110,13 +114,20 @@ function projectRoom(room: RoomSnapshot): ObjectValue {
 
 function logicalState(client: ChatClient, operations: Record<string, string>): ObjectValue {
 	const snapshot = client.snapshot();
+	// The default room before its `room_id` is known is the client's own placeholder, not a room.
+	const rooms = snapshot.rooms.filter((room) => room.id !== DEFAULT_ROOM_ID);
 	return JSON.parse(JSON.stringify({
 		you: snapshot.you ?? null,
 		caps: [...(snapshot.server?.caps ?? [])].sort(byString),
-		rooms: [...snapshot.rooms].sort((left, right) => byString(left.id, right.id)).map(projectRoom),
+		rooms: [...rooms].sort((left, right) => byString(left.id, right.id)).map(projectRoom),
 		typing: snapshot.typing
 			.map((entry) => ({ room_id: entry.room, from: entry.from }))
 			.sort((left, right) => byString(left.room_id, right.room_id) || byString(left.from.user_id, right.from.user_id)),
+		users: Object.fromEntries(Object.keys(snapshot.users).sort(byString).map((id) => [id, snapshot.users[id]])),
+		notices: snapshot.rooms.flatMap((room) => room.notices)
+			.sort((left, right) => left.at - right.at || byString(left.key, right.key))
+			.map(({ room_id, from, body }) => ({ room_id, from, ...(body ? { body } : {}) })),
+		directory: (snapshot.directory ?? []).map((listing) => listing.id),
 		operations
 	}));
 }
@@ -151,7 +162,7 @@ for (const fixture of fixtures) {
 	for (const variant of fixture.variants) {
 		for (const envelope of ['minimal', 'jsonrpc'] as const) {
 			test(`${fixture.name} / ${variant.name} / ${envelope}`, async () => {
-				expect(fixture.format).toBe(2);
+				expect(fixture.format).toBe(3);
 				expect(fixture.kind).toBe('session');
 				const client = new ChatClient(peerUrl.replace('http:', 'ws:') + '/ws');
 				const requests = new Map<string, ObjectValue>();
@@ -198,8 +209,14 @@ for (const fixture of fixtures) {
 								const { to: _, ...result } = step.reply;
 								await control(`/connections/${connection}/send`, wire({ id: request!.id, ...result }));
 							} else if ('send' in step) {
-								const { as, room, text, format, reply_to } = step.send;
-								track(as, client.send(room, text, format, reply_to !== undefined ? { replyTo: reply_to } : {}).promise);
+								const { as, room, text, format, reply_to, mentions } = step.send;
+								track(as, client.send(room ?? DEFAULT_ROOM_ID, text, format, {
+									...(reply_to !== undefined ? { replyTo: reply_to } : {}),
+									...(mentions !== undefined ? { mentions } : {})
+								}).promise);
+							} else if ('command' in step) {
+								const { as, room, text, mentions } = step.command;
+								track(as, client.command(room ?? DEFAULT_ROOM_ID, text, mentions !== undefined ? { mentions } : {}).promise);
 							} else if ('editMessage' in step) {
 								const { as, message_id, text } = step.editMessage;
 								track(as, client.editMessage(message_id, text).promise);
@@ -225,6 +242,12 @@ for (const fixture of fixtures) {
 									...(Object.hasOwn(patch, 'title') ? { title: patch.title } : {}),
 									...(Object.hasOwn(patch, 'intro_message_id') ? { introMessageId: patch.intro_message_id } : {})
 								}).promise);
+							} else if ('joinRoom' in step) {
+								track(step.joinRoom.as, client.joinRoom(step.joinRoom.room).promise);
+							} else if ('leaveRoom' in step) {
+								track(step.leaveRoom.as, client.leaveRoom(step.leaveRoom.room).promise);
+							} else if ('listRooms' in step) {
+								track(step.listRooms.as, client.listRooms(step.listRooms.parent_room_id));
 							} else if ('loadRoom' in step) {
 								const { as, room } = step.loadRoom;
 								track(as, client.loadRoom(room));

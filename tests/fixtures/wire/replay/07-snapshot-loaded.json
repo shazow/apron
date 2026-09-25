@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "replay",
   "name": "A history snapshot replaces a loaded message",
   "description": "A newer snapshot from history replaces the message already loaded from live delivery.",

@@ -19,7 +19,7 @@
 		onconnect: () => void;
 		onroom: (room: RoomSnapshot) => void;
 		onthread: (thread: string) => void;
-		/** Join a visible room or thread from `room_list` (cap `rooms`); it opens once announced. */
+		/** Join a visible room or thread from `room_list` (cap `rooms`); it opens once its `room_update` arrives. */
 		onjoin: (roomId: string) => void;
 		onsignout: () => void;
 		/** Opens the connect screen to sign in with a passkey, carrying a handle typed in the profile. */
@@ -62,7 +62,7 @@
 		if (browseOpen) list();
 	}
 
-	/** Servers may announce only some threads; the rest come from `room_list` with the parent (§4.3.1). */
+	/** Threads not joined come from `room_list` with the parent and `not_joined` (§4.3.1). */
 	function showMoreThreads(parentRoomId: string): void {
 		moreThreadsFor = moreThreadsFor === parentRoomId ? undefined : parentRoomId;
 		if (moreThreadsFor) list(parentRoomId);
@@ -136,11 +136,14 @@
 				</div>
 				{#if browseOpen}
 					<div class="ap-sect-body" data-testid="room-directory">
+						<!-- Servers may list only the most active rooms (§4.3.1), so this never claims to be all of them. -->
+						<p class="muted">Most active rooms</p>
 						{#each unjoined as listing (listing.id)}
+							{@const members = listing.memberCount ?? listing.members.length}
 							<button class="ap-room" type="button" data-join={listing.id} onclick={() => onjoin(listing.id)}>
 								<span class="ap-room-text">
 									<span class="ap-room-name">{listing.title}</span>
-									<span class="ap-room-topic">{listing.members.length} {listing.members.length === 1 ? 'member' : 'members'} · Join</span>
+									<span class="ap-room-topic">{members} {members === 1 ? 'member' : 'members'} · Join</span>
 								</span>
 							</button>
 						{/each}

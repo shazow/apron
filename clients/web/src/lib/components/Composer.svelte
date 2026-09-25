@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { MentionPerson } from '$lib/protocol/markdown';
-	import { collapseMentions, draftText, insertMention, mentionQuery, normalizeDraft, type DraftPart } from '$lib/ui/draft';
+	import { collapseMentions, draftMentions, draftText, insertMention, mentionQuery, normalizeDraft, type DraftPart } from '$lib/ui/draft';
+	import { isCommand } from '$lib/ui/commands';
 	import { directory } from '$lib/ui/directory.svelte';
 	import { clockLabel } from '$lib/ui/time';
 	import MentionPicker from './MentionPicker.svelte';
@@ -11,10 +12,21 @@
 	interface Props {
 		/** The draft as sent: mentions are `@user_id` (Appendix A.3); the field shows them as name chips. */
 		value: string;
+		/**
+		 * The `user_id`s the draft mentions, for `body.mentions` (§3.5): one per
+		 * chip, picked or typed out in full, so a chip deleted from the text is
+		 * no longer mentioned.
+		 */
+		mentions?: string[];
 		placeholder: string;
 		disabled: boolean;
 		/** Attachments and voice clips (cap `embed:upload`, §4.6.4): each file goes out as an `upload` embed. */
 		canUpload: boolean;
+		/**
+		 * Cap `command` (§4.8): text starting with one `/` is a command, shown
+		 * with a Command tag in monospace and sent with Run.
+		 */
+		canCommand?: boolean;
 		/** Who an `@` can name: the room's members, else its recent senders. */
 		people: MentionPerson[];
 		/** "Dana: text" for the message being replied to, when there is one. */
@@ -27,7 +39,7 @@
 		/** The mention picker opened: a moment to refresh who can be named. */
 		onmention?: () => void;
 	}
-	let { value = $bindable(), placeholder, disabled, canUpload, people, replyPreview, oninput, onsend, onfiles, oncancelreply, onmention }: Props = $props();
+	let { value = $bindable(), mentions = $bindable([]), placeholder, disabled, canUpload, canCommand = false, people, replyPreview, oninput, onsend, onfiles, oncancelreply, onmention }: Props = $props();
 
 	let field = $state<HTMLDivElement | undefined>();
 	let attachInput = $state<HTMLInputElement | undefined>();
@@ -49,6 +61,7 @@
 	let pickerOpen = $derived(query !== undefined && !disabled);
 	let activeIndex = $derived(Math.min(active, Math.max(0, matches.length - 1)));
 	let empty = $state(true);
+	let command = $derived(canCommand && isCommand(value));
 
 	/** People whose name or ID starts with the query; someone it names exactly comes first. */
 	function matching(text: string): MentionPerson[] {
@@ -194,6 +207,8 @@
 		const text = draftText(parts);
 		shown = { field: root, text };
 		empty = parts.length === 0;
+		const mentioned = draftMentions(parts);
+		if (mentioned.join('\u0000') !== mentions.join('\u0000')) mentions = mentioned;
 		if (empty && root.childNodes.length > 0) root.replaceChildren();
 		if (value !== text) value = text;
 		if (typed) oninput();
@@ -344,7 +359,7 @@
 	{#if pickerOpen}
 		<MentionPicker people={matches} query={query ?? ''} active={activeIndex} onpick={pick} onhover={(index) => (active = index)} />
 	{/if}
-	<form class="ap-composer" class:ap-composer-disabled={disabled} aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); send(); }}>
+	<form class="ap-composer" class:ap-composer-disabled={disabled} class:ap-composer-cmd={command} aria-label="Send a message" onsubmit={(event) => { event.preventDefault(); send(); }}>
 		{#if canUpload}
 			<span class="ap-composer-tools">
 				<button class="ap-iconbtn" type="button" aria-label="Attach a file" title="Attach a file" disabled={disabled || recording} onclick={() => attachInput?.click()}>
@@ -365,6 +380,7 @@
 		{#if recordSeconds !== undefined}
 			<span class="ap-composer-recording" role="status"><span class="ap-composer-recdot" aria-hidden="true"></span>Recording <span class="ap-composer-rectime">{clockLabel(recordSeconds)}</span></span>
 		{:else}
+			{#if command}<span class="ap-composer-cmdtag" data-testid="command-tag" title="Sent to the server, not posted">Command</span>{/if}
 			<div
 				class="ap-composer-field field"
 				class:field-empty={empty}
@@ -389,7 +405,7 @@
 				onblur={() => (query = undefined)}
 			></div>
 		{/if}
-		<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label="Send message" disabled={disabled || recording || !value.trim()}>Send</button>
+		<button class="ap-btn ap-btn-primary ap-btn-sm" data-testid="send-button" type="submit" aria-label={command ? 'Run command' : 'Send message'} disabled={disabled || recording || !value.trim()}>{command ? 'Run' : 'Send'}</button>
 	</form>
 </div>
 

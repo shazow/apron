@@ -63,18 +63,6 @@ export function renderPlain(source: string, resolve?: MentionResolver): string {
 	return chipText(escapeHtml(source), resolve);
 }
 
-/** Every ID a body mentions (Appendix A.3), outside Markdown code spans and blocks. */
-export function mentionedIds(source: string, markdown: boolean): string[] {
-	const ids: string[] = [];
-	const collect: MentionResolver = (id) => {
-		ids.push(id);
-		return undefined;
-	};
-	if (markdown) renderMarkdown(source, collect);
-	else renderPlain(source, collect);
-	return ids;
-}
-
 function escapeHtml(value: string): string {
 	return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

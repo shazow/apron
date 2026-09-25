@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collapseMentions, draftText, insertMention, mentionQuery } from './draft';
+import { collapseMentions, draftMentions, draftText, insertMention, mentionQuery } from './draft';
 
 const people = [
 	{ id: 'ada_1', name: 'Ada' },
@@ -71,5 +71,12 @@ describe('composer mentions', () => {
 		expect(insertMention(['hi @ad!'], 3, 6, 'ada_1')).toEqual({ parts: ['hi ', { id: 'ada_1' }, ' !'], caret: 10 });
 		expect(insertMention(['hi @ad there'], 3, 6, 'ada_1')).toEqual({ parts: ['hi ', { id: 'ada_1' }, ' there'], caret: 10 });
 		expect(insertMention([], 0, 0, 'bob')).toEqual({ parts: [{ id: 'bob' }, ' '], caret: 5 });
+	});
+});
+
+describe('draft mentions', () => {
+	it('lists each chip once, and drops one whose chip was deleted', () => {
+		expect(draftMentions(['hi ', { id: 'bob' }, ' and ', { id: 'carol' }, ' and ', { id: 'bob' }])).toEqual(['bob', 'carol']);
+		expect(draftMentions(['hi @bob, typed but not picked'])).toEqual([]);
 	});
 });

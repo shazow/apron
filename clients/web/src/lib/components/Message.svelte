@@ -76,6 +76,10 @@
 	let longPress: ReturnType<typeof setTimeout> | undefined;
 
 	let name = $derived(senderName(event));
+	/** Name (@user_id) (§3.3): the handle shows beside a display name that differs from it. */
+	let handle = $derived(directory.person(event.from)?.user_id ?? event.from.user_id);
+	/** Who else got a system message (Appendix A.1): everyone on the server, the room, or only you. */
+	let scope = $derived(event.from.user_id === '@server' ? 'server' : event.from.user_id === '@room' ? 'room' : event.from.user_id === '@private' ? 'private' : undefined);
 	let time = $derived(eventTime(event));
 	let fullTime = $derived(idDateTime(event.message_id));
 	let isoTime = $derived(idIso(event.message_id));
@@ -166,8 +170,8 @@
 {#if system && !selecting}
 	<!-- A system identity (Appendix A.1): a quiet centered line, no avatar, actions or grouping. -->
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
-	<article data-timeline-item class="ap-msg ap-msg-system" data-message-id={event.message_id} tabindex="-1" onclick={click}>
-		<span class="ap-msg-system-who">{name}</span>
+	<article data-timeline-item class="ap-msg ap-msg-system" class:ap-msg-private={scope === 'private'} data-message-id={event.message_id} data-scope={scope} tabindex="-1" onclick={click}>
+		<span class="ap-msg-system-who">{scope === 'private' ? event.from.name || 'Only you' : name}</span>
 		<div class="ap-msg-system-body">
 			{#if event.deleted}<span class="ap-msg-tomb">Message deleted</span>{:else}<div class="ap-msg-text" class:plain={event.body?.format !== 'markdown'}>{@html body}</div>{/if}
 		</div>
@@ -209,6 +213,7 @@
 		{#if !grouped}
 			<header class="ap-msg-head">
 				<span class="ap-msg-sender">{name}</span>
+				{#if handle && handle !== name}<span class="ap-msg-handle" data-testid="sender-handle">@{handle}</span>{/if}
 				<span class="ap-msg-meta">{#if time}<time datetime={isoTime} title={fullTime}>{time}</time>{/if}</span>
 			</header>
 		{/if}

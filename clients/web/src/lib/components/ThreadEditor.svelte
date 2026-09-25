@@ -19,9 +19,9 @@
 	let error = $state<string | undefined>();
 
 	/**
-	 * Saves the title with `room` (§4.3.4); the intro message and `ext`
-	 * are resubmitted unchanged. The next `room` frame is the truth, since a
-	 * server may alter or decline.
+	 * Saves the title with `room_set` (§4.3.4); the intro message and `ext`
+	 * are resubmitted unchanged. The `room_update` that follows is the truth,
+	 * since a server may alter or decline.
 	 */
 	async function save(event: SubmitEvent): Promise<void> {
 		event.preventDefault();

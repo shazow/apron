@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "kind": "session",
   "name": "Reactions",
   "description": "react sends the user's complete emoji set for one message and resolves on the empty result; broadcasts replace per (message_id, user_id). Reactions follow a move through the server's destination re-log, [] clears, an unknown message is invalid_params, and a tombstone hides reactions.",
@@ -12,11 +12,11 @@
     {
       "name": "session",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["edit","rooms","reactions"]}}},
+        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["edit","rooms","reactions"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
-        {"receive":{"method":"room","params":{"room_id":"general","log_id":"90","title":"General"}}},
-        {"receive":{"method":"room","params":{"room_id":"95","log_id":"95","parent_room_id":"general","title":"Side"}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General"},{"room_id":"95","log_id":"95","parent_room_id":"general","title":"Side"}]}}},
         {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"bob"},"body":{"text":"ship it?"}}}},
         {"react":{"as":"like","message_id":"101","emojis":["👍"]}},
         {"request":{"as":"like-request","match":{"method":"reactions","params":{"message_id":"101","emojis":["👍"]}}}},

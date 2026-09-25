@@ -9,11 +9,12 @@ const PING_MS = 1200;
 /**
  * Mentions of you as they arrive: the row pulses once, a room you aren't
  * reading gets an `@` badge (a thread's mentions badge both the thread and its
- * parent room), and
- * one that lands above the fold joins the jump bar's list. The first time a
- * room is seen its newest known log position becomes its watermark: messages
- * created at or below it are history (a thread's history loads only when it
- * is opened) and never ping; anything created after it is an arrival.
+ * parent room), and one that lands above the fold joins the jump bar's list.
+ * A message mentions you when its `body.mentions` lists you (§3.5); an edit
+ * that adds you counts as an arrival too. The first time a room is seen its
+ * newest known log position becomes its watermark: messages created at or
+ * below it are history (a thread's history loads only when it is opened) and
+ * never ping, nor do edits logged at or below it; anything after it arrives.
  */
 export class MentionTracker {
 	/** Message IDs pulsing because a mention of you just arrived. */
@@ -24,7 +25,8 @@ export class MentionTracker {
 	unseen = $state<string[]>([]);
 	/** How many mentions of you have arrived so far: it ticks up once per new one. */
 	arrived = $state(0);
-	private readonly shown = new Map<string, Set<string>>();
+	/** Per room, each message seen: the snapshot's `log_id` and whether it mentioned you. */
+	private readonly shown = new Map<string, Map<string, { log: string; mentioned: boolean }>>();
 	private readonly watermarks = new Map<string, string>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -38,7 +40,7 @@ export class MentionTracker {
 		for (const room of rooms) {
 			let shown = this.shown.get(room.id);
 			if (!shown) {
-				shown = new Set<string>();
+				shown = new Map();
 				this.shown.set(room.id, shown);
 				const newest = [room.latestLogId, room.timeline.order[room.timeline.order.length - 1]]
 					.filter((id): id is string => id !== undefined)
@@ -49,11 +51,13 @@ export class MentionTracker {
 			const watermark = this.watermarks.get(room.id);
 			const badge = room.parentRoomId !== undefined && visible.has(room.parentRoomId) ? room.parentRoomId : room.id;
 			for (const id of room.timeline.order) {
-				if (shown.has(id)) continue;
-				shown.add(id);
-				if (watermark !== undefined && compareLogIds(id, watermark) <= 0) continue;
 				const event = room.timeline.events[id];
-				if (!event || !mentionsMe(event, me)) continue;
+				const seen = shown.get(id);
+				if (!event || seen?.log === event.log_id) continue;
+				const mentioned = mentionsMe(event, me);
+				shown.set(id, { log: event.log_id, mentioned });
+				// A new message, or an edit that adds you, after the watermark.
+				if (!mentioned || seen?.mentioned || (watermark !== undefined && compareLogIds(event.log_id, watermark) <= 0)) continue;
 				this.ping(id);
 				this.arrived++;
 				if (room.id !== pane) {
@@ -61,7 +65,7 @@ export class MentionTracker {
 					if (badge !== room.id) next[room.id] = (next[room.id] ?? 0) + 1;
 					this.byRoom = next;
 				}
-				else if (!latestVisible) this.unseen = [...this.unseen, id];
+				else if (!latestVisible && !this.unseen.includes(id)) this.unseen = [...this.unseen, id];
 			}
 		}
 	}
