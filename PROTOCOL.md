@@ -302,10 +302,10 @@ Identity is server-authoritative: every message carries its author in `from`.
 `user_id` is required and stable. `name` is an optional display string;
 absent `name` falls back to `user_id`. `avatar` (Appendix E) and `ext` (§3.5)
 are optional. Every identity on the wire (`you`, `new`, `old`, `from`,
-`users`, RTC members) uses this shape, and servers MAY send only `user_id`. Clients keep
-one user object per `user_id` and merge into it every one they receive,
-whichever frame carried it: a present field replaces the kept value, an
-empty value (`""`, `{}`) removes it, and a missing field leaves it
+`users`, RTC members) uses this shape, and servers MAY send only `user_id`.
+Clients keep one user object per `user_id` and merge into it every one they
+receive, whichever frame carried it: a present field replaces the kept
+value, an empty value (`""`, `{}`) removes it, and a missing field leaves it
 unchanged, so an object with only `user_id` changes nothing. Clients render
 every message with the kept object. Whether history carries a user's name
 from posting time or their current one is server policy; the protocol
@@ -341,8 +341,9 @@ such as after a rename, a profile change, or an authentication change. It
 carries `you`, sent to the user's own connections, or `new` and `old`, sent
 to others who share a room with the user. `new` alone is the user's current
 object, `old` alone says the user no longer shares any room with the
-recipient, and both together say `user_id` changed. With `room_id`, `new` alone announces the user joining that room
-and `old` alone leaving it, sent to its members:
+recipient, and both together say `user_id` changed. With `room_id`, `new`
+alone announces the user joining that room and `old` alone leaving it, sent
+to its members:
 
 ```jsonc
 // <- to the user's own connections
