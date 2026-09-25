@@ -1523,9 +1523,14 @@ happens to it:
   `@private` to the sender, `@room` to the room, `@server` to everyone.
   Effects arrive as the frames they cause, such as `room_update`.
 - Retries follow §1.2, so a retried command does not run twice.
-- Which commands exist, their arguments, and who may use them are server
-  policy. Suggested convention: `/help` replies with the available commands
-  as a `@private` notice.
+- Commands are for what a server provides beyond this spec. Which exist,
+  their arguments, and who may use them are server policy. Suggested
+  convention: `/help` replies with the available commands as a `@private`
+  notice.
+- Clients MAY handle commands that match a request themselves, such as
+  `/nick` as `me`, `/topic` as `room_set`, `/join` as `room_join`, `/leave`
+  as `room_leave`, and `/mute` as `activity`, and send the rest as
+  `command`.
 
 ```jsonc
 // -> remove a user from the room; mentions name the target
