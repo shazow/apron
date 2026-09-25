@@ -30,6 +30,12 @@ const SESSION_KEY_PREFIX = "session:";
 /** Ordered, advisory expiry entries. The session record remains authoritative. */
 const SESSION_EXPIRY_PREFIX = "session-expiry:";
 const SESSION_CLEANUP_BATCH = 16;
+/**
+ * How often an alarm sweeps expired sessions. Every connection wakes the alarm
+ * at its auth deadline, and the probe is KV work charged at its full bound, so
+ * it runs at most this often; a resume rejects an expired session on its own.
+ */
+const SESSION_SWEEP_INTERVAL_MS = 60 * 60_000;
 const MAX_SESSION_TOKEN_CHARS = 256;
 
 type WebSocketConnection = WebSocket & {
@@ -67,6 +73,13 @@ const THROTTLED_TYPES: readonly ThrottledType[] = ["activity", "room_list"];
 const THROTTLE_WINDOW_MS = 60_000;
 /** The system identity for server notices (Appendix A.1). */
 const SERVER_IDENTITY = { user_id: "@server", name: "Server" } as const;
+/**
+ * The keepalive a client may send, byte for byte, and the runtime's answer.
+ * Both are notifications with unknown methods, which the other side ignores
+ * (section 1), so a client can send it to any server.
+ */
+const KEEPALIVE_REQUEST = '{"method":"ping"}';
+const KEEPALIVE_RESPONSE = '{"method":"pong"}';
 
 /**
  * A bearer session minted by a verified passkey login (protocol §4.9,
@@ -416,6 +429,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private alarmTail: Promise<void> = Promise.resolve();
 	private alarmFailures = 0;
 	private alarmKnown = false;
+	/** When the next alarm may sweep sessions; in memory, so a wake sweeps once. */
+	private nextSessionSweepAt = 0;
 	private accountUsageEvents = 0;
 	private accountUsageRetryAt = 0;
 	private accountUsageFailureCount = 0;
@@ -443,6 +458,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.config = loadConfig(env);
 		this.store = new Store(ctx as unknown as ConstructorParameters<typeof Store>[0], asStoreConfig(this.config));
 		this.webAuthn = new WebAuthnService(this.config);
+		// Answered by the runtime without waking the object or reaching
+		// webSocketMessage; the time of the last answer tells a live peer from
+		// one that vanished without a close frame (see isStale).
+		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE));
 		if (this.store.requiresReset()) {
 			// Stored data from another schema version is wiped, not migrated. The
 			// input gate holds every event until the fresh schema exists.
@@ -469,7 +488,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (!isAllowedOrigin(this.config, origin)) return responseError(403, "Origin not allowed");
 		try {
 			const sockets = this.ctx.getWebSockets();
-			const peers = sockets.map(socket => connectionAttachment(socket)).filter(peer => peer?.ipKey === ipKey);
+			// A vanished peer's socket still takes a slot until the runtime lets go
+			// of it, but it must not lock its own IP out of reconnecting.
+			const now = nowMs();
+			this.closeStale(now);
+			const peers = sockets.filter(socket => !this.isStale(socket, now)).map(socket => connectionAttachment(socket)).filter(peer => peer?.ipKey === ipKey);
 			if (sockets.length >= this.config.limits.openConnections || peers.length >= this.config.limits.connectionsPerIp ||
 				peers.filter(peer => peer?.tier !== "registered").length >= this.config.limits.anonymousConnectionsPerIp) {
 				return responseError(429, "Demo capacity reached", 60_000);
@@ -587,7 +610,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 				writeAttachment(socket, attachment);
 			}
 		}
-		try { await this.sweepSessions(now); } catch { /* retried on the next alarm */ }
+		if (now >= this.nextSessionSweepAt) {
+			try {
+				// A full batch may have left more behind; sweep again on the next alarm.
+				const full = await this.sweepSessions(now);
+				this.nextSessionSweepAt = full ? 0 : now + SESSION_SWEEP_INTERVAL_MS;
+			} catch { /* retried on the next alarm */ }
+		}
 		let result: ReturnType<Store["runCleanup"]> | undefined;
 		try {
 			result = this.store.runCleanup(now);
@@ -643,6 +672,12 @@ export class ApronDemoServer extends DurableObject<Env> {
 						registered_posts_per_minute: limits.registeredPostsPerMinute,
 						server_frames_per_minute: limits.globalFramesPerMinute,
 						room_list_per_minute: limits.roomListRequestsPerUserMinute,
+						// Send KEEPALIVE_REQUEST this often to stay listed as connected.
+						keepalive_seconds: limits.keepaliveSeconds,
+						// Every room is joined for good: `room_leave` is always denied.
+						room_leave: false,
+						// `read_message_id` in `activity` is dropped: no read cursors are kept.
+						read_cursors: false,
 						// With `activity`, typing is relayed; read cursors are neither kept nor relayed.
 						...(this.config.activityEnabled ? { activity_per_minute: limits.activityBroadcastsPerUserMinute } : {}),
 					},
@@ -833,14 +868,16 @@ export class ApronDemoServer extends DurableObject<Env> {
 		// Authentication ceremonies are request/response exchanges. Ignore auth
 		// notifications before reserving any attempt or changing attachment state.
 		if (request.id === undefined && request.params.scheme === "webauthn") return;
+		// A guest auth on an authenticated connection changes nothing: answer it
+		// without charging an attempt.
+		if (request.params.scheme === "guest" && (attachment.tier === "anonymous" || attachment.tier === "registered")) {
+			this.reply(socket, request, { you: publicIdentity(attachment) });
+			return;
+		}
 		this.store.reserveAuthAttempt({ ipKey: attachment.ipKey, now: nowMs() });
 		const params = request.params;
 		const scheme = requiredString(params, "scheme");
 		if (scheme === "guest") {
-			if (attachment.tier === "anonymous" || attachment.tier === "registered") {
-				this.reply(socket, request, { you: publicIdentity(attachment) });
-				return;
-			}
 			const userId = randomId("guest");
 			attachment.tier = "anonymous";
 			attachment.userId = userId;
@@ -933,8 +970,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 	/**
 	 * Resumes a passkey session through the protocol's `token` scheme. The
 	 * session must come from a ceremony on this same allowed origin and be
-	 * unexpired; a successful resume renews it for a full lifetime. The token is
-	 * not rotated, so several tabs may share one persisted token.
+	 * unexpired. A resume once less than half its lifetime remains renews it for
+	 * a full lifetime; earlier resumes leave it as is, since renewal is three KV
+	 * writes charged at their bound on every reload, tab and reconnect. The
+	 * token is not rotated, so several tabs may share one persisted token.
 	 */
 	private async handleTokenResume(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		return this.withSessionLock(() => this.handleTokenResumeLocked(socket, attachment, request));
@@ -963,18 +1002,21 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 		this.assertRegisteredCapacity(socket, identity.userId);
-		const renewed = { ...session, expiresMs: now + this.config.limits.sessionTtlSeconds * 1_000 };
-		await this.store.withMeterAsync("foreground", { writes: 3 }, async () => {
-			// The index is advisory. Writing it first means a crash cannot leave a
-			// live session without an expiry entry; a stale entry is harmless.
-			await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(renewed.expiresMs, key), {
-				v: 1, sessionKey: key, expiresMs: renewed.expiresMs,
+		const lifetimeMs = this.config.limits.sessionTtlSeconds * 1_000;
+		const renewed = { ...session, expiresMs: now + lifetimeMs };
+		if (session.expiresMs - now < lifetimeMs / 2) {
+			await this.store.withMeterAsync("foreground", { writes: 3 }, async () => {
+				// The index is advisory. Writing it first means a crash cannot leave a
+				// live session without an expiry entry; a stale entry is harmless.
+				await this.ctx.storage.put<SessionExpiryEntry>(sessionExpiryKey(renewed.expiresMs, key), {
+					v: 1, sessionKey: key, expiresMs: renewed.expiresMs,
+				});
+				await this.ctx.storage.put<StoredSession>(key, renewed);
+				const oldIndex = sessionExpiryKey(session.expiresMs, key);
+				const newIndex = sessionExpiryKey(renewed.expiresMs, key);
+				if (oldIndex !== newIndex) await this.ctx.storage.delete(oldIndex);
 			});
-			await this.ctx.storage.put<StoredSession>(key, renewed);
-			const oldIndex = sessionExpiryKey(session.expiresMs, key);
-			const newIndex = sessionExpiryKey(renewed.expiresMs, key);
-			if (oldIndex !== newIndex) await this.ctx.storage.delete(oldIndex);
-		});
+		}
 		if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
 		const guest = attachment.tier === "anonymous" ? publicIdentity(attachment) : null;
 		attachment.tier = "registered";
@@ -1003,11 +1045,12 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/** Drops expired session records from a bounded, ordered expiry index. */
-	private async sweepSessions(now: number): Promise<void> {
+	/** Whether it processed a full batch, so more may be due. */
+	private async sweepSessions(now: number): Promise<boolean> {
 		return this.withSessionLock(() => this.sweepSessionsLocked(now));
 	}
 
-	private async sweepSessionsLocked(now: number): Promise<void> {
+	private async sweepSessionsLocked(now: number): Promise<boolean> {
 		// Socket deadline alarms can be frequent. Probe the bounded expiry index
 		// before reserving a full batch; this is the only maintenance work
 		// performed until an expiry is actually due.
@@ -1016,9 +1059,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 			end: `${SESSION_EXPIRY_PREFIX}${Math.max(0, Math.trunc(now)).toString().padStart(16, "0")}\uffff`,
 			limit: 1,
 		}), now);
-		if (dueProbe.size === 0) return;
+		if (dueProbe.size === 0) return false;
 		// Up to B index rows + B session reads; writes cover 2B expiry deletes.
-		await this.store.withMeterAsync("maintenance", {
+		return await this.store.withMeterAsync("maintenance", {
 			reads: 2 * SESSION_CLEANUP_BATCH + 2,
 			writes: 2 * SESSION_CLEANUP_BATCH,
 		}, async () => {
@@ -1049,7 +1092,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 				// preserve the live session and discard its obsolete index row.
 				await this.ctx.storage.delete(indexKey);
 			}
-
+			return indexed.size >= SESSION_CLEANUP_BATCH;
 		});
 	}
 
@@ -1272,6 +1315,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	/** Everyone authenticated and connected, one entry per user, capped. */
 	private connectedMembers(): Array<{ user_id: string; name?: string }> {
+		this.closeStale(nowMs());
 		const members = new Map<string, { user_id: string; name?: string }>();
 		for (const peer of this.ctx.getWebSockets()) {
 			const state = connectionAttachment(peer as WebSocketConnection);
@@ -1281,6 +1325,41 @@ export class ApronDemoServer extends DurableObject<Env> {
 			if (members.size >= this.config.limits.roomListMembers) break;
 		}
 		return [...members.values()];
+	}
+
+	/**
+	 * Whether a connection's peer has gone quiet: it has sent the keepalive,
+	 * but neither that nor any frame within the timeout. The runtime cannot
+	 * ping, so a peer that vanished without a close frame (sleep, a network
+	 * change) otherwise stays connected until the edge gives up on it. A
+	 * connection that never sent the keepalive is never judged stale.
+	 */
+	private isStale(socket: WebSocket, now: number): boolean {
+		const pinged = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime();
+		if (pinged === undefined) return false;
+		const frames = connectionAttachment(socket as WebSocketConnection)?.frameTimes ?? [];
+		const heard = Math.max(pinged, frames[frames.length - 1] ?? 0);
+		return heard <= now - this.config.limits.keepaliveTimeoutSeconds * 1_000;
+	}
+
+	/**
+	 * Closes stale connections. Nothing schedules this: it runs where a stale
+	 * peer would be seen, before `members` are listed and before admission.
+	 */
+	private closeStale(now: number): void {
+		const sockets = this.ctx.getWebSockets();
+		let closed = 0;
+		for (const ws of sockets) {
+			const socket = ws as WebSocketConnection;
+			const attachment = connectionAttachment(socket);
+			if (!attachment || attachment.closing || !this.isStale(socket, now)) continue;
+			attachment.closing = true;
+			writeAttachment(socket, attachment);
+			try { socket.close(1001, "Connection idle; reconnect to recover"); } catch { /* already closed */ }
+			closed++;
+		}
+		// Shows in Workers Logs whether vanished peers are being found.
+		if (closed) console.log(JSON.stringify({ event: "stale_connections_closed", closed, sockets: sockets.length }));
 	}
 
 	/** Sends a profile change (section 3.3): `you` to the user's other connections, `new` (and `old`) to the rest. */

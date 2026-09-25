@@ -446,7 +446,11 @@ it('with ACTIVITY on, relays typing without read cursors, throttles it per user,
 		expect(BigInt(mine.frame.result.message_id)).toBeGreaterThan(BigInt(notices[0].params.log_id));
 		alice.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 50 } });
 		const history = await until(alice, (frame) => frame.id === 'history');
-		expect(history.frame.result.entries.some((entry: Frame) => entry.params?.from?.user_id === '@server')).toBe(false);
+		// History entries are flat message snapshots. The page holds Alice's post, so
+		// the check below is not passing on an empty or misread page.
+		const entries: Array<{ message_id: string; from?: { user_id: string } }> = history.frame.result.entries;
+		expect(entries.some((entry) => entry.message_id === mine.frame.result.message_id)).toBe(true);
+		expect(entries.some((entry) => entry.from?.user_id === '@server' || entry.message_id === notices[0].params.message_id)).toBe(false);
 	} finally { alice.close(); bob.close(); await configure((config) => { config.activityEnabled = false; }); }
 });
 
@@ -482,6 +486,85 @@ it('lists rooms and threads with the connected members, and throttles listing', 
 		expect(limited.code).toBe(-32002);
 		expect(limited.data.retry_after).toBeGreaterThan(0);
 	} finally { alice.close(); bob.close(); }
+});
+
+it('answers a guest re-auth on an authenticated connection without charging an attempt', async () => {
+	const peer = await connect();
+	try {
+		const you = await authenticate(peer);
+		// More than the per-IP attempt limit (10 a minute): none is charged.
+		for (let index = 0; index < 12; index += 1) {
+			peer.send({ id: `again-${index}`, method: 'auth', params: { scheme: 'guest' } });
+			expect((await until(peer, (frame) => frame.id === `again-${index}`)).frame.result.you.user_id).toBe(you.user_id);
+		}
+	} finally { peer.close(); }
+});
+
+it('lists only connected guests as members after others posted and left', async () => {
+	const alice = await connect();
+	const leavers = await Promise.all([connect(), connect(), connect()]);
+	try {
+		const aliceId = await authenticate(alice);
+		const gone: string[] = [];
+		for (const [index, peer] of leavers.entries()) {
+			gone.push((await authenticate(peer)).user_id);
+			peer.send({ id: `post-${index}`, method: 'message', params: { room_id: 'general', body: { text: `leaving ${index}` } } });
+			await until(peer, (frame) => frame.id === `post-${index}`);
+			peer.close();
+		}
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		// A fresh connection sees their messages in history, but not them as members.
+		const fresh = await connect();
+		try {
+			const freshId = await authenticate(fresh);
+			fresh.send({ id: 'history', method: 'history', params: { room_id: 'general', limit: 50 } });
+			const senders = (await until(fresh, (frame) => frame.id === 'history')).frame.result.entries.map((entry: { from?: { user_id: string } }) => entry.from?.user_id);
+			expect(senders).toEqual(expect.arrayContaining(gone));
+			fresh.send({ id: 'list', method: 'room_list', params: {} });
+			const members = (await until(fresh, (frame) => frame.id === 'list')).frame.result.rooms[0].members.map((member: { user_id: string }) => member.user_id);
+			expect(members).toEqual(expect.arrayContaining([aliceId.user_id, freshId.user_id]));
+			for (const id of gone) expect(members).not.toContain(id);
+		} finally { fresh.close(); }
+	} finally { alice.close(); }
+});
+
+it('drops a quiet keepalive connection from room_list members and closes it', async () => {
+	const alice = await connect();
+	const bob = await connect();
+	const carol = await connect();
+	try {
+		await authenticate(alice);
+		const bobId = await authenticate(bob);
+		const carolId = await authenticate(carol);
+		await configure((config) => { config.limits.keepaliveTimeoutSeconds = 1; });
+		const closed = new Promise<number>((resolve) => bob.socket.addEventListener('close', (event) => resolve(event.code)));
+		// The runtime answers the keepalive itself; it never reaches the handler.
+		bob.socket.send('{"method":"ping"}');
+		expect(await until(bob, (frame) => frame.method === 'pong')).toMatchObject({ frame: { method: 'pong' } });
+		carol.socket.send('{"method":"ping"}');
+		await until(carol, (frame) => frame.method === 'pong');
+		await new Promise((resolve) => setTimeout(resolve, 700));
+		// Carol keeps talking; Bob's peer has gone quiet.
+		carol.socket.send('{"method":"ping"}');
+		await until(carol, (frame) => frame.method === 'pong');
+		await new Promise((resolve) => setTimeout(resolve, 500));
+
+		alice.send({ id: 'list', method: 'room_list', params: {} });
+		const listed = (await until(alice, (frame) => frame.id === 'list')).frame.result.rooms[0].members.map((member: { user_id: string }) => member.user_id);
+		expect(listed).toContain(carolId.user_id);
+		expect(listed).not.toContain(bobId.user_id);
+		expect(await closed).toBe(1001);
+	} finally { alice.close(); bob.close(); carol.close(); await configure((config) => { config.limits.keepaliveTimeoutSeconds = 150; }); }
+});
+
+it('advertises the keepalive interval', async () => {
+	const peer = await connect();
+	try {
+		const server = await peer.next();
+		expect(server.params.ext.demo.keepalive_seconds).toBe(45);
+		expect(server.params.ext.demo.room_leave).toBe(false);
+		expect(server.params.ext.demo.read_cursors).toBe(false);
+	} finally { peer.close(); }
 });
 
 it('links each changed record to the previous one with prev_log_id', async () => {

@@ -19,9 +19,11 @@ The entry Worker rejects excessive connection attempts before calling the DO.
 See [edge admission operations](docs/edge-admission.md) for applying WAF rules,
 their Free-plan limitations, and the quota-exhaustion runbook.
 
-Passkey session cleanup uses an ordered expiry index. Each alarm processes at
-most 16 expired index entries; alarms with no expired entries perform only a
-small metered probe. Session issuance,
+Passkey session cleanup uses an ordered expiry index. An alarm sweeps it at most
+once an hour (every connection wakes the alarm at its auth deadline), processing
+at most 16 expired entries and sweeping again on the next alarm after a full
+batch; a sweep with no expired entries performs only a small metered probe. A
+token resume rejects an expired session whether or not it has been swept. Session issuance,
 renewal, and cleanup share a queue so cleanup cannot delete a concurrent renewal.
 KV operations reserve conservative row allowances before running; an exhausted
 maintenance budget leaves unfinished cleanup for a later alarm.
@@ -258,8 +260,11 @@ advisory, and the real upgrade still enforces every admission gate. The native
 per-IP attempt limiter also applies to these probes.
 
 When the daily SQL guard stops work, a `daily_budget_exhausted` log records the
-reserved counters and limits once per object instance/day. These are conservative
-reservations, not Cloudflare's measured usage. Compare them with account analytics
+reserved counters and limits once per object instance/day. Each operation reserves
+a conservative bound before it runs, and once it finishes the unused part, measured
+from its SQL cursors, is credited back, so the counters follow the rows actually
+read and written (plus one row per credit). Key-value work stays charged at its
+bound. Compare the counters with account analytics
 before tuning operation costs. Daily reservations survive redeploys and reset at
 UTC midnight; resetting the object or its counters would discard that protection.
 
@@ -268,8 +273,7 @@ If no records are eligible, they only advance the cleanup deadline. Within an
 object instance, a known adequate future alarm is reused without SQL bookkeeping;
 earlier deadlines, fired alarms, cleanup runs, and hibernation wakes are rechecked.
 
-<!-- TODO: Calibrate foreground SQL reservations against representative reconnect,
-auth, and history workloads. On 2026-09-21 the app stopped at 59,976 reserved
-foreground writes after 93 admissions, while account analytics reported about
-13,165 actual writes. Preserve crash/rollback accounting and maintenance headroom
-when reducing over-reservation; aggregate analytics alone cannot justify refunds. -->
+On 2026-09-21 the app stopped at 59,976 reserved foreground writes after 93
+admissions, while account analytics reported about 13,165 actual writes. Crediting
+back each operation's measured unused reservation closes most of that gap without
+relying on aggregate analytics; a crash or rollback still leaves work charged.

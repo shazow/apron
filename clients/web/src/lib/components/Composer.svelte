@@ -15,7 +15,7 @@
 		disabled: boolean;
 		/** Attachments and voice clips (cap `embed:upload`, §4.6.4): each file goes out as an `upload` embed. */
 		canUpload: boolean;
-		/** The senders this room has seen: who an `@` can name. */
+		/** Who an `@` can name: the room's members, else its recent senders. */
 		people: MentionPerson[];
 		/** "Dana: text" for the message being replied to, when there is one. */
 		replyPreview?: string;
@@ -24,8 +24,10 @@
 		/** Picked files or a finished voice clip, to send with whatever is in the field. */
 		onfiles: (files: File[]) => void;
 		oncancelreply: () => void;
+		/** The mention picker opened: a moment to refresh who can be named. */
+		onmention?: () => void;
 	}
-	let { value = $bindable(), placeholder, disabled, canUpload, people, replyPreview, oninput, onsend, onfiles, oncancelreply }: Props = $props();
+	let { value = $bindable(), placeholder, disabled, canUpload, people, replyPreview, oninput, onsend, onfiles, oncancelreply, onmention }: Props = $props();
 
 	let field = $state<HTMLDivElement | undefined>();
 	let attachInput = $state<HTMLInputElement | undefined>();
@@ -253,7 +255,10 @@
 			query = undefined;
 			return;
 		}
-		if (query === undefined) active = 0;
+		if (query === undefined) {
+			active = 0;
+			onmention?.();
+		}
 		anchor = found.start;
 		query = found.query;
 	}

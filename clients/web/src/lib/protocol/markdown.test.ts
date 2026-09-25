@@ -53,3 +53,13 @@ describe('line breaks', () => {
 		expect(renderMarkdown('```\na\nb\n```')).toBe('<pre><code>a\nb\n</code></pre>\n');
 	});
 });
+
+describe('rendering the same source again', () => {
+	it('links mentions with the current names', () => {
+		const source = 'Handing **this** to @alice.';
+		expect(renderMarkdown(source, resolve)).toContain('@Alice Chen');
+		expect(renderMarkdown(source, (id) => (id === 'alice' ? { kind: 'user', id, name: 'Alice Park' } : undefined))).toContain('@Alice Park');
+		expect(renderMarkdown(source)).toBe('<p>Handing <strong>this</strong> to @alice.</p>\n');
+		expect(mentionedIds(source, true)).toEqual(['alice']);
+	});
+});

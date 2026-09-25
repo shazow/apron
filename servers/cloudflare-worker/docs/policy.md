@@ -27,7 +27,10 @@ within it:
   `general` is fixed. Threads always carry a title (`Thread` by default).
   `room_join` re-sends a room's record; `room_leave` is `denied`. `room_list`
   lists `general` or its threads; each room's `members` are the users
-  connected now (at most 20), since every room is visible and joined.
+  connected now (at most 20), since every room is visible and joined. A client
+  that sends the `{"method":"ping"}` keepalive every 45 seconds and then goes
+  quiet for 150 is disconnected, so a peer that vanished without closing is
+  not listed.
 - Activity (only with `ACTIVITY=true`): typing is relayed to every other
   connection and never stored, at most 10 relays per user per minute; past that, updates are dropped and the
   sender gets one `@server` message a minute saying so. Read cursors are
@@ -63,8 +66,9 @@ pending challenge without extending the initial 30-second authentication
 deadline. A matching finish attempt consumes the challenge even on failure.
 A verified login or registration returns a bearer `token` (protocol [§4.9](../../../PROTOCOL.md#49-webauthn-authentication),
 session resume). Presenting it with `scheme: "token"` on a later connection from
-the same origin resumes the registered identity without a ceremony and renews
-the session for another 12 hours; the token itself does not change. Sessions
+the same origin resumes the registered identity without a ceremony; once less
+than half of its 12 hours remain, the resume renews it for another 12. The token
+itself does not change. Sessions
 are stored hashed in the object and swept on expiry. Signing out is local to
 the client: it drops the stored token, and the connection returns as a fresh
 guest.
@@ -79,7 +83,10 @@ but do consume frame and lookup resources.
 
 ## Demo policy metadata
 
-`server.params.ext.demo` describes retention and selected payload/posting policies.
+`server.params.ext.demo` describes retention and selected payload/posting policies,
+the keepalive interval (`keepalive_seconds`), and what the demo does not keep:
+`room_leave: false` (every room is joined for good) and `read_cursors: false`
+(read markers are dropped), so clients can skip sending them.
 The demo's 16 KiB frame policy is an explicit exception to the base protocol's
 advisory 256 KiB recommendation. Payload lengths count UTF-8 bytes. Errors use
 the base protocol codes; `retry_after` includes `data.retry_after`, whole

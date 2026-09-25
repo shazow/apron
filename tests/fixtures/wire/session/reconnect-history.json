@@ -2,7 +2,7 @@
   "format": 2,
   "kind": "session",
   "name": "Guest reconnect and retained history",
-  "description": "A fresh guest identity authenticates after transport loss. The client rebuilds its protocol view from the new connection: rooms are empty until announced, and recovery pages the whole retained range again from the lower bound, across message and reaction records, keeping the original sender and yielding each message once. This profile uses no persistent checkpoints.",
+  "description": "A fresh guest identity authenticates after transport loss. The client rebuilds its protocol view from the new connection: rooms are empty until announced again. Each room's records, floor and checkpoint are kept across the loss, so a re-announced room's recovery resumes after its checkpoint instead of paging the whole retained range, across message and reaction records, keeping the original sender and yielding each message once.",
   "references": [
     "PROTOCOL.md#32-authentication",
     "PROTOCOL.md#appendix-a--history",
@@ -10,7 +10,7 @@
   ],
   "variants": [
     {
-      "name": "full-recovery",
+      "name": "resume-from-checkpoint",
       "steps": [
         {"receive":{"method":"server","params":{"protocol":4,"auth":["guest"],"caps":["history"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
@@ -29,8 +29,8 @@
         {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_2"}}}},
         {"expect":{"you":{"user_id":"guest_2"}}},
         {"receive":{"method":"room","params":{"room_id":"general","log_id":"100","title":"General","latest_log_id":"104","history_log_id":"100"}}},
-        {"request":{"as":"history-after","match":{"method":"history","params":{"room_id":"general","after":"100","before":"104"}}}},
-        {"reply":{"to":"history-after","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"entries":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"guest_1"},"body":{"text":"retained","format":"plain"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while connected","format":"plain"}},{"message_id":"103","log_id":"103","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while away","format":"plain"}}],"reactions":[{"log_id":"104","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_id":"100","last_id":"104","more":false,"latest_log_id":"104","history_log_id":"100"}}},
+        {"request":{"as":"history-after","match":{"method":"history","params":{"room_id":"general","after":"102","before":"104"}}}},
+        {"reply":{"to":"history-after","result":{"entries":[{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while connected","format":"plain"}},{"message_id":"103","log_id":"103","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while away","format":"plain"}}],"reactions":[{"log_id":"104","message_id":"101","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["👍"]}]}],"first_id":"102","last_id":"104","more":false,"latest_log_id":"104","history_log_id":"100"}}},
         {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"guest_1"},"body":{"text":"retained","format":"plain"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while connected","format":"plain"}},{"message_id":"103","log_id":"103","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while away","format":"plain"}}]}]}},
         {"send":{"as":"after-reconnect","room":"general","text":"new connection","format":"plain"}},
         {"request":{"as":"send","match":{"method":"message","params":{"room_id":"general","body":{"text":"new connection","format":"plain"}}}}},

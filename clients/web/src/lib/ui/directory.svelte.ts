@@ -16,16 +16,23 @@ class Directory {
 	private users = $state.raw<Pick<ClientSnapshot, 'users' | 'userAliases'>>({ users: {}, userAliases: {} });
 	private rooms = $state.raw<Record<string, string>>({});
 
-	/** Takes an authenticated snapshot; the last one is kept while a reconnect rebuilds the view. */
+	/**
+	 * Takes an authenticated snapshot; the last one is kept while a reconnect
+	 * rebuilds the view. The client emits fresh records on every frame, so
+	 * unchanged ones are kept: every message body renders from them, and a
+	 * typing notice or an upload's progress should not render them all again.
+	 */
 	apply(snapshot: ClientSnapshot, origin: string | undefined): void {
 		this.origin = origin;
 		if (!snapshot.authenticated) return;
 		this.you = snapshot.you;
-		this.users = { users: snapshot.users, userAliases: snapshot.userAliases };
+		if (!sameEntries(this.users.users, snapshot.users) || !sameEntries(this.users.userAliases, snapshot.userAliases)) {
+			this.users = { users: snapshot.users, userAliases: snapshot.userAliases };
+		}
 		const rooms: Record<string, string> = {};
 		for (const listing of [...(snapshot.directory ?? []), ...Object.values(snapshot.threadDirectory).flat()]) rooms[listing.id] = listing.title;
 		for (const room of snapshot.rooms) rooms[room.id] = room.title;
-		this.rooms = rooms;
+		if (!sameEntries(this.rooms, rooms)) this.rooms = rooms;
 	}
 
 	forget(): void {
@@ -62,6 +69,12 @@ class Directory {
 		if (title !== undefined) return { kind: 'room', id, title };
 		return undefined;
 	};
+}
+
+/** The same keys holding the same values; the client keeps an identity object until that user changes. */
+function sameEntries<T>(a: Record<string, T>, b: Record<string, T>): boolean {
+	const keys = Object.keys(a);
+	return keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && a[key] === b[key]);
 }
 
 export const directory = new Directory();

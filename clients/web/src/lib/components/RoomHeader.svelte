@@ -12,6 +12,8 @@
 		typing: string[];
 		/** Replies in the open thread, once its history has loaded. */
 		replyCount?: number;
+		/** Older replies are not loaded yet, so `replyCount` is a lower bound. */
+		moreReplies?: boolean;
 		/** Show the thread's Edit button (cap `rooms`). */
 		canEditThread: boolean;
 		editorOpen: boolean;
@@ -23,7 +25,7 @@
 		onedit: () => void;
 		onleave: () => void;
 	}
-	let { room, pane, threadTitle, typing, replyCount, canEditThread, editorOpen, editDisabled, canLeave, onback, onroom, onedit, onleave }: Props = $props();
+	let { room, pane, threadTitle, typing, replyCount, moreReplies = false, canEditThread, editorOpen, editDisabled, canLeave, onback, onroom, onedit, onleave }: Props = $props();
 </script>
 
 <header class="ap-roomhead">
@@ -41,7 +43,7 @@
 		{#if typing.length > 0}
 			<p class="ap-roomhead-sub ap-roomhead-typing typing-head">{typing.length === 1 ? `${typing[0]} is typing…` : `${typing.length} people are typing…`}</p>
 		{:else if replyCount !== undefined}
-			<p class="ap-roomhead-sub">{replyCount} {replyCount === 1 ? 'reply' : 'replies'}</p>
+			<p class="ap-roomhead-sub">{replyCount}{moreReplies ? '+' : ''} {replyCount === 1 && !moreReplies ? 'reply' : 'replies'}</p>
 		{/if}
 	</div>
 	{#if pane.recovering || pane.loading}

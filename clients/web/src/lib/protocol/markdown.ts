@@ -32,9 +32,30 @@ export interface MentionPerson {
  */
 const MENTION = /@(@?[A-Za-z0-9_.-]+)/g;
 
+/** Sources rendered to HTML (before mentions are linked) kept for reuse, least recently used first. */
+const CACHE_SIZE = 2000;
+const rendered = new Map<string, string>();
+
+/**
+ * CommonMark output for a source. A body renders every time its message row
+ * is created, and again to find its mentions, so reopening a room would parse
+ * it all anew; mentions are linked afterwards, so names stay current.
+ */
+function commonmark(source: string): string {
+	let html = rendered.get(source);
+	if (html !== undefined) {
+		rendered.delete(source);
+	} else {
+		html = renderer.render(parser.parse(source));
+		if (rendered.size >= CACHE_SIZE) rendered.delete(rendered.keys().next().value!);
+	}
+	rendered.set(source, html);
+	return html;
+}
+
 /** CommonMark rendering with raw HTML and unsafe URL schemes disabled, keeping typed line breaks. */
 export function renderMarkdown(source: string, resolve?: MentionResolver): string {
-	return linkMentions(renderer.render(parser.parse(source)), resolve);
+	return linkMentions(commonmark(source), resolve);
 }
 
 /** A plain body as HTML: escaped, with mentions linked. Line breaks are kept by CSS (`pre-wrap`). */

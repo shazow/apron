@@ -57,3 +57,15 @@ Expected state resides exclusively in JSON fixtures. The runner normalizes
 client state and asserts it without querying UI elements or private fields.
 Both envelope forms run for every scenario variant. See
 [`../fixtures/wire/README.md`](../fixtures/wire/README.md) for the portable format.
+
+## Rendering benchmarks
+
+`perf.spec.ts` times user journeys against the production build, served by the
+Go server on `127.0.0.1:8090` (`make test-perf` from the repository root builds
+it first). It seeds two rooms of 200 messages and switches between them, then
+reports the time to the first painted frame and to the whole room with the CPU
+throttled 4x, and Chrome's layout and style counts. The element count is the
+same on every run, so `perf-ceilings.json` holds a ceiling for it: the test
+fails when a change raises it. When a change lowers it, run with
+`PERF_UPDATE=1` to write the new ceiling, and commit it. Set
+`PERF_PROFILE=out.cpuprofile` to save a CPU profile of the measured switches.
