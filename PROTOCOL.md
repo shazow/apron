@@ -671,7 +671,7 @@ follows `server.push` ([§4.7](#47-push)), passkeys `server.auth` ([§4.9](#49-w
 Six frame idioms cover everything logged or announced:
 
 - **Records** (room records, `message`): complete state at a `log_id` ([§2](#2-identifiers)).
-- **Per-user state** (`reactions`, `members`): the user plus their complete
+- **Per-user state** (`reactions`, `membership`): the user plus their complete
   state for a scope; newest wins per user. Logged ([§2](#2-identifiers)).
 - **Activity** (`activity`): `from` plus changes to the user's transient
   state; present fields update it and absent fields leave it unchanged. Not
@@ -687,7 +687,7 @@ Six frame idioms cover everything logged or announced:
 
 Stateless window query over a room's **log**. `rooms` holds room records
 ([§3.4](#34-rooms)), `entries` message snapshots ([§3.5](#35-messages)), `reactions` reaction sets
-([§4.5](#45-reactions)), and `members` memberships ([§4.3.2](#432-membership)): one log, partitioned by
+([§4.5](#45-reactions)), and `membership` memberships ([§4.3.2](#432-membership)): one log, partitioned by
 kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
 
 ```jsonc
@@ -714,7 +714,7 @@ kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
         "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
       }
     ],
-    "members": [
+    "membership": [
       {
         "log_id": "1724803300000", "room_id": "general",
         "members": [{"user": {"user_id": "dave", "name": "Dave"}, "joined": true}]
@@ -741,12 +741,12 @@ message stays in the source room; `prev_room_id` points there ([§2](#2-identifi
 - `first_id`/`last_id` are the slice's first and last `log_id`s before
   compaction; return both or neither. `more` indicates further matching
   changes in the selected direction. An empty slice returns `entries: []`
-  and `more: false`; `rooms`, `reactions`, and `members` MAY be omitted when
+  and `more: false`; `rooms`, `reactions`, and `membership` MAY be omitted when
   empty.
 - Continue forward with `after = last_id + 1`, backward with
   `before = first_id - 1`, computed numerically and encoded as strings.
   Never derive continuation from compacted records.
-- `rooms`, `entries`, `reactions`, and `members` are each ascending by
+- `rooms`, `entries`, `reactions`, and `membership` are each ascending by
   `log_id`.
 
 **Availability.** Every result includes `latest_log_id` and `history_log_id`
@@ -888,8 +888,9 @@ clients holding the old content drop it on the new tombstone.
 
 Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
 share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
-`room_set` are requests; `room_update` is a notification. The `members`
-notification carries logged memberships ([§4.3.2](#432-membership)). Visibility and membership are server policy.
+`room_set` are requests; `room_update` is a notification. The `membership`
+notification carries logged memberships ([§4.3.2](#432-membership)). Visibility and
+membership are server policy.
 
 #### 4.3.1 Listing
 
@@ -992,7 +993,7 @@ one entry per user, each with the user as a recorded object ([§3.3](#33-identit
 {"method": "room_join", "id": "c24", "params": {"room_id": "1724803399000"}}
 // <- to the room's members, the joining user's connections included
 {
-  "method": "members", "params": {
+  "method": "membership", "params": {
     "log_id": "1724803450100", "room_id": "1724803399000",
     "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]
   }
@@ -1006,7 +1007,7 @@ one entry per user, each with the user as a recorded object ([§3.3](#33-identit
 {"method": "room_leave", "id": "c25", "params": {"room_id": "1724803312001"}}
 // <- to the room's members, the leaving user's connections included
 {
-  "method": "members", "params": {
+  "method": "membership", "params": {
     "log_id": "1724803450200", "room_id": "1724803312001",
     "members": [{"user": {"user_id": "ada"}, "joined": false}]
   }
@@ -1450,7 +1451,7 @@ happens to it:
 {"method": "room_update", "params": {"left": [{"room_id": "general"}]}}
 // <- to the room: the membership, then the notice
 {
-  "method": "members", "params": {
+  "method": "membership", "params": {
     "log_id": "1724803900001", "room_id": "general",
     "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]
   }
