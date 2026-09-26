@@ -89,6 +89,16 @@ export interface Limits {
 	 * connections are counted for admission.
 	 */
 	pingTimeoutSeconds: number;
+	/**
+	 * Guest numbers (`guest_<n>`) the object reserves with one durable write.
+	 * It serves them from memory and reserves the next block when they run
+	 * out. A wake from hibernation or eviction cannot know how far it got, so
+	 * it starts a fresh block and the rest of the old one is skipped: guest
+	 * numbers stay unique but have gaps of up to one block per wake. Larger
+	 * blocks save writes only while the object stays awake; smaller ones keep
+	 * the latest number closer to the count of guests.
+	 */
+	guestNumberBlock: number;
 	sqlWritesPerDay: number;
 	sqlReadsPerDay: number;
 	foregroundWritesPerDay: number;
@@ -164,6 +174,7 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	roomListMembers: 100,
 	pingSeconds: 45,
 	pingTimeoutSeconds: 150,
+	guestNumberBlock: 10,
 	sqlWritesPerDay: 80_000,
 	sqlReadsPerDay: 3_000_000,
 	foregroundWritesPerDay: 60_000,
@@ -229,6 +240,9 @@ export const MAX_FRAME_LEASE = 20;
 // listing's reads and response by the thread ceiling (listings past the
 // response cap leave members out).
 export const MAX_ROOM_LIST_MEMBERS = 200;
+// A guest-number block is one durable write, spent whether or not the object
+// hands its numbers out before it sleeps; this bounds how fast numbers climb.
+export const MAX_GUEST_NUMBER_BLOCK = 10_000;
 export const MAX_SQL_WRITES = DEFAULT_LIMITS.sqlWritesPerDay;
 export const MAX_SQL_READS = DEFAULT_LIMITS.sqlReadsPerDay;
 export const MAX_DATABASE_HIGH_WATER_BYTES = DEFAULT_LIMITS.databaseHighWaterBytes;

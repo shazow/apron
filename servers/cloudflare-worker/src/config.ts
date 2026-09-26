@@ -133,6 +133,9 @@ function validateLimits(limits: Limits): void {
 	if (limits.roomListMembers > budget.MAX_ROOM_LIST_MEMBERS) {
 		fail("room_list members exceed the calibrated bound");
 	}
+	if (limits.guestNumberBlock > budget.MAX_GUEST_NUMBER_BLOCK) {
+		fail("guest number blocks exceed the calibrated bound");
+	}
 	if (limits.pingTimeoutSeconds < 2 * limits.pingSeconds) {
 		fail("the ping timeout must outlast a missed ping");
 	}

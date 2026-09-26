@@ -89,12 +89,19 @@ joined or not.
 
 ## Identity and profiles
 
-`auth` with scheme `guest` assigns `guest_<n>` from a server-wide counter and
-honors an optional requested `name`. A requested `user_id` is honored when it
-starts with a letter, uses only `[A-Za-z0-9_.-]` (ending in a letter, digit,
-or `_`; at most 64 characters), names no room, and was never assigned,
-ignoring case; otherwise the guest gets the next unused `guest_<n>`. No
-`user_id` is ever reissued.
+`auth` with scheme `guest` assigns `guest_<n>` from a server-wide counter
+(`guest_1`, `guest_2`, …) and honors an optional requested `name`. A
+requested `user_id` is honored when it starts with a letter, uses only
+`[A-Za-z0-9_.-]` (ending in a letter, digit, or `_`; at most 64 characters),
+does not start with `guest_` in any case, names no room, and was never
+assigned, ignoring case; otherwise the guest gets the next unused
+`guest_<n>`. The `guest_` namespace belongs to the counter: a request such as
+`guest_7`, `GUEST_7`, `guest_07` or `guest_x` is refused rather than taking a
+number out of sequence or impersonating a counter-assigned guest. Every guest
+`auth` takes exactly one counter value unless its requested ID is honored, so
+the latest guest number is roughly how many guests the process has admitted
+(the counter is in memory and starts over with the process). No `user_id` is
+ever reissued.
 
 `me` merges into the caller's profile: a given field replaces its value, an
 omitted field is unchanged, and an empty value removes it. `name` is trimmed

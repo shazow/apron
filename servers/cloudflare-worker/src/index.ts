@@ -495,6 +495,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 	 */
 	private readonly recentFrames: number[] = [];
 	private sessionWorkTail: Promise<void> = Promise.resolve();
+	/**
+	 * Guest numbers reserved durably and not yet handed out: the next one, and
+	 * one past the last. Both start at zero, so the first guest after a start
+	 * or wake reserves a fresh block rather than reusing one it cannot see.
+	 */
+	private guestNext = 0;
+	private guestLimit = 0;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -916,6 +923,24 @@ export class ApronDemoServer extends DurableObject<Env> {
 		throw { name: "unsupported", message: "Unsupported method" } satisfies ProtocolError;
 	}
 
+	/**
+	 * The next guest number. Numbers come from the in-memory block; an empty
+	 * block (always so after a start or wake) first reserves the next
+	 * `guestNumberBlock` numbers with one durable write. There is no await
+	 * between reading and advancing `guestNext`, and the Store call is
+	 * synchronous, so concurrent auths on other connections cannot both take
+	 * a number or both reserve a block. A failed reservation (an exhausted
+	 * budget) leaves the block empty and fails the auth.
+	 */
+	private nextGuestNumber(): number {
+		if (this.guestNext >= this.guestLimit) {
+			const block = this.store.reserveGuestNumbers(this.config.limits.guestNumberBlock, nowMs());
+			this.guestNext = block.first;
+			this.guestLimit = block.limit;
+		}
+		return this.guestNext++;
+	}
+
 	private async handleAuth(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		// Authentication ceremonies are request/response exchanges. Ignore auth
 		// notifications before reserving any attempt or changing attachment state.
@@ -931,12 +956,12 @@ export class ApronDemoServer extends DurableObject<Env> {
 		const scheme = requiredString(params, "scheme");
 		if (scheme === "guest") {
 			// A requested `name` or `user_id` is not honored: guests are
-			// `guest_` plus a random ID, never reissued, with a generated name
-			// they keep (§3.2 lets the server assign identity).
-			const userId = randomId("guest");
+			// `guest_<n>` from a server-wide counter, never reissued, with a
+			// generated name they keep (§3.2 lets the server assign identity).
+			const number = this.nextGuestNumber();
 			attachment.tier = "anonymous";
-			attachment.userId = userId;
-			attachment.name = `Guest ${userId.slice(-6)}`.slice(0, Math.min(this.config.limits.maxNameCodePoints, this.config.limits.maxNameBytes));
+			attachment.userId = `guest_${number}`;
+			attachment.name = `Guest ${number}`.slice(0, Math.min(this.config.limits.maxNameCodePoints, this.config.limits.maxNameBytes));
 			// A new guest has joined the default room (§3.4).
 			attachment.rooms = [...DEFAULT_JOINED_ROOMS];
 			delete attachment.listedJoined;

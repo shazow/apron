@@ -180,6 +180,36 @@ SQLite file reported `databaseSize = 147,456` bytes (135,168 under schema 3;
 the new table and index add pages). These values are a small schema/data
 sample and are not a per-message capacity estimate.
 
+## Guest numbers
+
+Measured on 2026-09-26 with the operation matrix above and
+[`test/guest-numbers.integration.test.ts`](../test/guest-numbers.integration.test.ts).
+Guests are numbered `guest_<n>` from a counter reserved in blocks of
+`guestNumberBlock` (10): one reservation advances the stored high-water mark
+(a `_meta` row; no schema change) and the object serves the block from
+memory. Guest auth still stores no identity row.
+
+| Operation | Observed reads | Observed writes | Reserved reads | Reserved writes |
+| --- | ---: | ---: | ---: | ---: |
+| Guest number block (steady state) | 4 | 4 | 16 | 16 |
+| Guest number block (first reservation after a wake) | 6 | 6 | 24 | 24 |
+| Guest number served from the block | 0 | 0 | 0 | 0 |
+
+- The written rows are the mark and the reservation's own bookkeeping (the
+  budget-row update and credit-back, and the effective clock when it
+  advances); the first reservation after a wake also loads the day's budget
+  row under the handover allowance. The reservation is foreground work and
+  counts no frame or post.
+- Every start, eviction, or hibernation wake that authenticates a guest
+  reserves a fresh block, since the in-memory block is lost; the unused numbers
+  are skipped. The cost is therefore about four rows per block of guests or
+  per waking visit, whichever is more: at most about 800 rows a day at the
+  2,000 guest admissions a day, against about 61 charged writes for each guest
+  reconnect (admission, auth, history, listing).
+- A schema reset reads the mark before the wipe and writes it back afterwards,
+  one uncharged control row like the carried budget row, so guest IDs are
+  never reissued.
+
 ## Frame blocks, activity, and throttle notices
 
 Measured on 2026-09-24 with the operation matrix above. A single-frame

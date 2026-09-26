@@ -37,7 +37,9 @@ export const ROOM_TITLE = "General";
  * snapshots, reaction sets, and registered users' memberships) and a
  * `memberships` table of registered users' joined rooms, indexed both ways.
  * Stored data from any other schema version is not migrated: the object is
- * wiped and started fresh (see resetStorage()).
+ * wiped and started fresh (see resetStorage()). Additive rows need no new
+ * version: the `_meta` guest-number mark, absent in older schema 4 objects,
+ * reads as zero.
  */
 export const SCHEMA_VERSION = 4;
 /** Rooms a new identity has joined: the permanent top-level room (§3.4). */
@@ -588,6 +590,13 @@ const META_PURGE_ROOMS = "purge_rooms";
 const MAX_PURGE_ROOMS = MAX_THREAD_LIMIT;
 const META_ACCOUNTING_UNSAFE = "accounting_unsafe";
 const META_ACCOUNT_USAGE = "account_usage_snapshot";
+/**
+ * The highest guest number ever reserved (see reserveGuestNumbers). Absent
+ * means none: the row is additive, so schema 4 objects need no reset for it.
+ */
+const META_GUEST_NUMBER_MARK = "guest_number_mark";
+/** Rows one guest-number block reservation may read and write, before control overhead. */
+const GUEST_NUMBER_BLOCK_COST = { reads: 8, writes: 8 } as const;
 
 function numericId(value: string, field = "id"): number {
   if (typeof value !== "string" || !/^\d+$/.test(value)) {
@@ -1009,8 +1018,10 @@ export class Store {
    * Used whenever the stored schema version differs from this code's, in
    * either direction; there is no data migration.
    *
-   * Only the current UTC day's resource reservations are carried over, when
-   * the old schema's budget row is readable, so a deploy cannot replenish the
+   * The guest-number high-water mark is carried over, so a guest ID is never
+   * reissued across a reset (a wipe does not restart guests at `guest_1`).
+   * Besides it, only the current UTC day's resource reservations are carried
+   * over, when the old schema's budget row is readable, so a deploy cannot replenish the
    * daily SQL allowance the platform has already metered. The fresh schema's
    * bootstrap reservation is added to that row without a capacity check, so
    * the reset itself can never fail on, or be blocked by, an exhausted budget;
@@ -1035,6 +1046,12 @@ export class Store {
     } catch {
       // An unreadable old budget table carries nothing.
     }
+    let guestNumberMark = 0;
+    try {
+      guestNumberMark = this.metaNumber(META_GUEST_NUMBER_MARK);
+    } catch {
+      // An unreadable old meta table carries no guest numbers.
+    }
     await deleteAll.call(this.durableStorage);
     this.initialized = false;
     this.accountingUnsafe = false;
@@ -1043,6 +1060,11 @@ export class Store {
     this.lastEffectiveMs = 0;
     this.scheduledAlarmAt = undefined;
     this.initialize();
+    if (guestNumberMark > 0) {
+      // Guest numbers outlive the wipe, so none is ever reissued. Like the
+      // budget row, this is one uncharged control write.
+      this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)", META_GUEST_NUMBER_MARK, String(guestNumberMark));
+    }
     if (!carried) return;
     const columns = ["reads_reserved", "writes_reserved", "frames_reserved", "admissions_reserved", "posts_reserved",
       "registrations_reserved", "foreground_reads", "foreground_writes", "maintenance_reads", "maintenance_writes"] as const;
@@ -2083,6 +2105,26 @@ export class Store {
         this.chargeEvent("auth", `ip:${input.ipKey}`, "auth", effective, this.config.authAttemptsPerIpMinute, "Authentication attempts limited");
       });
     });
+  }
+
+  /**
+   * Durably reserve the next `count` guest numbers and return them as the
+   * half-open range [first, limit). The stored high-water mark advances by
+   * `count` in one write, so numbers handed out from the range are never
+   * reissued, even after a restart, eviction, or hibernation wake loses the
+   * caller's in-memory range: the next call reserves past it, leaving a gap.
+   * Synchronous, like every Store call, so callers in one object cannot
+   * interleave two reservations.
+   */
+  reserveGuestNumbers(count: number, now = this.clock.now()): { first: number; limit: number } {
+    this.ensureReady();
+    if (!Number.isSafeInteger(count) || count <= 0) throw new StoreError("invalid_params", "guest number block must be a positive safe integer");
+    return this.reserved(GUEST_NUMBER_BLOCK_COST, false, now, () => this.transaction(() => {
+      const mark = this.metaNumber(META_GUEST_NUMBER_MARK);
+      if (mark > MAX_SAFE_ID - count - 1) throw new StoreError("internal_error", "guest numbers are exhausted");
+      this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)", META_GUEST_NUMBER_MARK, String(mark + count));
+      return { first: mark + 1, limit: mark + count + 1 };
+    }));
   }
 
   reserveHistory(input: { userId: string; ipKey: string; now: number }): void {

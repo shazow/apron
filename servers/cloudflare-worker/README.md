@@ -132,6 +132,11 @@ removed (its members get `room_update` `left`), which frees its slot under the
 This is not secure erasure, and says nothing about provider backups or copies
 on clients.
 
+Guests are numbered in arrival order: `guest_1` named "Guest 1", then
+`guest_2`, and so on, so the latest number roughly counts the demo's guests.
+The object reserves numbers ten at a time with one durable write and skips
+the rest of a block when it restarts or wakes from hibernation, so numbers
+are never reissued but have gaps (see [SPEC section 5](SPEC.md#guest)).
 Guest identities last only for their socket, including hibernation, and so do
 the rooms a guest has joined. A
 reconnect receives a new guest identity, joined to `general` only, so earlier
