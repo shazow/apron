@@ -254,9 +254,10 @@ All IDs are strings.
   source (live, history, embedded) or arrival order.
 - `log_id` and other server fields are ignored on input.
 - Room records and message snapshots MAY carry `prev_log_id`, the `log_id`
-  of the previous record for the same key; other records do not. A client can fetch that record with `history` bounded to it
-  (`after` and `before` both equal to it, [§4.1](#41-history)), and so walk a message's
-  edits back one at a time, as far as the server retains them. History is
+  of the previous record for the same key; other records do not. A client
+  can fetch that record with `history` bounded to it (`after` and `before`
+  both equal to it, [§4.1](#41-history)), and so walk a message's edits back one at a
+  time, as far as the server retains them. History is
   per room, so a message snapshot whose previous record is in another room,
   after a move ([§4.2](#42-edit)), also carries `prev_room_id`, the room to ask.
 
@@ -940,8 +941,8 @@ membership are server policy.
 }
 // -> general's threads I have not joined
 {"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "filter": "not_joined"}}
-// -> one room, such as for its members
-{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001"}}
+// -> one room, with its members
+{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001", "members": true}}
 ```
 
 Every filter is optional:
@@ -992,9 +993,8 @@ room receive only its room record changes ([§4.3.3](#433-updates)).
 
 Every membership change is a logged record in the room: joining, leaving,
 creating a room with `room_set`, and changes the server makes, such as a
-removal. A membership record carries `members`,
-one entry per user, each with the user as a recorded object ([§3.3](#33-identity)) and
-`joined`:
+removal. A membership record carries `members`, one entry per user, each
+with the user as a recorded object ([§3.3](#33-identity)) and `joined`:
 
 ```jsonc
 // ->
@@ -1040,9 +1040,9 @@ one entry per user, each with the user as a recorded object ([§3.3](#33-identit
   in `room_list` with `members: true` or in `room_update` `joined`, and keep
   it current from the memberships they receive live and in history.
 - A server MAY keep membership outside the log, such as for ephemeral
-  guests: it then sends no membership records for them, clients learn
-  those members only from `room_list`, and it ignores `latest_log_id` in
-  `room_list` unless the result stays correct.
+  guests: it then sends no membership records for them, clients learn those
+  members only from `room_list` and `room_update`, and it ignores
+  `latest_log_id` in `room_list` ([§4.3.1](#431-listing)).
 
 #### 4.3.3 Updates
 
@@ -1407,11 +1407,10 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 - Wake policy is server-defined.
 - Suggested convention: wake a user only for rooms they have joined
   ([§4.3.2](#432-membership)) and for messages whose `mentions` list them in rooms they can
-  see, when every
-  connection of theirs is away or gone ([§4.4](#44-activity)) and they have
-  not muted the room by server policy, such as a `/mute` command
-  ([§4.8](#48-command)). Servers MAY wait briefly first
-  and skip the push if the user's `read_message_id` has passed the message.
+  see, when every connection of theirs is away or gone ([§4.4](#44-activity)) and they
+  have not muted the room by server policy, such as a `/mute` command
+  ([§4.8](#48-command)). Servers MAY wait briefly first and skip the push if the user's
+  `read_message_id` has passed the message.
 
 ```json
 {
@@ -1463,15 +1462,16 @@ happens to it:
     "body": {"text": "/kick @guest_1234 spamming", "mentions": ["guest_1234"]}
   }
 }
-// <- to guest_1234's connections
-{"method": "room_update", "params": {"left": [{"room_id": "general"}]}}
-// <- to the room: the membership, then the notice
+// <- to the room, guest_1234 included: the membership
 {
   "method": "membership", "params": {
     "log_id": "1724803900001", "room_id": "general",
     "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]
   }
 }
+// <- to guest_1234's connections
+{"method": "room_update", "params": {"left": [{"room_id": "general"}]}}
+// <- to the room's remaining members: the notice
 {
   "method": "message", "params": {
     "message_id": "1724803900002", "log_id": "1724803900002", "room_id": "general",
