@@ -29,6 +29,8 @@
 	/** Threads are listed under their parent, not as rooms of their own. */
 	let rooms = $derived(sidebarRooms(session.rooms));
 	let canBrowse = $derived(session.canManageRooms && session.ready);
+	/** What picking a listed room does: join it, or open it without joining where guests only read. */
+	let action = $derived(session.readOnly ? 'Open' : 'Join');
 	let browseOpen = $state(false);
 	let moreThreadsFor = $state<string | undefined>();
 	let listError = $state('');
@@ -119,7 +121,7 @@
 									{#if moreThreadsFor === room.id}
 										{#each unjoinedThreads as listing (listing.id)}
 											<button class="ap-room ap-room-nested" type="button" data-join={listing.id} onclick={() => onjoin(listing.id)}>
-												<span class="ap-room-text"><span class="ap-room-name">{listing.title}</span><span class="ap-room-topic">Join</span></span>
+												<span class="ap-room-text"><span class="ap-room-name">{listing.title}</span><span class="ap-room-topic">{action}</span></span>
 											</button>
 										{/each}
 									{/if}
@@ -144,7 +146,7 @@
 							<button class="ap-room" type="button" data-join={listing.id} onclick={() => onjoin(listing.id)}>
 								<span class="ap-room-text">
 									<span class="ap-room-name">{listing.title}</span>
-									<span class="ap-room-topic">{#if members > 0}{members} {members === 1 ? 'member' : 'members'} · {/if}Join</span>
+									<span class="ap-room-topic">{#if members > 0}{members} {members === 1 ? 'member' : 'members'} · {/if}{action}</span>
 								</span>
 							</button>
 						{/each}

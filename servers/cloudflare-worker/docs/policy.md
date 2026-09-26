@@ -105,11 +105,12 @@ the client: it drops the stored token, and the connection returns as a fresh
 guest.
 
 Guests only read unless the deployment sets `GUEST_POSTING=true`
-(`ext.demo.guest_posting` says which): they can list rooms, read history, join
-and leave rooms, and run `/help`, but posting, reacting, and creating or
-editing threads are `denied` ("Guests can only read here; sign in with a
-passkey to post"). Guest `auth` sends a `@private` notice in `general` saying
-so, before its result.
+(`ext.demo.guest_posting` says which): they can list rooms, read any room's
+history without joining it, and run `/help`, and stay in `general`, where
+authentication put them. Posting, reacting, joining, leaving, and creating or
+editing threads are writes, `denied` ("Guests can only read here; sign in with
+a passkey to post or join rooms"). Guest `auth` sends a `@private` notice in
+`general` saying so, before its result.
 
 A registered user's `/invite-bot` creates or renames their bot, `bot_<their
 user_id>` named "Bot of <their name>", and returns its bearer token in a

@@ -95,7 +95,8 @@ setInterval(() => socket.send('{"method":"ping"}'), 45_000);
 ```
 
 A guest only reads: `auth` is answered with a `@private` notice saying so, and
-`message`, `reactions`, and `room_set` are `denied`. To exercise posting,
+`message`, `reactions`, `room_set`, `room_join`, and `room_leave` are `denied`;
+`room_list` and `history` work for any room without joining it. To exercise posting,
 editing, deletion/restoration, moves, threads, and reactions from your own
 client, sign in on the demo with a passkey, run `/invite-bot`, and connect with
 the token it gives you (see [Bots](#bots)). A new guest has joined `general`, and

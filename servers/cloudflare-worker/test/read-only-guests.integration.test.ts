@@ -92,7 +92,7 @@ async function inviteBot(peer: Peer, id: string): Promise<{ token: string; notic
 	return { token: token!, notice: notice!, skipped };
 }
 
-it('tells a guest it only reads, then denies its writes but not its reads', async () => {
+it('tells a guest it only reads, then denies its writes, joins and leaves included, but not its reads', async () => {
 	await guestsReadOnly();
 	const guest = await connect();
 	try {
@@ -117,8 +117,11 @@ it('tells a guest it only reads, then denies its writes but not its reads', asyn
 		denied(await request(guest, 'post-default', 'message', { body: { text: 'hello' } }));
 		denied(await request(guest, 'thread', 'room_set', { parent_room_id: 'general', title: 'Nope' }));
 		denied(await request(guest, 'bot', 'command', { body: { text: '/invite-bot' } }));
+		// Joining and leaving are writes too: the guest stays in general, where auth put it.
+		denied(await request(guest, 'leave', 'room_leave', { room_id: 'general' }));
+		denied(await request(guest, 'rejoin', 'room_join', { room_id: 'general' }));
 
-		// Reading stays open: listing, history, /help, and joining (which only changes deliveries).
+		// Reading stays open: listing, history, and /help.
 		expect((await request(guest, 'rooms', 'room_list', { filter: 'joined' })).result.joined[0].room_id).toBe('general');
 		expect((await request(guest, 'history', 'history', { room_id: 'general' })).result.latest_log_id).toBeDefined();
 		const help = await exchange(guest, 'help', 'command', { body: { text: '/help' } });
@@ -127,11 +130,19 @@ it('tells a guest it only reads, then denies its writes but not its reads', asyn
 		expect(listed).toContain('/help');
 		expect(listed).not.toContain('/invite-bot');
 
-		// Something to react to, posted by a registered user.
+		// Something to react to and a thread to read, from a registered user.
 		const { peer: owner } = await signedIn('reader_owner');
 		try {
 			const posted = await request(owner, 'post', 'message', { room_id: 'general', body: { text: 'for the guest' } });
 			denied(await request(guest, 'react', 'reactions', { message_id: posted.result.message_id, emojis: ['👍'] }));
+			const thread = (await request(owner, 'thread', 'room_set', { parent_room_id: 'general', title: 'Readable' })).result.room_id;
+			await request(owner, 'reply', 'message', { room_id: thread, body: { text: 'in the thread' } });
+			// The guest lists the thread and reads its history without joining it, but cannot join it.
+			const threads = await request(guest, 'threads', 'room_list', { parent_room_id: 'general', filter: 'not_joined' });
+			expect(threads.result.not_joined.map((room: { room_id: string }) => room.room_id)).toContain(thread);
+			const page = await request(guest, 'thread-history', 'history', { room_id: thread });
+			expect(page.result.messages.map((message: { body: { text: string } }) => message.body.text)).toContain('in the thread');
+			denied(await request(guest, 'join-thread', 'room_join', { room_id: thread }));
 		} finally { owner.close(); }
 	} finally { guest.close(); }
 });

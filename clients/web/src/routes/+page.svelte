@@ -143,7 +143,7 @@
 	let shownTimeline = $derived(hiddenItems > 0 ? timeline.slice(Math.min(hiddenItems, timeline.length)) : timeline);
 	/** The pane is live: its room is listed, and no sign-in is under way. */
 	let paneReady = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
-	/** Writing here: posting, replying, reacting, and editing threads. A guest who only reads can't, but can join and leave. */
+	/** Writing here: posting, replying, reacting, and editing threads. A guest who only reads can't. */
 	let canCompose = $derived(paneReady && !session.readOnly);
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members));
 	let typingNames = $derived(snapshot.typing
@@ -698,8 +698,24 @@
 
 	function joinRoom(roomId: string): void {
 		if (!client) return;
+		// Joining is a write where guests only read: they open the room through its history instead.
+		if (session.readOnly) {
+			openWithoutJoining(roomId);
+			return;
+		}
 		pendingJoin = roomId;
 		feedback.track(client.joinRoom(roomId), 'Joining…');
+	}
+
+	/**
+	 * Opens a listed room or thread without joining it, read through its
+	 * history (§4.1), for a guest on a server whose guests only read.
+	 */
+	function openWithoutJoining(roomId: string): void {
+		if (!client || !client.viewRoom(roomId)) return;
+		const room = session.rooms.find((candidate) => candidate.id === roomId);
+		if (room?.parentRoomId !== undefined) openDestination(room.parentRoomId, roomId);
+		else if (room) chooseRoom(room);
 	}
 
 	/** Leaves the open room or thread (cap `rooms`); the server removes it from the list. */
@@ -1074,8 +1090,8 @@
 				canEditThread={Boolean(activeThread && session.canManageRooms && !session.readOnly && activeThreadEntry)}
 				editorOpen={threadEditorOpen}
 				editDisabled={!paneReady}
-				canLeave={session.canLeaveRooms && Boolean(paneRoom?.joined)}
-				canJoin={session.canManageRooms && Boolean(paneRoom) && !paneRoom?.joined}
+				canLeave={session.canLeaveRooms && !session.readOnly && Boolean(paneRoom?.joined)}
+				canJoin={session.canManageRooms && !session.readOnly && Boolean(paneRoom) && !paneRoom?.joined}
 				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)} onleave={leavePane} onjoin={joinPane}
 			/>
 			{#if threadEditorOpen && activeThreadEntry}

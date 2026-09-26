@@ -101,8 +101,8 @@ const COMMANDS: ReadonlyArray<{ name: string; usage: string; help: string; audie
 	{ name: "help", usage: "/help", help: "list the commands you can use here", audience: "everyone" },
 	{ name: "invite-bot", usage: "/invite-bot", help: "get a sign-in token for your bot; a new one replaces the last", audience: "owners" },
 ];
-/** Why a guest's post, reaction, or room change is denied while guests only read. */
-const GUEST_READ_ONLY = "Guests can only read here; sign in with a passkey to post";
+/** Why a guest's post, reaction, join, leave, or room change is denied while guests only read. */
+const GUEST_READ_ONLY = "Guests can only read here; sign in with a passkey to post or join rooms";
 /**
  * A registered user's bot is `bot_` plus the owner's `user_id`. Guests are
  * `guest_<n>` and registered users `u_…`, so the prefix names bots alone.
@@ -1026,7 +1026,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 					params: {
 						room_id: ROOM_ID,
 						from: { ...PRIVATE_IDENTITY },
-						body: { text: "You’re reading as a guest. Sign in with a passkey to post, react, and start threads.", format: "plain" },
+						body: { text: "You’re reading as a guest. Sign in with a passkey to post, react, join rooms, and start threads.", format: "plain" },
 					},
 				});
 			}
@@ -1414,9 +1414,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	/**
-	 * Guests only read unless `GUEST_POSTING` is on: posting, reacting, and
-	 * room changes are denied by policy (§3.5). Listing, history, joining,
-	 * and leaving, which only change what the connection receives, stay open.
+	 * Guests only read unless `GUEST_POSTING` is on: posting, reacting,
+	 * joining, leaving, and room changes are denied by policy (§3.5, §4.3.2).
+	 * Listing rooms and reading history stay open.
 	 */
 	private assertMayWrite(attachment: ConnectionAttachment): void {
 		if (attachment.tier === "anonymous" && !this.config.guestPosting) throw { name: "denied", message: GUEST_READ_ONLY } satisfies ProtocolError;
@@ -1514,6 +1514,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private async handleRoomJoin(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: "Authenticate before joining rooms" } satisfies ProtocolError;
+		this.assertMayWrite(attachment);
 		const roomId = requiredString(request.params, "room_id");
 		const known = this.store.getRoom(roomId, nowMs());
 		this.noteRoom(roomId, known !== null);
@@ -1553,6 +1554,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private async handleRoomLeave(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: "Authenticate before leaving rooms" } satisfies ProtocolError;
+		this.assertMayWrite(attachment);
 		const roomId = requiredString(request.params, "room_id");
 		if (!this.roomExists(roomId)) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
 		const current = attachment.rooms ?? [];

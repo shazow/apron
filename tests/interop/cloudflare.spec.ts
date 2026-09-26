@@ -282,7 +282,7 @@ test('custom frontend origins read as guests, cannot post, and cannot use passke
 	}
 });
 
-test('Worker keeps guests read-only, leaves typing off, lists rooms, lets guests leave and rejoin General, colors avatars by user_id, and offers room members to mention', async ({ browser }) => {
+test('Worker keeps guests read-only, leaves typing off, lists rooms, lets guests open threads without joining, colors avatars by user_id, and offers room members to mention', async ({ browser }) => {
 	const writer = await browser.newContext();
 	const reader = await browser.newContext();
 	try {
@@ -300,7 +300,7 @@ test('Worker keeps guests read-only, leaves typing off, lists rooms, lets guests
 		// composer gives way to a sign-in bar. The reader stays a guest.
 		await expect(pageB.getByText('This demo keeps roughly the last day of history; older messages may expire.')).toBeVisible();
 		await expect(pageB.getByTestId('notice').filter({ hasText: 'You’re reading as a guest.' })).toBeVisible();
-		await expect(pageB.getByTestId('read-only-bar')).toContainText('Sign in to post, react, and start threads.');
+		await expect(pageB.getByTestId('read-only-bar')).toContainText('Sign in to post, react, join rooms, and start threads.');
 		await expect(composer(pageB)).toHaveCount(0);
 		// The demo denies guest renames; the profile editor says so and keeps the old handle.
 		await pageB.getByRole('button', { name: /^Your profile on/ }).click();
@@ -339,13 +339,30 @@ test('Worker keeps guests read-only, leaves typing off, lists rooms, lets guests
 		await expect(pageB.getByTestId('room-list').locator('[data-room="general"]')).toBeVisible();
 		await pageB.waitForTimeout(500);
 		await expect(pageB.getByTestId('browse-rooms')).toHaveCount(0);
-		// Leaving General makes it a room to browse and join again.
-		pageB.on('dialog', (dialog) => dialog.accept());
-		await pageB.getByTestId('leave-room').click();
-		await expect(pageB.getByTestId('room-list').locator('button[data-room="general"]')).toHaveCount(0);
-		await pageB.getByTestId('browse-rooms').click();
-		await pageB.getByTestId('room-directory').locator('[data-join="general"]').click();
-		await expect(pageB.getByRole('main', { name: 'Conversation' }).getByRole('heading', { name: 'General', exact: true })).toBeVisible();
+		// Joining and leaving are writes too, so the guest gets neither button.
+		await expect(pageB.getByTestId('leave-room')).toHaveCount(0);
+		// The writer starts a thread; the guest opens it from More threads…
+		// without joining, and reads it through its history.
+		await sendMessage(pageA, 'a thread guests can read');
+		const threadId = await startThread(pageA, await waitForMessage(pageA, 'a thread guests can read'));
+		await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
+		await pageB.getByTestId('more-threads').click();
+		const listed = pageB.locator(`[data-join="${threadId}"]`);
+		await expect(listed).toContainText('Open');
+		await listed.click();
+		await expect(pageB.getByRole('heading', { level: 1 })).toContainText('a thread guests can read');
+		await expect(pageB.getByTestId('join-room')).toHaveCount(0);
+		await expect(pageB.getByTestId('read-only-bar')).toBeVisible();
+		await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
+		// The signed-in writer can leave General, browse to it, and join it again.
+		pageA.on('dialog', (dialog) => dialog.accept());
+		await pageA.getByTestId('leave-room').click();
+		await expect(pageA.getByTestId('room-list').locator('button[data-room="general"]')).toHaveCount(0);
+		await pageA.getByTestId('browse-rooms').click();
+		const general = pageA.getByTestId('room-directory').locator('[data-join="general"]');
+		await expect(general).toContainText('Join');
+		await general.click();
+		await expect(pageA.getByRole('main', { name: 'Conversation' }).getByRole('heading', { name: 'General', exact: true })).toBeVisible();
 		// Placeholder avatars take their hue from the user_id, so two guests differ.
 		const hue = (page: typeof pageA) => page.locator('.ap-profile-me .ap-avatar').first().evaluate((element) => (element as HTMLElement).style.getPropertyValue('--avatar-hue'));
 		const [hueA, hueB] = [await hue(pageA), await hue(pageB)];

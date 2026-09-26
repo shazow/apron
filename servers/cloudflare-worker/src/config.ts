@@ -11,7 +11,7 @@ export interface RuntimeConfig {
 	admissionOff: boolean;
 	/** Advertise and relay typing (cap `activity`); off unless `ACTIVITY=true`. */
 	activityEnabled: boolean;
-	/** Let guests post, react, and create threads; off unless `GUEST_POSTING=true`, so guests only read. */
+	/** Let guests post, react, join and leave rooms, and create threads; off unless `GUEST_POSTING=true`, so guests only read. */
 	guestPosting: boolean;
 }
 

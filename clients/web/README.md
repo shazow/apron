@@ -229,9 +229,10 @@ identity attached to your chosen passkey.
 A server may keep guests read-only; the demo worker does, and says so with
 `ext.demo.guest_posting: false`. Signed in as a guest there, the composer gives
 way to a bar saying so with a **Sign in** button (it opens the connect screen
-on Passkey), and replying, reacting, starting or editing threads are hidden;
-reading, browsing, joining, and leaving rooms still work. Other servers' denials
-show as errors as usual.
+on Passkey). Replying, reacting, starting or editing threads, and Join and
+Leave are hidden; Browse rooms and More threads… offer **Open** instead of
+**Join**, which reads the room through its history without joining it. Other
+servers' denials show as errors as usual.
 
 Passkeys use the browser's native WebAuthn JSON APIs, with no frontend dependency.
 An up-to-date browser is required; unsupported browsers can still chat as guests.
