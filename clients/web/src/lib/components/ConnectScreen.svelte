@@ -69,6 +69,8 @@
 		return narrowed.length ? narrowed : supported;
 	});
 	let chosen = $derived(schemes.includes(scheme) ? scheme : schemes[0]);
+	/** The server in the field is the connected one, and its guests only read. */
+	let guestReadOnly = $derived(normalizedInput === client.url && session.server?.ext?.demo?.guest_posting === false);
 	/** A passkey ceremony can start from this tap: signed in here as a guest. */
 	let passkeyNow = $derived(chosen === 'webauthn' && !passkeySession && here);
 	let status = $derived.by((): 'idle' | 'connecting' | 'authing' => {
@@ -219,7 +221,7 @@
 		{:else if here && chosen === 'webauthn' && passkeySession}
 			<p class="ap-profedit-hint">Signed in with a passkey. Choose Guest to sign out.</p>
 		{:else}
-			<p class="ap-profedit-hint">{SCHEMES[chosen].hint}</p>
+			<p class="ap-profedit-hint">{guestReadOnly && chosen === 'guest' ? 'No token needed, but guests only read here: sign in with a passkey to post.' : SCHEMES[chosen].hint}</p>
 		{/if}
 		{#if passkeyNow}
 			<button class="ap-link ap-connect-other" type="button" data-testid="other-passkey" disabled={busy} onclick={() => passkey(plan === 'login' ? 'register' : 'login')}>

@@ -190,6 +190,12 @@ export interface ClientSnapshot {
 	authenticated: boolean;
 	authBusy?: boolean;
 	passkeySession?: boolean;
+	/**
+	 * Signed in as a guest on a server whose guests only read (the demo
+	 * worker's `ext.demo.guest_posting: false`): posting, reacting, and room
+	 * changes are denied until the user signs in.
+	 */
+	readOnly?: boolean;
 	/** This browser has signed in to this server with a passkey before. */
 	passkeyHint?: boolean;
 	error?: string;
@@ -745,6 +751,7 @@ export class ChatClient {
 			authenticated: this.authenticated,
 			authBusy: Boolean(this.passkeyAbort),
 			passkeySession: Boolean(this.registeredSession && this.authenticated),
+			readOnly: this.authenticated && !this.registeredSession && this.server?.ext?.demo?.guest_posting === false,
 			passkeyHint: this.passkeyHint,
 			error: this.error,
 			server: this.server,
@@ -1097,10 +1104,10 @@ export class ChatClient {
 
 	/**
 	 * Shows a transient notice in a room for this session (§3.5), such as a
-	 * command's error: from `@private` ("Only you"), never sent or stored.
+	 * command's error: from `@private`, never sent or stored.
 	 */
 	notify(room: string, text: string): void {
-		this.addNotice(room, { user_id: '@private', name: 'Only you' }, { text });
+		this.addNotice(room, { user_id: '@private', name: 'System message to you' }, { text });
 		this.emit();
 	}
 

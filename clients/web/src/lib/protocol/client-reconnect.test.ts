@@ -299,6 +299,33 @@ describe('persisted session tokens', () => {
 		elsewhere.stop();
 	});
 
+	it('reads only as a guest where the server says guests only read, until a sign-in', async () => {
+		const readOnlyExt = { demo: { guest_posting: false } };
+		const guest = new ChatClient('ws://fake.test/');
+		guest.subscribe((next) => (snapshot = next));
+		guest.start();
+		await latest().greet([], { auth: ['webauthn', 'token', 'guest'], ext: readOnlyExt });
+		expect(snapshot.readOnly).toBe(true);
+		guest.stop();
+
+		// A signed-in session writes; so does a guest where guests may post, or where nothing is said.
+		const signedIn = new ChatClient('ws://fake.test/');
+		signedIn.subscribe((next) => (snapshot = next));
+		signedIn.start();
+		await latest().greet([], { auth: ['webauthn', 'token', 'guest'], ext: readOnlyExt, token: 'session-3' });
+		expect(snapshot.readOnly).toBe(false);
+		signedIn.stop();
+		for (const ext of [{ demo: { guest_posting: true } }, undefined]) {
+			storage.clear();
+			const open = new ChatClient('ws://fake.test/');
+			open.subscribe((next) => (snapshot = next));
+			open.start();
+			await latest().greet([], { ...(ext ? { ext } : {}) });
+			expect(snapshot.readOnly).toBe(false);
+			open.stop();
+		}
+	});
+
 	it('does not persist a token when the server cannot resume with it', async () => {
 		const client = new ChatClient('ws://fake.test/');
 		client.start();

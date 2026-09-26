@@ -358,7 +358,17 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 .ap-msg-system-who { font-weight: 600; color: var(--ink-muted); }
 .ap-msg-system-body .ap-msg-text { color: var(--ink); }
 .ap-msg-system-time { font-size: 11px; font-variant-numeric: tabular-nums; }
-.ap-msg-private { border: 1px dashed var(--line-strong); border-radius: var(--radius-md); }
+/* Scoped system messages (Appendix A.1): @private, @room, @server. A left-aligned card titled by who got it,
+   "System message to you", "… to this room", "… to everyone"; never centered, since they run to paragraphs and code.
+   Private ones are dashed: never stored, gone on reload. A code block in one wraps, with a Copy button clear of the text. */
+.ap-notice { margin: var(--space-3) var(--space-4) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-200); font-size: 14px; line-height: 20px; color: var(--ink); text-align: left; }
+.ap-notice-private { border: 1px dashed var(--line-strong); background: transparent; }
+.ap-notice-head { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: var(--space-1); font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.ap-notice-title { font-weight: 600; }
+.ap-notice-time { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+.ap-notice-body { min-width: 0; }
+.ap-notice pre { position: relative; padding-right: 96px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ap-notice-copy { position: absolute; top: var(--space-1); right: var(--space-1); font-family: var(--font-sans); }
 /* Join and leave lines — quieter still: smaller, tighter, and the time only on hover or focus */
 .ap-msg-member { margin-top: var(--space-1); padding-block: 0; font-size: 12px; line-height: 16px; }
 .ap-msg-member .ap-msg-system-time { opacity: 0; transition: opacity .15s; }
