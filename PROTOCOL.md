@@ -59,25 +59,26 @@ room, including the sender.
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"protocol": 5, "caps": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
 
+// -> joined rooms and their members, sent without waiting: auth finishes first (§3.2)
+{"method": "room_list", "id": "c2", "params": {"filter": "joined", "members": true}}
+
 // <- assigned identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
 
-// -> joined rooms
-{"method": "room_list", "id": "c2", "params": {"only_joined": true}}
-
 // <- one room
-{"id": "c2", "result": {"joined": [{"room_id": "general", "title": "General"}]}}
+{
+  "id": "c2", "result": {
+    "joined": [{"room_id": "general", "title": "General", "members": [{"user_id": "guest_1234", "name": "Ada"}]}]
+  }
+}
 
 // -> post a message
 {"method": "message", "id": "c3", "params": {"room_id": "general", "body": {"text": "Hello"}}}
-
-// <- confirmation
-{"id": "c3", "result": {"message_id": "1724803200042"}}
 
 // <- broadcast to everyone in the room
 {
@@ -87,12 +88,16 @@ room, including the sender.
     "body": {"text": "Hello"}
   }
 }
+
+// <- confirmation, after the broadcast it caused
+{"id": "c3", "result": {"message_id": "1724803200042"}}
 ```
 
 - Client request `id` corresponds to server reply `id`.
 - `message_id` is a stable message identifier for its lifetime.
 - `log_id` identifies one change. The protocol is built around an append-only
-  log: every change to a room, message, or reaction is a record in it ([§2](#2-identifiers)).
+  log: every change to a room, message, reaction, or membership is a record
+  in it ([§2](#2-identifiers)).
 
 ---
 
@@ -113,6 +118,9 @@ room, including the sender.
 - On one connection, a result reflects every notification sent before it, so
   clients apply frames in arrival order: an older result never follows a
   notification of a change it does not include.
+- Notifications a request causes on the requesting connection, such as the
+  broadcast of a posted message or the `room_update` of a join, are sent
+  before its result.
 - Server announcements and broadcasts are notifications.
 - Unknown methods: servers reply `error/unsupported` to requests and ignore
   notifications; clients ignore unknown notifications.
@@ -214,7 +222,8 @@ All IDs are strings.
 
 - Decimal string of Unix epoch milliseconds, e.g. `"1724803200042"`.
 - One strictly increasing sequence per server, covering every record: room
-  records ([§3.4](#34-rooms)), message snapshots ([§3.5](#35-messages)), reaction sets ([§4.5](#45-reactions)).
+  records ([§3.4](#34-rooms)), message snapshots ([§3.5](#35-messages)), reaction sets ([§4.5](#45-reactions)),
+  memberships ([§4.3.2](#432-membership)).
 - Value is the commit time, or the previous `log_id + 1` if the clock has not
   advanced past it.
 - Clients MAY use it as a timestamp (this is the only one).
@@ -239,14 +248,18 @@ All IDs are strings.
 | room record      | `room_id`               |
 | message snapshot | `message_id`            |
 | reaction set     | `(message_id, user_id)` |
+| membership       | `(room_id, user_id)`    |
 
 - Clients keep the record with the greatest `log_id` per key, regardless of
   source (live, history, embedded) or arrival order.
 - `log_id` and other server fields are ignored on input.
-- A record MAY carry `prev_log_id`, the `log_id` of the previous record for
-  the same key. A client can fetch that record with `history` bounded to it
-  (`after` and `before` both equal to it, [§4.1](#41-history)), and so walk a message's
-  edits back one at a time, as far as the server retains them.
+- Room records and message snapshots MAY carry `prev_log_id`, the `log_id`
+  of the previous record for the same key; other records do not. A client
+  can fetch that record with `history` bounded to it (`after` and `before`
+  both equal to it, [§4.1](#41-history)), and so walk a message's edits back one at a
+  time, as far as the server retains them. History is
+  per room, so a message snapshot whose previous record is in another room,
+  after a move ([§4.2](#42-edit)), also carries `prev_room_id`, the room to ask.
 
 **Opaque IDs** — `room_id`, `user_id`, `embed_id`, `session_id`, and request
 `id`.
@@ -274,7 +287,7 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 5,
+    "protocol": 6,
     "name": "impl-name/1.0",
     "caps": ["history", "edit"],
     "auth": ["token"]
@@ -283,7 +296,7 @@ frame, unprompted. There is no client hello.
 ```
 
 - `protocol`: required integer, incremented with each revision of this spec.
-  Current value `5`. Implementations make a best effort to interoperate
+  Current value `6`. Implementations make a best effort to interoperate
   across versions; mismatched optional features degrade to their fallbacks
   ([§4](#4-capabilities)).
 - `name`: optional implementation/version string.
@@ -335,6 +348,12 @@ free-form implementation string for debugging.
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
 other requests get `denied` and other notifications are ignored.
 
+`auth` is a barrier: the server finishes an `auth` request before it
+processes any later frame on the connection, so clients MAY send requests
+right behind it, such as `room_list` and `history`, without waiting for its
+result. If the `auth` fails, those requests get `denied`. A WebAuthn `begin`
+step ([§4.9](#49-webauthn-authentication)) authenticates nothing, so requests behind it are denied.
+
 ### 3.3 Identity
 
 Identity is server-authoritative: every message carries its author in `from`.
@@ -346,35 +365,30 @@ Identity is server-authoritative: every message carries its author in `from`.
 `user_id` is required and stable. `name` is an optional display string; absent
 `name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)) and `ext` ([§3.5](#35-messages)) are
 optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
-`users`, RTC members) uses this shape, and servers MAY send only `user_id`.
-Clients keep one user object per `user_id` and merge into it every one they
-receive, whichever frame carried it, except an older `from` (below): a present
-field replaces the kept value, an empty value (`""`, `{}`) removes it, and a
-missing field leaves it unchanged, so an object with only `user_id` changes
-nothing. Clients render every message with the kept object.
+`users`, a membership's `user`, RTC members) uses this shape, and servers MAY
+send only `user_id`.
 
-A message's `from` describes its author as of the message's `message_id`,
-and later snapshots of the message MAY keep it unchanged. Clients remember
-the position of each kept object: a merged `from` sets it to its message's
-`message_id`, and any other user object (`you`, `user`, `members`, `users`)
-to the greatest `log_id` the client has received. Clients merge a `from` only
-when its `message_id` is greater, so an edited, moved, or quoted old message
-does not bring back an old name.
+User objects come in two kinds:
+
+- **Current** objects describe the user now: `you` and `new` in a `user`
+  notification, and room `members` and `users` in `room_list` and
+  `room_update` ([§4.3](#43-rooms)). Clients keep one user object per `user_id` and merge every
+  current object into it: a present field replaces the kept value, an empty
+  value (`""`, `{}`) removes it, and a missing field leaves it unchanged, so
+  an object with only `user_id` changes nothing.
+- **Recorded** objects describe the user as of a record: a message's `from`,
+  a reaction's `from`, a membership's `user` ([§4.3.2](#432-membership)). Later snapshots MAY keep
+  them unchanged, so they can be stale. Clients never merge them.
+
+Clients render a user field by field from the kept object, falling back to
+the recorded object the frame carries, then to `user_id`: the display name
+is the kept `name`, else the recorded `name`, else `user_id`. Servers SHOULD
+include `name` in `from`, so clients with no kept object can render any
+message without looking its author up.
 
 Clients SHOULD show a user as `Name (@user_id)` where space allows, and
-MUST when another user in the same room shares the name, so no one can pass
-as someone else.
-
-Servers SHOULD include `name` in `from`, so clients can render any message
-without looking its author up.
-
-A result MAY carry `users`, complete user objects, each user once, for the
-identities elsewhere in it, such as a history page's authors. Clients merge
-them like any other user object, after the rest of the result, so `users`
-wins over every `from` in the same result. Clients that ignore them lose what
-`from` leaves out, such as avatars, and names changed since the newest
-message they have. Servers whose `from` keeps the name from posting time
-SHOULD send the users' current objects in `users` with history pages.
+MUST when they know another `user_id` with the same display name, so no one
+can pass as someone else.
 
 A `me` request updates the user's own profile after authentication, by the
 same rule: fields given replace their current values, fields omitted stay
@@ -389,13 +403,13 @@ Servers announce a removed field as its empty value:
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙", "avatar": ""}}}
 ```
 
-After authentication, the server MAY send a `user` notification at any time,
-such as after a rename, a profile change, or an authentication change. It
-carries `you`, sent to the user's own connections, or `new` and `old`, sent
-to others who share a room with the user. `new` alone is the user's current
-object, `old` alone says the user no longer shares any room with the
-recipient, and both together say `user_id` changed. With `room_id`, they
-announce joins and leaves ([§4.3.2](#432-membership)):
+After authentication, the server MAY send a `user` notification at any time
+a user object changes, such as after a rename, a profile change, or an
+authentication change. It carries `you`, sent to the user's own
+connections, or `new`, sent to others who share a room with the user. `new`
+is the user's current object; with `old` as well, the user's `user_id`
+changed from `old.user_id` to `new.user_id`. Joins and leaves are
+memberships, not `user` notifications ([§4.3.2](#432-membership)).
 
 ```jsonc
 // <- to the user's own connections
@@ -431,9 +445,12 @@ its `room_id` from the messages in it, and title any room they know nothing
 more about by its `room_id`. Listing, joining, creating, and threads are cap
 `rooms` ([§4.3](#43-rooms)).
 
-A connection receives deliveries for the rooms its user has joined: every
-room, on servers without membership. Posting does not require joining
-([§3.5](#35-messages)).
+A connection receives the messages and other records of the rooms its user
+has joined: every room, on servers without cap `rooms`. Of a joined room's
+threads (below) it receives only changes to their room records, as
+`room_update` ([§4.3.3](#433-updates)), not their messages; a thread's messages go to the
+thread's members. System notices are delivered by their scope instead
+([Appendix A.1](#a1-system-identities-and-scoped-notices)). Posting does not require joining ([§3.5](#35-messages)).
 
 A **room record** describes one room, as `room_list` and `room_update`
 carry it ([§4.3](#43-rooms)):
@@ -463,12 +480,12 @@ clients always take the latest values, even if `log_id` did not change.
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
 | `intro_message`           | client   | optional message object ([§3.5](#35-messages)): the room's description or summary |
 | `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
-| `latest_log_id`           | delivery | greatest `log_id` in the room's log                                               |
+| `latest_log_id`           | delivery | greatest `log_id` in the room's log, memberships included                         |
 | `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
-| `member_count`, `members` | delivery | optional, in `room_list` only ([§4.3.1](#431-listing))                            |
+| `members`                 | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.3](#43-rooms))       |
 
 A room record is complete ([§2](#2-identifiers)); omitted fields are cleared, except
-`member_count` and `members`.
+`members`, which only some frames carry.
 
 `intro_message` is a message like any other. Servers SHOULD embed its
 snapshot in room records so clients can render it without history; editing
@@ -495,8 +512,6 @@ object as an authoritative **snapshot** at one log position.
     "body": {"text": "hello *world*", "format": "markdown"}
   }
 }
-// <-
-{"id": "c3", "result": {"message_id": "1724803200042"}}
 // <- broadcast to every client in the room, including the sender
 {
   "method": "message", "params": {
@@ -505,19 +520,22 @@ object as an authoritative **snapshot** at one log position.
     "body": {"text": "hello *world*", "format": "markdown"}
   }
 }
+// <-
+{"id": "c3", "result": {"message_id": "1724803200042"}}
 ```
 
-| field         | set by | meaning                                               |
-|---------------|--------|-------------------------------------------------------|
-| `message_id`  | server | permanent ID ([§2](#2-identifiers))                                     |
-| `log_id`      | server | position of this snapshot in the log ([§2](#2-identifiers))             |
-| `prev_log_id` | server | optional; this message's previous snapshot ([§2](#2-identifiers))       |
-| `from`        | server | author identity ([§3.3](#33-identity)), preserved across changes      |
-| `room_id`     | client | the room the message is in; omitted, the default room |
-| `body`        | client | `text`, `format`, `embeds`, `mentions`                |
-| `reply_to`    | client | optional message object naming the message replied to |
-| `deleted`     | client | tombstone marker, default false ([§4.2](#42-edit))          |
-| `ext`         | client | optional object of namespaced, opaque extension data  |
+| field          | set by | meaning                                                                 |
+|----------------|--------|-------------------------------------------------------------------------|
+| `message_id`   | server | permanent ID ([§2](#2-identifiers))                                     |
+| `log_id`       | server | position of this snapshot in the log ([§2](#2-identifiers))             |
+| `prev_log_id`  | server | optional; this message's previous snapshot ([§2](#2-identifiers))       |
+| `prev_room_id` | server | the previous snapshot's room, when it differs ([§2](#2-identifiers))    |
+| `from`         | server | author identity ([§3.3](#33-identity)), preserved across changes        |
+| `room_id`      | client | the room the message is in; omitted, the default room                   |
+| `body`         | client | `text`, `format`, `embeds`, `mentions`                                  |
+| `reply_to`     | client | optional message object naming the message replied to                   |
+| `deleted`      | client | tombstone marker, default false ([§4.2](#42-edit))                      |
+| `ext`          | client | optional object of namespaced, opaque extension data                    |
 
 **Extensions.** `ext` carries data the spec does not define, keyed by
 namespace:
@@ -550,8 +568,10 @@ local policy.
 - A new message with no `text` and no `embeds` SHOULD be neither logged nor
   broadcast; its result is then `{}`.
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
-  confirmation; the broadcast, delivered to the room's members, MAY arrive
-  before or after it, and a deduplicated retry ([§1.2](#12-retries-and-deduplication)) produces no broadcast.
+  confirmation. The broadcast goes to the connections that receive the
+  room's deliveries ([§3.4](#34-rooms)); when the sender's connection is one of them, the
+  broadcast comes first ([§1](#1-transport--framing)). A deduplicated retry ([§1.2](#12-retries-and-deduplication)) produces no
+  broadcast.
 - **Snapshots replace** under the replay rule ([§2](#2-identifiers)), including for messages
   the client has not loaded. Servers MAY publish a snapshot of any message at
   any time, such as edits, deletions, and moves of older messages. Support is
@@ -595,7 +615,8 @@ usually shows each one in `body.text` as `@` followed by the `user_id`
 Every server:
 
 1. Sends a `server` frame on connect ([§3.1](#31-server-frame)).
-2. Accepts at least one `auth` scheme and replies with `you` ([§3.2](#32-authentication)).
+2. Accepts at least one `auth` scheme, replies with `you`, and finishes
+   `auth` before processing later frames ([§3.2](#32-authentication)).
 3. Accepts `message` without `room_id` into its default room ([§3.5](#35-messages)).
 4. Accepts `message` creation: replies with `message_id` and broadcasts the
    snapshot to the room ([§3.5](#35-messages)).
@@ -615,8 +636,9 @@ A minimal client (informative):
    knows its record ([§3.4](#34-rooms)).
 3. Keeps each message's snapshot with the greatest `log_id`, from any
    source, and renders tombstones ([§2](#2-identifiers), [§3.5](#35-messages)).
-4. Merges user objects per `user_id`, skipping a `from` older than the kept
-   object, and shows `Name (@user_id)` when two users in a room share a name ([§3.3](#33-identity)).
+4. Keeps one user object per `user_id`, merged from current objects and
+   falling back to `from`, and shows `Name (@user_id)` when two `user_id`s
+   share a name ([§3.3](#33-identity)).
 5. Renders `plain` and `markdown` text with raw HTML disabled, and a
    fallback card for embed kinds it does not support ([§3.5](#35-messages)).
 6. Matches replies by `id`, acts on error codes, and ignores unknown
@@ -654,8 +676,8 @@ follows `server.push` ([§4.7](#47-push)), passkeys `server.auth` ([§4.9](#49-w
 Six frame idioms cover everything logged or announced:
 
 - **Records** (room records, `message`): complete state at a `log_id` ([§2](#2-identifiers)).
-- **Per-user state** (`reactions`): `from` plus the user's complete state for
-  a scope; newest wins per user. Logged ([§2](#2-identifiers)).
+- **Per-user state** (`reactions`, `membership`): the user plus their complete
+  state for a scope; newest wins per user. Logged ([§2](#2-identifiers)).
 - **Activity** (`activity`): `from` plus changes to the user's transient
   state; present fields update it and absent fields leave it unchanged. Not
   part of the append-only log.
@@ -663,15 +685,15 @@ Six frame idioms cover everything logged or announced:
   replaces the last.
 - **Room updates** (`room_update`): unlogged changes to the user's rooms,
   never a full list ([§4.3.3](#433-updates)).
-- **Users** (`user`, and every user object): unlogged; each merges into the
-  kept object, except a `from` older than it ([§3.3](#33-identity)).
+- **Users** (`user`, and every current user object): unlogged; each merges
+  into the kept object ([§3.3](#33-identity)).
 
 ### 4.1 `history`
 
 Stateless window query over a room's **log**. `rooms` holds room records
-([§3.4](#34-rooms)), `entries` message snapshots ([§3.5](#35-messages)), and `reactions` reaction sets
-([§4.5](#45-reactions)): one log, partitioned by kind. Without `room_id`, it pages the default
-room ([§3.5](#35-messages)).
+([§3.4](#34-rooms)), `messages` message snapshots ([§3.5](#35-messages)), `reactions` reaction sets
+([§4.5](#45-reactions)), and `membership` memberships ([§4.3.2](#432-membership)): one log, partitioned by
+kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
 
 ```jsonc
 // ->
@@ -685,7 +707,7 @@ room ([§3.5](#35-messages)).
 {
   "id": "c9", "result": {
     "rooms": [],
-    "entries": [
+    "messages": [
       {
         "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
         "from": {...}, "body": {...}
@@ -697,36 +719,40 @@ room ([§3.5](#35-messages)).
         "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
       }
     ],
-    "users": [
-      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
-      {"user_id": "carol", "name": "Carol"}
+    "membership": [
+      {
+        "log_id": "1724803300000", "room_id": "general",
+        "members": [{"user": {"user_id": "dave", "name": "Dave"}, "joined": true}]
+      }
     ],
-    "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
+    "first_log_id": "1724803200042", "last_log_id": "1724803312011", "more": true,
     "latest_log_id": "1724806800000", "history_log_id": "1724800000000"
   }
 }
 ```
 
-**Membership.** A record belongs to every room its message is in just before
-or after it, so a move ([§4.2](#42-edit)) appears in both rooms. Room records
-belong to their own room. Earlier history of a moved message stays in the
-source room.
+**Which rooms a record is in.** A record belongs to every room its message is
+in just before or after it, so a move ([§4.2](#42-edit)) appears in both rooms. Room
+records and memberships belong to their own room. Earlier history of a moved
+message stays in the source room; `prev_room_id` points there ([§2](#2-identifiers)).
 
 **Bounds and ordering.**
 
 - `after`/`before` are inclusive `log_id` bounds; either MAY be omitted.
 - Intersect the bounds with available history, then select a contiguous
-  slice of the room's changes of either kind. `limit` is a positive count of
+  slice of the room's changes of any kind. `limit` is a positive count of
   changes, applied before compaction; servers MAY clamp it and supply a
   default. With `after`, select the oldest matches; otherwise the newest.
-- `first_id`/`last_id` are the slice's first and last `log_id`s before
-  compaction; return both or neither. `more` indicates further matching
-  changes in the selected direction. An empty slice returns `entries: []`
-  and `more: false`; `rooms` and `reactions` MAY be omitted when empty.
-- Continue forward with `after = last_id + 1`, backward with
-  `before = first_id - 1`, computed numerically and encoded as strings.
+- `first_log_id`/`last_log_id` are the slice's first and last `log_id`s
+  before compaction; return both or neither. `more` indicates further
+  matching changes in the selected direction. An empty slice returns
+  `more: false` and neither bound.
+- `rooms`, `messages`, `reactions`, and `membership` MAY each be omitted when
+  empty; clients treat a missing array as empty. Each is ascending by
+  `log_id`.
+- Continue forward with `after = last_log_id + 1`, backward with
+  `before = first_log_id - 1`, computed numerically and encoded as strings.
   Never derive continuation from compacted records.
-- `rooms`, `entries`, and `reactions` are each ascending by `log_id`.
 
 **Availability.** Every result includes `latest_log_id` and `history_log_id`
 ([§3.4](#34-rooms)), captured consistently with the page. They describe the room, not the
@@ -738,19 +764,23 @@ it: keep the latest record per key under compaction's rules below. Compacted
 history still counts as available, keeps checkpoints valid, and leaves
 `history_log_id` in place. A server that truly discards a prefix advances
 `history_log_id`; the effective lower bound is `history_log_id`, or
-`latest_log_id + 1` when null, and MUST NOT decrease.
+`latest_log_id + 1` when null, and MUST NOT decrease. Before discarding a
+prefix that holds memberships, a server appends one membership record
+listing every current member (`joined: true` only), so the room's members
+survive; clients that restart from the new bound clear the room's state
+first, so leaves in the prefix are not needed.
 
 **Compaction (optional).** After selecting the slice, a server MAY keep only
 the last room record and each message's last snapshot in the slice, and MAY
 fold each message's reaction sets into one record carrying each user's last
-set in the slice, under the greatest folded `log_id`. Empty sets are kept so
-removals replay. Retained records keep their original `log_id`s and contents
-and never incorporate changes after the slice. Compacted and uncompacted pages
-yield the same terminal state.
+set in the slice, under the greatest folded `log_id`, and likewise fold the
+room's memberships into one record carrying each user's last membership.
+Empty sets and leaves are kept so removals replay. Retained records keep
+their original `log_id`s and contents and never incorporate changes after
+the slice. Compacted and uncompacted pages yield the same terminal state.
 
 **Replay** follows [§2](#2-identifiers). No earlier state is needed to apply a record, and
-order across the arrays is irrelevant. `users` holds current user objects
-for the page ([§3.3](#33-identity)) and is merged after the records.
+order across the arrays is irrelevant.
 
 **Recovery**, per room:
 
@@ -785,16 +815,17 @@ order with no merge.
     "body": {"text": "hello world", "format": "plain"}
   }
 }
-// <-
-{"id": "c12", "result": {"message_id": "1724803200042"}}
 // <- snapshot with a new log_id
 {
   "method": "message", "params": {
     "message_id": "1724803200042", "log_id": "1724803312007", "room_id": "general",
+    "prev_log_id": "1724803200042",
     "from": {"user_id": "alice", "name": "Alice"},
     "body": {"text": "hello world", "format": "plain"}
   }
 }
+// <-
+{"id": "c12", "result": {"message_id": "1724803200042"}}
 ```
 
 An unknown `message_id` is `invalid_params`; a save never creates a message.
@@ -804,15 +835,26 @@ MAY differ from the submitted state.
 **Move.** A save with a different `room_id` moves the message. The
 destination MUST exist and be visible to the caller. The snapshot is
 delivered to both rooms ([§4.1](#41-history)), and clients re-home the message rather
-than treating it as deleted. If the message has reactions, the server then
-logs one reactions record ([§4.5](#45-reactions)) in the destination carrying every
-non-empty set, so reactions follow the message.
+than treating it as deleted. The snapshot carries `prev_room_id`, the source
+room, whose log holds the message's earlier records ([§2](#2-identifiers)). If the message
+has reactions, the server then logs one reactions record ([§4.5](#45-reactions)) in the
+destination carrying every non-empty set, so reactions follow the message.
 
 ```jsonc
 // -> move Bob's reply into thread room 1724803312001
 {
   "method": "message", "id": "c15", "params": {
     "message_id": "1724803200043", "room_id": "1724803312001",
+    "reply_to": {"message_id": "1724803200042"},
+    "body": {"text": "Hello back!"}
+  }
+}
+// <- to both rooms
+{
+  "method": "message", "params": {
+    "message_id": "1724803200043", "log_id": "1724803312020", "room_id": "1724803312001",
+    "prev_log_id": "1724803200043", "prev_room_id": "general",
+    "from": {"user_id": "bob", "name": "Bob"},
     "reply_to": {"message_id": "1724803200042"},
     "body": {"text": "Hello back!"}
   }
@@ -852,18 +894,19 @@ clients holding the old content drop it on the new tombstone.
 
 Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
 share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
-`room_set` are requests; `room_update` is a notification. Visibility and
+`room_set` are requests; `room_update` is a notification. The `membership`
+notification carries logged memberships ([§4.3.2](#432-membership)). Visibility and
 membership are server policy.
 
 #### 4.3.1 Listing
 
-`room_list` answers with the rooms matching its filters, as
-room records ([§3.4](#34-rooms)) in two arrays: `joined`, rooms the user has joined, and
-`rooms`, visible rooms the user has not joined. Listing never joins.
+`room_list` answers with the rooms matching its filters, as room records
+([§3.4](#34-rooms)) in up to two arrays: `joined`, rooms the user has joined, and
+`not_joined`, visible rooms the user has not joined. Listing never joins.
 
 ```jsonc
-// -> my rooms, threads included
-{"method": "room_list", "id": "c20", "params": {"only_joined": true}}
+// -> my rooms, threads included, with their members
+{"method": "room_list", "id": "c20", "params": {"filter": "joined", "members": true}}
 // <-
 {
   "id": "c20", "result": {
@@ -871,78 +914,135 @@ room records ([§3.4](#34-rooms)) in two arrays: `joined`, rooms the user has jo
       {
         "room_id": "general", "log_id": "1724800000000", "title": "General",
         "latest_log_id": "1724803500000", "history_log_id": "1724800000000",
-        "member_count": 12
+        "members": [{"user_id": "alice"}, {"user_id": "bob"}, {"user_id": "carol"}]
       },
       {
         "room_id": "1724803312001", "log_id": "1724803312001",
         "parent_room_id": "general", "title": "Deploy", "intro_message": {...},
         "latest_log_id": "1724803400000", "history_log_id": "1724803312001",
-        "member_count": 2,
         "members": [{"user_id": "alice"}, {"user_id": "bob"}]
       }
     ],
     "users": [
       {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
-      {"user_id": "bob", "name": "Bob"}
+      {"user_id": "bob", "name": "Bob"},
+      {"user_id": "carol", "name": "Carol"}
     ]
   }
 }
-// -> reconnecting: only my rooms with activity since a position
-{"method": "room_list", "id": "c21", "params": {"only_joined": true, "latest_log_id": "1724803450000"}}
+// -> reconnecting: my rooms that changed since a position, and those I left
+{"method": "room_list", "id": "c21", "params": {"filter": "joined", "latest_log_id": "1724803450000"}}
+// <-
+{
+  "id": "c21", "result": {
+    "joined": [{"room_id": "general", "latest_log_id": "1724803500000", ...}],
+    "left": [{"room_id": "1724803399000"}]
+  }
+}
 // -> general's threads I have not joined
-{"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "not_joined": true}}
+{"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "filter": "not_joined"}}
 // -> one room, with its members
-{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001"}}
+{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001", "members": true}}
 ```
 
 Every filter is optional:
 
-- `only_joined` and `not_joined` let the server leave out `rooms` or
-  `joined`, respectively.
+- `filter`: `"joined"` lists only `joined`, `"not_joined"` only
+  `not_joined`, and `"all"`, the default, both; an array left out by the
+  filter is omitted, and one it asks for is present even when empty.
 - `parent_room_id` lists only that room's threads. Without it, `joined`
-  holds joined rooms at every depth, threads included, and `rooms` only
-  top-level rooms.
-- `room_id` lists only that visible room, such as for its members. It
-  overrides `parent_room_id`; an unknown or invisible `room_id` is
-  `invalid_params`. Servers SHOULD accept it.
-- `latest_log_id` lists only rooms whose `latest_log_id` is greater. A room
-  joined or left since then may be missing from such a result; a client
-  that needs its full membership lists with `only_joined` alone.
+  holds joined rooms at every depth, threads included, and `not_joined`
+  only top-level rooms.
+- `room_id` lists only that visible room, in the array its membership
+  selects, such as for its members. It overrides `parent_room_id`; an
+  unknown or invisible `room_id` is `invalid_params`. Servers SHOULD accept
+  it.
+- `members: true` adds each room's `members` and the result's `users`
+  (below); without it, a result carries neither.
+- `latest_log_id` lists only rooms whose `latest_log_id` is greater. Joins
+  and leaves are in the room's log ([§4.3.2](#432-membership)), so a room the user joined
+  since then is in `joined`, and a room the user left since then is in
+  `left`, as `[{room_id}]` like `room_update` ([§4.3.3](#433-updates)), whenever the result
+  has `joined`. Rooms deleted or no longer visible since then SHOULD be in
+  `left` too. A server applying this filter includes `left`, even when
+  empty; a server MAY ignore the filter, such as one that keeps memberships
+  out of the log, and its result without `left` is a full listing.
 
 A result lists rooms matching its filters, most recently active first.
 `joined` lists every match and is never truncated; servers MAY list only
-the most recently active of `rooms`, and a room left out is still visible
-and can be joined.
+the most recently active of `not_joined`, and a room left out is still
+visible and can be joined.
 
-Each room carries `member_count`, how many users have joined it, and
-`members`, user objects ([§3.3](#33-identity)): either complete, or `user_id` only with the
-complete objects in the result's `users`. Servers MAY truncate or omit
-`members` and MAY omit `member_count`, which stays the total. A client given
-no `members` learns a room's members from its history and from joins ([§4.3.2](#432-membership)).
+With `members: true`, each room in `joined` and `not_joined` carries
+`members`, every user who has joined it, as user objects ([§3.3](#33-identity)): complete,
+or partial, such as `user_id` only. The result MAY carry `users`, complete
+current objects for the users in its `members`, each user once however many
+rooms list them, so `members` can stay partial. A later revision may add
+paging for large rooms.
 
 #### 4.3.2 Membership
 
-`room_join` and `room_leave` take only a `room_id` and
-return `{}`. Joining subscribes: every connection of the user receives
-deliveries for the joined room, and under the suggested wake rule only
-joined rooms notify ([§4.7](#47-push)).
-An unknown or invisible `room_id` is `invalid_params`; the server MAY deny
-either by policy.
+`room_join` and `room_leave` take only a `room_id` and return `{}`, after the
+notifications they cause ([§1](#1-transport--framing)). An unknown or invisible `room_id` is
+`invalid_params`; the server MAY deny either by policy.
 
-The room's other members MAY be told with a `user` notification ([§3.3](#33-identity))
-carrying `room_id`: `new` alone announces a join, `old` alone a leave. They
-are sent as they happen, never as a member list, and servers MAY skip them,
-such as in large rooms; the members a client learns this way are partial.
+Joining subscribes: every connection of the user receives the joined
+room's deliveries ([§3.4](#34-rooms)), and under the suggested wake rule joined rooms
+notify ([§4.7](#47-push)). A thread is joined like any room; members of its parent
+room receive only its room record changes ([§4.3.3](#433-updates)).
+
+Every membership change is a logged record in the room: joining, leaving,
+creating a room with `room_set`, and changes the server makes, such as a
+removal. A membership record carries `members`, one entry per user, each
+with the user as a recorded object ([§3.3](#33-identity)) and `joined`:
 
 ```jsonc
 // ->
 {"method": "room_join", "id": "c24", "params": {"room_id": "1724803399000"}}
+// <- to the room's members, the joining user's connections included
+{
+  "method": "membership", "params": {
+    "log_id": "1724803450100", "room_id": "1724803399000",
+    "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]
+  }
+}
+// <- to the joining user's connections, with the members (§4.3.3)
+{
+  "method": "room_update", "params": {
+    "joined": [{"room_id": "1724803399000", ..., "members": [{"user_id": "ada"}, {"user_id": "bob"}]}],
+    "users": [{"user_id": "ada", "name": "Ada"}, {"user_id": "bob", "name": "Bob"}]
+  }
+}
+// <-
+{"id": "c24", "result": {}}
+
 // ->
 {"method": "room_leave", "id": "c25", "params": {"room_id": "1724803312001"}}
-// <- to the members of general, when Ada joins it and later leaves
-{"method": "user", "params": {"room_id": "general", "new": {"user_id": "ada", "name": "Ada"}}}
-{"method": "user", "params": {"room_id": "general", "old": {"user_id": "ada"}}}
+// <- to the room's members, the leaving user's connections included
+{
+  "method": "membership", "params": {
+    "log_id": "1724803450200", "room_id": "1724803312001",
+    "members": [{"user": {"user_id": "ada"}, "joined": false}]
+  }
+}
+{"method": "room_update", "params": {"left": [{"room_id": "1724803312001"}]}}
+{"id": "c25", "result": {}}
 ```
+
+- A membership's key is `(room_id, user.user_id)`, and the record with the
+  greatest `log_id` wins ([§2](#2-identifiers)). Live records carry one entry; compacted
+  history records MAY carry several ([§4.1](#41-history)), each replacing that user's
+  membership.
+- A membership record is delivered to the room's members before and after
+  the change, so both the joining and the leaving user receive it. It
+  advances the room's `latest_log_id`.
+- Clients start a room's member list from its `members`, which is complete,
+  in `room_list` with `members: true` or in `room_update` `joined`, and keep
+  it current from the memberships they receive live and in history.
+- A server MAY keep membership outside the log, such as for ephemeral
+  guests: it then sends no membership records for them, clients learn those
+  members only from `room_list` and `room_update`, and it ignores
+  `latest_log_id` in `room_list` ([§4.3.1](#431-listing)).
 
 #### 4.3.3 Updates
 
@@ -950,11 +1050,14 @@ such as in large rooms; the members a client learns this way are partial.
 the full list:
 
 - `joined`: room records of rooms the user joined, on any connection, by
-  creating them, or by the server's doing.
+  creating them, or by the server's doing, each with its `members` as in
+  `room_list` ([§4.3.1](#431-listing)); `users` MAY accompany them.
 - `left`: `[{room_id}]` of rooms the user is no longer in: left, removed,
   no longer visible, or deleted.
 - `updated`: room records that are new or changed while membership is not:
-  an edit to a joined room, or a new thread in one.
+  an edit to a joined room, or a new or edited thread of one. Messages in a
+  thread do not change its record, so a thread's `latest_log_id` here can
+  lag; clients refresh it with `room_list` and `parent_room_id`.
 
 ```jsonc
 // <- after the join above
@@ -970,8 +1073,8 @@ the full list:
 `room_set` without `room_id` creates a room and
 joins the creator; with `room_id` it replaces the client fields ([§3.4](#34-rooms))
 other than `parent_room_id`, which is fixed at creation, and omitted fields
-are cleared. Both return `{"room_id": "..."}`, and the change arrives as a
-`room_update`.
+are cleared. Both return `{"room_id": "..."}` after the change arrives as a
+`room_update`, and a creation also logs the creator's membership ([§4.3.2](#432-membership)).
 
 ```jsonc
 // -> start a thread on an existing message
@@ -981,8 +1084,6 @@ are cleared. Both return `{"room_id": "..."}`, and the change arrives as a
     "intro_message": {"message_id": "1724803200042"}
   }
 }
-// <-
-{"id": "c26", "result": {"room_id": "1724803312001"}}
 // <- to the creator; the server embedded the intro snapshot
 {
   "method": "room_update", "params": {
@@ -999,6 +1100,8 @@ are cleared. Both return `{"room_id": "..."}`, and the change arrives as a
     ]
   }
 }
+// <- then the result
+{"id": "c26", "result": {"room_id": "1724803312001"}}
 ```
 
 - `parent_room_id` MUST name an existing visible room. Nesting depth is
@@ -1073,8 +1176,6 @@ broadcast carries the state.
 ```jsonc
 // ->
 {"method": "reactions", "id": "c17", "params": {"message_id": "1724803200043", "emojis": ["👍"]}}
-// <-
-{"id": "c17", "result": {}}
 // <- (broadcast)
 {
   "method": "reactions", "params": {
@@ -1082,6 +1183,8 @@ broadcast carries the state.
     "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
   }
 }
+// <-
+{"id": "c17", "result": {}}
 ```
 
 - The request names only the message. The logged record carries the room the
@@ -1179,7 +1282,9 @@ The `message` or `command` ([§4.8](#48-command)) result lists them, in request 
     "body": {"text": "Before the fix:", "embeds": [{"kind": "upload", "title": "before.png"}]}
   }
 }
-// <-
+// <- the broadcast first, with the embed pending
+{"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}
+// <- then the result, with the write URL for the sender only
 {
   "id": "c8", "result": {
     "message_id": "1724803500000",
@@ -1187,8 +1292,7 @@ The `message` or `command` ([§4.8](#48-command)) result lists them, in request 
   }
 }
 // sender: curl -T before.png https://chat.example/w/4c7a…
-// <- the embed as broadcast: pending, then completed in a later snapshot
-{"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}
+// <- the embed as broadcast in a later snapshot, completed
 {
   "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
   "url": "https://chat.example/f/Zr8Tq1…",
@@ -1256,8 +1360,8 @@ HTTP while readers watch it grow. Stream embeds follow the embed identity
 A user object ([§3.3](#33-identity)) MAY carry `avatar`, an image shown beside
 the user's name.
 
-- Servers send `avatar` in `you`, `user`, `members`, and `users` ([§3.3](#33-identity)),
-  not in every `from`.
+- Servers send `avatar` in current user objects ([§3.3](#33-identity)): `you`, `user`,
+  and room `members` and `users`, not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs. A larger image goes through
   an upload (caps `command` and `embed:upload`): a `/avatar` command ([§4.8](#48-command))
@@ -1301,11 +1405,12 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   `log_id`, so clients render it but never install it as a snapshot. `body`
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
-- Suggested convention: wake a user only for rooms they have joined ([§4.3.2](#432-membership)),
-  when every connection of theirs is away or gone ([§4.4](#44-activity)) and they have
-  not muted the room by server policy, such as a `/mute` command
-  ([§4.8](#48-command)). Servers MAY wait briefly first
-  and skip the push if the user's `read_message_id` has passed the message.
+- Suggested convention: wake a user only for rooms they have joined
+  ([§4.3.2](#432-membership)) and for messages whose `mentions` list them in rooms they can
+  see, when every connection of theirs is away or gone ([§4.4](#44-activity)) and they
+  have not muted the room by server policy, such as a `/mute` command
+  ([§4.8](#48-command)). Servers MAY wait briefly first and skip the push if the user's
+  `read_message_id` has passed the message.
 
 ```json
 {
@@ -1357,18 +1462,25 @@ happens to it:
     "body": {"text": "/kick @guest_1234 spamming", "mentions": ["guest_1234"]}
   }
 }
-// <-
-{"id": "c30", "result": {}}
-// <- to the room
+// <- to the room, guest_1234 included: the membership
 {
-  "method": "message", "params": {
-    "message_id": "1724803900001", "log_id": "1724803900001", "room_id": "general",
-    "from": {"user_id": "@room", "name": "General"},
-    "body": {"text": "@guest_1234 was removed by @alice: spamming"}
+  "method": "membership", "params": {
+    "log_id": "1724803900001", "room_id": "general",
+    "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]
   }
 }
 // <- to guest_1234's connections
 {"method": "room_update", "params": {"left": [{"room_id": "general"}]}}
+// <- to the room's remaining members: the notice
+{
+  "method": "message", "params": {
+    "message_id": "1724803900002", "log_id": "1724803900002", "room_id": "general",
+    "from": {"user_id": "@room", "name": "General"},
+    "body": {"text": "@guest_1234 was removed by @alice: spamming"}
+  }
+}
+// <- then the result
+{"id": "c30", "result": {}}
 
 // -> answer an agent's permission prompt by replying to it
 {
@@ -1382,8 +1494,6 @@ happens to it:
 
 // -> list the available commands
 {"method": "command", "id": "c32", "params": {"room_id": "general", "body": {"text": "/help"}}}
-// <-
-{"id": "c32", "result": {}}
 // <- to the sender only
 {
   "method": "message", "params": {
@@ -1395,6 +1505,8 @@ happens to it:
     }
   }
 }
+// <-
+{"id": "c32", "result": {}}
 
 // -> set an avatar from an upload (§4.6.6)
 {
@@ -1472,23 +1584,25 @@ Three of them tell the receiver who else got the message:
 | `from.user_id` | received by                   | logged | for example                                  |
 |----------------|-------------------------------|--------|---------------------------------------------|
 | `@server`      | every user on the server      | yes    | maintenance notices, announcements           |
-| `@room`        | every member of the room      | yes    | joins and leaves, removals, poll results     |
+| `@room`        | every member of the room      | yes    | removals with a reason, poll results         |
 | `@private`     | only this user                | no     | welcomes, command replies, errors, reminders |
 
-- `room_id` is where the message is shown. A notice about no room in
-  particular goes in room `@server`, which every user receives without
-  joining; clients unaware of it show it as a room of its own. Room IDs
-  beginning with `@` are reserved for such server-defined rooms.
+- `room_id` is where the message is shown, as for any message. A
+  server-wide notice names a room too, usually the default room ([§3.5](#35-messages)),
+  and reaches every user whether or not they joined it; a `@private` notice
+  reaches its one user wherever it is shown. These are sender identities
+  that state a scope, not rooms. Joins and leaves are memberships ([§4.3.2](#432-membership)),
+  which clients can show, not `@room` messages.
 - `@private` messages are not logged and carry neither `log_id` nor
   `message_id`. Like push payloads ([§4.7](#47-push)), clients render them but
   never install them as snapshots, and they are not in history. A private
   notice that should last belongs in a room of its own.
 
 ```jsonc
-// <- to everyone on the server
+// <- to everyone on the server, shown in the default room
 {
   "method": "message", "params": {
-    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "@server",
+    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
     "from": {"user_id": "@server", "name": "Server"},
     "body": {"text": "Maintenance at 17:00 UTC."}
   }
@@ -1498,7 +1612,7 @@ Three of them tell the receiver who else got the message:
   "method": "message", "params": {
     "message_id": "1724803500002", "log_id": "1724803500002", "room_id": "general",
     "from": {"user_id": "@room", "name": "General"},
-    "body": {"text": "@guest_1234 joined"}
+    "body": {"text": "Poll closed: Tuesday wins, 7 votes to 4."}
   }
 }
 // <- to the new member only, shown in general
