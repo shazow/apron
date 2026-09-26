@@ -127,7 +127,13 @@ func privateNotice(r *roomState, text string) map[string]any {
 func (s *Server) postRoomNoticeLocked(r *roomState, text string) {
 	logID := s.nextIDLocked()
 	messageID := formatID(logID)
-	from := map[string]any{"user_id": roomNoticeID, "name": r.title()}
+	name := r.title()
+	if r.titleFrom != "" {
+		// A title taken from a message's text is not repeated in records
+		// that deleting the message would not redact.
+		name = defaultThreadTitle
+	}
+	from := map[string]any{"user_id": roomNoticeID, "name": name}
 	m := &messageState{id: messageID, from: from, owner: roomNoticeID, reactions: make(map[string]reactionSet)}
 	s.messages[messageID] = m
 	s.commitSnapshotLocked(m, map[string]any{
@@ -160,6 +166,9 @@ func (s *Server) avatarCommand(c *client, _ *roomState, body map[string]any, _ s
 	if len(embeds) != 1 || embeds[0].(map[string]any)["kind"] != "upload" {
 		return nil, invalidParams("/avatar takes exactly one upload embed: attach an image")
 	}
+	if err := s.admitPostLocked(c.user); err != nil {
+		return nil, err
+	}
 	s.embedNumber++
 	e := s.newWriteLocked(c, fmt.Sprintf("embed_%d", s.embedNumber), "upload", "")
 	e.avatarFor = c.user
@@ -167,6 +176,8 @@ func (s *Server) avatarCommand(c *client, _ *roomState, body map[string]any, _ s
 		"embeds": []any{map[string]any{"embed_id": e.id, "kind": "upload", "write_url": e.baseURL + writePath + e.token}},
 	}, nil
 }
+
+const maxKickReasonRunes = 200
 
 // kickCommand removes the one mentioned user from the room: the room's
 // members, the target included, receive the logged leave membership
@@ -192,6 +203,12 @@ func (s *Server) kickCommand(c *client, r *roomState, body map[string]any, args 
 	reason := args
 	if first, rest, _ := strings.Cut(args, " "); strings.HasPrefix(first, "@") {
 		reason = strings.TrimSpace(rest)
+	}
+	// The reason is one plain line inside a system notice.
+	reason, _, _ = strings.Cut(reason, "\n")
+	reason = strings.TrimSpace(reason)
+	if runes := []rune(reason); len(runes) > maxKickReasonRunes {
+		reason = strings.TrimSpace(string(runes[:maxKickReasonRunes])) + "…"
 	}
 	s.leaveLocked(target, r)
 	text := fmt.Sprintf("@%s was removed by @%s", target.id, u.id)

@@ -75,11 +75,7 @@ func (s *Server) authenticatePasskey(c *client, req request) (any, *rpcError) {
 		return nil, &rpcError{Code: codeDenied, Message: "Frontend origin is not configured for passkeys"}
 	}
 	now := time.Now()
-	for key, session := range s.sessions {
-		if !now.Before(session.expires) {
-			delete(s.sessions, key)
-		}
-	}
+	s.pruneSessionsLocked(now)
 	switch action {
 	case "register", "login":
 		step, rpcErr := parseString(req.params, "step", true)
@@ -269,6 +265,15 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 	return s.finishPasskey(c, req, user, token)
 }
 
+// pruneSessionsLocked forgets expired sessions.
+func (s *Server) pruneSessionsLocked(now time.Time) {
+	for key, session := range s.sessions {
+		if !now.Before(session.expires) {
+			delete(s.sessions, key)
+		}
+	}
+}
+
 // authenticateToken resumes a passkey session through the protocol's token
 // scheme. Keeping this outside the WebAuthn action space preserves §4.9's
 // register/login action grammar while retaining the example server's bearer
@@ -286,6 +291,7 @@ func (s *Server) authenticateToken(c *client, req request) (any, *rpcError) {
 	if token == "" {
 		return nil, invalidParams("token must be a non-empty string")
 	}
+	s.pruneSessionsLocked(now)
 	key := sha256.Sum256([]byte(token))
 	session, ok := s.sessions[key]
 	if !ok || session.origin != c.origin || !now.Before(session.expires) {

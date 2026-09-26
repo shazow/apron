@@ -17,6 +17,9 @@ const (
 	// larger images go through a /avatar upload (§4.6.6).
 	maxAvatarDataURLBytes = 64 << 10
 	maxDedupEntries       = 1024
+	// maxProfileExtBytes bounds a profile's ext, which is sent to everyone
+	// who shares a room with the user.
+	maxProfileExtBytes = 16 << 10
 )
 
 // userState is everything the server keeps for one user_id across its
@@ -84,7 +87,8 @@ func (u *userState) profile() map[string]any {
 }
 
 type dedupEntry struct {
-	fingerprint string
+	// fingerprint is a hash of the request's method and canonical params.
+	fingerprint [32]byte
 	done        chan struct{}
 	result      any
 	err         *rpcError
@@ -178,7 +182,7 @@ func requestable(id string) bool {
 func (s *Server) assignUserIDLocked(requested string) string {
 	claim := func(id string) bool {
 		key := strings.ToLower(id)
-		if s.usedIDs[key] || s.rooms[id] != nil {
+		if s.usedIDs[key] || s.roomNamedLocked(id) {
 			return false
 		}
 		s.usedIDs[key] = true
@@ -193,6 +197,13 @@ func (s *Server) assignUserIDLocked(requested string) string {
 			return id
 		}
 	}
+}
+
+// roomNamedLocked reports whether id names a room, ignoring case, so a
+// user_id never passes for a room_id to a reader that folds case. Rooms
+// created by clients have numeric IDs; only the seeded room has letters.
+func (s *Server) roomNamedLocked(id string) bool {
+	return s.rooms[id] != nil || strings.EqualFold(id, defaultRoomID)
 }
 
 func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
@@ -401,6 +412,9 @@ func (s *Server) updateProfile(c *client, req request) (any, bool, *rpcError) {
 	ext, err := parseObject(req.params, "ext", false)
 	if err != nil {
 		return nil, false, err
+	}
+	if ext != nil && len(req.params["ext"]) > maxProfileExtBytes {
+		return nil, false, invalidParams("ext is at most %d bytes", maxProfileExtBytes)
 	}
 	_, hasName := req.params["name"]
 	_, hasAvatar := req.params["avatar"]
