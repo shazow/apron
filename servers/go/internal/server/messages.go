@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type reactionSet struct {
@@ -258,20 +260,23 @@ func tombstone(snapshot map[string]any) {
 }
 
 // admitPostLocked applies MessagesPerMinute to new messages, room_set, and
-// /avatar.
+// /avatar: each user may send a burst of MessagesPerMinute, refilled evenly
+// over a minute.
 func (s *Server) admitPostLocked(u *userState) *rpcError {
 	limit := s.config.MessagesPerMinute
 	if limit <= 0 {
 		return nil
 	}
-	now := time.Now().UnixMilli()
-	window := int64(time.Minute / time.Millisecond)
-	u.posts = slices.DeleteFunc(u.posts, func(at int64) bool { return at <= now-window })
-	if len(u.posts) >= limit {
-		wait := (u.posts[0] + window - now + 999) / 1000
-		return &rpcError{Code: codeRetryAfter, Message: "Too many messages; slow down", Data: map[string]any{"retry_after": max(1, wait)}}
+	if u.posts == nil {
+		u.posts = rate.NewLimiter(rate.Every(time.Minute/time.Duration(limit)), limit)
 	}
-	u.posts = append(u.posts, now)
+	now := time.Now()
+	reservation := u.posts.ReserveN(now, 1)
+	if delay := reservation.DelayFrom(now); delay > 0 {
+		reservation.CancelAt(now)
+		wait := int64((delay + time.Second - 1) / time.Second)
+		return &rpcError{Code: codeRetryAfter, Message: "Too many messages; slow down", Data: map[string]any{"retry_after": wait}}
+	}
 	return nil
 }
 

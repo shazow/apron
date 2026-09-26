@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -138,11 +139,12 @@ func TestAvatarUploadsMustBeImages(t *testing.T) {
 	if !check("image/png", testPNG(t)) {
 		t.Fatal("a PNG was refused")
 	}
-	if check("image/png", []byte("not an image")) || check("image/jpeg", testPNG(t)) || check("image/webp", []byte("RIFF0000WAVE")) {
-		t.Fatal("a mismatched avatar was accepted")
-	}
-	if !check("image/webp", []byte("RIFF\x00\x00\x00\x00WEBPVP8 ")) {
+	webp, _ := base64.StdEncoding.DecodeString("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+	if !check("image/webp", webp) {
 		t.Fatal("a WebP was refused")
+	}
+	if check("image/png", []byte("not an image")) || check("image/jpeg", testPNG(t)) || check("image/webp", []byte("RIFF\x00\x00\x00\x00WEBPVP8 ")) {
+		t.Fatal("a mismatched avatar was accepted")
 	}
 }
 
@@ -378,6 +380,21 @@ func TestStaticDirectoryHidesDotfilesAndListings(t *testing.T) {
 	for path, want := range map[string]int{"/": 200, "/assets/app.js": 200, "/.env": 404, "/assets/": 404} {
 		if status, _, _ := httpDo(t, http.MethodGet, httpServer.URL+path, nil, ""); status != want {
 			t.Errorf("GET %s: %d, want %d", path, status, want)
+		}
+	}
+}
+
+func TestNamesAreNormalized(t *testing.T) {
+	for input, want := range map[string]string{
+		"  Ada   Lovelace ":     "Ada Lovelace",
+		"Ａｄａ":                   "Ada",
+		"Ada\u202eecalevoL":     "AdaecalevoL",
+		"Bob\x00\x07":           "Bob",
+		"\u200b\u200b":          "",
+		strings.Repeat("é", 80): strings.Repeat("é", maxNameRunes),
+	} {
+		if got := normalizeName(input); got != want {
+			t.Errorf("normalizeName(%q) = %q, want %q", input, got, want)
 		}
 	}
 }

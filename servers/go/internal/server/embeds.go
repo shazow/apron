@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	_ "golang.org/x/image/webp" // Registered for image.DecodeConfig.
 )
 
 // HTTP paths for embed content (§4.6.3, §4.6.5). Write URLs carry a one-time
@@ -530,17 +532,11 @@ func activeType(mediaType string) bool {
 	return false
 }
 
-// validAvatarImage checks that an avatar upload's content is the image type
-// it declares: PNG, JPEG, and GIF decode their header, and WebP has its
-// RIFF signature.
+// validAvatarImage checks that an avatar upload's content decodes as the
+// image type it declares.
 func validAvatarImage(contentType string, file *os.File) bool {
 	if !avatarType(contentType) || file == nil {
 		return false
-	}
-	if contentType == "image/webp" {
-		head := make([]byte, 12)
-		n, _ := file.ReadAt(head, 0)
-		return n == 12 && string(head[:4]) == "RIFF" && string(head[8:]) == "WEBP"
 	}
 	_, format, err := image.DecodeConfig(io.NewSectionReader(file, 0, 1<<30))
 	return err == nil && "image/"+format == contentType

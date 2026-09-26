@@ -47,8 +47,9 @@ Flags:
 - `-max-connections <n>` refuses connections beyond `n` with an error without
   `id` (`retry_after`), then closes them.
 - `-messages-per-minute <n>` limits each user's new messages, `room_set`
-  requests, and `/avatar` commands together; the excess gets `retry_after`
-  with `data.retry_after` in seconds. Edits, reactions, and activity are not
+  requests, and `/avatar` commands together: a burst of `n`, refilled evenly
+  over a minute. The excess gets `retry_after` with `data.retry_after` in
+  seconds. Edits, reactions, and activity are not
   counted.
 - `-upload-dir <directory>` holds uploaded files, by default
   `aprond/uploads` in the user cache directory (`$XDG_CACHE_HOME`, usually
@@ -127,8 +128,11 @@ the latest guest number is roughly how many guests the process has admitted
 ever reissued.
 
 `me` merges into the caller's profile: a given field replaces its value, an
-omitted field is unchanged, and an empty value removes it. `name` is trimmed
-and capped at 64 characters; `avatar` must be an `https:` URL or a
+omitted field is unchanged, and an empty value removes it. `name` is prepared
+with the PRECIS Nickname profile (RFC 8266: compatibility characters are
+mapped, runs of spaces folded, and the ends trimmed), after invisible
+characters such as controls and bidirectional overrides are dropped, and is
+capped at 64 characters; `avatar` must be an `https:` URL or a
 `data:image/{png,jpeg,gif,webp};base64,` URL of at most 64 KiB; `ext`
 (at most 16 KiB of JSON) replaces the profile extension object. The result's `you` and the `user`
 notifications carry removed fields as their empty values (`""`, `{}`).
@@ -279,7 +283,7 @@ without the embed.
   together; a message has at most 32 embeds). While pending the embed has no `url`. When
   the write finishes the server publishes a snapshot with `url` set to the
   hosted file and, for images and playable media, `og`: `image` (PNG, JPEG,
-  and GIF with `width` and `height`; the sender's `og.image.alt` is kept),
+  GIF, and WebP with `width` and `height`; the sender's `og.image.alt` is kept),
   `video`, or `audio`, plus `title`. Files are served sandboxed
   (`Content-Security-Policy: sandbox`, `nosniff`); only images, media, and
   plain text are shown inline, and markup, script, stylesheet, and

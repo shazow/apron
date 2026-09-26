@@ -7,7 +7,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/secure/precis"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -43,8 +47,9 @@ type userState struct {
 	leftAt  map[string]int64
 	dedup   dedupCache
 	passkey *passkeyUser
-	// posts holds recent message creation times for MessagesPerMinute.
-	posts []int64
+	// posts limits the user's new messages, room_set requests, and /avatar
+	// commands to MessagesPerMinute; nil when unlimited.
+	posts *rate.Limiter
 }
 
 func newUserState(id, name string) *userState {
@@ -133,10 +138,24 @@ func isClosed(done chan struct{}) bool {
 	}
 }
 
-// normalizeName trims a requested display name and caps its length; the
-// server may alter names (§3.3) and `you.name` is the answer.
+// normalizeName prepares a requested display name with the PRECIS
+// Nickname profile (RFC 8266): it maps compatibility characters, folds
+// runs of spaces, and trims. Invisible characters, such as controls and
+// bidirectional overrides, are dropped first rather than refused, and a
+// name that still cannot be a nickname becomes empty. The result is capped
+// at maxNameRunes. The server may alter names (§3.3) and `you.name` is the
+// answer.
 func normalizeName(name string) string {
-	name = strings.TrimSpace(name)
+	name = strings.Map(func(r rune) rune {
+		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs) {
+			return -1
+		}
+		return r
+	}, name)
+	name, err := precis.Nickname.String(name)
+	if err != nil {
+		return ""
+	}
 	if utf8.RuneCountInString(name) > maxNameRunes {
 		name = strings.TrimSpace(string([]rune(name)[:maxNameRunes]))
 	}

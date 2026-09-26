@@ -6,6 +6,9 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/go-webauthn/webauthn v0.18.2
+	golang.org/x/image v0.46.0
+	golang.org/x/text v0.42.0
+	golang.org/x/time v0.16.0
 )
 
 require (
