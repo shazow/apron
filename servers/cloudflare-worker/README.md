@@ -4,8 +4,10 @@ A single SQLite Durable Object serves the permanent `general` room and its
 thread rooms over hibernating WebSockets. The backend supports guest access,
 discoverable passkeys, complete-snapshot history, message
 replacement/deletion/restoration/moves, thread rooms, emoji reactions, and a
-rolling retention floor. It speaks protocol 6 with `history`, `edit`, `rooms`,
-`reactions`, and `command` (`/help` only), and advertises liveness pings
+rolling retention floor. Guests only read (set `GUEST_POSTING=true` to let
+them post); signing in with a passkey lets a user post and invite a bot. It
+speaks protocol 6 with `history`, `edit`, `rooms`, `reactions`, and `command`
+(`/help` and `/invite-bot`), and advertises liveness pings
 (typing through `activity` is built in but off; set `ACTIVITY=true` to
 advertise it); see [authentication and policy](docs/policy.md) and [the
 implementation specification](SPEC.md).
@@ -92,9 +94,13 @@ socket.onmessage = ({ data }) => {
 setInterval(() => socket.send('{"method":"ping"}'), 45_000);
 ```
 
-Use the protocol's `message`, `room_set`, `room_join`, `room_leave`, and
-`reactions` requests to exercise posting, editing, deletion/restoration, moves,
-threads, membership, and reactions. A new guest has joined `general`, and
+A guest only reads: each connection gets a `@private` welcome saying so right
+after the `server` frame, before any `auth`, and
+`message`, `reactions`, `room_set`, `room_join`, and `room_leave` are `denied`;
+`room_list` and `history` work for any room without joining it. To exercise posting,
+editing, deletion/restoration, moves, threads, and reactions from your own
+client, sign in on the demo with a passkey, run `/invite-bot`, and connect with
+the token it gives you (see [Bots](#bots)). A new guest has joined `general`, and
 receives only the rooms it has joined (a thread's messages go to its members
 only); posting to a room does not require joining it. `room_list` lists
 joined rooms and rooms to join by `filter`, with `members` and `users` on
@@ -113,12 +119,39 @@ an isolated sandbox: test messages are visible to others, guest ownership lasts
 only for the socket, and IP/resource quotas and retention still apply. Changing
 frontend origins does not give an IP a fresh allowance. Honor `retry_after`.
 
-The server advertises only `guest` authentication to custom frontends.
-`web.apron.chat` additionally receives `webauthn` and `token`; inspect each connection's
-`server.params.auth` rather than assuming passkeys are available everywhere.
+The server advertises `token` (for bot tokens) and `guest` to custom frontends.
+`web.apron.chat` additionally receives `webauthn`, and its `token` also resumes
+passkey sessions; inspect each connection's `server.params.auth` rather than
+assuming passkeys are available everywhere.
 A frontend with a Content Security Policy must permit the endpoint in
 `connect-src` (for example, `connect-src wss://server.apron.chat`). Wildcard
 admission cannot override the frontend's own browser policies.
+
+## Bots
+
+Sign in on the demo with a passkey and run `/invite-bot` in any room. You get
+a `@private` notice, only on that tab, with a bearer token for your bot:
+`bot_<your user_id>`, named "Bot of <your name>", and instructions you can
+give an LLM to connect it: read `PROTOCOL.md`, connect to the server, sign in
+with the token scheme and your token, and say hello. A bot of your own
+connects without a browser and signs in with the token:
+
+```js
+const socket = new WebSocket('wss://server.apron.chat/');
+socket.onmessage = ({ data }) => {
+  const frame = JSON.parse(data);
+  if (frame.method === 'server') {
+    socket.send(JSON.stringify({ id: 'auth', method: 'auth', params: { scheme: 'token', token: process.env.APRON_BOT_TOKEN } }));
+    socket.send(JSON.stringify({ id: 'hello', method: 'message', params: { room_id: 'general', body: { text: 'Hello from my bot' } } }));
+  }
+};
+```
+
+A bot posts, reacts, starts threads, and keeps its rooms like a registered
+user, under its own posting quota; it cannot rename itself or invite bots. The
+token does not expire. Running `/invite-bot` again replaces it, signs out
+connections that used the old one, and renames the bot after your current name.
+The first invite counts as a registration. See [SPEC section 5](SPEC.md#bots).
 
 ## User-visible policies
 
@@ -147,7 +180,8 @@ message ownership.
 Passkeys require authentication on each new connection and do not prevent
 multiple registrations by one person.
 
-Guest posting is shared by IP (native IPv6 grouped by /64): five accepted
+Guests only read by default. With `GUEST_POSTING=true`, guest posting is
+shared by IP (native IPv6 grouped by /64): five accepted
 mutations per rolling minute and 100 per UTC day. Registered users receive
 20/minute and 500/day, subject to the common IP and global limits. NAT users
 share allowances. Creates, edits, deletion, restoration, moves, reaction
@@ -173,10 +207,7 @@ IPv6 is grouped by /64. No IP secret or backup is needed. These internal hashes
 are compact identifiers, not anonymization: candidate IPs can be hashed to
 recover a match. Neither raw IPs nor these keys are sent to chat clients.
 
-Switching from the former keyed hashes resets per-IP buckets once as clients
-reconnect; existing buckets expire through normal cleanup. User and global
-quotas, credentials, and chat history are unchanged. Keep the hash format stable
-across future deployments to preserve active IP windows.
+Keep the hash format stable across deployments to preserve active IP windows.
 
 The public Worker reaches exactly `DEMO.getByName("public-demo-v1")`. URL,
 query, room, and identity input cannot select another object. Do not expose a
@@ -252,7 +283,7 @@ For direct Wrangler production commands, always pass
    Wrangler deployment workflow. Do not rename or recreate the production
    object to work around a quota or schema issue. Stored data is not migrated
    between schema versions: a deploy that changes the storage schema resets the
-   demo on the object's first wake (the protocol v6 release moved to schema 4; see
+   demo on the object's first wake (the current schema is 4; see
    [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
    identities, sessions, and limiter windows are deleted; users must register
    their passkeys again, and saved session tokens fall back to sign-in. Only the

@@ -117,7 +117,7 @@ func (s *Server) command(c *client, req request) (any, bool, *rpcError) {
 func privateNotice(r *roomState, text string) map[string]any {
 	return map[string]any{"method": "message", "params": map[string]any{
 		"room_id": r.id,
-		"from":    map[string]any{"user_id": privateNoticeID, "name": "Only you"},
+		"from":    map[string]any{"user_id": privateNoticeID, "name": "System message to you"},
 		"body":    map[string]any{"text": text, "format": "markdown"},
 	}}
 }

@@ -8,6 +8,7 @@
 	import { eventTime, idDateTime, idIso, idTimeCompact } from '$lib/ui/time';
 	import Avatar from './Avatar.svelte';
 	import ReactionBar from './ReactionBar.svelte';
+	import SystemNotice, { noticeScope } from './SystemNotice.svelte';
 	import Embed from './embeds/Embed.svelte';
 
 	const LONG_PRESS_MS = 500;
@@ -83,7 +84,7 @@
 	let handle = $derived(directory.person(event.from)?.user_id ?? event.from.user_id);
 	let showHandle = $derived(Boolean(handle) && (handle !== name || directory.sharesName(event.from)));
 	/** Who else got a system message (Appendix A.1): everyone on the server, the room, or only you. */
-	let scope = $derived(event.from.user_id === '@server' ? 'server' : event.from.user_id === '@room' ? 'room' : event.from.user_id === '@private' ? 'private' : undefined);
+	let scope = $derived(noticeScope(event.from.user_id));
 	let time = $derived(eventTime(event));
 	let fullTime = $derived(idDateTime(event.message_id));
 	let isoTime = $derived(idIso(event.message_id));
@@ -171,11 +172,15 @@
 	$effect(() => cancelLongPress);
 </script>
 
-{#if system && !selecting}
-	<!-- A system identity (Appendix A.1): a quiet centered line, no avatar, actions or grouping. -->
+{#if system && !selecting && scope}
+	<!-- A scoped system message (Appendix A.1): a left-aligned card titled by who got it. -->
+	<SystemNotice {scope} from={event.from} html={body} plain={event.body?.format !== 'markdown'} deleted={event.deleted} messageId={event.message_id}
+		time={time ? { short: time, iso: isoTime, full: fullTime } : undefined} onclick={click} />
+{:else if system && !selecting}
+	<!-- Another system identity (Appendix A.1): a quiet centered line, no avatar, actions or grouping. -->
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
-	<article data-timeline-item class="ap-msg ap-msg-system" class:ap-msg-private={scope === 'private'} data-message-id={event.message_id} data-scope={scope} tabindex="-1" onclick={click}>
-		<span class="ap-msg-system-who">{scope === 'private' ? event.from.name || 'Only you' : name}</span>
+	<article data-timeline-item class="ap-msg ap-msg-system" data-message-id={event.message_id} tabindex="-1" onclick={click}>
+		<span class="ap-msg-system-who">{name}</span>
 		<div class="ap-msg-system-body">
 			{#if event.deleted}<span class="ap-msg-tomb">Message deleted</span>{:else}<div class="ap-msg-text" class:plain={event.body?.format !== 'markdown'}>{@html body}</div>{/if}
 		</div>

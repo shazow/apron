@@ -1,4 +1,4 @@
-// Apron Chat v4 for trusted, compliant clients. Requires Bun; no dependencies.
+// Apron Chat v6 for trusted, compliant clients. Requires Bun; no dependencies.
 // Run: bun apron-server.js
 // LAN: HOST=0.0.0.0 PORT=8765 bun apron-server.js
 // One room, guest identities, names, replies, ext pass-through, and the latest
@@ -7,7 +7,7 @@
 // credentials, or rate limits. Clients must send valid protocol frames;
 // malformed input may close the connection.
 
-const greeting = { protocol: 4, name: "apron-bun/4", auth: ["guest"], caps: ["history"] };
+const greeting = { protocol: 6, name: "apron-bun/6", auth: ["guest"], caps: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
 
@@ -22,7 +22,7 @@ function append(record) {
   return record;
 }
 
-const room = append({ room_id: "general", log_id: nextLogId(), title: "General" });
+append({ room_id: "general", log_id: nextLogId(), title: "General" });
 
 function send(ws, frame) {
   ws.send(JSON.stringify(frame));
@@ -49,13 +49,13 @@ function readHistory(params) {
   const slice = "after" in params ? matches.slice(0, limit) : matches.slice(-limit);
   const result = {
     rooms: slice.filter(record => !record.message_id),
-    entries: slice.filter(record => record.message_id),
+    messages: slice.filter(record => record.message_id),
     more: matches.length > limit,
     ...availability(),
   };
   if (slice.length) {
-    result.first_id = slice[0].log_id;
-    result.last_id = slice.at(-1).log_id;
+    result.first_log_id = slice[0].log_id;
+    result.last_log_id = slice.at(-1).log_id;
   }
   return result;
 }
@@ -63,6 +63,7 @@ function readHistory(params) {
 function createMessage(you, params) {
   check(params.body && typeof params.body === "object", "Missing body");
   check(!params.deleted, "Cannot create a deleted message");
+  if (!params.body.text && !params.body.embeds?.length) return {}; // Nothing to show: neither logged nor broadcast.
   const replyTo = params.reply_to?.message_id;
   // The new ID is minted below, so a known target can never be the message itself.
   if ("reply_to" in params) {
@@ -97,7 +98,7 @@ function dispatch(ws, method, params) {
 
   check(method === "message" || method === "history", "Unsupported method", -32601);
   check(method !== "message" || !("message_id" in params), "Editing is unsupported", -32601);
-  check(params.room_id === "general", "Unknown room");
+  check((params.room_id ?? "general") === "general", "Unknown room"); // The default room.
   return method === "history" ? readHistory(params) : createMessage(ws.data.you, params);
 }
 
@@ -121,10 +122,7 @@ const server = Bun.serve({
         if (!frame || typeof frame !== "object" || Array.isArray(frame)) return ws.close(1003, "Invalid frame");
         const result = dispatch(ws, frame.method, frame.params ?? {});
         if ("id" in frame) send(ws, { id: frame.id, result });
-        if (frame.method === "auth") {
-          send(ws, { method: "room", params: { ...room, ...availability() } });
-          ws.subscribe("general");
-        }
+        if (frame.method === "auth") ws.subscribe("general");
       } catch (error) {
         if (!error.code) return ws.close(1003, "Invalid frame");
         if (frame?.id !== undefined) send(ws, { id: frame.id, error });

@@ -51,6 +51,8 @@ interface ConnectionAttachment {
 	userId?: string;
 	name?: string;
 	origin?: string;
+	/** The WebSocket URL this connection reached, for instructions that name the server (`/invite-bot`). */
+	endpoint?: string;
 	challenge?: ChallengeRecord;
 	authDeadline: number;
 	pendingFrames: number;
@@ -67,7 +69,7 @@ interface ConnectionAttachment {
 	/**
 	 * The rooms this connection's user has joined (§4.3.2), which it receives
 	 * deliveries for. Set at authentication and kept equal across the user's
-	 * connections; a registered user's are also stored with the identity.
+	 * connections; a registered user's are also stored in the `memberships` table.
 	 */
 	rooms?: string[];
 	/**
@@ -84,7 +86,7 @@ type ThrottledType = "activity" | "room_list";
 const THROTTLED_TYPES: readonly ThrottledType[] = ["activity", "room_list"];
 const THROTTLE_WINDOW_MS = 60_000;
 /** The system identity for notices to one user only, never logged (Appendix A.1). */
-const PRIVATE_IDENTITY = { user_id: "@private", name: "Only you" } as const;
+const PRIVATE_IDENTITY = { user_id: "@private", name: "System message to you" } as const;
 /**
  * The liveness ping clients send every `server.ping` seconds, byte for byte,
  * and its answer (§1). The runtime answers it without waking the object.
@@ -93,10 +95,29 @@ const PING_REQUEST = '{"method":"ping"}';
 const PING_RESPONSE = '{"method":"pong"}';
 /** Joined room IDs a connection attachment may carry: every room, with slack for removals in flight. */
 const MAX_ATTACHED_ROOMS = 2 * (MAX_THREAD_LIMIT + 1);
-/** The commands this server provides (§4.8), as `/help` lists them. */
-const COMMANDS: ReadonlyArray<{ name: string; usage: string; help: string }> = [
-	{ name: "help", usage: "/help", help: "list the commands you can use here" },
+/**
+ * The commands this server provides (§4.8), as `/help` lists them to those
+ * who may run them: `everyone`, or `owners`, registered users other than bots.
+ */
+const COMMANDS: ReadonlyArray<{ name: string; usage: string; help: string; audience: "everyone" | "owners" }> = [
+	{ name: "help", usage: "/help", help: "list the commands you can use here", audience: "everyone" },
+	{ name: "invite-bot", usage: "/invite-bot", help: "get a sign-in token for your bot; a new one replaces the last", audience: "owners" },
 ];
+/** Why a guest's post, reaction, join, leave, or room change is denied while guests only read. */
+const GUEST_READ_ONLY = "Guests can only read here; sign in with a passkey to post or join rooms";
+/**
+ * A registered user's bot is `bot_` plus the owner's `user_id`. Guests are
+ * `guest_<n>` and registered users `u_…`, so the prefix names bots alone.
+ */
+const BOT_ID_PREFIX = "bot_";
+/** Bot tokens start with this, so `auth` tells them from passkey session tokens without a storage read. */
+const BOT_TOKEN_PREFIX = "apron_bot_";
+/** Key prefix for bot tokens in key-value storage, by the token's SHA-256 like sessions. */
+const BOT_TOKEN_KEY_PREFIX = "bot-token:";
+/** Key prefix for each bot's current token key, so a new `/invite-bot` revokes the last token. */
+const BOT_KEY_PREFIX = "bot:";
+/** The protocol a bot's instructions point it at (`/invite-bot`). */
+const PROTOCOL_URL = "https://github.com/shazow/apron/blob/main/PROTOCOL.md";
 
 /**
  * A bearer session minted by a verified passkey login (protocol §4.9,
@@ -109,6 +130,23 @@ interface StoredSession {
 	userId: string;
 	origin: string;
 	expiresMs: number;
+}
+
+/**
+ * A bot's bearer token (`/invite-bot`), stored under its SHA-256. Unlike a
+ * passkey session it is bound to no origin, since bots are not browsers, and
+ * does not expire: the owner's next `/invite-bot` replaces it.
+ */
+interface StoredBotToken {
+	v: 1;
+	botId: string;
+	ownerId: string;
+}
+
+/** A bot's current token, by key, so the next invite can revoke it. */
+interface StoredBot {
+	v: 1;
+	tokenKey: string;
 }
 
 interface SessionExpiryEntry {
@@ -133,9 +171,34 @@ function bytesToBase64Url(bytes: Uint8Array): string {
 	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-async function sessionKey(token: string): Promise<string> {
+async function sha256Hex(token: string): Promise<string> {
 	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
-	return SESSION_KEY_PREFIX + Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sessionKey(token: string): Promise<string> {
+	return SESSION_KEY_PREFIX + await sha256Hex(token);
+}
+
+/** Longest connection endpoint an attachment keeps. */
+const MAX_ENDPOINT_CHARS = 256;
+
+/** The WebSocket URL a request reached, `ws(s)://host/path` without its query; undefined when too long. */
+function endpointOf(request: Request): string | undefined {
+	const url = new URL(request.url);
+	const endpoint = `${url.protocol === "http:" ? "ws:" : "wss:"}//${url.host}${url.pathname}`;
+	return endpoint.length <= MAX_ENDPOINT_CHARS ? endpoint : undefined;
+}
+
+function isBot(userId: string | undefined): boolean {
+	return userId?.startsWith(BOT_ID_PREFIX) === true;
+}
+
+/** "Bot of <owner>", cut to the name limits by whole code points. */
+function botName(owner: string, limits: { maxNameCodePoints: number; maxNameBytes: number }): string {
+	const points = [...`Bot of ${owner}`].slice(0, limits.maxNameCodePoints);
+	while (utf8Bytes(points.join("")) > limits.maxNameBytes) points.pop();
+	return points.join("");
 }
 
 function sessionExpiryKey(expiresMs: number, sessionKeyValue: string): string {
@@ -236,6 +299,7 @@ function connectionAttachment(socket: WebSocketConnection): ConnectionAttachment
 			...(typeof attachment.userId === "string" ? { userId: attachment.userId } : {}),
 			...(typeof attachment.name === "string" ? { name: attachment.name } : {}),
 			...(typeof attachment.origin === "string" ? { origin: attachment.origin } : {}),
+			...(typeof attachment.endpoint === "string" && attachment.endpoint.length <= MAX_ENDPOINT_CHARS ? { endpoint: attachment.endpoint } : {}),
 			...(challenge ? { challenge } : {}),
 			...(Array.isArray(attachment.rooms) ? {
 				rooms: attachment.rooms.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 64).slice(0, MAX_ATTACHED_ROOMS),
@@ -559,12 +623,14 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		const pair = new WebSocketPair();
 		const server = pair[1] as WebSocketConnection;
+		const endpoint = endpointOf(request);
 		const attachment: ConnectionAttachment = {
 			v: 1,
 			connId: randomId("c"),
 			ipKey,
 			tier: "pending",
 			...(origin ? { origin } : {}),
+			...(endpoint ? { endpoint } : {}),
 			authDeadline: nowMs() + this.config.limits.unauthenticatedTimeoutSeconds * 1_000,
 			pendingFrames: 0,
 			pendingBytes: 0,
@@ -575,6 +641,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.ctx.acceptWebSocket(server);
 		writeAttachment(server, attachment);
 		this.send(server, this.serverAnnouncement(origin));
+		// Where guests only read, a welcome says so before any auth (§3.2,
+		// Appendix B): to this connection only, with no room_id, since the
+		// client knows no rooms yet.
+		if (!this.config.guestPosting) this.send(server, this.readOnlyWelcome(origin));
 		await this.rescheduleAlarm();
 		return new Response(null, { status: 101, webSocket: pair[0] });
 	}
@@ -708,9 +778,11 @@ export class ApronDemoServer extends DurableObject<Env> {
 			method: "server",
 			params: {
 				protocol: 6,
-				name: "apron-cloudflare-demo/5",
+				name: "apron-cloudflare-demo/6",
 				caps: ["history", "edit", "rooms", "reactions", "command", ...(this.config.activityEnabled ? ["activity"] : [])],
-				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["guest"],
+				// Passkeys and their session tokens only where passkeys are offered;
+				// bot tokens (`/invite-bot`) from anywhere, since bots are not browsers.
+				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["token", "guest"],
 				// Answered by the runtime without waking the object (see PING_REQUEST).
 				ping: limits.pingSeconds,
 				ext: {
@@ -722,6 +794,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 						max_snapshot_bytes: limits.maxSnapshotBytes,
 						guest_posts_per_minute: limits.anonymousPostsPerMinute,
 						registered_posts_per_minute: limits.registeredPostsPerMinute,
+						// `false`: guests only read; posting, reacting, and room changes need a sign-in.
+						guest_posting: this.config.guestPosting,
 						server_frames_per_minute: limits.globalFramesPerMinute,
 						room_list_per_minute: limits.roomListRequestsPerUserMinute,
 						// Registered members listed per room in `members`; connected ones are always listed.
@@ -734,6 +808,15 @@ export class ApronDemoServer extends DurableObject<Env> {
 				},
 			},
 		};
+	}
+
+	/** The `@private` welcome for a server whose guests only read, worded for what this origin can sign in with. */
+	private readOnlyWelcome(origin: string | null): Record<string, unknown> {
+		const passkeys = origin !== null && this.config.rpOrigins.includes(origin);
+		const text = passkeys
+			? "Guests can read. *Sign in with passkey* to participate."
+			: "Guests can read. *Sign in with passkey* on the demo's own site, or use a bot token from `/invite-bot` there, to participate.";
+		return { method: "message", params: { from: { ...PRIVATE_IDENTITY }, body: { text, format: "markdown" } } };
 	}
 
 	private send(socket: WebSocketConnection, value: unknown): boolean {
@@ -971,7 +1054,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 			return;
 		}
 		if (scheme === "token") {
-			await this.handleTokenResume(socket, attachment, request);
+			const token = requiredString(params, "token");
+			if (token.startsWith(BOT_TOKEN_PREFIX)) await this.handleBotToken(socket, attachment, request, token);
+			else await this.handleTokenResume(socket, attachment, request);
 			return;
 		}
 		if (scheme !== "webauthn") throw { name: "unsupported", message: "Unsupported authentication scheme" } satisfies ProtocolError;
@@ -1128,6 +1213,56 @@ export class ApronDemoServer extends DurableObject<Env> {
 		await this.rescheduleAlarm();
 	}
 
+	/**
+	 * Signs a bot in with the token its owner got from `/invite-bot`, through
+	 * the `token` scheme (§3.2). Bots are not browsers, so unlike a passkey
+	 * session the token is taken from any origin, or none.
+	 */
+	private async handleBotToken(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame, token: string): Promise<void> {
+		return this.withSessionLock(async () => {
+			if (attachment.tier === "registered") throw { name: "denied", message: "Identity switching requires reconnect" } satisfies ProtocolError;
+			if (token.length > MAX_SESSION_TOKEN_CHARS) throw { name: "invalid_params", message: "token is too long" } satisfies ProtocolError;
+			const key = BOT_TOKEN_KEY_PREFIX + await sha256Hex(token);
+			const stored = await this.store.withMeterAsync("foreground", { reads: 1 }, () => this.ctx.storage.get<StoredBotToken>(key));
+			const invalid = { name: "denied", message: "Bot token is not valid; its owner can get a new one with /invite-bot" } satisfies ProtocolError;
+			if (!stored || stored.v !== 1 || !isBot(stored.botId)) throw invalid;
+			const identity = this.store.getIdentity(stored.botId);
+			if (!identity) throw invalid;
+			if (connectionAttachment(socket)?.closing || !openSocket(socket)) return;
+			this.assertRegisteredCapacity(socket, identity.userId);
+			const guest = attachment.tier === "anonymous" ? publicIdentity(attachment) : null;
+			const guestRooms = attachment.rooms ?? [];
+			attachment.tier = "registered";
+			attachment.userId = identity.userId;
+			attachment.name = identity.name;
+			attachment.rooms = this.liveRoomsOf(identity.userId, socket) ?? identity.rooms;
+			delete attachment.listedJoined;
+			writeSessionAttachment(socket, attachment);
+			this.reply(socket, request, { you: publicIdentity(attachment) });
+			if (guest) this.announceUser(socket, publicIdentity(attachment), [...guestRooms, ...attachment.rooms], guest);
+			await this.rescheduleAlarm();
+		});
+	}
+
+	/**
+	 * Mints a bot's token and revokes the one before it. The token is stored
+	 * only as its SHA-256; the plaintext goes to the owner once.
+	 */
+	private async issueBotToken(botId: string, ownerId: string): Promise<string> {
+		return this.withSessionLock(async () => {
+			const token = BOT_TOKEN_PREFIX + bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+			const key = BOT_TOKEN_KEY_PREFIX + await sha256Hex(token);
+			await this.store.withMeterAsync("foreground", { reads: 1, writes: 3 }, async () => {
+				const previous = await this.ctx.storage.get<StoredBot>(BOT_KEY_PREFIX + botId);
+				// Revoke first: a failure between the writes leaves no token, never two.
+				if (previous?.v === 1 && typeof previous.tokenKey === "string") await this.ctx.storage.delete(previous.tokenKey);
+				await this.ctx.storage.put<StoredBotToken>(key, { v: 1, botId, ownerId });
+				await this.ctx.storage.put<StoredBot>(BOT_KEY_PREFIX + botId, { v: 1, tokenKey: key });
+			});
+			return token;
+		});
+	}
+
 	private async issueSession(userId: string, origin: string, now: number): Promise<string> {
 		return this.withSessionLock(() => this.issueSessionLocked(userId, origin, now));
 	}
@@ -1267,6 +1402,9 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (attachment.tier !== "registered") {
 			throw { name: "denied", message: "Only registered users may change their name" } satisfies ProtocolError;
 		}
+		if (isBot(identity.user_id)) {
+			throw { name: "denied", message: "A bot is named after its owner, who can rename it with /invite-bot" } satisfies ProtocolError;
+		}
 		await this.runMutation(async () => {
 			const result = this.store.commitMutation({
 				userId: identity.user_id, ipKey: attachment.ipKey,
@@ -1294,6 +1432,15 @@ export class ApronDemoServer extends DurableObject<Env> {
 		});
 	}
 
+	/**
+	 * Guests only read unless `GUEST_POSTING` is on: posting, reacting,
+	 * joining, leaving, and room changes are denied by policy (§3.5, §4.3.2).
+	 * Listing rooms and reading history stay open.
+	 */
+	private assertMayWrite(attachment: ConnectionAttachment): void {
+		if (attachment.tier === "anonymous" && !this.config.guestPosting) throw { name: "denied", message: GUEST_READ_ONLY } satisfies ProtocolError;
+	}
+
 	/** Shared path for logged mutations: dedup, quotas, commit, reply, broadcast. */
 	private async commitAndBroadcast(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame, method: "message" | "reactions", action: string): Promise<void> {
 		const identity = identityOf(attachment);
@@ -1319,6 +1466,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	private async handleMessage(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate before posting" } satisfies ProtocolError;
+		this.assertMayWrite(attachment);
 		// Without room_id a message goes to the default room (§3.5). Posting does
 		// not require joining; a poster who has not joined gets only the result.
 		optionalString(request.params, "room_id");
@@ -1332,6 +1480,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	}
 
 	private async handleReactions(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
+		if (identityOf(attachment)) this.assertMayWrite(attachment);
 		await this.commitAndBroadcast(socket, attachment, request, "reactions", "reacting");
 	}
 
@@ -1346,6 +1495,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private async handleRoomSet(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: "Authenticate before changing rooms" } satisfies ProtocolError;
+		this.assertMayWrite(attachment);
 		await this.runMutation(async () => {
 			const result = this.store.mutate({
 				userId: identity.user_id, tier: identity.tier, ipKey: attachment.ipKey,
@@ -1383,6 +1533,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private async handleRoomJoin(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: "Authenticate before joining rooms" } satisfies ProtocolError;
+		this.assertMayWrite(attachment);
 		const roomId = requiredString(request.params, "room_id");
 		const known = this.store.getRoom(roomId, nowMs());
 		this.noteRoom(roomId, known !== null);
@@ -1422,6 +1573,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private async handleRoomLeave(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		const identity = identityOf(attachment);
 		if (!identity) throw { name: "denied", message: "Authenticate before leaving rooms" } satisfies ProtocolError;
+		this.assertMayWrite(attachment);
 		const roomId = requiredString(request.params, "room_id");
 		if (!this.roomExists(roomId)) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
 		const current = attachment.rooms ?? [];
@@ -1466,6 +1618,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 			throw { name: "invalid_params", message: "room_id must be a room" } satisfies ProtocolError;
 		}
 		if (request.id !== undefined) this.reply(socket, request, {});
+		// A guest who only reads has nothing to be typing.
+		if (attachment.tier === "anonymous" && !this.config.guestPosting) return;
 		if (typing === undefined || typeof roomId !== "string" || !this.roomExists(roomId)) return;
 		const now = nowMs();
 		const limit = this.config.limits.activityBroadcastsPerUserMinute;
@@ -1583,9 +1737,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 
 	/**
 	 * `command` (§4.8): never logged, broadcast, or saved. The demo provides
-	 * `/help`, which replies with a `@private` notice listing the commands. An
-	 * unknown command is an error the client shows; it is not a policy
-	 * violation, since people mistype.
+	 * `/help`, which replies with a `@private` notice listing the commands the
+	 * sender may run, and `/invite-bot` for registered users. An unknown
+	 * command is an error the client shows; it is not a policy violation,
+	 * since people mistype.
 	 */
 	private async handleCommand(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame): Promise<void> {
 		if (!identityOf(attachment)) throw { name: "denied", message: "Authenticate first" } satisfies ProtocolError;
@@ -1600,18 +1755,77 @@ export class ApronDemoServer extends DurableObject<Env> {
 		if (!this.roomExists(roomId)) throw { name: "invalid_params", message: "Unknown room" } satisfies ProtocolError;
 		const line = text.trim();
 		const name = line.startsWith("/") ? line.slice(1).split(/\s/, 1)[0].toLowerCase() : "";
-		if (!COMMANDS.some((command) => command.name === name)) {
+		const command = COMMANDS.find((candidate) => candidate.name === name);
+		if (!command) {
 			const message = line.startsWith("/") ? `Unknown command /${name}; try /help` : "A command starts with /; try /help";
 			this.fail(socket, request, { name: "invalid_params", message: message.slice(0, 200) });
 			return;
 		}
+		const owner = attachment.tier === "registered" && !isBot(attachment.userId);
+		if (command.audience === "owners" && !owner) {
+			throw { name: "denied", message: isBot(attachment.userId) ? `A bot can't use /${name}` : `Sign in with a passkey to use /${name}` } satisfies ProtocolError;
+		}
+		if (command.name === "invite-bot") {
+			await this.inviteBot(socket, attachment, request, roomId);
+			return;
+		}
 		// The reply a command causes comes before its result (§1).
+		const available = COMMANDS.filter((candidate) => candidate.audience === "everyone" || owner);
 		this.send(socket, {
 			method: "message",
 			params: {
 				room_id: roomId,
 				from: { ...PRIVATE_IDENTITY },
-				body: { text: COMMANDS.map((command) => `- \`${command.usage}\`: ${command.help}`).join("\n"), format: "markdown" },
+				body: { text: available.map((candidate) => `- \`${candidate.usage}\`: ${candidate.help}`).join("\n"), format: "markdown" },
+			},
+		});
+		this.reply(socket, request, {});
+	}
+
+	/**
+	 * `/invite-bot`: creates the sender's bot, `bot_<user_id>` named after
+	 * the sender, or renames it after the sender's current name, and mints its
+	 * bearer token. The token replaces the last one, whose connections close.
+	 * It goes to this connection only, in a `@private` notice (Appendix A.1),
+	 * before the result (§1).
+	 */
+	private async inviteBot(socket: WebSocketConnection, attachment: ConnectionAttachment, request: RequestFrame, roomId: string): Promise<void> {
+		const ownerId = attachment.userId!;
+		const botId = BOT_ID_PREFIX + ownerId;
+		const name = botName(attachment.name || ownerId, this.config.limits);
+		let bot!: ReturnType<Store["registerBot"]>;
+		await this.runMutation(async () => {
+			bot = this.store.registerBot({ ownerId, botId, name, now: nowMs(), ipKey: attachment.ipKey });
+			// A new bot's logged join of `general` goes to its members (§4.3.2).
+			for (const record of bot.broadcasts) this.broadcastRecord(record);
+		});
+		const token = await this.issueBotToken(botId, ownerId);
+		for (const peer of this.connectionsOf(botId)) {
+			const state = connectionAttachment(peer);
+			if (state) this.closePolicy(peer, state, 1008, "Bot token replaced; sign in with the new one");
+		}
+		// Those who share a room with the bot see its new name (§3.3).
+		if (bot.renamed) this.announceUser(socket, { user_id: botId, name }, this.store.getIdentity(botId)?.rooms ?? []);
+		const endpoint = connectionAttachment(socket)?.endpoint ?? attachment.endpoint ?? "this server's WebSocket URL";
+		this.send(socket, {
+			method: "message",
+			params: {
+				room_id: roomId,
+				from: { ...PRIVATE_IDENTITY },
+				body: {
+					text: [
+						`Your bot signs in as **${name}** (\`${botId}\`) with this token. It replaces any earlier one, and anyone who has it can post as your bot, so keep it secret.`,
+						"```\n" + token + "\n```",
+						"If you're using an LLM, you can give it these instructions:",
+						"```\n" + [
+							`Read ${PROTOCOL_URL}`,
+							`Connect to ${endpoint}`,
+							`Auth using token scheme with this token: "${token}"`,
+							"Say hello when you join and listen for messages",
+						].join("\n") + "\n```",
+					].join("\n\n"),
+					format: "markdown",
+				},
 			},
 		});
 		this.reply(socket, request, {});

@@ -50,8 +50,9 @@ To use the Cloudflare backend locally, follow its secret setup and run
 `make dev-worker` instead of `make dev-server`. The web client, the Go
 server, and the worker speak protocol v6; the worker does so within the
 demo's budgets and policies (only threads under `general` can be created,
-and guests' memberships are not logged, so its `room_list` ignores
-`latest_log_id`). `make test-worker` runs its
+guests only read until they sign in with a passkey, and guests' memberships
+are not logged, so its `room_list` ignores `latest_log_id`). A signed-in user
+can run `/invite-bot` for a bot token. `make test-worker` runs its
 Workers runtime suite; `make test-worker-browser` tests browser passkeys against
 local Wrangler. The public demo has persistent passkeys and rolling history;
 its passkey registration creates a new identity instead of upgrading guest
@@ -69,8 +70,8 @@ Use `localhost` for the default passkey configuration; see
 
 ## Threads
 
-A thread is a room with a `parent_room_id` (PROTOCOL.md [§3.4](PROTOCOL.md#34-rooms), [§4.3.4](PROTOCOL.md#434-creating-and-editing)). Rooms
-are not announced: the client lists the rooms you have joined with `room_list`,
+A thread is a room with a `parent_room_id` (PROTOCOL.md [§3.4](PROTOCOL.md#34-rooms), [§4.3.4](PROTOCOL.md#434-creating-and-editing)). The
+client lists the rooms you have joined with `room_list`,
 threads included, with their members, sent right behind `auth` without waiting
 for its result ([§3.2](PROTOCOL.md#32-authentication)), and follows `room_update` from then on ([§4.3](PROTOCOL.md#43-rooms)). After
 a dropped connection it resumes each room's history from where it stopped in

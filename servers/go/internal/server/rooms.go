@@ -212,7 +212,6 @@ func (s *Server) commitRoomLocked(roomID string, parent *roomState, fields map[s
 		}
 		r = &roomState{id: roomID, parent: parent, createdID: logID, members: make(map[string]*userState), reads: make(map[string]readCursor)}
 		s.rooms[roomID] = r
-		s.roomOrder = append(s.roomOrder, roomID)
 		if parent != nil {
 			parent.children = append(parent.children, r)
 		}
@@ -491,10 +490,7 @@ func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 		}
 		candidates = parent.children
 	default:
-		candidates = make([]*roomState, 0, len(s.roomOrder))
-		for _, id := range s.roomOrder {
-			candidates = append(candidates, s.rooms[id])
-		}
+		candidates = slices.Collect(maps.Values(s.rooms))
 	}
 	var joined, others, left []*roomState
 	for _, r := range candidates {

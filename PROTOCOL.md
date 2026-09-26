@@ -48,9 +48,10 @@ Contents:
   - [A.1 System identities and scoped notices](#a1-system-identities-and-scoped-notices)
   - [A.2 Field naming](#a2-field-naming)
   - [A.3 Mention text](#a3-mention-text)
-- [Appendix B — Under consideration](#appendix-b--under-consideration)
-  - [B.1 WebRTC: signaling for audio, video, and peer-to-peer connections](#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)
-  - [B.2 Multiplexing envelope](#b2-multiplexing-envelope)
+- [Appendix B — Valid scenarios (informative)](#appendix-b--valid-scenarios-informative)
+- [Appendix C — Under consideration](#appendix-c--under-consideration)
+  - [C.1 WebRTC: signaling for audio, video, and peer-to-peer connections](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)
+  - [C.2 Multiplexing envelope](#c2-multiplexing-envelope)
 
 A first exchange. After the WebSocket opens, the server announces itself and
 accepts authentication, and the client lists the rooms it has joined. The
@@ -347,6 +348,9 @@ free-form implementation string for debugging.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
 other requests get `denied` and other notifications are ignored.
+Authentication gates what a client sends, not what it receives: the server
+MAY send notifications before auth, such as a `@private` welcome
+([Appendix A.1](#a1-system-identities-and-scoped-notices), [Appendix B](#appendix-b--valid-scenarios-informative)).
 
 `auth` is a barrier: the server finishes an `auth` request before it
 processes any later frame on the connection, so clients MAY send requests
@@ -1574,7 +1578,7 @@ that ignore `token` remain conforming.
 ### A.1 System identities and scoped notices
 
 `user_id`s beginning with `@` are reserved for server-controlled identities,
-such as `@sfu` for a media server ([Appendix B.1](#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
+such as `@sfu` for a media server ([Appendix C.1](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
 them to users. They carry an ordinary `from` and render like any sender, so
 clients unaware of the convention still work; clients MAY style them as
 system messages.
@@ -1585,7 +1589,7 @@ Three of them tell the receiver who else got the message:
 |----------------|-------------------------------|--------|---------------------------------------------|
 | `@server`      | every user on the server      | yes    | maintenance notices, announcements           |
 | `@room`        | every member of the room      | yes    | removals with a reason, poll results         |
-| `@private`     | only this user                | no     | welcomes, command replies, errors, reminders |
+| `@private`     | only this connection's user   | no     | welcomes, command replies, errors, reminders |
 
 - `room_id` is where the message is shown, as for any message. A
   server-wide notice names a room too, usually the default room ([§3.5](#35-messages)),
@@ -1597,6 +1601,9 @@ Three of them tell the receiver who else got the message:
   `message_id`. Like push payloads ([§4.7](#47-push)), clients render them but
   never install them as snapshots, and they are not in history. A private
   notice that should last belongs in a room of its own.
+- Before authentication, a `@private` notice reaches only the connection it
+  is sent on. It MAY omit `room_id` like any message ([§3.5](#35-messages)); a client with
+  no room to show it in yet, such as one still signing in, shows it there.
 
 ```jsonc
 // <- to everyone on the server, shown in the default room
@@ -1649,12 +1656,65 @@ In `body.text`, a mention ([§3.5](#35-messages)) usually appears as `@` followe
 
 ---
 
-## Appendix B — Under consideration
+## Appendix B — Valid scenarios (informative)
+
+Exchanges that are valid under this spec but easy to get wrong, collected so
+implementations accept them. Each follows from the sections it cites.
+
+- **The server sends a welcome before `auth`.** Authentication gates what a
+  client sends, not what it receives ([§3.2](#32-authentication)). A server MAY follow its
+  `server` frame with a `@private` notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)), such as how to
+  sign in. It reaches only this connection and omits `room_id`, since the
+  client knows no rooms yet. Sent before the server reads any frame, it
+  precedes the `auth` result even when the client pipelined `auth`. It is
+  sent again on each connection, so clients MAY replace the previous one
+  rather than show both.
+
+  ```jsonc
+  // <-
+  {"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+  // <- before any auth
+  {
+    "method": "message", "params": {
+      "from": {"user_id": "@private", "name": "Only you"},
+      "body": {"text": "Guests can read along. **Sign in with a passkey** to post.", "format": "markdown"}
+    }
+  }
+  // ->
+  {"method": "auth", "id": "c1", "params": {"scheme": "guest"}}
+  // <-
+  {"id": "c1", "result": {"you": {"user_id": "guest_1234"}}}
+  ```
+
+- **A bot connects, posts once, and disconnects.** A deploy hook or cron
+  job needs no rooms. It MAY send `auth` and `message` together without
+  waiting for `server`, since `auth` is a barrier ([§3.2](#32-authentication)). Posting does
+  not require joining ([§3.5](#35-messages)), so the bot receives no broadcast; the
+  `message_id` result is its confirmation, and it closes the connection
+  once that arrives. If the connection drops first, it resends the same
+  `id` and `params` on a new connection, and the server returns the
+  original result rather than posting twice ([§1.2](#12-retries-and-deduplication)).
+
+  ```jsonc
+  // -> both at once, before server arrives
+  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "deploy-hook/1.0"}}
+  {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
+  // <-
+  {"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["token"]}}
+  // <-
+  {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
+  // <- then the bot closes the connection
+  {"id": "deploy-7f3a", "result": {"message_id": "1724803200042"}}
+  ```
+
+---
+
+## Appendix C — Under consideration
 
 Designs that are not yet part of the protocol, kept here so implementations
 can experiment and converge on them.
 
-### B.1 WebRTC: signaling for audio, video, and peer-to-peer connections
+### C.1 WebRTC: signaling for audio, video, and peer-to-peer connections
 
 Planned capability `rtc`: the socket carries signaling; media travels out of
 band. Future channels (screenshare, documents, file transfer) should reuse
@@ -1727,7 +1787,7 @@ clients negotiate a single PeerConnection.
 Invite/ring/reject state machines are covered by an `rtc` frame plus a push
 notification. Recording and transcoding are server-side.
 
-### B.2 Multiplexing envelope
+### C.2 Multiplexing envelope
 
 Multiple logical protocol connections can share one physical WebSocket via an
 aggregator that proxies backends. This envelope is outside the core protocol.

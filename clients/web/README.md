@@ -1,6 +1,6 @@
-# Bottomless Chat web client
+# Apron web client
 
-This is a Svelte 5 / SvelteKit 2 + TypeScript client for the Bottomless Chat protocol. It
+This is a Svelte 5 / SvelteKit 2 + TypeScript client for the Apron Chat Protocol. It
 builds as a static shell with `adapter-static`; the browser opens the WebSocket
 from `onMount`, so the generated site can be served by the Go server.
 
@@ -57,12 +57,22 @@ always when another user the client knows of shows under the same name, so no
 one can pass as someone else. Without an avatar, a
 person's initials sit on a muted tint whose hue is hashed from their `user_id`,
 so the same person has the same color on every client. Senders whose `user_id`
-starts with `@` render as quiet system lines; `@private` ones, and every
-`message` without a `message_id` (such as a command's reply), are transient
-notices: shown in their room with a dashed outline and "Only you" for the
-session, never stored, and gone on reload. A server-wide `@server` notice names
+starts with `@` render as quiet centered system lines, except the three that
+state a scope (`@private`, `@room`, `@server`), which render as the design
+system's notice card: left-aligned, and titled by the sender as the server
+names it, `Name (@user_id)`, such as "System message to you (@private)" from
+this repository's servers. `@private` ones, and
+every `message` without a `message_id` (such as a command's reply), are
+transient notices: a dashed card for the session, never stored, and gone on
+reload. A notice sent before authentication, such as a server's welcome
+(PROTOCOL.md Appendix B), shows in the first room once one is listed; the next
+connection's welcome replaces it, and signing in with a passkey or a stored
+session drops it, since it speaks to whoever connected. A code block in a
+notice wraps and has a Copy button, such as for the token `/invite-bot` gives
+on the demo worker. A server-wide `@server` notice names
 a room like any message; one for a room you haven't joined also shows as a
-notice where you are. Room IDs starting with `@` are ordinary rooms.
+notice where you are. `@server`, `@room`, and `@private` are sender scopes, not rooms (Appendix A.1); a
+room ID starting with `@` is an ordinary room.
 
 Joins and leaves show in a room's timeline as the quietest system line, at
 each `membership` record's `log_id` among the messages: "Ada joined", with the
@@ -106,8 +116,8 @@ title, with the `rooms` cap) are handled by the client; anything else goes out
 as a `command` request with the params a message would have — `room_id`, the
 text as typed, `mentions`, `reply_to`, and attached files as `upload` embeds —
 and is never posted. `/help` lists what the server offers. The server's replies
-arrive as notices, and a failed command shows its error as a local "Only you"
-notice and gives the draft back. `//` posts a message starting with one `/`.
+arrive as notices, and a failed command shows its error as a local "System
+message to you" notice and gives the draft back. `//` posts a message starting with one `/`.
 Without the cap, `/` text is an ordinary message.
 
 With the `activity` cap, reading the latest message of a room advances your
@@ -143,8 +153,9 @@ included.
 
 With the `rooms` cap the header also offers **Leave**, which leaves the room or
 the thread; a thread is a room of its own, so leaving its parent keeps it.
-**Browse rooms** in the sidebar lists, via `room_list` with `not_joined`, the
-most active visible rooms you haven't joined, and **More threads…** under the
+**Browse rooms** in the sidebar lists, via `room_list` with
+`filter: "not_joined"`, the most active visible rooms you haven't joined, and
+**More threads…** under the
 open room lists its threads you haven't joined; picking one joins it and opens
 it once its `room_update` arrives.
 
@@ -219,6 +230,14 @@ and **Sign out** when the server advertises WebAuthn. With the Go example, open
 deployments need HTTPS and configured RP/frontend origins. Adding a passkey
 keeps your guest identity and message ownership. Signing in restores the
 identity attached to your chosen passkey.
+
+A server may keep guests read-only; the demo worker does, and says so with
+`ext.demo.guest_posting: false`. Signed in as a guest there, the composer gives
+way to a bar saying so with a **Sign in** button (it opens the connect screen
+on Passkey). Replying, reacting, starting or editing threads, and Join and
+Leave are hidden; Browse rooms and More threads… offer **Open** instead of
+**Join**, which reads the room through its history without joining it. Other
+servers' denials show as errors as usual.
 
 Passkeys use the browser's native WebAuthn JSON APIs, with no frontend dependency.
 An up-to-date browser is required; unsupported browsers can still chat as guests.

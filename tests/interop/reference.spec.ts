@@ -201,8 +201,8 @@ test.describe('reference features against the Go server', () => {
 		// The server's reply is a @private notice: never stored, marked as yours alone.
 		const help = page.getByTestId('notice').filter({ hasText: '/avatar' }).last();
 		await expect(help).toBeVisible();
-		await expect(help).toHaveClass(/ap-msg-private/);
-		await expect(help).toContainText('Only you');
+		await expect(help).toHaveClass(/ap-notice-private/);
+		await expect(help.locator('.ap-notice-title')).toHaveText('System message to you (@private)');
 		await expect(help).not.toHaveAttribute('data-message-id');
 
 		// A failed command shows its error the same way and gives the draft back.

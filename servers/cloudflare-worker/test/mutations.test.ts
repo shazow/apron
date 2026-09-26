@@ -419,7 +419,7 @@ it("keeps a recently edited message after its creation record expires", async ()
 		expect(messagesOf(history).map((entry) => entry.log_id)).toEqual([editLog]);
 		expect(messagesOf(history)[0].body?.text).toBe("recent edit");
 		// The general room record survives in the current-state table and is
-		// still announced with its original log_id.
+		// still listed with its original log_id.
 		expect(Number(store.getRoomState().log_id)).toBeLessThan(creationLog);
 	});
 });

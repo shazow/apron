@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["websockets>=14,<17"]
 # ///
-"""Apron Chat v4 for trusted, compliant clients.
+"""Apron Chat v6 for trusted, compliant clients.
 
 Run: uv run apron_server.py [--host 0.0.0.0] [--port 8765]
 Or:  python -m pip install 'websockets>=14,<17'; python apron_server.py
@@ -26,7 +26,7 @@ from websockets.asyncio.server import broadcast, serve
 from websockets.exceptions import ConnectionClosed
 
 
-GREETING = {"protocol": 4, "name": "apron-python/4", "auth": ["guest"],
+GREETING = {"protocol": 6, "name": "apron-python/6", "auth": ["guest"],
             "caps": ["history"]}
 
 
@@ -50,8 +50,7 @@ class ApronServer:
         self.clients = {}  # Only authenticated connections receive broadcasts.
         self.log = deque(maxlen=history_size)  # Room and message records.
         self.last_id = 0
-        self.room = {"room_id": "general", "log_id": self.next_id(), "title": "General"}
-        self.log.append(self.room)
+        self.log.append({"room_id": "general", "log_id": self.next_id(), "title": "General"})
 
     def next_id(self):
         self.last_id = max(time.time_ns() // 1_000_000, self.last_id + 1)
@@ -69,15 +68,17 @@ class ApronServer:
         matches = [r for r in self.log if after <= int(r["log_id"]) <= before]
         page = matches[:limit] if "after" in p else matches[-limit:]
         result = {"rooms": [r for r in page if "message_id" not in r],
-                  "entries": [r for r in page if "message_id" in r],
+                  "messages": [r for r in page if "message_id" in r],
                   "more": len(matches) > limit, **self.availability()}
         if page:
-            result.update(first_id=page[0]["log_id"], last_id=page[-1]["log_id"])
+            result.update(first_log_id=page[0]["log_id"], last_log_id=page[-1]["log_id"])
         return result
 
     def create_message(self, you, p):
         require(isinstance(p.get("body"), dict), "Missing body")
         require(not p.get("deleted"), "Cannot create a deleted message")
+        if not p["body"].get("text") and not p["body"].get("embeds"):
+            return {}  # Nothing to show: neither logged nor broadcast.
         reply_to = p.get("reply_to")
         # The new ID is minted below, so a known target can never be the message itself.
         if "reply_to" in p:
@@ -111,7 +112,7 @@ class ApronServer:
 
         require(method in ("message", "history"), "Unsupported method", -32601)
         require(method != "message" or "message_id" not in p, "Editing is unsupported", -32601)
-        require(p.get("room_id") == "general", "Unknown room")
+        require(p.get("room_id", "general") == "general", "Unknown room")  # The default room.
         return self.history(p) if method == "history" else self.create_message(self.clients[ws], p)
 
     def receive(self, ws, raw):
@@ -120,8 +121,6 @@ class ApronServer:
             result = self.dispatch(ws, frame["method"], frame.get("params", {}))
             if "id" in frame:
                 send([ws], id=frame["id"], result=result)
-            if frame["method"] == "auth":
-                send([ws], method="room", params={**self.room, **self.availability()})
         except Error as error:
             if "id" in frame:
                 send([ws], id=frame["id"], error=error.payload)

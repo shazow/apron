@@ -63,6 +63,12 @@ export interface Notice {
 	after: string;
 	/** When it arrived, in epoch milliseconds (notices carry no `log_id`). */
 	at: number;
+	/**
+	 * It arrived before this connection authenticated, such as a server's
+	 * welcome. Servers send those again on each connection, so a new one
+	 * replaces the last rather than stacking (PROTOCOL.md Appendix B).
+	 */
+	welcome?: boolean;
 }
 
 /**
@@ -190,6 +196,12 @@ export interface ClientSnapshot {
 	authenticated: boolean;
 	authBusy?: boolean;
 	passkeySession?: boolean;
+	/**
+	 * Signed in as a guest on a server whose guests only read (the demo
+	 * worker's `ext.demo.guest_posting: false`): posting, reacting, and room
+	 * changes are denied until the user signs in.
+	 */
+	readOnly?: boolean;
 	/** This browser has signed in to this server with a passkey before. */
 	passkeyHint?: boolean;
 	error?: string;
@@ -490,7 +502,7 @@ export class ChatClient {
 	/** Transient notices per room, for the session (§3.5). */
 	private readonly notices = new Map<string, Notice[]>();
 	/** Notices that arrived before there was a room to show them in; the first room shown takes them. */
-	private orphanNotices: Array<{ from: Identity; body?: MessageBody }> = [];
+	private orphanNotices: Array<{ from: Identity; body?: MessageBody; welcome?: boolean }> = [];
 	private noticeCount = 0;
 	/** Nobody is attending this connection (§4.4); `awaySent` is what the server was last told on it. */
 	private away = false;
@@ -745,6 +757,7 @@ export class ChatClient {
 			authenticated: this.authenticated,
 			authBusy: Boolean(this.passkeyAbort),
 			passkeySession: Boolean(this.registeredSession && this.authenticated),
+			readOnly: this.authenticated && !this.registeredSession && this.server?.ext?.demo?.guest_posting === false,
 			passkeyHint: this.passkeyHint,
 			error: this.error,
 			server: this.server,
@@ -1097,10 +1110,10 @@ export class ChatClient {
 
 	/**
 	 * Shows a transient notice in a room for this session (§3.5), such as a
-	 * command's error: from `@private` ("Only you"), never sent or stored.
+	 * command's error: from `@private`, never sent or stored.
 	 */
 	notify(room: string, text: string): void {
-		this.addNotice(room, { user_id: '@private', name: 'Only you' }, { text });
+		this.addNotice(room, { user_id: '@private', name: 'System message to you' }, { text });
 		this.emit();
 	}
 
@@ -2066,6 +2079,9 @@ export class ChatClient {
 		// when the server doesn't already have it, and not again after it was
 		// denied, unless this sign-in is a registered one that may now be allowed.
 		const registered = passkey || typeof result.token === 'string';
+		// A welcome sent before auth speaks to whoever connected, typically about
+		// signing in; once signed in with a passkey or token, it no longer applies.
+		if (registered) this.dropWelcomes();
 		const name = this.displayName;
 		const wanted = Boolean(name) && name !== this.you?.name && (registered || this.declinedName !== name);
 		this.authNameRequest = wanted ? this.sendName() : undefined;
@@ -2271,8 +2287,8 @@ export class ChatClient {
 	/**
 	 * A `room_update` (§4.3.3): `joined` rooms become visible with their
 	 * members and recover, `updated` records replace a visible room's (or
-	 * describe a new or edited thread of one), and `left` rooms go. `users`
-	 * merges last.
+	 * describe a new or edited thread of one) and carry no members, and `left`
+	 * rooms go. `users` merges last.
 	 */
 	private handleRoomUpdate(params: JsonObject | undefined): void {
 		if (!params) return;
@@ -2287,7 +2303,6 @@ export class ChatClient {
 			const decoded = decodeRoom(value);
 			if (!decoded) continue;
 			this.observeLogId(decoded.delivery.latest_log_id);
-			this.noteMembers(decoded.record.room_id, decoded.delivery);
 			if (this.rooms.has(decoded.record.room_id)) {
 				this.showRoom(decoded);
 			} else {
@@ -2452,16 +2467,27 @@ export class ChatClient {
 	 * greater `message_id`, and history loaded later sorts above it. Without a
 	 * room, it waits for the first one.
 	 */
-	private addNotice(roomId: string | undefined, from: Identity, body?: MessageBody): void {
+	private addNotice(roomId: string | undefined, from: Identity, body?: MessageBody, welcome = false): void {
 		if (roomId === undefined) {
-			this.orphanNotices.push({ from, ...(body ? { body } : {}) });
+			this.orphanNotices.push({ from, ...(body ? { body } : {}), ...(welcome ? { welcome } : {}) });
 			return;
 		}
 		this.showMessageRoom(roomId);
 		const room = this.rooms.get(roomId);
 		const after = maxDefined(this.greatestLogId, room?.latestLogId) ?? String(Date.now());
-		const notice: Notice = { key: `notice:${++this.noticeCount}`, room_id: roomId, from, ...(body ? { body } : {}), after, at: Date.now() };
+		const notice: Notice = {
+			key: `notice:${++this.noticeCount}`, room_id: roomId, from, ...(body ? { body } : {}), after, at: Date.now(), ...(welcome ? { welcome } : {})
+		};
 		this.notices.set(roomId, [...(this.notices.get(roomId) ?? []), notice]);
+	}
+
+	/** Forgets the notices that came before authentication on an earlier connection. */
+	private dropWelcomes(): void {
+		this.orphanNotices = this.orphanNotices.filter((notice) => !notice.welcome);
+		for (const [roomId, notices] of this.notices) {
+			const kept = notices.filter((notice) => !notice.welcome);
+			if (kept.length !== notices.length) this.notices.set(roomId, kept);
+		}
 	}
 
 	/** Notices that waited for a room go to the first one there is. */
@@ -2469,7 +2495,7 @@ export class ChatClient {
 		if (!this.orphanNotices.length) return;
 		const roomId = this.noticeRoom();
 		if (roomId === undefined) return;
-		for (const { from, body } of this.orphanNotices.splice(0)) this.addNotice(roomId, from, body);
+		for (const { from, body, welcome } of this.orphanNotices.splice(0)) this.addNotice(roomId, from, body, welcome);
 	}
 
 	private handleSnapshot(params: JsonObject | undefined): void {
@@ -2478,7 +2504,10 @@ export class ChatClient {
 			// A message without `message_id` is a transient notice, never a snapshot (§3.5).
 			const notice = decodeNotice(params);
 			if (!notice) return;
-			this.addNotice(notice.room_id ?? this.noticeRoom(), notice.from, notice.body);
+			// Notifications may come before auth (§3.2); a welcome replaces the last connection's.
+			const welcome = !this.authenticated;
+			if (welcome) this.dropWelcomes();
+			this.addNotice(notice.room_id ?? this.noticeRoom(), notice.from, notice.body, welcome);
 			this.emit();
 			return;
 		}
@@ -2950,7 +2979,7 @@ export class ChatClient {
 	private sendRequest(request: PendingRequest): void {
 		if (!this.canSend(request) || request.sentConnection === this.connectionId) return;
 		request.sentConnection = this.connectionId;
-		this.sendFrame({ jsonrpc: '2.0', method: request.method, id: request.id, params: request.params });
+		this.sendFrame({ method: request.method, id: request.id, params: request.params });
 	}
 
 	private sendFrame(frame: WireFrame): void {
@@ -3365,7 +3394,6 @@ function userFacingRpcError(error: RpcError): string {
 	return error.message || `Request failed (${error.code})`;
 }
 
-/** Exposed for deterministic UI/client tests without relying on timer scheduling. */
 /** Whether the page is hidden or the browser reports no network; false outside a browser. */
 function absent(): boolean {
 	return globalThis.document?.visibilityState === 'hidden' || globalThis.navigator?.onLine === false;

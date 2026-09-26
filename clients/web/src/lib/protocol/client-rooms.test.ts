@@ -111,6 +111,29 @@ describe('rooms by request (cap rooms)', () => {
 		expect(room('general')?.notices).toHaveLength(3);
 	});
 
+	it('shows a welcome sent before auth in the first room, and lets the next connection\'s welcome replace it', async () => {
+		const welcome = (text: string) => ({ method: 'message', params: { from: { user_id: '@private', name: 'Only you' }, body: { text } } });
+		socket.open();
+		socket.receive({ method: 'server', params: { protocol: 6, auth: ['guest'], caps: ['rooms'] } });
+		// Notifications may come before auth (§3.2); with no room yet, it waits for one (Appendix B).
+		socket.receive(welcome('Guests can read along.'));
+		await socket.reply('auth', { you: { user_id: 'guest_1', name: 'Guest' } });
+		await socket.reply('room_list', { joined: [{ room_id: 'general', title: 'General', latest_log_id: '30' }] });
+		socket.receive({ method: 'message', params: { room_id: 'general', from: { user_id: '@private' }, body: { text: 'A command reply' } } });
+		const texts = () => room('general')?.notices.map((notice) => notice.body?.text);
+		expect(texts()).toEqual(['Guests can read along.', 'A command reply']);
+		// The server sends its welcome on every connection: the new one replaces the old.
+		socket.drop();
+		vi.advanceTimersByTime(5_000);
+		socket = FakeSocket.latest();
+		socket.open();
+		socket.receive({ method: 'server', params: { protocol: 6, auth: ['guest'], caps: ['rooms'] } });
+		socket.receive(welcome('Guests can read along, again.'));
+		await socket.reply('auth', { you: { user_id: 'guest_1', name: 'Guest' } });
+		await socket.reply('room_list', { joined: [{ room_id: 'general', title: 'General' }] });
+		expect(texts()).toEqual(['A command reply', 'Guests can read along, again.']);
+	});
+
 	it('treats room IDs starting with @ as ordinary rooms and has no Server room', async () => {
 		await authenticate(['rooms']);
 		await socket.reply('room_list', { joined: [{ room_id: '@ops', title: 'At ops' }, { room_id: 'general', title: 'General' }] });

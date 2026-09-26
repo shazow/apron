@@ -145,6 +145,8 @@ export interface DemoParams extends JsonObject {
 	max_snapshot_bytes?: number;
 	guest_posts_per_minute?: number;
 	registered_posts_per_minute?: number;
+	/** `false` when guests only read: posting, reacting, and room changes need a sign-in. */
+	guest_posting?: boolean;
 	/** `false` when every room is joined for good and `room_leave` is always denied. */
 	room_leave?: boolean;
 	/** `false` when the server keeps no read cursors, so `read_message_id` is not worth sending. */
