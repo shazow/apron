@@ -53,6 +53,8 @@ export class SessionView {
 	readonly canManageRooms = $derived(canManageRooms(this.server));
 	/** Leaving needs cap `rooms`, and not a demo worker that says rooms are joined for good. */
 	readonly canLeaveRooms = $derived(this.canManageRooms && this.server?.ext?.demo?.room_leave !== false);
+	/** A guest on a server whose guests only read: no composer, reactions, or new threads until sign-in. */
+	readonly readOnly = $derived(Boolean(this.snapshot.readOnly));
 	/** Reaction chips and the React action (cap `reactions`). */
 	readonly canReact = $derived(canReact(this.server));
 

@@ -299,6 +299,52 @@ describe('persisted session tokens', () => {
 		elsewhere.stop();
 	});
 
+	it('reads only as a guest where the server says guests only read, until a sign-in', async () => {
+		const readOnlyExt = { demo: { guest_posting: false } };
+		const guest = new ChatClient('ws://fake.test/');
+		guest.subscribe((next) => (snapshot = next));
+		guest.start();
+		await latest().greet([], { auth: ['webauthn', 'token', 'guest'], ext: readOnlyExt });
+		expect(snapshot.readOnly).toBe(true);
+		guest.stop();
+
+		// A signed-in session writes; so does a guest where guests may post, or where nothing is said.
+		const signedIn = new ChatClient('ws://fake.test/');
+		signedIn.subscribe((next) => (snapshot = next));
+		signedIn.start();
+		await latest().greet([], { auth: ['webauthn', 'token', 'guest'], ext: readOnlyExt, token: 'session-3' });
+		expect(snapshot.readOnly).toBe(false);
+		signedIn.stop();
+		for (const ext of [{ demo: { guest_posting: true } }, undefined]) {
+			storage.clear();
+			const open = new ChatClient('ws://fake.test/');
+			open.subscribe((next) => (snapshot = next));
+			open.start();
+			await latest().greet([], { ...(ext ? { ext } : {}) });
+			expect(snapshot.readOnly).toBe(false);
+			open.stop();
+		}
+	});
+
+	it('drops a welcome sent before auth once a stored session signs in', async () => {
+		storage.set('apron.session:ws://fake.test/', 'session-4');
+		const client = new ChatClient('ws://fake.test/');
+		client.subscribe((next) => (snapshot = next));
+		client.start();
+		latest().open();
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['webauthn', 'token', 'guest'], caps: ['rooms'] } });
+		latest().receive({ method: 'message', params: { from: { user_id: '@private' }, body: { text: 'Guests can read along.' } } });
+		const auth = latest().sent.find((frame) => frame.method === 'auth')!;
+		latest().receive({ id: auth.id, result: { you: { user_id: 'u_1', name: 'Ada' }, token: 'session-4' } });
+		await Promise.resolve();
+		await Promise.resolve();
+		const listing = latest().sent.find((frame) => frame.method === 'room_list')!;
+		latest().receive({ id: listing.id, result: { joined: [{ room_id: 'general', title: 'General' }] } });
+		await Promise.resolve();
+		expect(snapshot.rooms.find((room) => room.id === 'general')?.notices).toEqual([]);
+		client.stop();
+	});
+
 	it('does not persist a token when the server cannot resume with it', async () => {
 		const client = new ChatClient('ws://fake.test/');
 		client.start();

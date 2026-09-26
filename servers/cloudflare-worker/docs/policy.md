@@ -9,8 +9,8 @@ nullable `history_log_id`, without extension negotiation. See
 
 WebAuthn uses the canonical [optional authentication scheme](../../../PROTOCOL.md#49-webauthn-authentication),
 advertised through `auth: ["webauthn", "token", "guest"]` only on connections whose
-origin is in `RP_ORIGINS`. Other connections advertise `auth: ["guest"]`
-and reject WebAuthn requests. Guest user IDs are `guest_<n>` from a
+origin is in `RP_ORIGINS`. Other connections advertise `auth: ["token", "guest"]`,
+where `token` takes only bot tokens (below), and reject WebAuthn requests. Guest user IDs are `guest_<n>` from a
 server-wide counter, with the name `Guest <n>`; a requested `user_id` or
 `name` is ignored. Numbers are reserved in blocks of `guestNumberBlock` (10)
 with one durable write per block, are never reissued (not across restarts,
@@ -52,8 +52,9 @@ within it:
   members and never stored, at most 10 relays per user per minute; past that, updates are dropped and the
   sender gets one `@private` notice a minute saying so. Read cursors are
   neither kept nor relayed. `away` is accepted and ignored: the demo has no push.
-- Commands: `/help` replies with a `@private` notice; other commands are
-  `invalid_params`.
+- Commands: `/help` replies with a `@private` notice listing the commands the
+  sender may run; `/invite-bot` gives a registered user a bot token (below);
+  other commands are `invalid_params`.
 - Messages: a request without `room_id` is in `general`. A new message with
   empty text and no embeds is not logged and returns `{}`; an empty save is
   `invalid_params` (delete instead). `body.mentions` is stored as sent, and
@@ -103,6 +104,24 @@ are stored hashed in the object and swept on expiry. Signing out is local to
 the client: it drops the stored token, and the connection returns as a fresh
 guest.
 
+Guests only read unless the deployment sets `GUEST_POSTING=true`
+(`ext.demo.guest_posting` says which): they can list rooms, read any room's
+history without joining it, and run `/help`, and stay in `general`, where
+authentication put them. Posting, reacting, joining, leaving, and creating or
+editing threads are writes, `denied` ("Guests can only read here; sign in with
+a passkey to post or join rooms"). Every connection gets a `@private` welcome
+saying so right after the `server` frame, before any `auth`, with no
+`room_id` (protocol Appendix B).
+
+A registered user's `/invite-bot` creates or renames their bot, `bot_<their
+user_id>` named "Bot of <their name>", and returns its bearer token in a
+`@private` notice to that connection only. The token signs the bot in with
+`scheme: "token"` from any origin, or none; it does not expire, and the next
+`/invite-bot` replaces it and closes connections that used the old one. The
+first invite counts as a registration against the per-IP, daily, and identity
+caps. A bot posts under the registered quotas, keeps its rooms, cannot rename
+itself with `me`, and cannot invite bots. See [SPEC section 5](../SPEC.md#bots).
+
 Guest identities last for a socket, including hibernation. Repeated guest
 authentication on that socket preserves the identity. Reconnecting creates a
 new guest identity, so guest ownership and deduplication cannot span reconnects.
@@ -122,7 +141,7 @@ advisory 256 KiB recommendation. Payload lengths count UTF-8 bytes. Errors use
 the base protocol codes; `retry_after` includes `data.retry_after`, whole
 seconds rounded up. Permanent identity/thread-room ceilings return `denied`, not a fabricated replenishment time.
 
-Guest posting allowances are shared across a normalized IP; native IPv6
+Guest posting allowances (with `GUEST_POSTING=true`) are shared across a normalized IP; native IPv6
 addresses share a /64 bucket. Registered users also share the aggregate IP
 limit. NAT users can therefore limit one another. Passkeys do not provide
 one-person-one-account or prevent Sybil attacks.

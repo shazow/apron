@@ -50,8 +50,9 @@ To use the Cloudflare backend locally, follow its secret setup and run
 `make dev-worker` instead of `make dev-server`. The web client, the Go
 server, and the worker speak protocol v6; the worker does so within the
 demo's budgets and policies (only threads under `general` can be created,
-and guests' memberships are not logged, so its `room_list` ignores
-`latest_log_id`). `make test-worker` runs its
+guests only read until they sign in with a passkey, and guests' memberships
+are not logged, so its `room_list` ignores `latest_log_id`). A signed-in user
+can run `/invite-bot` for a bot token. `make test-worker` runs its
 Workers runtime suite; `make test-worker-browser` tests browser passkeys against
 local Wrangler. The public demo has persistent passkeys and rolling history;
 its passkey registration creates a new identity instead of upgrading guest

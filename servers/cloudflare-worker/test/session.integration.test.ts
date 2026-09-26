@@ -74,13 +74,18 @@ async function issueSession(userId: string, origin: string): Promise<string> {
 	});
 }
 
-it('advertises token resume only where passkeys are offered', async () => {
+it('resumes passkey sessions only where passkeys are offered; bot tokens work anywhere', async () => {
 	const trusted = await connect();
 	expect((await trusted.next()).params.auth).toEqual(['webauthn', 'token', 'guest']);
 	trusted.close();
+	// `token` is offered without an Origin too, for bot tokens (/invite-bot).
+	await registerIdentity('user_session_elsewhere', 'session-elsewhere-ip');
+	const session = await issueSession('user_session_elsewhere', 'http://localhost:5173');
 	const untrusted = await connect(null);
-	expect((await untrusted.next()).params.auth).toEqual(['guest']);
+	expect((await untrusted.next()).params.auth).toEqual(['token', 'guest']);
 	untrusted.send({ id: 't', method: 'auth', params: { scheme: 'token', token: 'anything' } });
+	expect((await untrusted.next()).error.code).toBe(-32001);
+	untrusted.send({ id: 's', method: 'auth', params: { scheme: 'token', token: session } });
 	expect((await untrusted.next()).error.code).toBe(-32001);
 	untrusted.close();
 });

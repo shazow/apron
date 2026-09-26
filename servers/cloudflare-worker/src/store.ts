@@ -2453,6 +2453,73 @@ export class Store {
     return body.text === "" && (body.embeds as unknown[]).length === 0;
   }
 
+  /**
+   * Creates or renames a registered owner's bot (`/invite-bot`): an identity
+   * with no credential, which signs in only with the bearer token the caller
+   * keeps. A new bot counts as a registration against the same daily and
+   * identity caps as a passkey, and starts in `general`, a logged membership
+   * (§4.3.2) returned in `broadcasts`. An existing bot only takes the new name.
+   */
+  registerBot(input: { ownerId: string; botId: string; name: string; now: number; ipKey: string }): {
+    userId: string; name: string; created: boolean; renamed: boolean; broadcasts: Broadcast[];
+  } {
+    this.ensureReady();
+    ensureText(input.name, "name", this.config.maxNameBytes);
+    if ([...input.name].length > this.config.maxNameCodePoints) throw new StoreError("too_large", "name is too long");
+    const existing = this.reserved({ reads: 16 }, false, input.now, () => {
+      const owner = this.identityRow(input.ownerId);
+      if (!owner || owner.tier !== "registered") throw new StoreError("denied", "Only registered users may invite a bot");
+      return this.identityRow(input.botId);
+    });
+    if (existing) {
+      if (existing.tier !== "bot") throw new StoreError("internal_error", "bot identity is taken");
+      const renamed = existing.name !== input.name;
+      if (renamed) {
+        this.reserved({ reads: 8, writes: 8 }, false, input.now, () => {
+          this.rawExec("UPDATE identities SET name = ?, updated_ms = ? WHERE user_id = ?", input.name, this.effectiveNow(input.now), input.botId);
+        });
+      }
+      return { userId: input.botId, name: input.name, created: false, renamed, broadcasts: [] };
+    }
+    const beforeReads = this.observed.reads;
+    const beforeWrites = this.observed.writes;
+    // The limiter and meta rows, the identity row, and one membership row and
+    // logged record in `general`.
+    const reservation = this.reserveCost({ reads: 128, writes: 72, registrations: 1 }, false, input.now);
+    try {
+      if (this.metaNumber("identity_count") >= this.config.registeredIdentityCount) throw new StoreError("denied", "registration_closed");
+      this.ensureGrowthCapacity(this.config.maxSnapshotBytes);
+      const effective = this.effectiveNow(input.now);
+      return this.transaction(() => {
+        if (this.identityRow(input.botId)) throw new StoreError("invalid_params", "identity already exists");
+        if (this.metaNumber("identity_count") >= this.config.registeredIdentityCount) throw new StoreError("denied", "registration_closed");
+        this.chargeRegistration(input.ipKey, effective);
+        this.rawExec(
+          "INSERT INTO identities (user_id, user_handle, name, tier, created_ms, updated_ms) VALUES (?, '', ?, 'bot', ?, ?)",
+          input.botId, input.name, effective, effective,
+        );
+        this.rawExec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('identity_count', ?)", String(this.metaNumber("identity_count") + 1));
+        const broadcasts: Broadcast[] = [];
+        const joined = this.existingRooms(DEFAULT_JOINED_ROOMS);
+        if (joined.length) {
+          const state = this.logState();
+          const startLogId = state.last_log_id;
+          const context: CommitContext = { state, commitMs: Math.max(effective, state.last_commit_ms), touched: new Map() };
+          for (const roomId of joined) {
+            this.rawExec("INSERT OR IGNORE INTO memberships (room_id, user_id) VALUES (?, ?)", roomId, input.botId);
+            broadcasts.push(this.logMembership(context, roomId, recordedUser(input.botId, input.name), true));
+          }
+          this.finishCommit(context, startLogId);
+        }
+        this.assertStorageTarget();
+        this.assertReservation(reservation, beforeReads, beforeWrites);
+        return { userId: input.botId, name: input.name, created: true, renamed: false, broadcasts };
+      });
+    } finally {
+      this.settleReservation(reservation, beforeReads, beforeWrites);
+    }
+  }
+
   /** The given room IDs that still exist, once each and in order. Reads the capped rooms table. */
   private existingRooms(ids: readonly string[]): string[] {
     const known = new Set(this.rawRows<{ room_id: string }>("SELECT room_id FROM rooms LIMIT ?", MAX_THREAD_LIMIT + 1).map((row) => row.room_id));

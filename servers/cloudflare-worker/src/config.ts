@@ -11,6 +11,8 @@ export interface RuntimeConfig {
 	admissionOff: boolean;
 	/** Advertise and relay typing (cap `activity`); off unless `ACTIVITY=true`. */
 	activityEnabled: boolean;
+	/** Let guests post, react, join and leave rooms, and create threads; off unless `GUEST_POSTING=true`, so guests only read. */
+	guestPosting: boolean;
 }
 
 export class ConfigError extends Error {
@@ -27,6 +29,7 @@ type EnvLike = {
 	RP_NAME?: string;
 	ADMISSION_OFF?: string;
 	ACTIVITY?: string;
+	GUEST_POSTING?: string;
 	ENVIRONMENT?: string;
 	NODE_ENV?: string;
 };
@@ -217,6 +220,8 @@ export function loadConfig(env: EnvLike, overrides: Partial<Limits> = {}): Runti
 	const admissionOff = String(env.ADMISSION_OFF ?? "").toLowerCase() === "true";
 	if (env.ACTIVITY !== undefined && !["true", "false"].includes(String(env.ACTIVITY).toLowerCase())) throw new ConfigError("ACTIVITY must be true or false");
 	const activityEnabled = String(env.ACTIVITY ?? "").toLowerCase() === "true";
+	if (env.GUEST_POSTING !== undefined && !["true", "false"].includes(String(env.GUEST_POSTING).toLowerCase())) throw new ConfigError("GUEST_POSTING must be true or false");
+	const guestPosting = String(env.GUEST_POSTING ?? "").toLowerCase() === "true";
 	const rpName = String(env.RP_NAME ?? "Apron Demo");
 	if (!rpName.trim() || [...rpName].length > limits.maxNameCodePoints || new TextEncoder().encode(rpName).byteLength > limits.maxNameBytes) {
 		throw new ConfigError("RP_NAME exceeds the configured display-name policy");
@@ -229,6 +234,7 @@ export function loadConfig(env: EnvLike, overrides: Partial<Limits> = {}): Runti
 		rpName,
 		admissionOff,
 		activityEnabled,
+		guestPosting,
 	};
 }
 

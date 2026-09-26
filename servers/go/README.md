@@ -287,7 +287,7 @@ Mentions in commands notify no one. A command's effects and `@private`
 replies arrive before its result. Commands:
 
 - `/help` sends the calling connection a `@private` notice
-  (`from: {user_id: "@private", name: "Only you"}`, Markdown, no `message_id`
+  (`from: {user_id: "@private", name: "System message to you"}`, Markdown, no `message_id`
   or `log_id`, not logged) in the command's room, listing the commands the
   sender may use there, and returns `{}`.
 - `/avatar` with exactly one `upload` embed returns

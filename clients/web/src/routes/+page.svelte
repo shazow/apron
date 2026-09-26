@@ -6,6 +6,7 @@
 	import { compareLogIds } from '$lib/protocol/reducer';
 	import type { MessageRecord } from '$lib/protocol/types';
 	import Composer from '$lib/components/Composer.svelte';
+	import ReadOnlyBar from '$lib/components/ReadOnlyBar.svelte';
 	import ConnectScreen, { type Scheme } from '$lib/components/ConnectScreen.svelte';
 	import JumpBar from '$lib/components/JumpBar.svelte';
 	import Message, { type MessageCaps } from '$lib/components/Message.svelte';
@@ -140,7 +141,10 @@
 		? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames, moreReplies: Boolean(threadRoom?.olderAvailable), notices: paneRoom?.notices })
 		: buildRoomTimeline({ messages, threads, notices: paneRoom?.notices, memberships: paneRoom?.timeline.memberships }));
 	let shownTimeline = $derived(hiddenItems > 0 ? timeline.slice(Math.min(hiddenItems, timeline.length)) : timeline);
-	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
+	/** The pane is live: its room is listed, and no sign-in is under way. */
+	let paneReady = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
+	/** Writing here: posting, replying, reacting, and editing threads. A guest who only reads can't. */
+	let canCompose = $derived(paneReady && !session.readOnly);
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members));
 	let typingNames = $derived(snapshot.typing
 		.filter((entry) => entry.room === paneRoom?.id && entry.from.user_id !== session.you?.user_id)
@@ -164,7 +168,7 @@
 	let selectableOrder = $derived(messages.filter(canSelect).map((event) => event.message_id));
 	let selectThreads = $derived(joinedThreads.filter((entry) => entry.id !== activeThread));
 	/** New threads hang off a top-level room; this client keeps threads one level deep. */
-	let canStartThreads = $derived(session.canManageRooms && Boolean(activeRoom) && activeRoom?.parentRoomId === undefined);
+	let canStartThreads = $derived(session.canManageRooms && !session.readOnly && Boolean(activeRoom) && activeRoom?.parentRoomId === undefined);
 
 	$effect(() => {
 		const roomId = activeRoom?.id;
@@ -694,8 +698,24 @@
 
 	function joinRoom(roomId: string): void {
 		if (!client) return;
+		// Joining is a write where guests only read: they open the room through its history instead.
+		if (session.readOnly) {
+			openWithoutJoining(roomId);
+			return;
+		}
 		pendingJoin = roomId;
 		feedback.track(client.joinRoom(roomId), 'Joining…');
+	}
+
+	/**
+	 * Opens a listed room or thread without joining it, read through its
+	 * history (§4.1), for a guest on a server whose guests only read.
+	 */
+	function openWithoutJoining(roomId: string): void {
+		if (!client || !client.viewRoom(roomId)) return;
+		const room = session.rooms.find((candidate) => candidate.id === roomId);
+		if (room?.parentRoomId !== undefined) openDestination(room.parentRoomId, roomId);
+		else if (room) chooseRoom(room);
 	}
 
 	/** Leaves the open room or thread (cap `rooms`); the server removes it from the list. */
@@ -1067,11 +1087,11 @@
 				typing={typingNames}
 				replyCount={activeThread ? threadReplyCount : undefined}
 				moreReplies={Boolean(activeThread && threadRoom?.olderAvailable)}
-				canEditThread={Boolean(activeThread && session.canManageRooms && activeThreadEntry)}
+				canEditThread={Boolean(activeThread && session.canManageRooms && !session.readOnly && activeThreadEntry)}
 				editorOpen={threadEditorOpen}
-				editDisabled={!canCompose}
-				canLeave={session.canLeaveRooms && Boolean(paneRoom?.joined)}
-				canJoin={session.canManageRooms && Boolean(paneRoom) && !paneRoom?.joined}
+				editDisabled={!paneReady}
+				canLeave={session.canLeaveRooms && !session.readOnly && Boolean(paneRoom?.joined)}
+				canJoin={session.canManageRooms && !session.readOnly && Boolean(paneRoom) && !paneRoom?.joined}
 				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)} onleave={leavePane} onjoin={joinPane}
 			/>
 			{#if threadEditorOpen && activeThreadEntry}
@@ -1195,6 +1215,8 @@
 					onmove={(room) => moveSelection(room)} onnewthread={() => moveSelection('new')} onfill={() => selection.fillBetween(selectableOrder)}
 					oncancel={() => { selection.cancel(); composer?.focus(); }}
 				/>
+			{:else if session.readOnly}
+				<ReadOnlyBar {passkeyUnavailable} onsignin={() => openConnect({ passkey: true })} />
 			{:else}
 				<Composer
 					bind:this={composer}
