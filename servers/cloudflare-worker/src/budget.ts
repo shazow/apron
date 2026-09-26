@@ -71,8 +71,10 @@ export interface Limits {
 	 */
 	frameLease: number;
 	/**
-	 * Users listed as `members` of each room in a `room_list` result: those
-	 * connected now who have joined it.
+	 * Registered members listed per room in `members` (`room_list` with
+	 * `members: true`, and `room_update` `joined`), in `user_id` order.
+	 * Connected members, guests included, are always listed besides. Each
+	 * listed registered member costs two indexed reads.
 	 */
 	roomListMembers: number;
 	/**
@@ -159,7 +161,7 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
 	roomListRequestsPerUserMinute: 6,
 	activityMaxTypingSeconds: 30,
 	frameLease: 10,
-	roomListMembers: 20,
+	roomListMembers: 100,
 	pingSeconds: 45,
 	pingTimeoutSeconds: 150,
 	sqlWritesPerDay: 80_000,
@@ -224,8 +226,9 @@ export const MAX_TYPE_THROTTLE_PER_MINUTE = 60;
 // A block counts against the IP's frame minute all at once.
 export const MAX_FRAME_LEASE = 20;
 // Every room in a listing carries its members list, so it multiplies the
-// response by the thread ceiling (listings past the response cap leave it out).
-export const MAX_ROOM_LIST_MEMBERS = 50;
+// listing's reads and response by the thread ceiling (listings past the
+// response cap leave members out).
+export const MAX_ROOM_LIST_MEMBERS = 200;
 export const MAX_SQL_WRITES = DEFAULT_LIMITS.sqlWritesPerDay;
 export const MAX_SQL_READS = DEFAULT_LIMITS.sqlReadsPerDay;
 export const MAX_DATABASE_HIGH_WATER_BYTES = DEFAULT_LIMITS.databaseHighWaterBytes;

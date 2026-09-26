@@ -2,6 +2,11 @@ import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { RETENTION_MS, Store, StoreError, type StoreConfig, type StoreMutationInput, type StoreMutationResult } from "../src/store";
 
+/** A history page's messages; the array is omitted when empty (§4.1). */
+function messagesOf(page: { messages?: Array<{ log_id: string; message_id: string; room_id?: string; body?: Record<string, unknown> & { text?: string } }> }) {
+	return page.messages ?? [];
+}
+
 type TestClock = {
 	value: number;
 	readonly clock: { now(): number };
@@ -243,7 +248,7 @@ it("creates only thread rooms and replaces their client fields on save", async (
 		const history = store.historyPage({ roomId, after: "0", limit: 50, now: clock.value });
 		expect(history.rooms?.map((room) => room.log_id)).toEqual([roomId, saved.room?.log_id]);
 		expect(history.rooms?.[0]).toMatchObject({ title: "Deploy", intro_message: { message_id: introId } });
-		expect(history.entries).toEqual([]);
+		expect(history.messages).toBeUndefined();
 		expect(store.listRooms().map((room) => room.room_id)).toEqual(["general", roomId]);
 	});
 });
@@ -290,14 +295,14 @@ it("moves a message into both rooms' logs and re-logs its reactions in the desti
 		// The move belongs to the source and destination logs; earlier history
 		// of the message stays in the source room.
 		const source = store.historyPage({ roomId: "general", after: "0", limit: 50, now: clock.value });
-		expect(source.entries.map((entry) => [entry.log_id, entry.room_id])).toEqual([
+		expect(messagesOf(source).map((entry) => [entry.log_id, entry.room_id])).toEqual([
 			[messageId, "general"],
 			[snapshot.log_id, threadId],
 		]);
 		expect(source.reactions?.map((record) => record.room_id)).toEqual(["general", "general"]);
 		const destination = store.historyPage({ roomId: threadId, after: "0", limit: 50, now: clock.value });
 		expect(destination.rooms?.map((room) => room.room_id)).toEqual([threadId]);
-		expect(destination.entries.map((entry) => entry.log_id)).toEqual([snapshot.log_id]);
+		expect(messagesOf(destination).map((entry) => entry.log_id)).toEqual([snapshot.log_id]);
 		expect(destination.reactions?.map((record) => record.log_id)).toEqual([reactions.log_id]);
 		expect(store.getRoomState().latest_log_id).toBe(snapshot.log_id);
 		expect(store.getRoomState(threadId).latest_log_id).toBe(reactions.log_id);
@@ -352,7 +357,7 @@ it("sets, clears, collapses, and deduplicates reactions", async () => {
 		})))).toBe("invalid_params");
 
 		const history = store.historyPage({ roomId: "general", after: target.message!.log_id, limit: 50, now: clock.value });
-		expect(history.entries.map((entry) => entry.message_id)).toEqual([messageId]);
+		expect(messagesOf(history).map((entry) => entry.message_id)).toEqual([messageId]);
 		expect(history.reactions?.map((record) => record.reactions[0].emojis)).toEqual([["👍", "🎉"], []]);
 	});
 });
@@ -411,8 +416,8 @@ it("keeps a recently edited message after its creation record expires", async ()
 		const history = store.historyPage({ roomId: "general", after: "0", limit: 50, now: clock.value });
 		expect(history.history_log_id).toBe(String(creationLog + 1));
 		expect(history.rooms).toBeUndefined();
-		expect(history.entries.map((entry) => entry.log_id)).toEqual([editLog]);
-		expect(history.entries[0].body?.text).toBe("recent edit");
+		expect(messagesOf(history).map((entry) => entry.log_id)).toEqual([editLog]);
+		expect(messagesOf(history)[0].body?.text).toBe("recent edit");
 		// The general room record survives in the current-state table and is
 		// still announced with its original log_id.
 		expect(Number(store.getRoomState().log_id)).toBeLessThan(creationLog);
