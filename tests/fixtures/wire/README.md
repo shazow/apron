@@ -8,16 +8,12 @@ client conformance.
 
 ## Run
 
-From the repository root, after `make install`:
-
-```sh
-make test-wire  # session fixtures over real loopback WebSockets
-make test       # also the Go tests; runs in CI
-```
-
-The replay fixtures run in
+The session fixtures run in
+[apron-chat/apron-server-go](https://github.com/apron-chat/apron-server-go)
+(`make test-wire`, and in its CI), which checks out this repository as a
+submodule. The replay fixtures run in
 [apron-chat/apron-web](https://github.com/apron-chat/apron-web)'s unit tests
-(`npm test`), which check out this repository as a submodule. Session tests use the actual
+(`npm test`), which also check out this repository as a submodule. Session tests use the actual
 TypeScript client with Node.js 24 WebSockets and a small Go transport peer;
 no browser or running example server is needed. No new dependencies are required.
 
@@ -453,8 +449,9 @@ no sleeps, timers, or DOM selectors.
 | `reconnect-history.json` | new guest identity after reconnect with a full listing; the kept room's recovery resumes from its checkpoint behind `auth`, without a head, across message and reaction records |
 | `thread-recovery.json` | thread room loaded only by `loadRoom`, newest page first and an older page by `loadOlder`, as its own room; move in both rooms' logs; interleaved with room recovery |
 
-The Node adapter is [`tests/interop/wire.spec.ts`](../../interop/wire.spec.ts).
-Its [`wire-peer.go`](../../interop/wire-peer.go) utility only transports frames;
+The Node adapter is apron-server-go's
+[`tests/interop/wire.spec.ts`](https://github.com/apron-chat/apron-server-go/blob/main/tests/interop/wire.spec.ts).
+Its [`wire-peer.go`](https://github.com/apron-chat/apron-server-go/blob/main/tests/interop/wire-peer.go) utility only transports frames;
 it contains no chat behavior or expected state. Each test gets a fresh client
 connection. Alternative implementations can use any transport harness that
 preserves these exchanges and projections.

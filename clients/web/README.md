@@ -5,5 +5,5 @@ The SvelteKit web client deployed at `https://web.apron.chat` now lives in
 history. That repository tests every pull request and deploys on merge to
 `main`.
 
-The browser tests in [`tests/interop`](../../tests/interop) still run it
-against the Go server; `make install` clones it into `.apron-web/`.
+The browser tests that run it against the Go server moved with that server to
+[apron-chat/apron-server-go](https://github.com/apron-chat/apron-server-go).
