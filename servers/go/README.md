@@ -3,9 +3,9 @@
 `cmd/aprond` serves the reference Apron backend: it implements protocol v6
 ([PROTOCOL.md](../../PROTOCOL.md)), every capability and liveness ping, but
 not the designs under consideration, multiplexing
-([Appendix B.2](../../PROTOCOL.md#b2-multiplexing-envelope))
+([Appendix C.2](../../PROTOCOL.md#c2-multiplexing-envelope))
 and WebRTC
-([Appendix B.1](../../PROTOCOL.md#b1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
+([Appendix C.1](../../PROTOCOL.md#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
 State is in memory; restarting the process clears messages, identities,
 uploads, passkeys, and sessions.
 
