@@ -65,7 +65,7 @@ room, including the sender.
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
 
 // -> joined rooms, sent without waiting: auth finishes first (§3.2)
-{"method": "room_list", "id": "c2", "params": {"scope": "joined"}}
+{"method": "room_list", "id": "c2", "params": {"filter": "joined"}}
 
 // <- assigned identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
@@ -445,9 +445,9 @@ more about by its `room_id`. Listing, joining, creating, and threads are cap
 `rooms` ([§4.3](#43-rooms)).
 
 A connection receives deliveries for the rooms its user has joined: every
-room, on servers without membership. It also receives the `message`
-snapshots, and only those, of the threads of those rooms (below), so thread
-previews stay current; joining a thread is following it ([§4.3.2](#432-membership)). Posting
+room, on servers without membership. Of a joined room's threads (below) it
+receives only changes to their room records, as `room_update` ([§4.3.3](#433-updates)),
+not their messages; a thread's messages go to the thread's members. Posting
 does not require joining ([§3.5](#35-messages)).
 
 A **room record** describes one room, as `room_list` and `room_update`
@@ -905,11 +905,11 @@ share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
 
 `room_list` answers with the rooms matching its filters, as room records
 ([§3.4](#34-rooms)) in up to two arrays: `joined`, rooms the user has joined, and
-`discoverable`, visible rooms the user has not joined. Listing never joins.
+`not_joined`, visible rooms the user has not joined. Listing never joins.
 
 ```jsonc
 // -> my rooms, threads included
-{"method": "room_list", "id": "c20", "params": {"scope": "joined"}}
+{"method": "room_list", "id": "c20", "params": {"filter": "joined"}}
 // <-
 {
   "id": "c20", "result": {
@@ -929,7 +929,7 @@ share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
   }
 }
 // -> reconnecting: my rooms that changed since a position, and those I left
-{"method": "room_list", "id": "c21", "params": {"scope": "joined", "latest_log_id": "1724803450000"}}
+{"method": "room_list", "id": "c21", "params": {"filter": "joined", "latest_log_id": "1724803450000"}}
 // <-
 {
   "id": "c21", "result": {
@@ -938,7 +938,7 @@ share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
   }
 }
 // -> general's threads I have not joined
-{"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "scope": "discoverable"}}
+{"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "filter": "not_joined"}}
 // -> one room, with its members
 {"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001", "members": true}}
 // <-
@@ -963,11 +963,11 @@ share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
 
 Every filter is optional:
 
-- `scope`: `"joined"` lists only `joined`, and `"discoverable"` only
-  `discoverable`; the other array is omitted. Without `scope`, both arrays
-  are present, even when empty.
+- `filter`: `"joined"` lists only `joined`, `"not_joined"` only
+  `not_joined`, and `"all"`, the default, both; an array left out by the
+  filter is omitted, and one it asks for is present even when empty.
 - `parent_room_id` lists only that room's threads. Without it, `joined`
-  holds joined rooms at every depth, threads included, and `discoverable`
+  holds joined rooms at every depth, threads included, and `not_joined`
   only top-level rooms.
 - `room_id` lists only that visible room, in the array its membership
   selects, such as for its members. It overrides `parent_room_id`; an
@@ -985,15 +985,15 @@ Every filter is optional:
 
 A result lists rooms matching its filters, most recently active first.
 `joined` lists every match and is never truncated; servers MAY list only
-the most recently active of `discoverable`, and a room left out is still
+the most recently active of `not_joined`, and a room left out is still
 visible and can be joined.
 
 Each room MAY carry `member_count`, how many users have joined it. With
 `members: true`, each room also carries `members`, user objects ([§3.3](#33-identity)):
 either complete, or `user_id` only with the complete objects in the
-result's `users`. Servers MAY truncate or omit `members`; `member_count`
-stays the total. A client given no `members` learns a room's members from
-its memberships ([§4.3.2](#432-membership)) and senders.
+result's `users`. `members` lists every member of the room; a later
+revision may add paging for large rooms. Servers MAY refuse `members: true`
+without `room_id` as too costly (`too_large`).
 
 #### 4.3.2 Membership
 
@@ -1003,11 +1003,8 @@ notifications they cause ([§1](#1-transport--framing)). An unknown or invisible
 
 Joining subscribes: every connection of the user receives the joined
 room's deliveries ([§3.4](#34-rooms)), and under the suggested wake rule joined rooms
-notify ([§4.7](#47-push)). Members of a room also receive its threads' `message`
-snapshots, so joining a thread is **following** it: it adds the thread's
-other deliveries, such as reactions and typing, lists it in `joined`, and
-makes it notify. Leaving a thread unfollows it; its messages still arrive
-while the user is in its parent room.
+notify ([§4.7](#47-push)). A thread is joined like any room; members of its parent
+room receive only its room record changes ([§4.3.3](#433-updates)).
 
 With cap `members`, every membership change is a logged record in the
 room: joining, leaving, creating a room with `room_set`, and changes the
@@ -1051,8 +1048,8 @@ one entry per user, each with the user as a recorded object ([§3.3](#33-identit
   the change, so both the joining and the leaving user receive it. It
   advances the room's `latest_log_id`.
 - Clients start a room's member list from `room_list` with `room_id` and
-  `members: true`, and keep it current from the memberships they receive
-  live and in history.
+  `members: true`, which is complete, and keep it current from the
+  memberships they receive live and in history.
 - Without cap `members`, membership is server state outside the log: no
   membership records exist, and clients learn members only from
   `room_list`.
@@ -1067,7 +1064,9 @@ the full list:
 - `left`: `[{room_id}]` of rooms the user is no longer in: left, removed,
   no longer visible, or deleted.
 - `updated`: room records that are new or changed while membership is not:
-  an edit to a joined room, or a new thread in one.
+  an edit to a joined room, or a new or edited thread of one. Messages in a
+  thread do not change its record, so a thread's `latest_log_id` here can
+  lag; clients refresh it with `room_list` and `parent_room_id`.
 
 ```jsonc
 // <- after the join above
@@ -1415,10 +1414,9 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   `log_id`, so clients render it but never install it as a snapshot. `body`
   MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
-- Suggested convention: wake a user only for rooms they have joined,
-  followed threads included ([§4.3.2](#432-membership)), and for messages whose `mentions` list
-  them in threads of those rooms, when every connection of theirs is away
-  or gone ([§4.4](#44-activity)) and they have
+- Suggested convention: wake a user only for rooms they have joined
+  ([§4.3.2](#432-membership)) and for messages whose `mentions` list them, when every
+  connection of theirs is away or gone ([§4.4](#44-activity)) and they have
   not muted the room by server policy, such as a `/mute` command
   ([§4.8](#48-command)). Servers MAY wait briefly first
   and skip the push if the user's `read_message_id` has passed the message.
@@ -1597,20 +1595,20 @@ Three of them tell the receiver who else got the message:
 | `@room`        | every member of the room      | yes    | joins and leaves, removals, poll results     |
 | `@private`     | only this user                | no     | welcomes, command replies, errors, reminders |
 
-- `room_id` is where the message is shown. A notice about no room in
-  particular goes in room `@server`, which every user receives without
-  joining; clients unaware of it show it as a room of its own. Room IDs
-  beginning with `@` are reserved for such server-defined rooms.
+- `room_id` is where the message is shown, as for any message. A
+  server-wide notice names a room too, usually the default room ([§3.5](#35-messages)),
+  and reaches every user whether or not they joined it. These are sender
+  identities that state a scope, not rooms.
 - `@private` messages are not logged and carry neither `log_id` nor
   `message_id`. Like push payloads ([§4.7](#47-push)), clients render them but
   never install them as snapshots, and they are not in history. A private
   notice that should last belongs in a room of its own.
 
 ```jsonc
-// <- to everyone on the server
+// <- to everyone on the server, shown in the default room
 {
   "method": "message", "params": {
-    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "@server",
+    "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
     "from": {"user_id": "@server", "name": "Server"},
     "body": {"text": "Maintenance at 17:00 UTC."}
   }
