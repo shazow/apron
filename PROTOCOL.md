@@ -359,13 +359,14 @@ Identity is server-authoritative: every message carries its author in `from`.
 `user_id` is required and stable. `name` is an optional display string; absent
 `name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)) and `ext` ([§3.5](#35-messages)) are
 optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
-`users`, a membership's `user`, RTC members) uses this shape, and servers MAY send only `user_id`.
+`users`, a membership's `user`, RTC members) uses this shape, and servers MAY
+send only `user_id`.
 
 User objects come in two kinds:
 
 - **Current** objects describe the user now: `you` and `new` in a `user`
-  notification, room `members` in `room_list` ([§4.3.1](#431-listing)), and a result's
-  `users` (below). Clients keep one user object per `user_id` and merge every
+  notification, and room `members` and `users` in `room_list`
+  ([§4.3.1](#431-listing)). Clients keep one user object per `user_id` and merge every
   current object into it: a present field replaces the kept value, an empty
   value (`""`, `{}`) removes it, and a missing field leaves it unchanged, so
   an object with only `user_id` changes nothing.
@@ -383,11 +384,8 @@ Clients SHOULD show a user as `Name (@user_id)` where space allows, and
 MUST when they know another `user_id` with the same display name, so no one
 can pass as someone else.
 
-A result MAY carry `users`, current user objects, each user once, for the
-identities elsewhere in it, such as a history page's authors and reactors.
-Servers whose `from` keeps the name from posting time SHOULD send `users`
-with history pages; clients that ignore it render those pages with the
-names as posted.
+Authors and reactors a client keeps no object for, such as users who left
+the room, render as recorded.
 
 A `me` request updates the user's own profile after authentication, by the
 same rule: fields given replace their current values, fields omitted stay
@@ -657,7 +655,6 @@ lacks a cap falls back as below:
 | `history`      | page and recover a room's log                                | session-only scrollback      | [§4.1](#41-history)        |
 | `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | [§4.2](#42-edit)           |
 | `rooms`        | `room_list`, `room_join`, `room_leave`, `room_set`, updates  | one default room, no threads | [§4.3](#43-rooms)          |
-| `members`      | memberships in the log, with cap `rooms`                     | members from `room_list`     | [§4.3.2](#432-membership)  |
 | `activity`     | typing, read markers, and away                               | no typing or read indicators | [§4.4](#44-activity)       |
 | `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | [§4.5](#45-reactions)      |
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | [§4.6.4](#464-embedupload) |
@@ -723,10 +720,6 @@ kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
         "members": [{"user": {"user_id": "dave", "name": "Dave"}, "joined": true}]
       }
     ],
-    "users": [
-      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
-      {"user_id": "carol", "name": "Carol"}
-    ],
     "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
     "latest_log_id": "1724806800000", "history_log_id": "1724800000000"
   }
@@ -767,8 +760,7 @@ history still counts as available, keeps checkpoints valid, and leaves
 `history_log_id` in place. A server that truly discards a prefix advances
 `history_log_id`; the effective lower bound is `history_log_id`, or
 `latest_log_id + 1` when null, and MUST NOT decrease. Before discarding a
-prefix that holds memberships, a server with cap `members` appends one
-membership record listing every current member (`joined: true` only), so
+prefix that holds memberships, a server appends one listing every current member (`joined: true` only), so
 the room's members survive; clients that restart from the new bound clear
 the room's state first, so leaves in the prefix are not needed.
 
@@ -782,8 +774,7 @@ their original `log_id`s and contents and never incorporate changes after
 the slice. Compacted and uncompacted pages yield the same terminal state.
 
 **Replay** follows [§2](#2-identifiers). No earlier state is needed to apply a record, and
-order across the arrays is irrelevant. `users` holds current user objects
-for the page ([§3.3](#33-identity)) and is merged after the records.
+order across the arrays is irrelevant.
 
 **Recovery**, per room:
 
@@ -897,9 +888,8 @@ clients holding the old content drop it on the new tombstone.
 
 Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
 share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
-`room_set` are requests; `room_update` is a notification. With cap
-`members`, the `members` notification carries logged memberships
-([§4.3.2](#432-membership)). Visibility and membership are server policy.
+`room_set` are requests; `room_update` is a notification. The `members`
+notification carries logged memberships ([§4.3.2](#432-membership)). Visibility and membership are server policy.
 
 #### 4.3.1 Listing
 
@@ -960,14 +950,14 @@ Every filter is optional:
   selects, such as for its members. It overrides `parent_room_id`; an
   unknown or invisible `room_id` is `invalid_params`. Servers SHOULD accept
   it.
-- `latest_log_id` lists only rooms whose `latest_log_id` is greater. With cap
-  `members`, joins and leaves are in the room's log ([§4.3.2](#432-membership)), so a room the
-  user joined since then is in `joined`, and a room the user left since
-  then is in `left`, as `[{room_id}]` like `room_update` ([§4.3.3](#433-updates)), whenever the
-  result has `joined`. Rooms deleted or no longer visible since then SHOULD
-  be in `left` too. Without cap `members`, a client lists without this
-  filter after reconnecting, since membership changes leave no trace in
-  `latest_log_id`.
+- `latest_log_id` lists only rooms whose `latest_log_id` is greater. Joins
+  and leaves are in the room's log ([§4.3.2](#432-membership)), so a room the user joined
+  since then is in `joined`, and a room the user left since then is in
+  `left`, as `[{room_id}]` like `room_update` ([§4.3.3](#433-updates)), whenever the result
+  has `joined`. Rooms deleted or no longer visible since then SHOULD be in
+  `left` too. A server applying this filter includes `left`, even when
+  empty; a server MAY ignore the filter, such as one that keeps memberships
+  out of the log, and its result without `left` is a full listing.
 
 A result lists rooms matching its filters, most recently active first.
 `joined` lists every match and is never truncated; servers MAY list only
@@ -991,9 +981,9 @@ room's deliveries ([§3.4](#34-rooms)), and under the suggested wake rule joined
 notify ([§4.7](#47-push)). A thread is joined like any room; members of its parent
 room receive only its room record changes ([§4.3.3](#433-updates)).
 
-With cap `members`, every membership change is a logged record in the
-room: joining, leaving, creating a room with `room_set`, and changes the
-server makes, such as a removal. A membership record carries `members`,
+Every membership change is a logged record in the room: joining, leaving,
+creating a room with `room_set`, and changes the server makes, such as a
+removal. A membership record carries `members`,
 one entry per user, each with the user as a recorded object ([§3.3](#33-identity)) and
 `joined`:
 
@@ -1035,9 +1025,10 @@ one entry per user, each with the user as a recorded object ([§3.3](#33-identit
 - Clients start a room's member list from its `members` in `room_list`,
   which is complete, and keep it current from the memberships they receive
   live and in history.
-- Without cap `members`, membership is server state outside the log: no
-  membership records exist, and clients learn members only from
-  `room_list`.
+- A server MAY keep membership outside the log, such as for ephemeral
+  guests: it then sends no membership records for them, clients learn
+  those members only from `room_list`, and it ignores `latest_log_id` in
+  `room_list` unless the result stays correct.
 
 #### 4.3.3 Updates
 
@@ -1068,8 +1059,7 @@ the full list:
 joins the creator; with `room_id` it replaces the client fields ([§3.4](#34-rooms))
 other than `parent_room_id`, which is fixed at creation, and omitted fields
 are cleared. Both return `{"room_id": "..."}` after the change arrives as a
-`room_update`, and with cap `members` a creation also logs the creator's
-membership ([§4.3.2](#432-membership)).
+`room_update`, and a creation also logs the creator's membership ([§4.3.2](#432-membership)).
 
 ```jsonc
 // -> start a thread on an existing message
