@@ -31,6 +31,9 @@ type roomState struct {
 	// creator is the user_id that created the room, empty for the seeded
 	// room; only the creator may /kick (§4.8).
 	creator string
+	// titleFrom is the message_id of the intro message the current title was
+	// derived from, empty for a title the client chose.
+	titleFrom string
 	// reads holds each user's latest read cursor (§4.4).
 	reads map[string]readCursor
 }
@@ -89,21 +92,6 @@ func (s *Server) roomParamsLocked(r *roomState) map[string]any {
 	}
 	maps.Copy(params, r.deliveryFields())
 	return params
-}
-
-// embedIntroLocked returns a shallow copy of a room record whose bare
-// intro_message reference is replaced by the JSON of the referenced message's
-// current snapshot.
-func (s *Server) embedIntroLocked(record map[string]any) map[string]any {
-	value := maps.Clone(record)
-	if intro, ok := value["intro_message"].(map[string]any); ok {
-		if id, ok := intro["message_id"].(string); ok {
-			if m := s.messages[id]; m != nil {
-				value["intro_message"] = m.currentRaw()
-			}
-		}
-	}
-	return value
 }
 
 // deliverLocked sends a frame to every connection of every member of the
@@ -238,14 +226,60 @@ func (s *Server) commitRoomLocked(roomID string, parent *roomState, fields map[s
 	maps.Copy(record, fields)
 	r.record = record
 	r.recordLogID = logID
-	logged := newLogRecord(logID, kindRoom, s.embedIntroLocked(record))
-	s.appendLocked(logged, r)
+	value := maps.Clone(record)
+	delete(value, "intro_message")
+	logged := newLogRecord(logID, kindRoom, value)
 	if intro, ok := fields["intro_message"].(map[string]any); ok {
-		// Deleting the intro message redacts the copy embedded here.
+		// The record embeds the intro snapshot current now, by reference, so
+		// deleting the intro message redacts it here too (§4.2).
 		m := s.messages[intro["message_id"].(string)]
-		m.introRecords = append(m.introRecords, logged)
+		logged.intro = m.records[len(m.records)-1]
 	}
+	s.appendLocked(logged, r)
 	return r
+}
+
+// announceRoomLocked sends a room's current record as room_update updated to
+// its members, the parent's members for a thread, and editor, if any.
+func (s *Server) announceRoomLocked(r *roomState, editor *userState) {
+	audience := maps.Clone(r.members)
+	if r.parent != nil {
+		maps.Copy(audience, r.parent.members)
+	}
+	if editor != nil {
+		audience[editor.id] = editor
+	}
+	frame := roomUpdate("updated", s.roomParamsLocked(r))
+	for _, member := range audience {
+		member.send(frame)
+	}
+}
+
+// untitleLocked replaces the titles derived from a deleted intro message:
+// the room records carrying one are redacted to the default thread title
+// (§4.2), and each room still titled by it gets a new record with the
+// default title.
+func (s *Server) untitleLocked(m *messageState) {
+	for _, record := range m.titleRecords {
+		record.rewrite(func(value map[string]any) {
+			value["title"] = defaultThreadTitle
+		})
+	}
+	m.titleRecords = nil
+	for _, r := range m.titledRooms {
+		if r.titleFrom != m.id {
+			continue
+		}
+		fields := maps.Clone(r.record)
+		for _, key := range []string{"room_id", "log_id", "prev_log_id", "parent_room_id"} {
+			delete(fields, key)
+		}
+		fields["title"] = defaultThreadTitle
+		r.titleFrom = ""
+		s.commitRoomLocked(r.id, r.parent, fields)
+		s.announceRoomLocked(r, nil)
+	}
+	m.titledRooms = nil
 }
 
 // setRoom creates a room (no room_id) or replaces an existing room's client
@@ -307,10 +341,17 @@ func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
 	if hasIntro && s.messages[introID] == nil {
 		return nil, false, invalidParams("Unknown intro_message %q", introID)
 	}
+	if err := s.admitPostLocked(u); err != nil {
+		return nil, false, err
+	}
 	fields := make(map[string]any)
+	titleFrom := ""
 	if title == "" && parent != nil {
 		// Servers title threads so clients unaware of parent_room_id render them.
 		title = s.threadTitleLocked(introID)
+		if title != defaultThreadTitle {
+			titleFrom = introID
+		}
 	}
 	if title != "" {
 		fields["title"] = title
@@ -325,17 +366,16 @@ func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
 	if !updating {
 		r.creator = u.id
 	}
+	r.titleFrom = titleFrom
+	if titleFrom != "" {
+		// Deleting the intro message removes the title taken from its text.
+		m := s.messages[titleFrom]
+		m.titleRecords = append(m.titleRecords, r.log[len(r.log)-1])
+		m.titledRooms = append(m.titledRooms, r)
+	}
 	// Room updates precede the result, so the room is known when it arrives.
 	if updating {
-		audience := maps.Clone(r.members)
-		if parent != nil {
-			maps.Copy(audience, parent.members)
-		}
-		audience[u.id] = u
-		frame := roomUpdate("updated", s.roomParamsLocked(r))
-		for _, member := range audience {
-			member.send(frame)
-		}
+		s.announceRoomLocked(r, u)
 	} else {
 		// The room record and the membership are both logged before the
 		// room_update, whose latest_log_id is then the membership's.
@@ -360,7 +400,10 @@ func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
 	return result, true, nil
 }
 
-const maxThreadTitleRunes = 60
+const (
+	maxThreadTitleRunes = 60
+	defaultThreadTitle  = "Thread"
+)
 
 // threadTitleLocked derives a default thread title from the intro message's
 // first line of text.
@@ -378,7 +421,7 @@ func (s *Server) threadTitleLocked(introID string) string {
 			}
 		}
 	}
-	return "Thread"
+	return defaultThreadTitle
 }
 
 // listRooms answers room_list (§4.3.1): the rooms matching its filters,
@@ -626,34 +669,75 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 			matching = matching[len(matching)-limit:]
 		}
 	}
-	var rooms, messages, reactions, membership []any
-	for _, record := range matching {
-		switch record.kind {
-		case kindRoom:
-			rooms = append(rooms, record.raw)
-		case kindMessage:
-			messages = append(messages, record.raw)
-		case kindReactions:
-			reactions = append(reactions, record.raw)
-		case kindMembership:
-			membership = append(membership, record.raw)
+	// A page also stops at maxHistoryReplyBytes of records, keeping at least
+	// one, so one request cannot hold the lock to render an unbounded reply.
+	size := 0
+	for i := range matching {
+		k := i
+		if !hasAfter {
+			k = len(matching) - 1 - i
+		}
+		if size += matching[k].wireLen(); size > maxHistoryReplyBytes && i > 0 {
+			if hasAfter {
+				matching = matching[:k]
+			} else {
+				matching = matching[k+1:]
+			}
+			more = true
+			break
 		}
 	}
-	result := map[string]any{"more": more}
-	for key, list := range map[string][]any{"rooms": rooms, "messages": messages, "reactions": reactions, "membership": membership} {
-		if len(list) > 0 {
-			result[key] = list
-		}
-	}
-	maps.Copy(result, r.deliveryFields())
-	if len(matching) > 0 {
-		result["first_log_id"] = formatID(matching[0].id)
-		result["last_log_id"] = formatID(matching[len(matching)-1].id)
-	}
+	result := json.RawMessage(renderHistory(r, matching, more, size))
+	// The records are already JSON: the reply is assembled from them without
+	// decoding or re-encoding.
 	if req.hasID {
-		c.sendResult(req, result)
+		c.enqueue(rawResponse(req.id, req.full, result))
 	}
 	return result, true, nil
+}
+
+// renderHistory assembles a history result (§4.1) from a window of records.
+func renderHistory(r *roomState, matching []*logRecord, more bool, size int) []byte {
+	buf := make([]byte, 0, size+len(matching)+256)
+	buf = append(buf, `{"more":`...)
+	buf = strconv.AppendBool(buf, more)
+	for _, group := range []struct {
+		key  string
+		kind recordKind
+	}{{"rooms", kindRoom}, {"messages", kindMessage}, {"reactions", kindReactions}, {"membership", kindMembership}} {
+		first := true
+		for _, record := range matching {
+			if record.kind != group.kind {
+				continue
+			}
+			if first {
+				buf = append(buf, `,"`...)
+				buf = append(buf, group.key...)
+				buf = append(buf, `":[`...)
+				first = false
+			} else {
+				buf = append(buf, ',')
+			}
+			buf = record.appendWire(buf)
+		}
+		if !first {
+			buf = append(buf, ']')
+		}
+	}
+	field := func(key string, id int64) {
+		buf = append(buf, `,"`...)
+		buf = append(buf, key...)
+		buf = append(buf, `":"`...)
+		buf = strconv.AppendInt(buf, id, 10)
+		buf = append(buf, '"')
+	}
+	field("latest_log_id", r.latestID)
+	field("history_log_id", r.createdID)
+	if len(matching) > 0 {
+		field("first_log_id", matching[0].id)
+		field("last_log_id", matching[len(matching)-1].id)
+	}
+	return append(buf, '}')
 }
 
 // window returns the records of a log, which is in log_id order, within the

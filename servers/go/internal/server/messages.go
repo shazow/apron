@@ -25,9 +25,10 @@ type messageState struct {
 	reactions map[string]reactionSet
 	// records are every logged snapshot, for redaction; the last is current.
 	records []*logRecord
-	// introRecords are the room records embedding a snapshot of this message
-	// as intro_message, for redaction.
-	introRecords []*logRecord
+	// titleRecords are the room records whose title was derived from this
+	// message's text, and titledRooms their rooms, for redaction.
+	titleRecords []*logRecord
+	titledRooms  []*roomState
 }
 
 // currentRaw is the JSON of the message's current snapshot.
@@ -236,20 +237,15 @@ func (s *Server) republishLocked(m *messageState, edit func(body map[string]any)
 	s.commitSnapshotLocked(m, snapshot, logID)
 }
 
-// redactLocked rewrites a deleted message's earlier snapshots, and the
-// intro_message copies embedded in room records, into tombstones at their
-// original log_ids (§4.2).
+// redactLocked rewrites a deleted message's earlier snapshots into
+// tombstones at their original log_ids (§4.2). Room records embed intro
+// snapshots by reference, so their intro_message copies follow; thread
+// titles taken from the message's text are replaced.
 func (s *Server) redactLocked(m *messageState) {
 	for _, record := range m.records {
 		record.rewrite(tombstone)
 	}
-	for _, record := range m.introRecords {
-		record.rewrite(func(value map[string]any) {
-			if intro, ok := value["intro_message"].(map[string]any); ok {
-				tombstone(intro)
-			}
-		})
-	}
+	s.untitleLocked(m)
 }
 
 func tombstone(snapshot map[string]any) {
@@ -260,7 +256,8 @@ func tombstone(snapshot map[string]any) {
 	snapshot["deleted"] = true
 }
 
-// admitPostLocked applies MessagesPerMinute to new messages.
+// admitPostLocked applies MessagesPerMinute to new messages, room_set, and
+// /avatar.
 func (s *Server) admitPostLocked(u *userState) *rpcError {
 	limit := s.config.MessagesPerMinute
 	if limit <= 0 {
@@ -366,6 +363,9 @@ func validateBody(body map[string]any) *rpcError {
 		embeds, ok := raw.([]any)
 		if !ok {
 			return invalidParams("body.embeds must be an array")
+		}
+		if len(embeds) > maxEmbedsPerMessage {
+			return invalidParams("body.embeds lists at most %d embeds", maxEmbedsPerMessage)
 		}
 		for i, value := range embeds {
 			embed, ok := value.(map[string]any)

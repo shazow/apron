@@ -5,10 +5,12 @@ import (
 	"expvar"
 	"flag"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,7 +20,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "HTTP and WebSocket listen address")
+	addr := flag.String("addr", "127.0.0.1:8080", "HTTP and WebSocket listen address; use :8080 to listen on every interface")
 	staticDir := flag.String("static-dir", "", "directory containing the built frontend")
 	origins := flag.String("origin", "", "comma-separated allowed WebSocket origins; empty uses localhost defaults")
 	allowAnyOrigin := flag.Bool("allow-any-origin", false, "disable WebSocket origin checks")
@@ -26,7 +28,11 @@ func main() {
 	rpOrigins := flag.String("webauthn-origin", "http://localhost:5173,http://localhost:8080", "comma-separated exact frontend origins for passkeys")
 	publicURL := flag.String("public-url", "", "external base URL of upload, file, and stream links, such as https://chat.example; empty uses each request's host")
 	maxConnections := flag.Int("max-connections", 0, "maximum concurrent WebSockets; 0 is unlimited")
-	messagesPerMinute := flag.Int("messages-per-minute", 0, "maximum new messages per user per minute; 0 is unlimited")
+	messagesPerMinute := flag.Int("messages-per-minute", 0, "maximum new messages, room_set requests, and /avatar commands per user per minute; 0 is unlimited")
+	uploadDir := flag.String("upload-dir", defaultUploadDir(), "directory holding uploaded files; upload files left by a previous run are removed at start")
+	maxUploadMiB := flag.Int64("max-upload-mb", 20, "maximum size of one upload, in MiB")
+	maxMessageUploadMiB := flag.Int64("max-message-upload-mb", 20, "maximum total size of one message's uploads, in MiB")
+	maxUploadStorageMiB := flag.Int64("max-upload-storage-mb", 1000, "total size of hosted uploads, in MiB, beyond which the oldest are removed from their messages")
 	disablePush := flag.Bool("disable-push", false, "do not offer push registration")
 	allowInsecurePush := flag.Bool("allow-insecure-push", false, "accept http and internal push endpoints (development only)")
 	debugAddr := flag.String("debug-addr", "", "listen address for pprof and expvar under /debug/, such as 127.0.0.1:6060; empty disables")
@@ -38,6 +44,10 @@ func main() {
 	config.PublicURL = *publicURL
 	config.MaxConnections = *maxConnections
 	config.MessagesPerMinute = *messagesPerMinute
+	config.UploadDir = *uploadDir
+	config.MaxUploadBytes = *maxUploadMiB << 20
+	config.MaxMessageUploadBytes = *maxMessageUploadMiB << 20
+	config.MaxUploadStorageBytes = *maxUploadStorageMiB << 20
 	config.DisablePush = *disablePush
 	config.AllowInsecurePush = *allowInsecurePush
 	if strings.TrimSpace(*origins) != "" {
@@ -59,10 +69,16 @@ func main() {
 		Addr:              *addr,
 		Handler:           app.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		// Idle keep-alive connections close; WebSockets and streams are
+		// hijacked or long-lived requests, which it does not affect.
+		IdleTimeout: 2 * time.Minute,
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if *debugAddr != "" {
+		if !loopbackAddr(*debugAddr) {
+			logger.Warn("the debug listener is unauthenticated and not bound to loopback", "addr", *debugAddr)
+		}
 		go serveDebug(logger, *debugAddr)
 	}
 	stop := make(chan os.Signal, 1)
@@ -71,7 +87,7 @@ func main() {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("apron server listening", "addr", *addr, "static_dir", *staticDir)
+		logger.Info("apron server listening", "addr", *addr, "static_dir", *staticDir, "upload_dir", *uploadDir)
 		serverErr <- httpServer.ListenAndServe()
 	}()
 
@@ -89,6 +105,31 @@ func main() {
 			logger.Error("graceful shutdown failed", "error", err)
 		}
 	}
+}
+
+// defaultUploadDir is aprond/uploads in the user's cache directory
+// ($XDG_CACHE_HOME, usually ~/.cache, on Linux). Uploads last only as long as
+// the process, like the rest of the server's state, so they are cache.
+// Empty, when there is no cache directory, uses a temporary directory.
+func defaultUploadDir() string {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(cache, "aprond", "uploads")
+}
+
+// loopbackAddr reports whether a listen address binds only loopback.
+func loopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func splitNonEmpty(value string) []string {

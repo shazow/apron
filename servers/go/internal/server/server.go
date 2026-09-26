@@ -2,10 +2,15 @@ package server
 
 import (
 	"bytes"
+	"container/list"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,15 +23,22 @@ import (
 )
 
 const (
-	defaultReadLimit          int64 = 256 << 10
-	defaultOutgoingQueue            = 128
-	defaultHistoryPageSize          = 100
-	maxHistoryPageSize              = 1000
-	defaultPingInterval             = 30 * time.Second
-	defaultPingTimeout              = 10 * time.Second
-	defaultWriteTimeout             = 10 * time.Second
-	defaultMaxUploadBytes     int64 = 32 << 20
-	defaultMaxAvatarBytes     int64 = 2 << 20
+	defaultReadLimit         int64 = 256 << 10
+	defaultOutgoingQueue           = 128
+	defaultHistoryPageSize         = 100
+	maxHistoryPageSize             = 1000
+	defaultPingInterval            = 30 * time.Second
+	defaultPingTimeout             = 10 * time.Second
+	defaultWriteTimeout            = 10 * time.Second
+	defaultMaxUploadBytes    int64 = 20 << 20
+	defaultMaxAvatarBytes    int64 = 2 << 20
+	defaultMaxMessageUploads int64 = 20 << 20
+	defaultMaxUploadStorage  int64 = 1000 << 20
+	// uploadReadTimeout bounds how long one upload body may take to arrive.
+	uploadReadTimeout = 15 * time.Minute
+	// maxHistoryReplyBytes bounds the records in one history page; a page
+	// always holds at least one record.
+	maxHistoryReplyBytes            = 4 << 20
 	defaultUploadStartTimeout       = 5 * time.Minute
 	defaultStreamKeepBytes          = 64 << 10
 	defaultStreamMaxBytes     int64 = 16 << 20
@@ -62,6 +74,16 @@ type Config struct {
 	// MaxUploadBytes bounds one upload; MaxAvatarBytes bounds a /avatar upload.
 	MaxUploadBytes int64
 	MaxAvatarBytes int64
+	// MaxMessageUploadBytes bounds the uploads hosted for one message.
+	MaxMessageUploadBytes int64
+	// MaxUploadStorageBytes bounds all hosted uploads; beyond it the oldest
+	// message uploads are removed from their messages. Avatars count toward
+	// it but are never removed.
+	MaxUploadStorageBytes int64
+	// UploadDir holds hosted upload content. Empty uses a temporary directory
+	// removed on Shutdown. Uploads last only as long as the process, so files
+	// named *.upload left in UploadDir by a previous run are removed at start.
+	UploadDir string
 	// UploadStartTimeout is how long an unused write URL stays valid.
 	UploadStartTimeout time.Duration
 	// StreamKeepBytes is the trailing text a stream keeps; StreamMaxBytes and
@@ -82,19 +104,21 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		OriginPatterns:     []string{"http://localhost:*", "http://127.0.0.1:*", "http://[[]::1]:*"},
-		ReadLimit:          defaultReadLimit,
-		OutgoingQueue:      defaultOutgoingQueue,
-		HistoryPageSize:    defaultHistoryPageSize,
-		PingInterval:       defaultPingInterval,
-		PingTimeout:        defaultPingTimeout,
-		WriteTimeout:       defaultWriteTimeout,
-		MaxUploadBytes:     defaultMaxUploadBytes,
-		MaxAvatarBytes:     defaultMaxAvatarBytes,
-		UploadStartTimeout: defaultUploadStartTimeout,
-		StreamKeepBytes:    defaultStreamKeepBytes,
-		StreamMaxBytes:     defaultStreamMaxBytes,
-		StreamMaxDuration:  defaultStreamMaxDuration,
+		OriginPatterns:        []string{"http://localhost:*", "http://127.0.0.1:*", "http://[[]::1]:*"},
+		ReadLimit:             defaultReadLimit,
+		OutgoingQueue:         defaultOutgoingQueue,
+		HistoryPageSize:       defaultHistoryPageSize,
+		PingInterval:          defaultPingInterval,
+		PingTimeout:           defaultPingTimeout,
+		WriteTimeout:          defaultWriteTimeout,
+		MaxUploadBytes:        defaultMaxUploadBytes,
+		MaxAvatarBytes:        defaultMaxAvatarBytes,
+		MaxMessageUploadBytes: defaultMaxMessageUploads,
+		MaxUploadStorageBytes: defaultMaxUploadStorage,
+		UploadStartTimeout:    defaultUploadStartTimeout,
+		StreamKeepBytes:       defaultStreamKeepBytes,
+		StreamMaxBytes:        defaultStreamMaxBytes,
+		StreamMaxDuration:     defaultStreamMaxDuration,
 	}
 }
 
@@ -126,6 +150,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxAvatarBytes <= 0 {
 		c.MaxAvatarBytes = defaults.MaxAvatarBytes
+	}
+	if c.MaxMessageUploadBytes <= 0 {
+		c.MaxMessageUploadBytes = defaults.MaxMessageUploadBytes
+	}
+	if c.MaxUploadStorageBytes <= 0 {
+		c.MaxUploadStorageBytes = defaults.MaxUploadStorageBytes
 	}
 	if c.UploadStartTimeout <= 0 {
 		c.UploadStartTimeout = defaults.UploadStartTimeout
@@ -160,17 +190,57 @@ const (
 // modified, so a reader may hold it after releasing s.mu. A record is
 // referenced from the log of every room it belongs to, so a move snapshot
 // appears in both the source and destination room logs (§4.1).
+//
+// A room record's intro_message is not copied into raw: intro points at the
+// message snapshot current at commit time, and wire splices that snapshot's
+// raw in when the record is sent, so redacting the snapshot redacts every
+// room record embedding it.
 type logRecord struct {
-	id   int64
-	kind recordKind
-	raw  json.RawMessage
+	id    int64
+	kind  recordKind
+	raw   json.RawMessage
+	intro *logRecord
 }
 
 // newLogRecord encodes value. Values hold only JSON-decoded data and
 // server-built strings, maps, and slices, so encoding cannot fail.
 func newLogRecord(id int64, kind recordKind, value map[string]any) *logRecord {
-	raw, _ := json.Marshal(value)
-	return &logRecord{id: id, kind: kind, raw: raw}
+	return &logRecord{id: id, kind: kind, raw: encodeJSON(value)}
+}
+
+// appendWire appends the record as sent on the wire to buf.
+func (r *logRecord) appendWire(buf []byte) []byte {
+	if r.intro == nil {
+		return append(buf, r.raw...)
+	}
+	buf = append(buf, r.raw[:len(r.raw)-1]...)
+	if len(r.raw) > 2 {
+		buf = append(buf, ',')
+	}
+	buf = append(buf, `"intro_message":`...)
+	buf = append(buf, r.intro.raw...)
+	return append(buf, '}')
+}
+
+// wireLen is the length of the record as sent on the wire.
+func (r *logRecord) wireLen() int {
+	if r.intro == nil {
+		return len(r.raw)
+	}
+	return len(r.raw) + len(r.intro.raw) + len(`,"intro_message":`)
+}
+
+// encodeJSON encodes a value without escaping <, >, and &, which only matter
+// for JSON embedded in HTML and would otherwise make stored text up to six
+// times larger than it arrived.
+func encodeJSON(value any) []byte {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 }
 
 // value decodes the record.
@@ -184,7 +254,7 @@ func (r *logRecord) value() map[string]any {
 func (r *logRecord) rewrite(edit func(value map[string]any)) {
 	value := r.value()
 	edit(value)
-	r.raw, _ = json.Marshal(value)
+	r.raw = encodeJSON(value)
 }
 
 // pingFrame is the exact client liveness ping (§1); pongFrame answers it.
@@ -195,8 +265,7 @@ var (
 
 // notification renders a frame once, for sending to many connections.
 func notification(method string, params any) json.RawMessage {
-	payload, _ := json.Marshal(map[string]any{"method": method, "params": params})
-	return payload
+	return encodeJSON(map[string]any{"method": method, "params": params})
 }
 
 // rawNotification renders a frame around params that are already JSON, as
@@ -207,6 +276,21 @@ func rawNotification(method string, params json.RawMessage) json.RawMessage {
 	payload = strconv.AppendQuote(payload, method)
 	payload = append(payload, `,"params":`...)
 	payload = append(payload, params...)
+	return append(payload, '}')
+}
+
+// rawResponse renders a result reply around a result that is already JSON,
+// as response would with the decoded result.
+func rawResponse(id string, full bool, result []byte) json.RawMessage {
+	payload := make([]byte, 0, len(id)+len(result)+40)
+	payload = append(payload, '{')
+	if full {
+		payload = append(payload, `"jsonrpc":"2.0",`...)
+	}
+	payload = append(payload, `"id":`...)
+	payload = strconv.AppendQuote(payload, id)
+	payload = append(payload, `,"result":`...)
+	payload = append(payload, result...)
 	return append(payload, '}')
 }
 
@@ -269,12 +353,19 @@ type Server struct {
 	embedNumber uint64
 	embeds      map[string]*embedState
 	// writes maps an unused or in-progress write token to its embed.
-	writes      map[string]*embedState
-	pushes      map[string]*pushRegistration
-	closed      bool
-	passkeys    map[string]*passkeyUser
-	credentials map[string]*passkeyUser
-	sessions    map[[32]byte]passkeySession
+	writes map[string]*embedState
+	// uploads lists finished uploads, oldest first, for eviction beyond
+	// MaxUploadStorageBytes; uploadBytes is their total size.
+	uploads     *list.List
+	uploadBytes int64
+	// uploadDir holds upload content; tempUploadDir is removed on Shutdown.
+	uploadDir     string
+	tempUploadDir bool
+	pushes        map[string]*pushRegistration
+	closed        bool
+	passkeys      map[string]*passkeyUser
+	credentials   map[string]*passkeyUser
+	sessions      map[[32]byte]passkeySession
 
 	ops         map[string]operation
 	push        *pushDeliverer
@@ -292,6 +383,7 @@ func New(config Config) *Server {
 		usedIDs:     make(map[string]bool),
 		embeds:      make(map[string]*embedState),
 		writes:      make(map[string]*embedState),
+		uploads:     list.New(),
 		pushes:      make(map[string]*pushRegistration),
 		passkeys:    make(map[string]*passkeyUser),
 		credentials: make(map[string]*passkeyUser),
@@ -299,6 +391,7 @@ func New(config Config) *Server {
 	}
 	s.ops = s.operations()
 	s.push = newPushDeliverer(config.AllowInsecurePush)
+	s.openUploadDir()
 	// The seeded default room has a logged creation record like any other room,
 	// so its history_log_id is never null.
 	s.commitRoomLocked(defaultRoomID, nil, map[string]any{"title": "General"})
@@ -320,13 +413,38 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(streamPath, s.handleStream)
 	if s.config.StaticDir != "" {
 		root := filepath.Clean(s.config.StaticDir)
-		mux.Handle("/", http.FileServer(http.Dir(root)))
+		mux.Handle("/", http.FileServer(staticFS{http.Dir(root)}))
 	} else {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 		})
 	}
 	return mux
+}
+
+// staticFS serves a built frontend without directory listings or dotfiles.
+type staticFS struct{ root http.FileSystem }
+
+func (f staticFS) Open(name string) (http.File, error) {
+	for _, part := range strings.Split(path.Clean(name), "/") {
+		if strings.HasPrefix(part, ".") {
+			return nil, fs.ErrNotExist
+		}
+	}
+	file, err := f.root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := file.Stat(); err == nil && info.IsDir() {
+		// A directory is served only through its index.html.
+		index, err := f.root.Open(strings.TrimSuffix(name, "/") + "/index.html")
+		if err != nil {
+			file.Close()
+			return nil, fs.ErrNotExist
+		}
+		index.Close()
+	}
+	return file, nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -355,6 +473,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 		for _, e := range s.embeds {
 			e.endStream()
+		}
+		if s.tempUploadDir {
+			_ = os.RemoveAll(s.uploadDir)
 		}
 	}
 	s.mu.Unlock()
@@ -484,6 +605,7 @@ func (s *Server) serverParams() map[string]any {
 			"max_frame_bytes":           s.config.ReadLimit,
 			"max_history_limit":         maxHistoryPageSize,
 			"max_upload_bytes":          s.config.MaxUploadBytes,
+			"max_message_upload_bytes":  s.config.MaxMessageUploadBytes,
 			"max_avatar_bytes":          s.config.MaxAvatarBytes,
 			"stream_keep_bytes":         s.config.StreamKeepBytes,
 			"max_stream_bytes":          s.config.StreamMaxBytes,
@@ -602,8 +724,7 @@ func (c *client) enqueueBatch(values ...any) bool {
 		// writer never modifies it.
 		payload, rendered := value.(json.RawMessage)
 		if !rendered {
-			var err error
-			if payload, err = json.Marshal(value); err != nil {
+			if payload = encodeJSON(value); payload == nil {
 				c.stopConnection()
 				return false
 			}
@@ -657,6 +778,10 @@ func (s *Server) operations() map[string]operation {
 	return ops
 }
 
+// readOnlyOps change nothing, so their results are not kept for
+// deduplication (§1.2): a duplicate after the original finished runs again.
+var readOnlyOps = map[string]bool{"history": true, "room_list": true}
+
 func (s *Server) processFrame(c *client, payload []byte) {
 	req, parseErr := parseRequest(payload)
 	if parseErr != nil {
@@ -708,7 +833,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	// even one running on another connection, and replies with its outcome.
 	var entry *dedupEntry
 	if req.hasID {
-		fingerprint := requestFingerprint(req)
+		fingerprint := sha256.Sum256([]byte(requestFingerprint(req)))
 		if prior := user.dedup.get(req.id); prior != nil {
 			s.mu.Unlock()
 			if prior.fingerprint != fingerprint {
@@ -739,8 +864,10 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	if entry != nil {
 		s.mu.Lock()
 		entry.result, entry.err = result, err
-		if err != nil {
-			// Failed operations are not cached; a retry executes again.
+		if err != nil || readOnlyOps[req.method] {
+			// Failed operations are not cached, and neither are reads, whose
+			// results can be large and which are safe to run again: a retry
+			// executes again. Concurrent duplicates still share the outcome.
 			user.dedup.remove(req.id, entry)
 		}
 		close(entry.done)

@@ -7,7 +7,8 @@ not the designs under consideration, multiplexing
 and WebRTC
 ([Appendix C.1](../../PROTOCOL.md#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
 State is in memory; restarting the process clears messages, identities,
-uploads, passkeys, and sessions.
+uploads, passkeys, and sessions. Uploaded files are kept on disk in the
+upload directory while the process runs; a restart removes those left over.
 
 ```sh
 go run ./cmd/aprond
@@ -15,7 +16,7 @@ go run ./cmd/aprond
 
 Defaults:
 
-- HTTP and WebSocket listener: `127.0.0.1:8080`
+- HTTP and WebSocket listener: `127.0.0.1:8080` (`-addr`)
 - WebSocket endpoint: `/ws`; health endpoint: `/healthz`
 - embed endpoints: `/write/<token>`, `/files/<embed_id>/<secret>`,
   `/streams/<embed_id>/<secret>`
@@ -34,19 +35,37 @@ Flags:
 - `-static-dir <directory>` serves a built frontend from the same listener.
 - `-origin <pattern,...>` sets a deployment-specific origin allowlist;
   `-allow-any-origin` only when the deployment has its own cross-site
-  protections. `-addr` changes the listener address.
+  protections. `-addr` changes the listener address; `-addr :8080` listens on
+  every interface.
+- `-static-dir <directory>` serves files but never directory listings or
+  names starting with `.`; a directory is served only through its
+  `index.html`.
 - `-public-url https://chat.example` sets the base of write, file, and stream
   URLs. Without it they use the host each WebSocket request arrived on, which
   suits local development but lets a client choose the host in URLs others
   see; set it in any deployment.
 - `-max-connections <n>` refuses connections beyond `n` with an error without
   `id` (`retry_after`), then closes them.
-- `-messages-per-minute <n>` limits each user's new messages; the excess gets
-  `retry_after` with `data.retry_after` in seconds.
+- `-messages-per-minute <n>` limits each user's new messages, `room_set`
+  requests, and `/avatar` commands together; the excess gets `retry_after`
+  with `data.retry_after` in seconds. Edits, reactions, and activity are not
+  counted.
+- `-upload-dir <directory>` holds uploaded files, by default
+  `aprond/uploads` in the user cache directory (`$XDG_CACHE_HOME`, usually
+  `~/.cache`, on Linux). Uploads last only as long as the process, so at
+  start the server removes files named `*.upload` there, left by an earlier
+  run, and nothing else.
+- `-max-upload-mb <n>` (20) bounds one upload, `-max-message-upload-mb <n>`
+  (20) all of one message's uploads, and `-max-upload-storage-mb <n>` (1000)
+  every hosted upload together, all in MiB. Past the storage bound the oldest
+  message uploads are removed: their files are deleted and each affected
+  message is republished without them. Avatars count toward the bound but are
+  never removed.
 - `-disable-push` removes push; `-allow-insecure-push` accepts `http` and
   internal push endpoints (development only).
 - `-debug-addr 127.0.0.1:6060` serves `net/http/pprof` and `expvar` under
-  `/debug/` on a separate listener; keep it off public interfaces.
+  `/debug/` on a separate listener; keep it off public interfaces (the server
+  warns at start when it is not bound to loopback).
   [`cmd/apron-hammer`](cmd/apron-hammer/README.md) load-tests the server and
   reads it to report heap and goroutines.
 
@@ -80,7 +99,12 @@ before discarding a prefix.
 partitioned into `rooms`, `messages`, `reactions`, and `membership`; an empty
 array is omitted. `limit` (default 100, clamped to 1000) counts records of
 every kind, and `first_log_id`/`last_log_id` span all of them; an empty window
-has neither. Records keep the user objects they were logged with. A window bounded to one `log_id` (`after` equal to
+has neither. A page also ends, with `more: true`, once its records reach
+4 MiB, keeping at least one record, so continuing from `first_log_id` or
+`last_log_id` pages through large records as usual. Records are stored as the
+JSON they are sent as (without escaping `<`, `>`, and `&`), and a history
+reply is assembled from them without decoding them. Records keep the user
+objects they were logged with. A window bounded to one `log_id` (`after` equal to
 `before`) returns exactly that record from the room's log, so a client walks a
 message's edits back through `prev_log_id`, asking the room in `prev_room_id`
 after a move. Every room is visible, so any user may page any room's history,
@@ -92,7 +116,7 @@ joined or not.
 (`guest_1`, `guest_2`, …) and honors an optional requested `name`. A
 requested `user_id` is honored when it starts with a letter, uses only
 `[A-Za-z0-9_.-]` (ending in a letter, digit, or `_`; at most 64 characters),
-does not start with `guest_` in any case, names no room, and was never
+does not start with `guest_` in any case, names no room (ignoring case), and was never
 assigned, ignoring case; otherwise the guest gets the next unused
 `guest_<n>`. The `guest_` namespace belongs to the counter: a request such as
 `guest_7`, `GUEST_7`, `guest_07` or `guest_x` is refused rather than taking a
@@ -106,7 +130,7 @@ ever reissued.
 omitted field is unchanged, and an empty value removes it. `name` is trimmed
 and capped at 64 characters; `avatar` must be an `https:` URL or a
 `data:image/{png,jpeg,gif,webp};base64,` URL of at most 64 KiB; `ext`
-replaces the profile extension object. The result's `you` and the `user`
+(at most 16 KiB of JSON) replaces the profile extension object. The result's `you` and the `user`
 notifications carry removed fields as their empty values (`""`, `{}`).
 Current user objects (`you`, `new` in `user`, and `users` in `room_list` and
 `room_update`) carry `avatar` and `ext`; recorded objects (`from` in messages
@@ -187,8 +211,12 @@ a room, a `/kick` removal, and a guest's leaves when it is retired.
   return `{"room_id": ...}` after the `room_update`. Any authenticated user
   may create top-level rooms or threads (nested threads are allowed) and edit
   any room. A thread saved without a title is titled from the first line of
-  its intro message, or `Thread`. `intro_message` is stored as a reference,
-  and room records embed the referenced message's current snapshot.
+  its intro message, or `Thread`; deleting that message replaces such a
+  title with `Thread`, in the room's current record and in the records that
+  carried it. `intro_message` is stored as a reference, and room records
+  embed the referenced message's snapshot: a room's current record the
+  current one, and a logged room record the one current when it was logged,
+  held by reference, so deleting the message redacts it there too.
 - Posting does not require joining: a poster who has not joined gets the
   result but not the broadcast.
 
@@ -247,14 +275,16 @@ or POSTs the content there. A write URL expires after five minutes unused,
 and a write that never starts or fails is finished by publishing the message
 without the embed.
 
-- **Uploads** (at most 32 MiB). While pending the embed has no `url`. When
+- **Uploads** (at most 20 MiB each, and 20 MiB for one message's uploads
+  together; a message has at most 32 embeds). While pending the embed has no `url`. When
   the write finishes the server publishes a snapshot with `url` set to the
   hosted file and, for images and playable media, `og`: `image` (PNG, JPEG,
   and GIF with `width` and `height`; the sender's `og.image.alt` is kept),
   `video`, or `audio`, plus `title`. Files are served sandboxed
   (`Content-Security-Policy: sandbox`, `nosniff`); only images, media, and
-  plain text are shown inline, and HTML, XML, and script types are never
-  served as such.
+  plain text are shown inline, and markup, script, stylesheet, and
+  WebAssembly types are never served as such. An avatar must decode as the
+  image type it declares.
 - **Streams**: the broadcast embed carries a live `url`. Readers `GET` it for
   the kept text followed by more as it arrives; a reader that falls behind the
   kept window continues from it. The server keeps the trailing 64 KiB. The
@@ -297,8 +327,10 @@ replies arrive before its result. Commands:
   can kick in `general`). The removal is a logged leave membership with the
   target as `user`, delivered to the room's members, the target included;
   the target then receives `room_update` `left`, and the remaining members a
-  logged `@room` message (`from: {user_id: "@room", name: <room title>}`),
-  such as `@guest_3 was removed by @guest_1: spamming`.
+  logged `@room` message (`from: {user_id: "@room", name: <room title>}`, or
+  `Thread` for a thread titled from its intro message), such as
+  `@guest_3 was removed by @guest_1: spamming`. The reason is the first line
+  of the rest of the text, at most 200 characters.
 
 ## Activity
 
@@ -314,9 +346,10 @@ that connection, or the connection closing.
 ## Push
 
 `server.push` offers the `relay` kind. `push_register` takes
-`{kind: "relay", url, token?}`; `url` must be `https` (unless
-`-allow-insecure-push`) and identifies the registration, so registering it
-again replaces it; a user may hold ten. `push_unregister` removes the caller's
+`{kind: "relay", url, token?}`; `url` (at most 2,048 bytes) must be `https`
+(unless `-allow-insecure-push`) and identifies the registration, so
+registering it again replaces it, even another user's: the URL names a
+device, which may sign in as someone else; a user may hold ten. `push_unregister` removes the caller's
 registration for a `url`. Registrations belong to the user, so they matter for
 passkey users; a guest's end with the guest.
 
@@ -327,9 +360,14 @@ any room, since every room is visible; a reply wakes its target's author only
 in a room they have joined. Either way, a user is woken only when every
 connection of theirs is away or gone. The server POSTs the push payload (the message without `log_id`,
 `format`, or `embeds`, text truncated to 1,000 characters) to each of their
-endpoints with `token` as bearer. Deliveries run in the background, refuse to
-connect to loopback, private, and link-local addresses, and a relay answering
-`404` or `410` loses its registration.
+endpoints with `token` as bearer. Deliveries run in the background, apart
+from message delivery, in a lane per relay host: at most 8 at once to one
+host and 32 in all, so a slow relay delays only pushes to itself. A user has
+at most 20 deliveries waiting or running and the server 1,024; beyond them a
+push is dropped. Deliveries connect only to public addresses: never loopback,
+private, link-local, shared (CGNAT, `100.64.0.0/10`), benchmarking, reserved,
+or IPv6 translation addresses. A relay answering `404` or `410` loses its
+registration.
 
 ## Requests and errors
 
@@ -337,7 +375,9 @@ Request IDs deduplicate per user, across all of that user's connections: a
 retry returns the original result without re-executing or rebroadcasting, a
 concurrent duplicate waits for the original, and reuse with a different
 method or params is `invalid_params`. The latest 1,024 IDs per user are kept;
-failed requests are not cached. Unknown requests return `unsupported`.
+failed requests are not cached, and neither are `history` and `room_list`,
+which change nothing and may be large: a duplicate of one that has finished
+runs again. Unknown requests return `unsupported`.
 
 Errors not tied to a request omit `id`. On shutdown every connection
 receives `retry_after` (`data.retry_after: 5`) before it closes; over

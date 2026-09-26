@@ -1,7 +1,7 @@
 package server
 
 import (
-	"bytes"
+	"container/list"
 	"crypto/rand"
 	"crypto/subtle"
 	"errors"
@@ -11,9 +11,12 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log/slog"
 	"maps"
 	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +32,7 @@ const (
 	streamPath = "/streams/"
 )
 
+// maxEmbedsPerMessage bounds body.embeds.
 const maxEmbedsPerMessage = 32
 
 // embedState is a server-hosted embed: an upload or a stream. Other embed
@@ -55,7 +59,11 @@ type embedState struct {
 	// and og, a live stream's url, a finished stream's text.
 	owned map[string]any
 
-	content     []byte
+	// path is the file holding a finished upload's content, size its length,
+	// and upload its element in Server.uploads.
+	path        string
+	size        int64
+	upload      *list.Element
 	contentType string
 	stream      *streamBuffer
 }
@@ -222,7 +230,14 @@ func (s *Server) removeEmbedLocked(id string) {
 		e.timer.Stop()
 	}
 	e.endStream()
-	e.content = nil
+	if e.upload != nil {
+		s.uploads.Remove(e.upload)
+		e.upload = nil
+		s.uploadBytes -= e.size
+	}
+	if e.path != "" {
+		_ = os.Remove(e.path)
+	}
 	delete(s.writes, e.token)
 	delete(s.embeds, id)
 }
@@ -313,37 +328,70 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeUpload(w http.ResponseWriter, r *http.Request, e *embedState) {
 	limit := s.config.MaxUploadBytes
+	s.mu.RLock()
 	if e.avatarFor != nil {
 		limit = s.config.MaxAvatarBytes
+	} else {
+		limit = min(limit, s.config.MaxMessageUploadBytes-s.messageUploadBytesLocked(e.messageID))
 	}
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
-	contentType := uploadContentType(r.Header.Get("Content-Type"), data)
+	s.mu.RUnlock()
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadTimeout))
+	file, size, err := s.receiveUpload(w, r, limit)
+	var head []byte
+	if file != nil {
+		head = make([]byte, 512)
+		n, _ := file.ReadAt(head, 0)
+		head = head[:n]
+	}
+	contentType := uploadContentType(r.Header.Get("Content-Type"), head)
+	if err == nil && e.avatarFor != nil && !validAvatarImage(contentType, file) {
+		err = errNotAvatar
+	}
+	var og map[string]any
+	if err == nil {
+		e.contentType = contentType
+		og = describeUpload(e, file)
+	}
+	if file != nil {
+		file.Close()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e.removed {
-		http.Error(w, "The embed was removed from its message", http.StatusGone)
-		return
+	fail := func(status int, message string) {
+		if file != nil {
+			_ = os.Remove(file.Name())
+		}
+		if !e.removed {
+			s.failWriteLocked(e)
+		}
+		http.Error(w, message, status)
 	}
 	var tooLarge *http.MaxBytesError
 	switch {
+	case e.removed:
+		fail(http.StatusGone, "The embed was removed from its message")
+		return
 	case errors.As(err, &tooLarge):
-		s.failWriteLocked(e)
-		http.Error(w, fmt.Sprintf("Uploads are limited to %d bytes", limit), http.StatusRequestEntityTooLarge)
+		fail(http.StatusRequestEntityTooLarge, fmt.Sprintf("This upload is limited to %d bytes", limit))
+		return
+	case errors.Is(err, errNotAvatar):
+		fail(http.StatusUnsupportedMediaType, "Avatars must be PNG, JPEG, GIF, or WebP images")
 		return
 	case err != nil:
-		s.failWriteLocked(e)
-		http.Error(w, "The upload did not finish", http.StatusBadRequest)
+		fail(http.StatusBadRequest, "The upload did not finish")
 		return
-	case e.avatarFor != nil && !avatarType(contentType):
-		s.failWriteLocked(e)
-		http.Error(w, "Avatars must be PNG, JPEG, GIF, or WebP images", http.StatusUnsupportedMediaType)
+	case e.avatarFor == nil && s.messageUploadBytesLocked(e.messageID)+size > s.config.MaxMessageUploadBytes:
+		// Another upload for the message finished while this one arrived.
+		fail(http.StatusRequestEntityTooLarge, fmt.Sprintf("A message's uploads are limited to %d bytes", s.config.MaxMessageUploadBytes))
 		return
 	}
 	e.finished = true
-	e.content = data
-	e.contentType = contentType
+	e.path = file.Name()
+	e.size = size
+	e.upload = s.uploads.PushBack(e)
+	s.uploadBytes += size
 	e.owned = map[string]any{"url": e.fileURL()}
-	if og := describeUpload(e, data); og != nil {
+	if og != nil {
 		e.owned["og"] = og
 	}
 	if u := e.avatarFor; u != nil {
@@ -361,26 +409,141 @@ func (s *Server) writeUpload(w http.ResponseWriter, r *http.Request, e *embedSta
 			})
 		})
 	}
+	s.evictUploadsLocked(e)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = fmt.Fprintf(w, "{\"url\":%q}\n", e.fileURL())
 }
 
+var errNotAvatar = errors.New("not an avatar image")
+
+// receiveUpload copies a request body of at most limit bytes into a new file
+// in the upload directory. On error the file, if any, is still returned so
+// the caller can remove it.
+func (s *Server) receiveUpload(w http.ResponseWriter, r *http.Request, limit int64) (*os.File, int64, error) {
+	if limit <= 0 {
+		return nil, 0, &http.MaxBytesError{Limit: limit}
+	}
+	file, err := os.CreateTemp(s.uploadDir, "*"+uploadSuffix)
+	if err != nil {
+		slog.Error("cannot store upload", "error", err)
+		return nil, 0, err
+	}
+	size, err := io.Copy(file, http.MaxBytesReader(w, r.Body, limit))
+	return file, size, err
+}
+
+// messageUploadBytesLocked totals the finished uploads of one message.
+func (s *Server) messageUploadBytesLocked(messageID string) int64 {
+	var total int64
+	for element := s.uploads.Front(); element != nil; element = element.Next() {
+		if e := element.Value.(*embedState); e.messageID == messageID && e.avatarFor == nil {
+			total += e.size
+		}
+	}
+	return total
+}
+
+// evictUploadsLocked removes the oldest message uploads, other than keep,
+// while hosted uploads exceed MaxUploadStorageBytes. Each affected message
+// is republished once without its evicted embeds, as for a failed write
+// (§4.6.3). Avatars count toward the total but are never removed.
+func (s *Server) evictUploadsLocked(keep *embedState) {
+	evicted := make(map[string][]string)
+	var order []string
+	for element := s.uploads.Front(); element != nil && s.uploadBytes > s.config.MaxUploadStorageBytes; {
+		e := element.Value.(*embedState)
+		element = element.Next()
+		if e == keep || e.avatarFor != nil {
+			continue
+		}
+		if _, seen := evicted[e.messageID]; !seen {
+			order = append(order, e.messageID)
+		}
+		evicted[e.messageID] = append(evicted[e.messageID], e.id)
+		s.removeEmbedLocked(e.id)
+	}
+	for _, messageID := range order {
+		if m := s.messages[messageID]; m != nil {
+			ids := evicted[messageID]
+			s.republishLocked(m, func(body map[string]any) bool {
+				changed := false
+				for _, id := range ids {
+					changed = replaceEmbed(body, id, nil) || changed
+				}
+				return changed
+			})
+		}
+	}
+}
+
+// uploadSuffix names upload files, so stale ones can be told apart from
+// anything else in the directory.
+const uploadSuffix = ".upload"
+
+// openUploadDir prepares the upload directory: the configured one, whose
+// stale upload files from a previous run are removed, or a new temporary one.
+func (s *Server) openUploadDir() {
+	dir := s.config.UploadDir
+	if dir == "" {
+		temp, err := os.MkdirTemp("", "aprond-uploads-")
+		if err != nil {
+			slog.Error("cannot create a temporary upload directory", "error", err)
+			return
+		}
+		s.uploadDir, s.tempUploadDir = temp, true
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		slog.Error("cannot create the upload directory", "dir", dir, "error", err)
+	}
+	s.uploadDir = dir
+	stale, _ := filepath.Glob(filepath.Join(dir, "*"+uploadSuffix))
+	for _, name := range stale {
+		_ = os.Remove(name)
+	}
+}
+
 // uploadContentType prefers the sender's declared type, except for types a
 // browser would run as a document, and otherwise sniffs the content.
-func uploadContentType(declared string, data []byte) string {
+func uploadContentType(declared string, head []byte) string {
 	if mediaType, _, err := mime.ParseMediaType(declared); err == nil && mediaType != "application/octet-stream" {
-		switch {
-		case strings.Contains(mediaType, "html"), strings.Contains(mediaType, "xml"), strings.Contains(mediaType, "javascript"):
-		default:
+		if !activeType(mediaType) {
 			return mediaType
 		}
 	}
-	mediaType, _, _ := mime.ParseMediaType(http.DetectContentType(data))
-	if strings.Contains(mediaType, "html") || strings.Contains(mediaType, "xml") {
+	mediaType, _, _ := mime.ParseMediaType(http.DetectContentType(head))
+	if activeType(mediaType) {
 		return "application/octet-stream"
 	}
 	return mediaType
+}
+
+// activeType reports whether a browser could run or apply content of the
+// type on this origin: markup, scripts, stylesheets, and WebAssembly.
+func activeType(mediaType string) bool {
+	for _, marker := range []string{"html", "xml", "xsl", "script", "jscript", "css", "wasm"} {
+		if strings.Contains(mediaType, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// validAvatarImage checks that an avatar upload's content is the image type
+// it declares: PNG, JPEG, and GIF decode their header, and WebP has its
+// RIFF signature.
+func validAvatarImage(contentType string, file *os.File) bool {
+	if !avatarType(contentType) || file == nil {
+		return false
+	}
+	if contentType == "image/webp" {
+		head := make([]byte, 12)
+		n, _ := file.ReadAt(head, 0)
+		return n == 12 && string(head[:4]) == "RIFF" && string(head[8:]) == "WEBP"
+	}
+	_, format, err := image.DecodeConfig(io.NewSectionReader(file, 0, 1<<30))
+	return err == nil && "image/"+format == contentType
 }
 
 func avatarType(contentType string) bool {
@@ -394,12 +557,12 @@ func avatarType(contentType string) bool {
 // describeUpload builds the og the server sets on a finished upload
 // (§4.6.4): image for a preview, or video or audio to play. Other files
 // have none, so clients show a file card.
-func describeUpload(e *embedState, data []byte) map[string]any {
+func describeUpload(e *embedState, file *os.File) map[string]any {
 	media := map[string]any{"url": e.fileURL(), "type": e.contentType}
 	og := map[string]any{}
 	switch {
 	case avatarType(e.contentType):
-		if config, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		if config, _, err := image.DecodeConfig(io.NewSectionReader(file, 0, 1<<30)); err == nil {
 			media["width"], media["height"] = config.Width, config.Height
 		}
 		if e.alt != "" {
@@ -442,8 +605,15 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	content, contentType, title := e.content, e.contentType, e.title
+	name, contentType, title := e.path, e.contentType, e.title
+	// An upload removed after this still reads from the open file.
+	content, err := os.Open(name)
 	s.mu.RUnlock()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer content.Close()
 	header := w.Header()
 	header.Set("Content-Type", contentType)
 	header.Set("X-Content-Type-Options", "nosniff")
@@ -457,7 +627,7 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		disposition = mime.FormatMediaType(disposition, map[string]string{"filename": title})
 	}
 	header.Set("Content-Disposition", disposition)
-	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(content))
+	http.ServeContent(w, r, "", time.Time{}, content)
 }
 
 // lookupEmbedLocked resolves "embed_id/secret" from a file or stream path.
