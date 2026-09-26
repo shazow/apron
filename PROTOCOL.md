@@ -686,7 +686,7 @@ Six frame idioms cover everything logged or announced:
 ### 4.1 `history`
 
 Stateless window query over a room's **log**. `rooms` holds room records
-([§3.4](#34-rooms)), `entries` message snapshots ([§3.5](#35-messages)), `reactions` reaction sets
+([§3.4](#34-rooms)), `messages` message snapshots ([§3.5](#35-messages)), `reactions` reaction sets
 ([§4.5](#45-reactions)), and `membership` memberships ([§4.3.2](#432-membership)): one log, partitioned by
 kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
 
@@ -702,7 +702,7 @@ kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
 {
   "id": "c9", "result": {
     "rooms": [],
-    "entries": [
+    "messages": [
       {
         "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
         "from": {...}, "body": {...}
@@ -720,7 +720,7 @@ kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
         "members": [{"user": {"user_id": "dave", "name": "Dave"}, "joined": true}]
       }
     ],
-    "first_id": "1724803200042", "last_id": "1724803312011", "more": true,
+    "first_log_id": "1724803200042", "last_log_id": "1724803312011", "more": true,
     "latest_log_id": "1724806800000", "history_log_id": "1724800000000"
   }
 }
@@ -738,16 +738,16 @@ message stays in the source room; `prev_room_id` points there ([§2](#2-identifi
   slice of the room's changes of either kind. `limit` is a positive count of
   changes, applied before compaction; servers MAY clamp it and supply a
   default. With `after`, select the oldest matches; otherwise the newest.
-- `first_id`/`last_id` are the slice's first and last `log_id`s before
-  compaction; return both or neither. `more` indicates further matching
-  changes in the selected direction. An empty slice returns `entries: []`
-  and `more: false`; `rooms`, `reactions`, and `membership` MAY be omitted when
-  empty.
-- Continue forward with `after = last_id + 1`, backward with
-  `before = first_id - 1`, computed numerically and encoded as strings.
-  Never derive continuation from compacted records.
-- `rooms`, `entries`, `reactions`, and `membership` are each ascending by
+- `first_log_id`/`last_log_id` are the slice's first and last `log_id`s
+  before compaction; return both or neither. `more` indicates further
+  matching changes in the selected direction. An empty slice returns
+  `more: false` and neither bound.
+- `rooms`, `messages`, `reactions`, and `membership` MAY each be omitted when
+  empty; clients treat a missing array as empty. Each is ascending by
   `log_id`.
+- Continue forward with `after = last_log_id + 1`, backward with
+  `before = first_log_id - 1`, computed numerically and encoded as strings.
+  Never derive continuation from compacted records.
 
 **Availability.** Every result includes `latest_log_id` and `history_log_id`
 ([§3.4](#34-rooms)), captured consistently with the page. They describe the room, not the
