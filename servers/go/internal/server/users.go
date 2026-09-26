@@ -204,6 +204,7 @@ func (s *Server) assignUserIDLocked(requested string) string {
 			return false
 		}
 		s.usedIDs[key] = true
+		s.touchUsedID(key)
 		return true
 	}
 	if requestable(requested) && claim(requested) {
@@ -226,7 +227,7 @@ func (s *Server) roomNamedLocked(id string) bool {
 
 func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	scheme, err := parseString(req.params, "scheme", true)
 	if err != nil {
 		return nil, err
@@ -260,6 +261,7 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	}
 	user := newUserState(s.assignUserIDLocked(requested), normalizeName(name))
 	s.users[user.id] = user
+	s.touchUser(user.id)
 	s.attachLocked(c, user)
 	// A new guest joins the default room, so their room list is not empty.
 	// The join is a logged membership, delivered to general's members, this
@@ -341,10 +343,12 @@ func (s *Server) retireLocked(u *userState) {
 	for key, registration := range s.pushes {
 		if registration.userID == u.id {
 			delete(s.pushes, key)
+			s.touchPush(key)
 		}
 	}
 	s.setAvatarEmbedLocked(u, nil)
 	delete(s.users, u.id)
+	s.touchUser(u.id)
 }
 
 // attending reports whether any connection of the user is not away (§4.4).
@@ -438,12 +442,13 @@ func (s *Server) updateProfile(c *client, req request) (any, bool, *rpcError) {
 	_, hasAvatar := req.params["avatar"]
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	u := c.user
 	if hasAvatar && avatar != "" && avatar != u.avatar && !validAvatar(avatar) {
 		return nil, false, invalidParams("avatar must be an https: URL or a data:image URL of at most %d bytes; upload larger images with /avatar", maxAvatarDataURLBytes)
 	}
 	before := u.profile()
+	s.touchUser(u.id)
 	var removed []string
 	if hasName {
 		u.name = normalizeName(name)

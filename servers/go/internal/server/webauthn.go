@@ -18,7 +18,7 @@ const passkeyLifetime = 2 * time.Minute
 const sessionLifetime = 12 * time.Hour
 
 type passkeyUser struct {
-	// TODO: Persist complete credentials and stable user handles before using this outside the in-memory example.
+	// handle and credentials are persisted with the user (persist.go).
 	user        *userState
 	handle      []byte
 	credentials []webauthn.Credential
@@ -226,6 +226,7 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 		}
 		user.credentials = append(user.credentials, *credential)
 		c.user.passkey = user
+		s.touchUser(c.user.id)
 		s.passkeys[c.user.id] = user
 		s.credentials[string(credential.ID)] = user
 	} else {
@@ -256,6 +257,7 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 		}
 	}
 	delete(s.sessions, c.token)
+	s.touchSession(c.token)
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, &rpcError{Code: codeInternalError, Message: "Unable to create passkey session"}
@@ -263,6 +265,7 @@ func (s *Server) finishPasskeyCeremony(c *client, req request, action string, w 
 	token := base64.RawURLEncoding.EncodeToString(secret)
 	c.token = sha256.Sum256([]byte(token))
 	s.sessions[c.token] = passkeySession{user: user, origin: c.origin, expires: now.Add(sessionLifetime)}
+	s.touchSession(c.token)
 	return s.finishPasskey(c, req, user, token)
 }
 
@@ -271,6 +274,7 @@ func (s *Server) pruneSessionsLocked(now time.Time) {
 	for key, session := range s.sessions {
 		if !now.Before(session.expires) {
 			delete(s.sessions, key)
+			s.touchSession(key)
 		}
 	}
 }
@@ -303,6 +307,7 @@ func (s *Server) authenticateToken(c *client, req request) (any, *rpcError) {
 	// not rotated: several tabs may share one persisted token.
 	session.expires = now.Add(sessionLifetime)
 	s.sessions[key] = session
+	s.touchSession(key)
 	c.token = key
 	return s.finishPasskey(c, req, session.user, token)
 }

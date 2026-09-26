@@ -16,7 +16,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +65,7 @@ type embedState struct {
 	path        string
 	size        int64
 	upload      *list.Element
+	seq         int64
 	contentType string
 	stream      *streamBuffer
 }
@@ -186,10 +186,11 @@ func (s *Server) newWriteLocked(c *client, id, kind, messageID string) *embedSta
 		token:     rand.Text(),
 	}
 	s.embeds[id] = e
+	s.touchEmbed(id)
 	s.writes[e.token] = e
 	e.timer = time.AfterFunc(s.config.UploadStartTimeout, func() {
 		s.mu.Lock()
-		defer s.mu.Unlock()
+		defer s.unlock()
 		if !e.started && !e.removed {
 			s.failWriteLocked(e)
 		}
@@ -242,6 +243,7 @@ func (s *Server) removeEmbedLocked(id string) {
 	}
 	delete(s.writes, e.token)
 	delete(s.embeds, id)
+	s.touchEmbed(id)
 }
 
 // failWriteLocked finishes a write that never started or failed: the embed is
@@ -286,6 +288,7 @@ func (s *Server) setAvatarEmbedLocked(u *userState, e *embedState) {
 		s.removeEmbedLocked(u.avatarEmbed.id)
 	}
 	u.avatarEmbed = e
+	s.touchUser(u.id)
 }
 
 func setEmbedCORS(w http.ResponseWriter, methods string) {
@@ -310,7 +313,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	e := s.writes[token]
 	if e == nil || e.started || e.removed {
-		s.mu.Unlock()
+		s.unlock()
 		http.Error(w, "This write URL is unknown, used, or expired", http.StatusNotFound)
 		return
 	}
@@ -320,7 +323,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	if e.stream != nil {
 		e.timer = time.AfterFunc(s.config.StreamMaxDuration, e.endStream)
 	}
-	s.mu.Unlock()
+	s.unlock()
 	if e.stream != nil {
 		s.writeStream(w, r, e)
 	} else {
@@ -358,7 +361,7 @@ func (s *Server) writeUpload(w http.ResponseWriter, r *http.Request, e *embedSta
 		file.Close()
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	fail := func(status int, message string) {
 		if file != nil {
 			_ = os.Remove(file.Name())
@@ -391,7 +394,10 @@ func (s *Server) writeUpload(w http.ResponseWriter, r *http.Request, e *embedSta
 	e.path = file.Name()
 	e.size = size
 	e.upload = s.uploads.PushBack(e)
+	s.uploadSeq++
+	e.seq = s.uploadSeq
 	s.uploadBytes += size
+	s.touchEmbed(e.id)
 	e.owned = map[string]any{"url": e.fileURL()}
 	if og != nil {
 		e.owned["og"] = og
@@ -400,6 +406,7 @@ func (s *Server) writeUpload(w http.ResponseWriter, r *http.Request, e *embedSta
 		if s.users[u.id] == u {
 			s.setAvatarEmbedLocked(u, e)
 			u.avatar = e.fileURL()
+			s.touchUser(u.id)
 			s.notifyProfileLocked(u, nil)
 		} else {
 			s.removeEmbedLocked(e.id)
@@ -483,8 +490,9 @@ func (s *Server) evictUploadsLocked(keep *embedState) {
 // anything else in the directory.
 const uploadSuffix = ".upload"
 
-// openUploadDir prepares the upload directory: the configured one, whose
-// stale upload files from a previous run are removed, or a new temporary one.
+// openUploadDir prepares the upload directory: the configured one, or a new
+// temporary one. Upload files no restored embed holds are removed after the
+// state is restored.
 func (s *Server) openUploadDir() {
 	dir := s.config.UploadDir
 	if dir == "" {
@@ -500,10 +508,6 @@ func (s *Server) openUploadDir() {
 		slog.Error("cannot create the upload directory", "dir", dir, "error", err)
 	}
 	s.uploadDir = dir
-	stale, _ := filepath.Glob(filepath.Join(dir, "*"+uploadSuffix))
-	for _, name := range stale {
-		_ = os.Remove(name)
-	}
 }
 
 // uploadContentType prefers the sender's declared type, except for types a
@@ -681,12 +685,13 @@ func (s *Server) writeStream(w http.ResponseWriter, r *http.Request, e *embedSta
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	e.timer.Stop()
 	if e.removed {
 		http.Error(w, "The stream was removed from its message", http.StatusGone)
 		return
 	}
+	s.touchEmbed(e.id)
 	e.finished = true
 	e.owned = map[string]any{"text": e.stream.text()}
 	if m := s.messages[e.messageID]; m != nil {

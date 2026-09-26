@@ -88,7 +88,7 @@ func (s *Server) command(c *client, req request) (any, bool, *rpcError) {
 	name := strings.ToLower(word)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	c.away = false
 	r := s.rooms[roomID]
 	if r == nil {

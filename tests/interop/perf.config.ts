@@ -23,7 +23,7 @@ export default defineConfig({
 		...(chromiumExecutablePath ? { launchOptions: { executablePath: chromiumExecutablePath } } : {})
 	},
 	webServer: {
-		command: `go run ./cmd/aprond --addr 127.0.0.1:8090 --allow-any-origin --static-dir ${path.join(repositoryRoot, 'clients/web/build')}`,
+		command: `go run ./cmd/aprond --store memory --addr 127.0.0.1:8090 --allow-any-origin --static-dir ${path.join(repositoryRoot, 'clients/web/build')}`,
 		cwd: path.join(repositoryRoot, 'servers/go'),
 		url: 'http://127.0.0.1:8090/healthz',
 		timeout: 120_000,

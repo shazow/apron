@@ -149,6 +149,8 @@ func (s *Server) addMemberLocked(u *userState, r *roomState) bool {
 	}
 	u.joined[r.id] = r
 	r.members[u.id] = u
+	s.touchRoom(r)
+	s.touchUser(u.id)
 	delete(u.leftAt, r.id)
 	s.deliverLocked(s.logMembershipLocked(u, r, true), r)
 	return true
@@ -194,6 +196,8 @@ func (s *Server) leaveLocked(u *userState, r *roomState) bool {
 	}
 	s.deliverLocked(s.logMembershipLocked(u, r, false), r)
 	delete(u.joined, r.id)
+	s.touchRoom(r)
+	s.touchUser(u.id)
 	delete(r.members, u.id)
 	u.send(roomUpdate("left", map[string]any{"room_id": r.id}))
 	return true
@@ -264,8 +268,10 @@ func (s *Server) untitleLocked(m *messageState) {
 		record.rewrite(func(value map[string]any) {
 			value["title"] = defaultThreadTitle
 		})
+		s.touchRecord(record)
 	}
 	m.titleRecords = nil
+	s.touchMessage(m)
 	for _, r := range m.titledRooms {
 		if r.titleFrom != m.id {
 			continue
@@ -324,7 +330,7 @@ func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	u := c.user
 	var parent *roomState
 	if updating {
@@ -367,10 +373,12 @@ func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
 		r.creator = u.id
 	}
 	r.titleFrom = titleFrom
+	s.touchRoom(r)
 	if titleFrom != "" {
 		// Deleting the intro message removes the title taken from its text.
 		m := s.messages[titleFrom]
 		m.titleRecords = append(m.titleRecords, r.log[len(r.log)-1])
+		s.touchMessage(m)
 		m.titledRooms = append(m.titledRooms, r)
 	}
 	// Room updates precede the result, so the room is known when it arrives.
@@ -381,6 +389,7 @@ func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
 		// room_update, whose latest_log_id is then the membership's.
 		u.joined[r.id] = r
 		r.members[u.id] = u
+		s.touchUser(u.id)
 		membership := s.logMembershipLocked(u, r, true)
 		u.send(s.joinedUpdateLocked(r))
 		s.deliverLocked(membership, r)
@@ -584,7 +593,7 @@ func (s *Server) joinRoom(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	r := s.rooms[roomID]
 	if r == nil {
 		return nil, false, invalidParams("Unknown room %q", roomID)
@@ -609,7 +618,7 @@ func (s *Server) leaveRoom(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	r := s.rooms[roomID]
 	if r == nil {
 		return nil, false, invalidParams("Unknown room %q", roomID)
@@ -822,7 +831,7 @@ func (s *Server) activity(c *client, req request) (any, bool, *rpcError) {
 	}
 	_, hasAway := req.params["away"]
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	inRoom := typing != nil || hasRead
 	r := s.rooms[roomID]
 	if inRoom && r == nil {
@@ -856,6 +865,7 @@ func (s *Server) activity(c *client, req request) (any, bool, *rpcError) {
 		id, _ := strconv.ParseInt(readID, 10, 64)
 		if cursor, ok := r.reads[u.id]; !ok || id > cursor.id {
 			r.reads[u.id] = readCursor{from: u.from(), messageID: readID, id: id}
+			s.touchRoom(r)
 			if u.joined[r.id] == nil {
 				// A cursor for a room the user has not joined still syncs
 				// across their own connections.

@@ -21,6 +21,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/go-webauthn/webauthn/webauthn"
+
+	"github.com/shazow/apron/servers/go/internal/store"
 )
 
 const (
@@ -92,6 +94,9 @@ type Config struct {
 	StreamKeepBytes   int
 	StreamMaxBytes    int64
 	StreamMaxDuration time.Duration
+	// Store keeps the server's state across restarts; nil keeps it in memory
+	// for this Server only. The server closes it on Shutdown.
+	Store store.Store
 	// DisablePush omits server.push and push registration.
 	DisablePush bool
 	// AllowInsecurePush accepts http push endpoints and internal addresses.
@@ -201,6 +206,8 @@ type logRecord struct {
 	kind  recordKind
 	raw   jsontext.Value
 	intro *logRecord
+	// rooms are the rooms whose logs hold the record.
+	rooms []string
 }
 
 // newLogRecord encodes value. Values hold only JSON-decoded data and
@@ -368,19 +375,44 @@ type Server struct {
 	// uploadDir holds upload content; tempUploadDir is removed on Shutdown.
 	uploadDir     string
 	tempUploadDir bool
-	pushes        map[string]*pushRegistration
-	closed        bool
-	passkeys      map[string]*passkeyUser
-	credentials   map[string]*passkeyUser
-	sessions      map[[32]byte]passkeySession
+	// uploadSeq orders finished uploads across restarts.
+	uploadSeq int64
+
+	// dirty is the state changed under mu since it was last written to the
+	// store; storeWrites queues batches for the store writer.
+	dirty       dirtySet
+	storeWrites chan []store.Entry
+	storeDone   chan struct{}
+	storeClosed bool
+	storedMeta  storedMeta
+	pushes      map[string]*pushRegistration
+	closed      bool
+	passkeys    map[string]*passkeyUser
+	credentials map[string]*passkeyUser
+	sessions    map[[32]byte]passkeySession
 
 	ops         map[string]operation
 	push        *pushDeliverer
 	connections sync.WaitGroup
 }
 
+// New starts a server with the state in config.Store, or an empty memory
+// store. It panics if the store cannot be read; Open returns the error.
 func New(config Config) *Server {
+	s, err := Open(config)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// Open starts a server with the state in config.Store, or an empty memory
+// store when it is nil.
+func Open(config Config) (*Server, error) {
 	config = config.withDefaults()
+	if config.Store == nil {
+		config.Store = store.NewMemory()
+	}
 	s := &Server{
 		config:      config,
 		rooms:       make(map[string]*roomState),
@@ -395,14 +427,30 @@ func New(config Config) *Server {
 		passkeys:    make(map[string]*passkeyUser),
 		credentials: make(map[string]*passkeyUser),
 		sessions:    make(map[[32]byte]passkeySession),
+		dirty:       newDirtySet(),
+		storeWrites: make(chan []store.Entry, storeQueue),
+		storeDone:   make(chan struct{}),
 	}
 	s.ops = s.operations()
 	s.push = newPushDeliverer(config.AllowInsecurePush)
 	s.openUploadDir()
-	// The seeded default room has a logged creation record like any other room,
-	// so its history_log_id is never null.
-	s.commitRoomLocked(defaultRoomID, nil, map[string]any{"title": "General"})
-	return s
+	go s.writeStore()
+	s.mu.Lock()
+	files, err := s.restoreLocked()
+	if err != nil {
+		s.storeClosed = true
+		close(s.storeWrites)
+		s.mu.Unlock()
+		return nil, err
+	}
+	if s.rooms[defaultRoomID] == nil {
+		// The seeded default room has a logged creation record like any
+		// other room, so its history_log_id is never null.
+		s.commitRoomLocked(defaultRoomID, nil, map[string]any{"title": "General"})
+	}
+	s.removeStaleUploads(files)
+	s.unlock()
+	return s, nil
 }
 
 // defaultRoomID is the seeded room that requests without room_id address
@@ -485,12 +533,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			_ = os.RemoveAll(s.uploadDir)
 		}
 	}
-	s.mu.Unlock()
+	s.unlock()
 
 	done := make(chan struct{})
 	go func() {
 		s.connections.Wait()
 		s.push.wait()
+		s.mu.Lock()
+		s.closeStoreLocked()
+		s.mu.Unlock()
 		close(done)
 	}()
 	select {
@@ -504,12 +555,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if s.closed {
-		s.mu.Unlock()
+		s.unlock()
 		http.Error(w, "server is shutting down", http.StatusServiceUnavailable)
 		return
 	}
 	s.connections.Add(1)
-	s.mu.Unlock()
+	s.unlock()
 	defer s.connections.Done()
 
 	options := &websocket.AcceptOptions{}
@@ -536,7 +587,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go c.pingLoop()
 	s.mu.Lock()
 	if s.closed {
-		s.mu.Unlock()
+		s.unlock()
 		c.stopConnection()
 		return
 	}
@@ -544,21 +595,21 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// An error about the connection as a whole omits id (§1.1).
 		c.enqueue(map[string]any{"method": "server", "params": s.serverParams()})
 		c.closeWithError(&rpcError{Code: codeRetryAfter, Message: "Server at capacity; try again shortly", Data: map[string]any{"retry_after": retryAfterSeconds}})
-		s.mu.Unlock()
+		s.unlock()
 		<-c.done
 		return
 	}
 	s.clients[c] = struct{}{}
 	// The server announcement is queued before the reader starts accepting auth.
 	c.enqueue(map[string]any{"method": "server", "params": s.serverParams()})
-	s.mu.Unlock()
+	s.unlock()
 
 	defer func() {
 		c.stopConnection()
 		s.mu.Lock()
 		delete(s.clients, c)
 		s.detachLocked(c)
-		s.mu.Unlock()
+		s.unlock()
 	}()
 
 	ctx := r.Context()
@@ -822,7 +873,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	s.mu.Lock()
 	user := c.user
 	if user == nil {
-		s.mu.Unlock()
+		s.unlock()
 		if req.hasID {
 			c.sendError(req, &rpcError{Code: codeDenied, Message: "Sign in before sending requests"})
 		}
@@ -830,7 +881,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	}
 	op := s.ops[req.method]
 	if op == nil {
-		s.mu.Unlock()
+		s.unlock()
 		if req.hasID {
 			c.sendError(req, &rpcError{Code: codeUnsupported, Message: "Unsupported method " + strconv.Quote(req.method)})
 		}
@@ -842,7 +893,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 	if req.hasID {
 		fingerprint := sha256.Sum256([]byte(requestFingerprint(req)))
 		if prior := user.dedup.get(req.id); prior != nil {
-			s.mu.Unlock()
+			s.unlock()
 			if prior.fingerprint != fingerprint {
 				c.sendError(req, invalidParams("Request id %q was already used for another operation", req.id))
 				return
@@ -858,7 +909,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 		entry = &dedupEntry{fingerprint: fingerprint, done: make(chan struct{})}
 		user.dedup.put(req.id, entry)
 	}
-	s.mu.Unlock()
+	s.unlock()
 
 	result, replied, err := op(s, c, req)
 	if req.hasID && !replied {
@@ -878,7 +929,7 @@ func (s *Server) processFrame(c *client, payload []byte) {
 			user.dedup.remove(req.id, entry)
 		}
 		close(entry.done)
-		s.mu.Unlock()
+		s.unlock()
 	}
 }
 
@@ -894,7 +945,10 @@ func (s *Server) appendLocked(record *logRecord, rooms ...*roomState) {
 	for _, r := range rooms {
 		r.log = append(r.log, record)
 		r.latestID = record.id
+		record.rooms = append(record.rooms, r.id)
+		s.touchRoom(r)
 	}
+	s.touchRecord(record)
 }
 
 var _ http.Handler = (*Server)(nil)
