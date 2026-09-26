@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { ChatClient, DEFAULT_ROOM_ID, userIn, type RoomSnapshot } from '../../clients/web/src/lib/protocol/client';
+import { ChatClient, DEFAULT_ROOM_ID, userIn, type RoomSnapshot } from '../../.apron-web/src/lib/protocol/client';
 
 type ObjectValue = Record<string, unknown>;
 type Step =

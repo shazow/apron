@@ -5,8 +5,11 @@ server keeps rooms and history in memory; restarting it clears messages.
 
 ## Layout
 
-- `clients/web`: SvelteKit and TypeScript client; connection and replay logic
-  lives separately from UI components under `src/lib/protocol`.
+- [apron-chat/apron-web](https://github.com/apron-chat/apron-web): the
+  SvelteKit and TypeScript web client, deployed at `https://web.apron.chat`.
+  `make install` clones it into `.apron-web/` (ignored), where the browser
+  tests, `make dev-web`, and `make run` use it; replace that directory with a
+  symlink to work on your own checkout.
 - `servers/go`: Go module and the reference server, implementing every
   capability in PROTOCOL.md; `cmd/aprond` is the executable and `internal`
   contains implementation packages. See its [README](servers/go/README.md).
@@ -40,9 +43,8 @@ after manifest or lockfile changes.
 For background processes, use `devenv up --detach` and stop them with
 `devenv down`.
 
-Without Nix, install Node.js 24 LTS, npm, Go 1.27+, Make, and a C compiler
-(and [Wrangler](https://developers.cloudflare.com/workers/wrangler/) for
-`make deploy-web`). Run `make install`, then `make dev-server` and
+Without Nix, install Node.js 24 LTS, npm, Go 1.27+, Make, Git, and a C
+compiler. Run `make install`, then `make dev-server` and
 `make dev-web` in separate terminals. All Make commands below work inside `devenv shell` or with those
 tools installed directly.
 
@@ -179,7 +181,7 @@ threads remain available; deleting or moving their intro message does not
 remove them. With the Go server the client also sends attachments and
 voice clips, shows live streams, sets avatars, marks where you stopped reading,
 and browses, joins, and leaves rooms; see
-[`clients/web/README.md`](clients/web/README.md). The interop suite's
+[apron-web's README](https://github.com/apron-chat/apron-web#readme). The interop suite's
 `reference.spec.ts` exercises these against the Go server.
 
 ## Build and serve
@@ -210,8 +212,8 @@ make check
 make test
 ```
 
-`make test` includes shared replay fixtures in the frontend unit suite and
-session fixtures over real loopback WebSockets. Run the latter alone with
+`make test` runs the Go tests and the session fixtures over real loopback
+WebSockets against the web client's `ChatClient`. Run the latter alone with
 `make test-wire`; it needs Node.js and Go, but no browser or running dev server.
 
 The devenv environment supplies Chromium on Linux. Outside that environment,

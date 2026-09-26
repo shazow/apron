@@ -456,7 +456,7 @@ Use explicit settings for an HTTPS deployment (origins refer to the page running
 the frontend, which may differ from the WebSocket server):
 
 ```sh
-go run ./cmd/aprond --static-dir ../../clients/web/build \
+go run ./cmd/aprond --static-dir ../../.apron-web/build \
   --origin https://chat.example.com \
   --webauthn.rp-id chat.example.com \
   --webauthn.origin https://chat.example.com

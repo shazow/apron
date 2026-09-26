@@ -55,7 +55,7 @@ export default defineConfig({
 		},
 		{
 			command: 'npm run dev -- --host 127.0.0.1 --port 5173 --strictPort',
-			cwd: path.join(repositoryRoot, 'clients/web'),
+			cwd: path.join(repositoryRoot, '.apron-web'),
 			url: 'http://127.0.0.1:5173',
 			timeout: 120_000,
 			reuseExistingServer: false

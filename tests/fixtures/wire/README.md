@@ -11,12 +11,13 @@ client conformance.
 From the repository root, after `make install`:
 
 ```sh
-make test-web   # replay fixtures and frontend unit tests
 make test-wire  # session fixtures over real loopback WebSockets
-make test       # both suites and Go tests; also runs in CI
+make test       # also the Go tests; runs in CI
 ```
 
-Replay uses the frontend's existing Vitest setup. Session tests use the actual
+The replay fixtures run in
+[apron-chat/apron-web](https://github.com/apron-chat/apron-web)'s unit tests
+(`npm test`), which check out this repository as a submodule. Session tests use the actual
 TypeScript client with Node.js 24 WebSockets and a small Go transport peer;
 no browser or running example server is needed. No new dependencies are required.
 
@@ -194,7 +195,8 @@ record, at least one message currently homed in it, or member state, sorted by
 | `17-memberships.json` | memberships by the replay rule from live, raw and compacted history; a complete `members` list as of its room's head, before or after newer memberships; leaves kept through compaction |
 
 The TypeScript adapter is
-[`clients/web/src/lib/protocol/wire-replay.test.ts`](../../../clients/web/src/lib/protocol/wire-replay.test.ts).
+[`src/lib/protocol/wire-replay.test.ts`](https://github.com/apron-chat/apron-web/blob/main/src/lib/protocol/wire-replay.test.ts)
+in apron-chat/apron-web, which checks out this repository as a submodule.
 Another client needs only a JSON loader, a frame-to-store adapter, and the
 projection above.
 

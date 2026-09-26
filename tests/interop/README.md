@@ -35,7 +35,9 @@ npm test
 The config starts both services itself with `reuseExistingServer: false`:
 
 * Go server: `127.0.0.1:8080`, started from `servers/go` with `-addr`
-* Vite dev server: `127.0.0.1:5173`, started from `clients/web`
+* Vite dev server: `127.0.0.1:5173`, started from `.apron-web`, a checkout of
+  [apron-chat/apron-web](https://github.com/apron-chat/apron-web) that `make install`
+  clones (or a symlink to your own)
 
 Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` when the browser is supplied by the
 environment (for example, the NixOS VM). If it is unset, Playwright uses its
