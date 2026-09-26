@@ -2,7 +2,8 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 	"sort"
 	"time"
@@ -32,7 +33,7 @@ type messageState struct {
 }
 
 // currentRaw is the JSON of the message's current snapshot.
-func (m *messageState) currentRaw() json.RawMessage {
+func (m *messageState) currentRaw() jsontext.Value {
 	return m.records[len(m.records)-1].raw
 }
 
@@ -303,12 +304,12 @@ func validMessageID(id string) bool {
 
 // parseMessageRef reads a message reference (reply_to, intro_message). Clients
 // send bare references; any other keys, such as an echoed snapshot, are ignored.
-func parseMessageRef(params map[string]json.RawMessage, name string) (string, bool, *rpcError) {
+func parseMessageRef(params map[string]jsontext.Value, name string) (string, bool, *rpcError) {
 	raw, present := params[name]
 	if !present {
 		return "", false, nil
 	}
-	var ref map[string]json.RawMessage
+	var ref map[string]jsontext.Value
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &ref) != nil || ref == nil {
 		return "", false, invalidParams("%s must be a message object", name)
 	}
@@ -435,12 +436,12 @@ func (s *Server) commitReactionsLocked(m *messageState, elements []any) {
 	s.deliverLocked(rawNotification("reactions", record.raw), r)
 }
 
-func parseEmojis(params map[string]json.RawMessage) ([]string, *rpcError) {
+func parseEmojis(params map[string]jsontext.Value) ([]string, *rpcError) {
 	raw, ok := params["emojis"]
 	if !ok {
 		return nil, invalidParams("Missing emojis")
 	}
-	var values []json.RawMessage
+	var values []jsontext.Value
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &values) != nil {
 		return nil, invalidParams("emojis must be an array of strings")
 	}

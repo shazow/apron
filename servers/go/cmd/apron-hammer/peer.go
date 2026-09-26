@@ -3,7 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,9 +16,9 @@ import (
 )
 
 type rpcError struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Data    jsontext.Value `json:"data,omitempty"`
 }
 
 func (e *rpcError) Error() string {
@@ -25,7 +26,7 @@ func (e *rpcError) Error() string {
 }
 
 type reply struct {
-	result json.RawMessage
+	result jsontext.Value
 	err    *rpcError
 }
 
@@ -165,8 +166,8 @@ func (p *peer) authAndList(ctx context.Context, auth map[string]any) error {
 				UserID string `json:"user_id"`
 			} `json:"members"`
 		} `json:"joined"`
-		NotJoined json.RawMessage   `json:"not_joined"`
-		Users     []json.RawMessage `json:"users"`
+		NotJoined jsontext.Value   `json:"not_joined"`
+		Users     []jsontext.Value `json:"users"`
 	}
 	if err := json.Unmarshal(raw, &listed); err != nil {
 		return fail(fmt.Errorf("room_list result: %w", err))
@@ -218,9 +219,9 @@ func (p *peer) readLoop() {
 			continue
 		}
 		var frame struct {
-			ID     *string         `json:"id"`
-			Result json.RawMessage `json:"result"`
-			Error  *rpcError       `json:"error"`
+			ID     *string        `json:"id"`
+			Result jsontext.Value `json:"result"`
+			Error  *rpcError      `json:"error"`
 		}
 		if err := json.Unmarshal(data, &frame); err != nil {
 			p.h.protocolViolation("unparseable frame from server: %v", err)
@@ -267,7 +268,7 @@ func (p *peer) sendRaw(ctx context.Context, payload []byte) error {
 }
 
 // call sends a request and waits for its reply.
-func (p *peer) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+func (p *peer) call(ctx context.Context, method string, params any) (jsontext.Value, error) {
 	id := strconv.FormatUint(p.next.Add(1), 36)
 	ch, err := p.expect(id)
 	if err != nil {
@@ -282,7 +283,7 @@ func (p *peer) call(ctx context.Context, method string, params any) (json.RawMes
 
 // callRaw sends a hand-written request frame carrying id and waits for its
 // reply.
-func (p *peer) callRaw(ctx context.Context, id string, payload []byte) (json.RawMessage, error) {
+func (p *peer) callRaw(ctx context.Context, id string, payload []byte) (jsontext.Value, error) {
 	ch, err := p.expect(id)
 	if err != nil {
 		return nil, err
@@ -311,7 +312,7 @@ func (p *peer) forget(id string) {
 	p.mu.Unlock()
 }
 
-func (p *peer) wait(ctx context.Context, id string, ch chan reply) (json.RawMessage, error) {
+func (p *peer) wait(ctx context.Context, id string, ch chan reply) (jsontext.Value, error) {
 	select {
 	case r, ok := <-ch:
 		if !ok {

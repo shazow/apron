@@ -2,7 +2,6 @@ package server
 
 import (
 	"cmp"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"regexp"
@@ -459,7 +458,6 @@ func (s *Server) updateProfile(c *client, req request) (any, bool, *rpcError) {
 }
 
 func jsonEqual(a, b any) bool {
-	left, errLeft := json.Marshal(a)
-	right, errRight := json.Marshal(b)
-	return errLeft == nil && errRight == nil && string(left) == string(right)
+	left, right := encodeJSON(a), encodeJSON(b)
+	return left != nil && right != nil && string(left) == string(right)
 }

@@ -2,7 +2,8 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 )
 
@@ -20,30 +21,30 @@ const (
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
+	Data    any    `json:"data,omitzero"`
 }
 
 type rpcResponse struct {
 	JSONRPC string    `json:"jsonrpc,omitempty"`
-	ID      any       `json:"id,omitempty"`
-	Result  any       `json:"result,omitempty"`
-	Error   *rpcError `json:"error,omitempty"`
+	ID      any       `json:"id,omitzero"`
+	Result  any       `json:"result,omitzero"`
+	Error   *rpcError `json:"error,omitzero"`
 }
 
 type request struct {
 	method string
-	params map[string]json.RawMessage
+	params map[string]jsontext.Value
 	id     string
 	hasID  bool
 	full   bool
 }
 
 func parseRequest(payload []byte) (request, *rpcError) {
-	if !json.Valid(payload) {
+	if !jsontext.Value(payload).IsValid() {
 		return request{}, &rpcError{Code: codeParseError, Message: "Parse error"}
 	}
 
-	var object map[string]json.RawMessage
+	var object map[string]jsontext.Value
 	if err := json.Unmarshal(payload, &object); err != nil || object == nil {
 		return request{}, &rpcError{Code: codeInvalidRequest, Message: "Invalid request"}
 	}
@@ -70,7 +71,7 @@ func parseRequest(payload []byte) (request, *rpcError) {
 		return req, &rpcError{Code: codeInvalidRequest, Message: "Invalid request"}
 	}
 
-	req.params = make(map[string]json.RawMessage)
+	req.params = make(map[string]jsontext.Value)
 	if rawParams, ok := object["params"]; ok {
 		if bytes.Equal(bytes.TrimSpace(rawParams), []byte("null")) || json.Unmarshal(rawParams, &req.params) != nil || req.params == nil {
 			return req, invalidParams("Params must be an object")
@@ -79,20 +80,19 @@ func parseRequest(payload []byte) (request, *rpcError) {
 	return req, nil
 }
 
-func canonicalParams(params map[string]json.RawMessage) string {
+func canonicalParams(params map[string]jsontext.Value) string {
 	if params == nil {
 		return "{}"
 	}
 	var value any
-	raw, err := json.Marshal(params)
-	if err != nil || json.Unmarshal(raw, &value) != nil {
+	raw := encodeJSON(params)
+	if raw == nil || json.Unmarshal(raw, &value) != nil {
 		return string(raw)
 	}
-	canonical, err := json.Marshal(value)
-	if err != nil {
-		return string(raw)
+	if canonical := encodeJSON(value); canonical != nil {
+		return string(canonical)
 	}
-	return string(canonical)
+	return string(raw)
 }
 
 func requestFingerprint(req request) string {
@@ -121,7 +121,7 @@ func invalidParams(format string, args ...any) *rpcError {
 	return &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf(format, args...)}
 }
 
-func parseString(params map[string]json.RawMessage, name string, required bool) (string, *rpcError) {
+func parseString(params map[string]jsontext.Value, name string, required bool) (string, *rpcError) {
 	raw, ok := params[name]
 	if !ok {
 		if required {
@@ -136,7 +136,7 @@ func parseString(params map[string]json.RawMessage, name string, required bool) 
 	return value, nil
 }
 
-func parseBool(params map[string]json.RawMessage, name string, required bool) (bool, *rpcError) {
+func parseBool(params map[string]jsontext.Value, name string, required bool) (bool, *rpcError) {
 	raw, ok := params[name]
 	if !ok {
 		if required {
@@ -151,7 +151,7 @@ func parseBool(params map[string]json.RawMessage, name string, required bool) (b
 	return value, nil
 }
 
-func parseObject(params map[string]json.RawMessage, name string, required bool) (map[string]any, *rpcError) {
+func parseObject(params map[string]jsontext.Value, name string, required bool) (map[string]any, *rpcError) {
 	raw, ok := params[name]
 	if !ok {
 		if required {

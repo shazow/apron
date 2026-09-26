@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -176,8 +175,7 @@ func pushPayload(snapshot map[string]any) []byte {
 			value["body"] = map[string]any{"text": text}
 		}
 	}
-	payload, _ := json.Marshal(value)
-	return payload
+	return encodeJSON(value)
 }
 
 // pushDeliverer POSTs push payloads in the background, off the paths that

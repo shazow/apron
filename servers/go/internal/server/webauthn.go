@@ -5,7 +5,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"time"
 
@@ -309,12 +310,12 @@ func (s *Server) authenticateToken(c *client, req request) (any, *rpcError) {
 // parsePasskeyCredential performs only wire-shape validation. A syntactically
 // shaped credential with invalid base64, authenticator data, origin, RP, UV,
 // or signature remains a failed proof and is reported as denied by the caller.
-func parsePasskeyCredential(params map[string]json.RawMessage, action string) ([]byte, *rpcError) {
+func parsePasskeyCredential(params map[string]jsontext.Value, action string) ([]byte, *rpcError) {
 	raw, ok := params["credential"]
 	if !ok {
 		return nil, invalidParams("Missing credential")
 	}
-	var credential map[string]json.RawMessage
+	var credential map[string]jsontext.Value
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &credential) != nil || credential == nil {
 		return nil, invalidParams("credential must be an object")
 	}
@@ -330,7 +331,7 @@ func parsePasskeyCredential(params map[string]json.RawMessage, action string) ([
 		return nil, invalidParams("credential.type must be public-key")
 	}
 	if value, ok := credential["clientExtensionResults"]; ok {
-		var extensions map[string]json.RawMessage
+		var extensions map[string]jsontext.Value
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &extensions) != nil || extensions == nil {
 			return nil, invalidParams("credential.clientExtensionResults must be an object")
 		}
@@ -348,7 +349,7 @@ func parsePasskeyCredential(params map[string]json.RawMessage, action string) ([
 	if !ok || bytes.Equal(bytes.TrimSpace(rawResponse), []byte("null")) {
 		return nil, invalidParams("credential.response must be an object")
 	}
-	var response map[string]json.RawMessage
+	var response map[string]jsontext.Value
 	if json.Unmarshal(rawResponse, &response) != nil || response == nil {
 		return nil, invalidParams("credential.response must be an object")
 	}
