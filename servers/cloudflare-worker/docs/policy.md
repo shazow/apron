@@ -1,6 +1,6 @@
 # Public demo authentication and policy
 
-The demo speaks Apron protocol **5**, advertising `history`, `edit`, `rooms`,
+The demo speaks Apron protocol **6**, advertising `history`, `edit`, `rooms`,
 `reactions`, and `command`, and `server.ping` (45 seconds). `activity`
 (typing) is implemented but off unless the deployment sets `ACTIVITY=true`. History availability uses each room's `latest_log_id` and
 nullable `history_log_id`, without extension negotiation. See

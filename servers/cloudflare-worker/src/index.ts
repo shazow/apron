@@ -67,7 +67,7 @@ interface ConnectionAttachment {
 	/**
 	 * The rooms this connection's user has joined (§4.3.2), which it receives
 	 * deliveries for. Set at authentication and kept equal across the user's
-	 * connections; a registered user's are also stored with the identity.
+	 * connections; a registered user's are also stored in the `memberships` table.
 	 */
 	rooms?: string[];
 	/**

@@ -89,7 +89,7 @@ async function authenticate(peer: Peer, scheme = 'guest', extraCaps: string[] = 
 	peer.send({ method: 'auth', id: 'auth', params: { scheme } });
 	const auth = await peer.next();
 	expect(auth.result.you.user_id).toMatch(/^guest_/);
-	// Rooms are not announced (§4.3.1): the client lists them.
+	// The client lists its rooms with room_list (§4.3.1).
 	return auth.result.you;
 }
 
@@ -353,7 +353,7 @@ it('stores body.mentions as sent and never reads mentions out of text', async ()
 	} finally { peer.close(); }
 });
 
-it('rejects operations guests may not perform and the v4 room method', async () => {
+it('rejects operations guests may not perform', async () => {
 	// Three invalid requests within a minute close a socket, so spread them.
 	const peer = await connect();
 	const other = await connect();
@@ -363,8 +363,6 @@ it('rejects operations guests may not perform and the v4 room method', async () 
 		expect((await request(peer, 'top-level', 'room_set', { title: 'Top level' })).error.code).toBe(-32001);
 		// Guests keep their assigned name.
 		expect((await request(peer, 'rename', 'me', { name: 'Ada' })).error.code).toBe(-32001);
-		// Rooms are no longer announced or saved with `room`.
-		expect((await request(peer, 'v4-room', 'room', { parent_room_id: 'general', title: 'Old' })).error.code).toBe(-32601);
 		expect((await request(other, 'unknown-history', 'history', { room_id: 'missing' })).error.code).toBe(-32602);
 		expect((await request(other, 'join-missing', 'room_join', { room_id: 'missing' })).error.code).toBe(-32602);
 		expect((await request(peer, 'leave-missing', 'room_leave', { room_id: 'missing' })).error.code).toBe(-32602);
