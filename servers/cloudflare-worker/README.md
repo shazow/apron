@@ -4,7 +4,7 @@ A single SQLite Durable Object serves the permanent `general` room and its
 thread rooms over hibernating WebSockets. The backend supports guest access,
 discoverable passkeys, complete-snapshot history, message
 replacement/deletion/restoration/moves, thread rooms, emoji reactions, and a
-rolling retention floor. It speaks protocol 5 with `history`, `edit`, `rooms`,
+rolling retention floor. It speaks protocol 6 with `history`, `edit`, `rooms`,
 `reactions`, and `command` (`/help` only), and advertises liveness pings
 (typing through `activity` is built in but off; set `ACTIVITY=true` to
 advertise it); see [authentication and policy](docs/policy.md) and [the
@@ -82,9 +82,9 @@ socket.onmessage = ({ data }) => {
   const frame = JSON.parse(data);
   console.log(frame);
   if (frame.method === 'server') {
+    // `auth` finishes before the frames behind it run, so send them together.
     socket.send(JSON.stringify({ id: 'guest', method: 'auth', params: { scheme: 'guest' } }));
-  } else if (frame.id === 'guest' && frame.result) {
-    socket.send(JSON.stringify({ id: 'rooms', method: 'room_list', params: { only_joined: true } }));
+    socket.send(JSON.stringify({ id: 'rooms', method: 'room_list', params: { filter: 'joined', members: true } }));
     socket.send(JSON.stringify({ id: 'history', method: 'history', params: { room_id: 'general' } }));
   }
 };
@@ -95,10 +95,16 @@ setInterval(() => socket.send('{"method":"ping"}'), 45_000);
 Use the protocol's `message`, `room_set`, `room_join`, `room_leave`, and
 `reactions` requests to exercise posting, editing, deletion/restoration, moves,
 threads, membership, and reactions. A new guest has joined `general`, and
-receives only the rooms it has joined; posting to a room does not require
-joining it. `room_list` lists joined rooms and rooms to join with the members
-connected now, up to 6 times a minute per user (the first `only_joined`
+receives only the rooms it has joined (a thread's messages go to its members
+only); posting to a room does not require joining it. `room_list` lists
+joined rooms and rooms to join by `filter`, with `members` and `users` on
+request, up to 6 times a minute per user (the first `filter: "joined"`
 listing after authentication is free), and `room_update` reports changes.
+A registered user's joins and leaves are logged `membership` records,
+returned in `history`; a guest's live in its connection and are not logged,
+so `room_list` ignores `latest_log_id` and always answers with a full
+listing. `members` lists every connected member and at most 100 registered
+members per room. See [SPEC section 4](SPEC.md#memberships).
 The whole server processes at most 300 frames a
 minute; past that, requests get `retry_after` and the socket stays open. The demo
 only creates thread rooms: `room_set` creations need `parent_room_id: "general"`,
@@ -116,8 +122,8 @@ admission cannot override the frontend's own browser policies.
 
 ## User-visible policies
 
-Only roughly the last day of records (messages, reactions, and room changes)
-is retained. Hourly cleanup normally exposes 24–25 hours; quota exhaustion may
+Only roughly the last day of records (messages, reactions, room changes, and
+registered users' memberships) is retained. Hourly cleanup normally exposes 24–25 hours; quota exhaustion may
 delay physical deletion. The `general` room ID and the log head never rotate.
 Recent edits can keep old messages visible. Rooms keep their current record
 after its log entry expires; a thread room whose whole log has expired is
@@ -241,7 +247,7 @@ For direct Wrangler production commands, always pass
    Wrangler deployment workflow. Do not rename or recreate the production
    object to work around a quota or schema issue. Stored data is not migrated
    between schema versions: a deploy that changes the storage schema resets the
-   demo on the object's first wake (the protocol v5 release moved to schema 3; see
+   demo on the object's first wake (the protocol v6 release moved to schema 4; see
    [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
    identities, sessions, and limiter windows are deleted; users must register
    their passkeys again, and saved session tokens fall back to sign-in. Only the

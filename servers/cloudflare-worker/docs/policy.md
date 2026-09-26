@@ -29,14 +29,19 @@ within it:
   participant may save a thread's `title`, `intro_message`, and `ext`, while
   `general` is fixed. Threads always carry a title (`Thread` by default).
   `room_join` and `room_leave` work for `general` and threads, and changes
-  arrive as `room_update` before the result. A guest's rooms last for its
-  connection; a registered identity keeps its rooms across connections, and its
-  joins and leaves count as posts. Joins and leaves are not announced with
-  `user` notifications. `room_list` takes the protocol's filters; each room's
-  `members` are the users connected now who have joined it (at most 20), and
-  `member_count` is left out. A client that sends the `{"method":"ping"}`
-  liveness ping every 45 seconds and then goes quiet for 150 is disconnected,
-  so a peer that vanished without closing is not listed.
+  arrive as `room_update` before the result. A thread's messages go to its
+  members only. A guest's rooms last for its connection and are not logged; a
+  registered identity keeps its rooms across connections, its joins and leaves
+  count as posts, and each is a logged `membership` record delivered to the
+  room's members before the `room_update` and kept in history. Joins and
+  leaves are never `user` notifications. `room_list` takes `filter`,
+  `parent_room_id`, and `room_id`, and with `members: true` lists each room's
+  members (every connected one and at most 100 registered ones) and their
+  current objects in `users`; it ignores `latest_log_id` and always returns a
+  full listing, since guest memberships are not logged. A client that sends
+  the `{"method":"ping"}` liveness ping every 45 seconds and then goes quiet
+  for 150 is disconnected, so a peer that vanished without closing is not
+  listed.
 - Activity (only with `ACTIVITY=true`): typing is relayed to the room's other
   members and never stored, at most 10 relays per user per minute; past that, updates are dropped and the
   sender gets one `@private` notice a minute saying so. Read cursors are
@@ -58,13 +63,18 @@ within it:
   requests get `retry_after` and notifications are dropped; sockets stay open.
 - `me` renames registered users only; given fields replace, omitted ones stay,
   and `name: ""` removes the name (announced as `name: ""`). `avatar` and `ext`
-  are ignored. A rename sends `user` notifications, as does signing in on a
-  guest's connection (`new` with the retired guest as `old`). History pages
-  carry `users` with registered authors' current names. A `user_id` or `name`
-  requested in `auth` is not honored.
-- Records: message snapshots and reaction sets carry `prev_log_id` when the
-  previous record for the same key is still stored. Deletion does not redact
-  earlier snapshots; they expire with the retention window.
+  are ignored. A rename sends `user` notifications to the user's other
+  connections and to users who share a room with them, as does signing in on
+  a guest's connection (`new` with the retired guest as `old`). History pages
+  carry no `users`: records keep the names they were logged with, and
+  listings carry current ones. A `user_id` or `name` requested in `auth` is
+  not honored.
+- Records: message snapshots carry `prev_log_id` when the previous snapshot is
+  still stored, and a move's snapshot also `prev_room_id`; reaction sets and
+  memberships carry neither. Deletion does not redact earlier snapshots; they
+  expire with the retention window.
+- Ordering: `auth` finishes before any later frame on its connection, and the
+  notifications a request causes on its connection come before its result.
 
 ## Authentication policy
 

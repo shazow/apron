@@ -61,6 +61,13 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	expect(registered.error).toBeUndefined();
 	expect(registered.result.you.user_id).not.toBe(guest.result.you.user_id);
 	const userId = registered.result.you.user_id;
+	// The new identity starts in the guest's rooms, and each start is a logged
+	// membership that reaches this connection before the auth result (§4.3.2).
+	const joins = await page.evaluate(() => (window as any).frames.filter((frame: any) => frame.method === 'membership'));
+	expect(joins).toEqual([{ method: 'membership', params: {
+		log_id: expect.stringMatching(/^[1-9][0-9]*$/), room_id: 'general',
+		members: [{ user: { user_id: userId, name: registered.result.you.name }, joined: true }],
+	} }]);
 	const renamed = await page.evaluate(() => (window as any).request('me', { name: 'Saved passkey name' }));
 	expect(renamed.result.you).toMatchObject({ user_id: userId, name: 'Saved passkey name' });
 	const { credentials } = await cdp.send('WebAuthn.getCredentials', { authenticatorId });
@@ -135,15 +142,20 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	await expect(threadCard).toContainText('verified returning owner');
 	await expect(savedMessage).toHaveCount(0);
 	// A thread's members are those who joined it: leaving drops its row but
-	// keeps its card in General, and opening the card joins it again.
+	// keeps its card in General. The card opens the thread read-only, and
+	// joining makes it live again.
 	page.on('dialog', (dialog) => dialog.accept());
 	const row = page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
 	await openThread(page, threadId);
 	await page.getByTestId('leave-room').click();
 	await expect(row).toHaveCount(0);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('General');
 	await expect(threadCard).toBeVisible();
 	await openThread(page, threadId);
 	await expect(page.getByRole('heading', { level: 1 })).toContainText('verified returning owner');
+	await expect(page.getByTestId('join-room')).toBeVisible();
+	await expect(reply).toBeVisible();
+	await openThread(page, threadId, { join: true });
 	await expect(row).toHaveCount(1);
 });
 
@@ -225,7 +237,8 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 			expect(result.auth.result.you.user_id).toBeTruthy();
 			expect(result.passkey.error.code).toBe(-32001);
 			for (const operation of result.operations) expect(operation.error).toBeUndefined();
-			expect(result.history.result.entries).toBeInstanceOf(Array);
+			expect(result.history.result.messages).toBeInstanceOf(Array);
+			expect(result.history.result.entries).toBeUndefined();
 			expect(result.limited.error.code).toBe(-32002);
 			expect(result.limited.error.data.retry_after).toBeGreaterThanOrEqual(1);
 			expect(Number.isInteger(result.limited.error.data.retry_after)).toBe(true);
@@ -235,7 +248,7 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 	}
 });
 
-test('Worker leaves typing off, lists rooms, lets guests leave and rejoin General, colors guest avatars by user_id, and offers only connected users to mention', async ({ browser }) => {
+test('Worker leaves typing off, lists rooms, lets guests leave and rejoin General, colors guest avatars by user_id, and offers room members to mention', async ({ browser }) => {
 	const writer = await browser.newContext();
 	const reader = await browser.newContext();
 	try {
@@ -252,16 +265,19 @@ test('Worker leaves typing off, lists rooms, lets guests leave and rejoin Genera
 		await pageA.getByRole('textbox', { name: 'Message', exact: true }).pressSequentially('hello');
 		await pageB.waitForTimeout(500);
 		await expect(pageB.locator('.ap-roomhead-typing')).toHaveCount(0);
-		// Mentions offer the users connected now, the viewer and the reader, and
-		// none of the earlier tests' senders whose messages are still in the room.
-		// Guests keep the server's name, which ends in their user_id's last six characters.
+		// Mentions offer General's members: the viewer and the reader, and the
+		// registered members an earlier test may have left behind, but none of
+		// the earlier guests whose messages are still in the room: a guest's
+		// membership ends with its connection. Guests keep the server's name,
+		// which ends in their user_id's last six characters.
 		const readerName = new RegExp((await userIdOf(pageB)).slice(-6));
 		const field = composer(pageA);
 		const picker = pageA.getByTestId('mention-picker');
 		await pageA.clock.fastForward(16_000);
 		await field.fill('@');
 		await expect(picker.getByRole('option', { name: readerName })).toBeVisible();
-		await expect(picker.getByRole('option')).toHaveCount(2);
+		const members = await picker.getByRole('option').count();
+		expect(members).toBeGreaterThanOrEqual(2);
 		await field.fill('');
 		await expect(picker).toHaveCount(0);
 		// room_list: a new guest has joined General, the demo's only top-level
@@ -289,7 +305,7 @@ test('Worker leaves typing off, lists rooms, lets guests leave and rejoin Genera
 		await pageA.clock.fastForward(16_000);
 		await field.fill('@');
 		await expect(picker.getByRole('option', { name: readerName })).toHaveCount(0);
-		await expect(picker.getByRole('option')).toHaveCount(1);
+		await expect(picker.getByRole('option')).toHaveCount(members - 1);
 	} finally {
 		await Promise.all([writer.close(), reader.close()]);
 	}

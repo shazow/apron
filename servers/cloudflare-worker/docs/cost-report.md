@@ -105,60 +105,80 @@ against its 280/280 reservation; the record still fit one history response.
 The per-message cap is what bounds this move: without it, the re-logged set
 count would be limited only by posting quotas.
 
-## Protocol v5 operations
+## Protocol v6 operations
 
-Measured on 2026-09-25 with the same operation matrix after the protocol v5
-changes (schema 3, which stores each registered identity's joined rooms). These
-figures include the credit-back and the 96-write floor described above, so
-they are the current ones; the operations not listed here did not change.
+Measured on 2026-09-26 with the same operation matrix after the protocol v6
+changes (schema 4: membership records in the log, and a `memberships` table of
+registered users' rooms, keyed by room with an index by user, which replaces
+schema 3's per-identity room list). These figures include the credit-back and
+the 96-write floor described above, so they are the current ones; the
+operations not listed here did not change.
 
 | Operation | Observed reads | Observed writes | Reserved reads | Reserved writes |
 | --- | ---: | ---: | ---: | ---: |
-| Identity registration (prunes its starting rooms) | 26 | 24 | 237 | 72 |
+| Identity registration (starts in `general`, logs that membership) | 29 | 33 | 338 | 880 |
+| Identity registration starting in 100 rooms | 228 | 825 | 338 | 880 |
+| Identity lookup (with the user's rooms) | 8 | 2 | 434 | 8 |
 | Message create with request ID | 33 | 37 | 280 | 120 |
-| Empty new message (not logged or charged) | 4 | 2 | 16 | 8 |
-| Thread room create by a registered user (stores the membership) | 33 | 28 | 280 | 120 |
+| Thread room create by a registered user (stores and logs the membership) | 31 | 35 | 280 | 120 |
 | Thread room save | 21 | 19 | 280 | 120 |
-| Registered room leave | 18 | 14 | 173 | 72 |
-| Registered room join | 15 | 9 | 173 | 72 |
-| Registered room join at the 100-thread ceiling | 126 | 24 | 173 | 72 |
-| History page with `users` for its registered authors | 12 | 2 | 264 | 40 |
+| Registered room leave (logs the membership) | 24 | 20 | 482 | 72 |
+| Registered room join (logs the membership) | 23 | 17 | 482 | 72 |
+| Registered room join at the 100-thread ceiling | 333 | 32 | 482 | 72 |
+| History page (no `users`) | 12 | 2 | 264 | 40 |
 | Room listing (representative matrix) | 8 | 2 | 444 | 8 |
+| Room members, `general` and one thread | 8 | 2 | 424 | 8 |
+| Room members, 101 rooms with 100 registered members each | 20,203 | 2 | 20,620 | 8 |
+| Cleanup (matrix, one day later) | 128 | 51 | 1,070 | 1,058 |
 
-- Rooms are no longer announced at authentication. The client's first
-  `only_joined` `room_list` after it takes the same room-listing reservation
-  the announcements did, and is exempt from the listing throttle, so a
-  reconnect costs what it did. Listing unjoined top-level rooms while joined to
-  `general` needs no SQL.
-- A guest's joins and leaves live in its connection attachment and write
-  nothing; a join reads the room record (24/8). A registered user's rooms are
-  stored with the identity: each change is one identity-row update, reserved as
-  64 reads plus the capped rooms table (101 rows, read to prune rooms that no
-  longer exist) and 64 writes, and it counts as a post. A join or leave that
-  changes nothing writes nothing.
-- Registration prunes the rooms the new identity starts with against the same
-  capped table, which is why its read reservation grew by 101 rows.
-- History pages look up the current names of at most 50 registered authors and
-  reactors with one primary-key lookup each (`users`); guests cannot rename,
-  so their `from` is already current.
-- `@private` throttle notices and `/help` replies carry no `log_id`, so they need
-  no SQL (the v4 `@server` notice reserved 12/12 to advance the log sequence).
+- A registered user's join or leave is still one reservation that counts as a
+  post; it now also appends one membership record and advances the room's
+  head, about 8 more writes than the identity-row update it replaces, within
+  the same 64-write floor. It no longer prunes against the rooms table; the
+  read floor instead covers the user's rooms, read by the user index and
+  joined to `rooms` (`8 + 2 × (101 + 100)` rows for live rooms and removed
+  rooms awaiting purge). A join or leave that changes nothing writes nothing.
+- A registration logs a membership in each starting room (at most the 101
+  rooms), so its write floor is `64 + 8 × 101`. Registrations are capped at
+  100 a day; the credit-back returns the unused part.
+- A guest's joins and leaves live in its connection and are not logged; a
+  join reads the room record (24/8) and its members (below).
+- `members` (`room_list` with `members: true`, and `room_update` `joined`)
+  read each listed room's registered members by primary-key range with one
+  identity lookup each, at most `roomListMembers` (100) per room: the
+  reservation is `8 + rooms × (4 + 2 × 100)` reads. Connected members come from
+  connection attachments. A user in `general` and a few threads reads about
+  two rows per registered member of those rooms; the worst case, a listing of
+  all 101 rooms each at the cap, measured 20,203 reads, which the 2,500,000
+  foreground reads a day allow about 120 times. Listings without `members`
+  cost what they did.
+- History pages no longer look up `users`, and membership records are read
+  from the same room range as every other record.
+- Cleanup purges a removed thread's membership rows in the same bounded
+  batch, after its other deletions; its due check reserves 14 reads (seven
+  probes, one of them the purge list). The full-batch test now also purges one
+  membership per removed room within the 1,032/1,032 batch reservation.
+- `room_list` ignores `latest_log_id`, so a reconnect's listing is always the
+  full joined listing it was under protocol v5.
+- `@private` throttle notices and `/help` replies carry no `log_id`, so they
+  need no SQL.
 
 For the three-day traffic sample, the operation rows were:
 
 | Operation | Observed reads/writes | Reserved reads/writes |
 | --- | ---: | ---: |
-| Day 0 create | 32 / 35 | 288 / 288 |
-| Day 1 create | 25 / 21 | 296 / 296 |
-| Day 2 edit of older message | 27 / 20 | 296 / 296 |
-| Day 2 create | 19 / 20 | 280 / 280 |
-| Cleanup | 56 / 16 | 1,068 / 1,058 |
-| History after cleanup | 7 / 1 | 264 / 40 |
+| Day 0 create | 34 / 37 | 288 / 128 |
+| Day 1 create | 27 / 23 | 296 / 136 |
+| Day 2 edit of older message | 29 / 22 | 296 / 296 |
+| Day 2 create | 21 / 22 | 280 / 120 |
+| Cleanup | 61 / 18 | 1,070 / 1,058 |
+| History after cleanup | 8 / 2 | 264 / 40 |
 
-The final counters for that sample were 202 observed reads and 130 observed
-writes, against 2,516 reserved reads and 2,266 reserved writes. The native
-SQLite file reported `databaseSize = 135,168` bytes. These values are a
-small schema/data sample and are not a per-message capacity estimate.
+The final counters for that sample were 217 observed reads and 142 observed
+writes, against 2,518 reserved reads and 1,786 reserved writes. The native
+SQLite file reported `databaseSize = 147,456` bytes (135,168 under schema 3;
+the new table and index add pages). These values are a small schema/data
+sample and are not a per-message capacity estimate.
 
 ## Frame blocks, activity, and throttle notices
 
@@ -185,8 +205,10 @@ connection and 120 per IP a minute) bound a single sender.
 
 A throttled sender's `@private` notice is sent to that connection only, at
 most once per user per minute, and needs no SQL. `room_list` reuses the
-room-listing reservation (444 reads, 8 writes) and adds no writes; its members
-come from connection attachments.
+room-listing reservation (444 reads, 8 writes) and adds no writes; with
+`members: true` it also reads each listed room's registered members (see
+Protocol v6 operations), and its connected members come from connection
+attachments.
 
 The liveness ping (`{"method":"ping"}` every `server.ping` = 45 seconds, from
 clients that support it) is answered by `setWebSocketAutoResponse`: it never
@@ -289,6 +311,13 @@ dedup expiry:
   SEARCH accepted_requests USING INDEX accepted_requests_expiry_idx (expires_ms<?)
 limiter expiry:
   SEARCH principal_limits USING INDEX principal_limits_updated_idx (updated_ms<?)
+room members:
+  SEARCH m USING COVERING INDEX sqlite_autoindex_memberships_1 (room_id=?)
+  SEARCH i USING INDEX sqlite_autoindex_identities_1 (user_id=?) LEFT-JOIN
+a user's rooms:
+  SEARCH m USING INDEX memberships_user_idx (user_id=?)
+  SEARCH r USING INDEX sqlite_autoindex_rooms_1 (room_id=?)
+  USE TEMP B-TREE FOR ORDER BY
 ```
 
 History reads one contiguous primary-key range of one room's log; a move is
@@ -297,9 +326,10 @@ needed. The cleanup source selection explicitly uses `records_retention_idx`
 for the strict commit-time cutoff, then `records_log_idx` for the bounded
 physical delete. The move's reaction read and the room listing sort at most
 the capped per-message reaction sets and the capped room table respectively;
-the thread-room expiry check in cleanup, and the pruning of a registered
-identity's stored rooms, scan that same capped table. History `users` look up
-identities by primary key.
+the thread-room expiry check in cleanup scans that same capped table. Room
+members are one primary-key range per room, already in `user_id` order, with a
+primary-key identity lookup per member; a user's rooms are one index range,
+sorted after joining the capped rooms table.
 
 ## Schema reset
 

@@ -2,6 +2,11 @@ import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { RETENTION_MS, Store, StoreError, type StoreMutationInput } from "../src/store";
 
+/** A history page's messages; the array is omitted when empty (§4.1). */
+function messagesOf(page: { messages?: Array<{ log_id: string; message_id: string; room_id?: string; body?: Record<string, unknown> & { text?: string } }> }) {
+	return page.messages ?? [];
+}
+
 const DAY_MS = 86_400_000;
 
 type TestClock = {
@@ -239,7 +244,7 @@ it("publishes a floor before a failed physical delete and resumes after restart"
 		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM records").count)).toBe(2);
 		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM message_state").count)).toBe(1);
 		const hidden = store.history({ roomId: "general", after: 0n, limit: 50, now: clock.value });
-		expect(hidden.entries).toEqual([]);
+		expect(hidden.messages).toBeUndefined();
 		expect(hidden.latest_log_id).toBe(head);
 		expect(hidden.history_log_id).toBeNull();
 
@@ -256,6 +261,6 @@ it("publishes a floor before a failed physical delete and resumes after restart"
 		expect(last?.latest_id).toBe(head);
 		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM records").count)).toBe(0);
 		expect(Number(rowValue<{ count: number }>(state, "SELECT COUNT(*) AS count FROM message_state").count)).toBe(0);
-		expect(restarted.history({ roomId: "general", after: 0n, limit: 50, now: clock.value }).entries).toEqual([]);
+		expect(messagesOf(restarted.history({ roomId: "general", after: 0n, limit: 50, now: clock.value }))).toEqual([]);
 	});
 });

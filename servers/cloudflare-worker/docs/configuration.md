@@ -113,7 +113,7 @@ registered identities and limiter records 10,000 each, processed frames
 connection frame rate 120/minute, server-wide frames 1,000/minute (at least one
 IP's minute), per-type throttles 60/minute, frame blocks
 20 frames (and one block per anonymous connection must fit the IP's frame
-minute), `room_list` members 50, SQL writes 80,000/day, SQL reads 3,000,000/day,
+minute), `room_list` registered members 200 per room, SQL writes 80,000/day, SQL reads 3,000,000/day,
 database high-water 96 MiB and hard target 128 MiB, cleanup 100 records,
 thread rooms 100 with 2 KiB of client fields, reactions 64 users per message
 and 16 emoji per user, and credentials/challenges 16 KiB. Operators
@@ -164,7 +164,10 @@ The numeric rows are grouped by their unit and enforcement scope:
   `threadLimit`, `reactionUsersPerMessage`, `reactionEmojisPerUser`,
   `limiterRecordCap`, `frameLease`, `roomListMembers`,
   `activityMaxTypingSeconds`, `pingSeconds` (advertised as `server.ping`), `pingTimeoutSeconds`
-  (seconds; the timeout must be at least twice the interval).
+  (seconds; the timeout must be at least twice the interval). `roomListMembers`
+  is how many registered members each room lists in `members`, in `user_id`
+  order, besides every connected member; each costs two indexed reads per
+  listed room.
 - Rolling minute budgets: `historyRequestsPerUserMinute`,
   `historyRequestsPerIpMinute`, `anonymousPostsPerMinute`,
   `registeredPostsPerMinute`, `ipPostsPerMinute`, `globalPostsPerMinute`,
@@ -230,7 +233,7 @@ The numeric rows are grouped by their unit and enforcement scope:
 | `roomListRequestsPerUserMinute` | 6 |
 | `activityMaxTypingSeconds` | 30 |
 | `frameLease` | 10 |
-| `roomListMembers` | 20 |
+| `roomListMembers` | 100 |
 | `pingSeconds` | 45 |
 | `pingTimeoutSeconds` | 150 |
 | `sqlWritesPerDay` | 80000 |
