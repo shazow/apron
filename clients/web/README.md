@@ -64,6 +64,19 @@ session, never stored, and gone on reload. A server-wide `@server` notice names
 a room like any message; one for a room you haven't joined also shows as a
 notice where you are. Room IDs starting with `@` are ordinary rooms.
 
+Joins and leaves show in a room's timeline as the quietest system line, at
+each `membership` record's `log_id` among the messages: "Ada joined", with the
+time on hover. Records with nothing else between them (a message, a card, a
+notice, or a date divider) make one line, netted out per user, so someone who
+joins and leaves again (or leaves and comes back) in between shows on neither
+side, and a run that nets to nothing shows no line at all: "Ada and Bob joined
+· Carol left", and past three names "Ada, Bob, and 4 others joined", with
+everyone in the tooltip. A record joining more than 20 users at once is a
+baseline, not an event, and gets no line. Names render like any other user,
+with the `@user_id` when someone else shows under the same name. The lines
+never count as unread or mention you, and a message after one starts a new
+sender group.
+
 Mentions follow the `@user_id` convention ([PROTOCOL.md Appendix A.3](../../PROTOCOL.md#a3-mention-text)). Typing `@` in the
 composer opens the mention picker over the room's members (from the room's
 listing, kept current by the `membership` records of joins and leaves), or the
@@ -249,7 +262,8 @@ reactive state behind it lives in `src/lib/ui` as small classes — `SessionView
 (the last authenticated view, held through a reconnect), `MentionTracker`,
 `MessageSelection`, `FeedbackState`, `SidebarLayout` — beside pure, unit-tested
 helpers: `timeline.ts` groups threads under their rooms and builds the room and
-thread views, `reactions.ts` turns reaction summaries into chips, `emoji.ts`
+thread views, `membership.ts` nets runs of joins and leaves and words their
+lines, `reactions.ts` turns reaction summaries into chips, `emoji.ts`
 places and themes the emoji picker (`emoji-picker.svelte.ts` keeps the one open
 picker and loads emoji-mart), `draft.ts` edits the composer's draft, `messages.ts`
 and `time.ts` read messages, `connection.ts` words the connection state, and
@@ -258,7 +272,8 @@ and `time.ts` read messages, `connection.ts` words the connection state, and
 Protocol types, replay reduction, and the WebSocket session live under
 `src/lib/protocol` and speak Apron protocol v6. `reducer.ts` keeps one store
 of room records, message snapshots, per-user reaction sets, and memberships
-for every room;
+for every room, and beside the latest membership per user, each room's
+membership records in `log_id` order for the timeline's join and leave lines;
 each record replaces the stored one only when its `log_id` is greater, so
 overlapping history and live delivery cannot revert newer state, and a move
 snapshot re-homes a message into its new room. Embedded `reply_to` and
