@@ -40,9 +40,10 @@ after manifest or lockfile changes.
 For background processes, use `devenv up --detach` and stop them with
 `devenv down`.
 
-Without Nix, install Node.js 24 LTS, npm, Go 1.27+, Make, and a C compiler.
-Run `make install`, then `make dev-server` and `make dev-web` in separate
-terminals. All Make commands below work inside `devenv shell` or with those
+Without Nix, install Node.js 24 LTS, npm, Go 1.27+, Make, and a C compiler
+(and [Wrangler](https://developers.cloudflare.com/workers/wrangler/) for
+`make deploy-web`). Run `make install`, then `make dev-server` and
+`make dev-web` in separate terminals. All Make commands below work inside `devenv shell` or with those
 tools installed directly.
 
 Open `http://localhost:5173`. The development server proxies `/ws` to

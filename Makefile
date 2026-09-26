@@ -13,7 +13,7 @@ dev-server:
 
 deploy-web:
 	VITE_DEFAULT_SERVER_URL=wss://server.apron.chat/ npm --prefix clients/web run build
-	cd clients/web && npx wrangler deploy
+	cd clients/web && wrangler deploy
 
 check:
 	npm --prefix clients/web run check

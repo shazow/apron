@@ -18,8 +18,8 @@ npm run preview
 The default connection is same-origin `/ws` in a browser unless
 `VITE_DEFAULT_SERVER_URL` is set at build time. `make deploy-web` from the
 repository root builds with `wss://server.apron.chat/` and deploys the static
-frontend to `https://web.apron.chat` using `wrangler.toml`. The backend deploys
-separately, from
+frontend to `https://web.apron.chat` using `wrangler.toml` and the Wrangler on
+`PATH` (devenv provides it). The backend deploys separately, from
 [apron-chat/apron-server-cloudflare](https://github.com/apron-chat/apron-server-cloudflare).
 The apex `apron.chat` is reserved for docs.
 Local development and ordinary builds retain the same-origin default.
