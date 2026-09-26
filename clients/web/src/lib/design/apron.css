@@ -359,6 +359,11 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 .ap-msg-system-body .ap-msg-text { color: var(--ink); }
 .ap-msg-system-time { font-size: 11px; font-variant-numeric: tabular-nums; }
 .ap-msg-private { border: 1px dashed var(--line-strong); border-radius: var(--radius-md); }
+/* Join and leave lines — quieter still: smaller, tighter, and the time only on hover or focus */
+.ap-msg-member { margin-top: var(--space-1); padding-block: 0; font-size: 12px; line-height: 16px; }
+.ap-msg-member .ap-msg-system-time { opacity: 0; transition: opacity .15s; }
+.ap-msg-member:hover .ap-msg-system-time, .ap-msg-member:focus-within .ap-msg-system-time { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .ap-msg-member .ap-msg-system-time { transition: none; } }
 
 /* Embeds v4 — upload (pending / image / video / audio / file), stream, og card */
 .ap-embed-figure { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }

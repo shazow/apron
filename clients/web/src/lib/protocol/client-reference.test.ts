@@ -91,6 +91,13 @@ describe('ChatClient reference features', () => {
 		expect(snapshot.users.bob).toBeUndefined();
 		expect(snapshot.recordedUsers.bob).toEqual({ user_id: 'bob', name: 'Bob then' });
 		expect(snapshot.rooms[0].members?.map((member) => member.user_id)).toEqual(['bob']);
+		// The timeline keeps the record at its log_id for join and leave lines, and a live one after it.
+		expect(snapshot.rooms[0].timeline.memberships).toEqual([
+			{ log_id: '12', entries: [{ user: { user_id: 'bob', name: 'Bob then' }, joined: true }, { user: { user_id: 'carol' }, joined: false }] }
+		]);
+		socket.receive({ method: 'membership', params: { log_id: '14', room_id: 'general', members: [{ user: { user_id: 'bob' }, joined: false }] } });
+		expect(snapshot.rooms[0].timeline.memberships.map((record) => record.log_id)).toEqual(['12', '14']);
+		expect(snapshot.rooms[0].members).toEqual([]);
 	});
 
 	it('tracks read cursors forward only and advances your own with activity', async () => {

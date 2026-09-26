@@ -367,6 +367,51 @@ test.describe('chat protocol interoperability', () => {
 		}
 	});
 
+	test('shows who joined as a quiet line, and no line for a join and leave with nothing between', async ({ browser }) => {
+		const contexts = await Promise.all([browser.newContext(), browser.newContext(), browser.newContext(), browser.newContext()]);
+		const [watcher, joiner, churner, reader] = await Promise.all(contexts.map((context) => context.newPage()));
+		try {
+			await openChat(watcher);
+			const token = `members-${Date.now().toString(36)}`;
+			/** The join and leave lines right after a message, up to the next message. */
+			const linesAfter = (page: typeof watcher, messageId: string) =>
+				page.locator(`article[data-message-id="${messageId}"] + [data-testid="membership-line"]`);
+			await sendMessage(watcher, `${token}-before`);
+			const before = (await (await waitForMessage(watcher, `${token}-before`)).getAttribute('data-message-id'))!;
+
+			// A guest joins General as it signs in: the watcher sees a quiet line, not a message.
+			await openChat(joiner);
+			const joinerId = await userIdOf(joiner);
+			const joined = linesAfter(watcher, before);
+			await expect(joined.locator('.ap-msg-system-body')).toHaveText(`${joinerId} joined`);
+			await expect(joined.locator('time')).toHaveAttribute('title', /\d/);
+			await expect(joined.locator('.ap-avatar, button')).toHaveCount(0);
+			// The line renders its user as every row does: a rename shows on it.
+			const name = `Zed ${token}`;
+			await setDisplayName(joiner, name);
+			await expect(joined.locator('.ap-msg-system-body')).toHaveText(`${name} joined`);
+
+			// Another guest joins and leaves with no message between: the line it had goes away.
+			await sendMessage(watcher, `${token}-after`);
+			const after = (await (await waitForMessage(watcher, `${token}-after`)).getAttribute('data-message-id'))!;
+			await openChat(churner);
+			const churnerId = await userIdOf(churner);
+			await expect(linesAfter(watcher, after).locator('.ap-msg-system-body')).toHaveText(`${churnerId} joined`);
+			await contexts[2].close();
+			await expect(linesAfter(watcher, after)).toHaveCount(0);
+			// Messages on either side of the netted run still group.
+			await sendMessage(watcher, `${token}-grouped`);
+			await expect(await waitForMessage(watcher, `${token}-grouped`)).toHaveClass(/ap-msg-grouped/);
+
+			// A new reader gets the same lines from history.
+			await openChat(reader);
+			await expect(linesAfter(reader, before).locator('.ap-msg-system-body')).toHaveText(`${name} joined`);
+			await expect(linesAfter(reader, after)).toHaveCount(0);
+		} finally {
+			await Promise.all(contexts.map((context) => context.close()));
+		}
+	});
+
 	test('propagates edits and deletion, including the resulting history state', async ({ browser }) => {
 		const contextA = await browser.newContext();
 		const contextB = await browser.newContext();
