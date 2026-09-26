@@ -197,6 +197,9 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	await block.getByRole('button', { name: 'Copy', exact: true }).click();
 	await expect(block.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(token);
+	// The second block is instructions for an LLM, naming this server and the token.
+	await expect(notice.locator('pre').nth(1)).toContainText('Connect to ws://localhost:8788/ws');
+	await expect(notice.locator('pre').nth(1)).toContainText(`Auth using token scheme with this token: "${token}"`);
 	// A new bot joins General, which the room shows like any join.
 	await expect(page.getByTestId('membership-line').filter({ hasText: botName })).toBeVisible();
 
@@ -299,7 +302,7 @@ test('Worker keeps guests read-only, leaves typing off, lists rooms, lets guests
 		// Guests only read: the server says so in a private notice, and the
 		// composer gives way to a sign-in bar. The reader stays a guest.
 		await expect(pageB.getByText('This demo keeps roughly the last day of history; older messages may expire.')).toBeVisible();
-		await expect(pageB.getByTestId('notice').filter({ hasText: 'Guests can read along.' })).toHaveCount(1);
+		await expect(pageB.getByTestId('notice').filter({ hasText: 'Guests can read. Sign in with passkey to participate.' })).toHaveCount(1);
 		await expect(pageB.getByTestId('read-only-bar')).toContainText('Sign in to post, react, join rooms, and start threads.');
 		await expect(composer(pageB)).toHaveCount(0);
 		// The demo denies guest renames; the profile editor says so and keeps the old handle.

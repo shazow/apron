@@ -51,6 +51,8 @@ interface ConnectionAttachment {
 	userId?: string;
 	name?: string;
 	origin?: string;
+	/** The WebSocket URL this connection reached, for instructions that name the server (`/invite-bot`). */
+	endpoint?: string;
 	challenge?: ChallengeRecord;
 	authDeadline: number;
 	pendingFrames: number;
@@ -114,6 +116,8 @@ const BOT_TOKEN_PREFIX = "apron_bot_";
 const BOT_TOKEN_KEY_PREFIX = "bot-token:";
 /** Key prefix for each bot's current token key, so a new `/invite-bot` revokes the last token. */
 const BOT_KEY_PREFIX = "bot:";
+/** The protocol a bot's instructions point it at (`/invite-bot`). */
+const PROTOCOL_URL = "https://github.com/shazow/apron/blob/main/PROTOCOL.md";
 
 /**
  * A bearer session minted by a verified passkey login (protocol §4.9,
@@ -174,6 +178,16 @@ async function sha256Hex(token: string): Promise<string> {
 
 async function sessionKey(token: string): Promise<string> {
 	return SESSION_KEY_PREFIX + await sha256Hex(token);
+}
+
+/** Longest connection endpoint an attachment keeps. */
+const MAX_ENDPOINT_CHARS = 256;
+
+/** The WebSocket URL a request reached, `ws(s)://host/path` without its query; undefined when too long. */
+function endpointOf(request: Request): string | undefined {
+	const url = new URL(request.url);
+	const endpoint = `${url.protocol === "http:" ? "ws:" : "wss:"}//${url.host}${url.pathname}`;
+	return endpoint.length <= MAX_ENDPOINT_CHARS ? endpoint : undefined;
 }
 
 function isBot(userId: string | undefined): boolean {
@@ -285,6 +299,7 @@ function connectionAttachment(socket: WebSocketConnection): ConnectionAttachment
 			...(typeof attachment.userId === "string" ? { userId: attachment.userId } : {}),
 			...(typeof attachment.name === "string" ? { name: attachment.name } : {}),
 			...(typeof attachment.origin === "string" ? { origin: attachment.origin } : {}),
+			...(typeof attachment.endpoint === "string" && attachment.endpoint.length <= MAX_ENDPOINT_CHARS ? { endpoint: attachment.endpoint } : {}),
 			...(challenge ? { challenge } : {}),
 			...(Array.isArray(attachment.rooms) ? {
 				rooms: attachment.rooms.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 64).slice(0, MAX_ATTACHED_ROOMS),
@@ -608,12 +623,14 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		const pair = new WebSocketPair();
 		const server = pair[1] as WebSocketConnection;
+		const endpoint = endpointOf(request);
 		const attachment: ConnectionAttachment = {
 			v: 1,
 			connId: randomId("c"),
 			ipKey,
 			tier: "pending",
 			...(origin ? { origin } : {}),
+			...(endpoint ? { endpoint } : {}),
 			authDeadline: nowMs() + this.config.limits.unauthenticatedTimeoutSeconds * 1_000,
 			pendingFrames: 0,
 			pendingBytes: 0,
@@ -797,8 +814,8 @@ export class ApronDemoServer extends DurableObject<Env> {
 	private readOnlyWelcome(origin: string | null): Record<string, unknown> {
 		const passkeys = origin !== null && this.config.rpOrigins.includes(origin);
 		const text = passkeys
-			? "Guests can read along. **Sign in with a passkey** to post, react, join rooms, and start threads."
-			: "Guests can read along. Posting takes a passkey on the demo's own site, or a bot token from `/invite-bot` there.";
+			? "Guests can read. *Sign in with passkey* to participate."
+			: "Guests can read. *Sign in with passkey* on the demo's own site, or use a bot token from `/invite-bot` there, to participate.";
 		return { method: "message", params: { from: { ...PRIVATE_IDENTITY }, body: { text, format: "markdown" } } };
 	}
 
@@ -1789,7 +1806,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 		}
 		// Those who share a room with the bot see its new name (§3.3).
 		if (bot.renamed) this.announceUser(socket, { user_id: botId, name }, this.store.getIdentity(botId)?.rooms ?? []);
-		const sample = JSON.stringify({ method: "auth", id: "auth", params: { scheme: "token", token } });
+		const endpoint = connectionAttachment(socket)?.endpoint ?? attachment.endpoint ?? "this server's WebSocket URL";
 		this.send(socket, {
 			method: "message",
 			params: {
@@ -1799,8 +1816,13 @@ export class ApronDemoServer extends DurableObject<Env> {
 					text: [
 						`Your bot signs in as **${name}** (\`${botId}\`) with this token. It replaces any earlier one, and anyone who has it can post as your bot, so keep it secret.`,
 						"```\n" + token + "\n```",
-						"The bot connects to this server's WebSocket and sends:",
-						"```json\n" + sample + "\n```",
+						"If you're using an LLM, you can give it these instructions:",
+						"```\n" + [
+							`Read ${PROTOCOL_URL}`,
+							`Connect to ${endpoint}`,
+							`Auth using token scheme with this token: "${token}"`,
+							"Say hello when you join and listen for messages",
+						].join("\n") + "\n```",
 					].join("\n\n"),
 					format: "markdown",
 				},

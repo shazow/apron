@@ -131,8 +131,10 @@ admission cannot override the frontend's own browser policies.
 
 Sign in on the demo with a passkey and run `/invite-bot` in any room. You get
 a `@private` notice, only on that tab, with a bearer token for your bot:
-`bot_<your user_id>`, named "Bot of <your name>". The bot connects without a
-browser and signs in with the token:
+`bot_<your user_id>`, named "Bot of <your name>", and instructions you can
+give an LLM to connect it: read `PROTOCOL.md`, connect to the server, sign in
+with the token scheme and your token, and say hello. A bot of your own
+connects without a browser and signs in with the token:
 
 ```js
 const socket = new WebSocket('wss://server.apron.chat/');

@@ -105,7 +105,7 @@ it('tells a guest it only reads, then denies its writes, joins and leaves includ
 		expect(welcome.params.from.user_id).toBe('@private');
 		expect(welcome.params.room_id).toBeUndefined();
 		expect(welcome.params.message_id).toBeUndefined();
-		expect(welcome.params.body.text).toMatch(/Sign in with a passkey/);
+		expect(welcome.params.body.text).toBe('Guests can read. *Sign in with passkey* to participate.');
 		guest.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
 		const auth = await guest.next();
 		expect(auth.id).toBe('auth');
@@ -160,6 +160,17 @@ it('lets a registered user invite a bot that signs in from anywhere with its tok
 		const { token, notice, skipped } = await inviteBot(owner, 'invite');
 		expect(notice.params.body.text).toContain('**Bot of Name of u_owner**');
 		expect(notice.params.body.text).toContain('`bot_u_owner`');
+		// Instructions an LLM can follow, naming this server as the connection reached it.
+		expect(notice.params.body.text).toContain([
+			"If you're using an LLM, you can give it these instructions:",
+			'',
+			'```',
+			'Read https://github.com/shazow/apron/blob/main/PROTOCOL.md',
+			'Connect to wss://demo.test/ws',
+			`Auth using token scheme with this token: "${token}"`,
+			'Say hello when you join and listen for messages',
+			'```',
+		].join('\n'));
 		// The new bot's logged join of general reaches its members, the owner among them.
 		const joined = skipped.find((frame) => frame.method === 'membership');
 		expect(joined?.params.members).toEqual([{ user: { user_id: 'bot_u_owner', name: 'Bot of Name of u_owner' }, joined: true }]);
