@@ -708,7 +708,7 @@ export class ApronDemoServer extends DurableObject<Env> {
 			method: "server",
 			params: {
 				protocol: 6,
-				name: "apron-cloudflare-demo/5",
+				name: "apron-cloudflare-demo/6",
 				caps: ["history", "edit", "rooms", "reactions", "command", ...(this.config.activityEnabled ? ["activity"] : [])],
 				auth: origin !== null && this.config.rpOrigins.includes(origin) ? ["webauthn", "token", "guest"] : ["guest"],
 				// Answered by the runtime without waking the object (see PING_REQUEST).

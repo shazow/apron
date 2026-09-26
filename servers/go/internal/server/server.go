@@ -476,7 +476,7 @@ func (s *Server) serverParams() map[string]any {
 	}
 	params := map[string]any{
 		"protocol": 6,
-		"name":     "apron-go/0.7",
+		"name":     "apron-go/6",
 		"caps":     []string{"history", "edit", "rooms", "reactions", "activity", "embed:upload", "embed:stream", "command"},
 		"auth":     authSchemes,
 		"ping":     max(1, int(s.config.PingInterval/time.Second)),

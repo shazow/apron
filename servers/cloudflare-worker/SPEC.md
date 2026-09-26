@@ -88,7 +88,7 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":6,"name":"apron-cloudflare-demo/5","caps":["history","edit","rooms","reactions","command"],"auth":["webauthn","token","guest"],"ping":45,"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"room_list_members":100,"read_cursors":false}}}}
+{"method":"server","params":{"protocol":6,"name":"apron-cloudflare-demo/6","caps":["history","edit","rooms","reactions","command"],"auth":["webauthn","token","guest"],"ping":45,"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"room_list_members":100,"read_cursors":false}}}}
 ```
 
 `ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol [§4.9](../../PROTOCOL.md#49-webauthn-authentication), without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
