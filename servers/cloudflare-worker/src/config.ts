@@ -130,8 +130,11 @@ function validateLimits(limits: Limits): void {
 	if (limits.frameLease > budget.MAX_FRAME_LEASE || limits.frameLease > limits.framesPerConnectionMinute || limits.frameLease * limits.anonymousConnectionsPerIp > limits.framesPerIpMinute) {
 		fail("frame blocks exceed the per-connection or per-IP frame policy");
 	}
-	if (limits.roomListMembers > budget.MAX_ROOM_LIST_MEMBERS || limits.roomListMembers > limits.openConnections) {
+	if (limits.roomListMembers > budget.MAX_ROOM_LIST_MEMBERS) {
 		fail("room_list members exceed the calibrated bound");
+	}
+	if (limits.guestNumberBlock > budget.MAX_GUEST_NUMBER_BLOCK) {
+		fail("guest number blocks exceed the calibrated bound");
 	}
 	if (limits.pingTimeoutSeconds < 2 * limits.pingSeconds) {
 		fail("the ping timeout must outlast a missed ping");

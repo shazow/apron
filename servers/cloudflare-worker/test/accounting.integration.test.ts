@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { Store, StoreError, defaultStoreConfig, type StoreConfig } from '../src/store';
 import { DEFAULT_LIMITS } from '../src/budget';
 
+/** A history page's messages; the array is omitted when empty (§4.1). */
+function messagesOf(page: { messages?: Array<{ log_id: string; message_id: string; room_id?: string; body?: Record<string, unknown> & { text?: string } }> }) {
+	return page.messages ?? [];
+}
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -146,14 +151,14 @@ describe('measured storage accounting', () => {
 			const size = store.databaseSize();
 
 			const cleanupResult = cleanup as { history_floor: string; deleted_records: number; deleted_messages: number };
-			const history = page as { entries: Array<{ log_id: string; message_id: string }>; latest_log_id: string; history_log_id: string | null };
+			const history = page as { messages?: Array<{ log_id: string; message_id: string }>; latest_log_id: string; history_log_id: string | null };
 			// The seeded general room record, the day-0 create, and the day-1
 			// create expire; the day-0 message survives through its day-2 edit.
 			expect(cleanupResult.deleted_records).toBe(3);
 			expect(cleanupResult.deleted_messages).toBe(1);
-			expect(history.entries).toHaveLength(2);
-			expect(history.entries.some((entry) => entry.message_id === firstMessageId)).toBe(true);
-			expect(history.entries.every((entry) => BigInt(entry.log_id) >= BigInt(history.history_log_id!))).toBe(true);
+			expect(messagesOf(history)).toHaveLength(2);
+			expect(messagesOf(history).some((entry) => entry.message_id === firstMessageId)).toBe(true);
+			expect(messagesOf(history).every((entry) => BigInt(entry.log_id) >= BigInt(history.history_log_id!))).toBe(true);
 			expect(room.history_log_id).toBe(cleanupResult.history_floor);
 			expect(history.latest_log_id).toBe(room.latest_log_id);
 			expect(BigInt(room.latest_log_id)).toBeGreaterThanOrEqual(BigInt(room.history_log_id!));
@@ -161,7 +166,7 @@ describe('measured storage accounting', () => {
 			return {
 				base,
 				cleanup: cleanupResult,
-				history: { floor: history.history_log_id, entries: history.entries.map((entry) => ({ log_id: entry.log_id, message_id: entry.message_id })) },
+				history: { floor: history.history_log_id, entries: messagesOf(history).map((entry) => ({ log_id: entry.log_id, message_id: entry.message_id })) },
 				operationCosts,
 				budget,
 				observed,
@@ -362,13 +367,23 @@ describe('measured storage accounting', () => {
 			expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
 			expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
 
-			// A registered user's join reads the whole capped rooms table to prune
-			// rooms that no longer exist from the stored list.
-			store.registerIdentity({
+			// A registration that starts in 100 rooms (a guest's, carried over)
+			// stores and logs a membership in each.
+			const beforeRegistrationBudget = store.budget();
+			const beforeRegistration = store.storageAccounting();
+			const registered = store.registerIdentity({
 				userId: 'lister', name: 'Lister', userHandle: 'lister-handle', now: clock.now(), ipKey: 'lister-ip',
 				credential: { credentialId: 'lister-credential', userId: 'lister', publicKey: 'key', counter: 0 },
 				rooms: ['general', ...Array.from({ length: 99 }, (_, index) => `thread-${index + 1}`), 'expired-thread'],
 			});
+			const afterRegistration = store.storageAccounting();
+			const registration = {
+				observed: diffAccounting(afterRegistration, beforeRegistration),
+				reserved: reservedBetween(store.budget(), beforeRegistrationBudget, afterRegistration, beforeRegistration),
+			};
+			expect(registered.broadcasts).toHaveLength(100);
+			expect(registration.observed.reads).toBeLessThanOrEqual(registration.reserved.reads);
+			expect(registration.observed.writes).toBeLessThanOrEqual(registration.reserved.writes);
 			const beforeJoinBudget = store.budget();
 			const beforeJoin = store.storageAccounting();
 			const joined = store.changeMembership({ userId: 'lister', ipKey: 'lister-ip', roomId: 'thread-100', join: true, now: clock.now() });
@@ -378,7 +393,24 @@ describe('measured storage accounting', () => {
 			expect(joined.rooms).not.toContain('expired-thread');
 			expect(join.observed.reads).toBeLessThanOrEqual(join.reserved.reads);
 			expect(join.observed.writes).toBeLessThanOrEqual(join.reserved.writes);
-			return { rooms: rooms.length, observed, reserved, join };
+
+			// Members of every room at the listing cap: 100 registered members in
+			// each of the 101 rooms, read by primary-key range with a name lookup each.
+			state.storage.transactionSync(() => {
+				for (let index = 1; index <= 100; index += 1) {
+					state.storage.sql.exec("INSERT INTO identities (user_id, user_handle, name, tier, created_ms, updated_ms) VALUES (?, ?, ?, 'registered', 0, 0)", `member-${index}`, `member-handle-${index}`, `Member ${index}`);
+					for (const room of rooms) state.storage.sql.exec('INSERT OR IGNORE INTO memberships (room_id, user_id) VALUES (?, ?)', room.room_id, `member-${index}`);
+				}
+			});
+			const beforeMembersBudget = store.budget();
+			const beforeMembers = store.storageAccounting();
+			const members = store.roomMembers(rooms.map((room) => room.room_id), DEFAULT_LIMITS.roomListMembers, clock.now());
+			const afterMembers = store.storageAccounting();
+			const memberListing = { observed: diffAccounting(afterMembers, beforeMembers), reserved: reservedBetween(store.budget(), beforeMembersBudget, afterMembers, beforeMembers) };
+			expect([...members.values()].every((list) => list.length === DEFAULT_LIMITS.roomListMembers)).toBe(true);
+			expect(memberListing.observed.reads).toBeLessThanOrEqual(memberListing.reserved.reads);
+			expect(memberListing.observed.writes).toBeLessThanOrEqual(memberListing.reserved.writes);
+			return { rooms: rooms.length, observed, reserved, registration, join, memberListing };
 		});
 		console.info('accounting-room-list', JSON.stringify(result));
 	});
@@ -416,16 +448,16 @@ describe('measured storage accounting', () => {
 			const afterBudget = store.budget();
 			const observed = diffAccounting(afterAccounting, beforeAccounting);
 			const reserved = reservedBetween(afterBudget, beforeBudget, afterAccounting, beforeAccounting);
-			expect((page.rooms?.length ?? 0) + page.entries.length + (page.reactions?.length ?? 0)).toBe(50);
+			expect((page.rooms?.length ?? 0) + messagesOf(page).length + (page.reactions?.length ?? 0)).toBe(50);
 			expect(page.rooms).toHaveLength(17);
 			expect(page.reactions).toHaveLength(17);
-			expect(page.entries).toHaveLength(16);
+			expect(messagesOf(page)).toHaveLength(16);
 			expect(page.more).toBe(true);
-			expect(page.first_id).toBe('1');
-			expect(page.last_id).toBe('50');
+			expect(page.first_log_id).toBe('1');
+			expect(page.last_log_id).toBe('50');
 			expect(observed.reads).toBeLessThanOrEqual(reserved.reads);
 			expect(observed.writes).toBeLessThanOrEqual(reserved.writes);
-			return { observed, reserved, first: page.first_id, last: page.last_id, more: page.more };
+			return { observed, reserved, first: page.first_log_id, last: page.last_log_id, more: page.more };
 		});
 		console.info('accounting-history-cardinality', JSON.stringify(result));
 	});
@@ -567,7 +599,7 @@ describe('measured storage accounting', () => {
 				"SELECT day, posts_day FROM principal_limits WHERE scope = 'post' AND principal_key = ? LIMIT 1",
 				'anonymous:audit-ip',
 			).one();
-			expect(history.entries).toHaveLength(18);
+			expect(messagesOf(history)).toHaveLength(18);
 			expect(limiter.posts_day).toBe(13);
 			expect(limiter.day).toBe(new Date(clock.now()).toISOString().slice(0, 10));
 			for (const operation of costs) {
@@ -576,7 +608,7 @@ describe('measured storage accounting', () => {
 			return {
 				midnight,
 				snapshotBytes,
-				acceptedTransitions: history.entries.length,
+				acceptedTransitions: messagesOf(history).length,
 				postDay: limiter,
 				maximumObservedReads: Math.max(...costs.map((operation) => (operation.observed as { reads: number }).reads)),
 				maximumObservedWrites: Math.max(...costs.map((operation) => (operation.observed as { writes: number }).writes)),
@@ -687,6 +719,7 @@ describe('measured storage accounting', () => {
 			measure('history quota reservation', () => store.reserveHistory({ userId: 'matrix-history-user', ipKey: 'matrix-history-ip', now: clock.now() }));
 			measure('frame reservation', () => store.reserveFrames({ ipKey: 'matrix-frame-ip', now: clock.now(), count: 1 }));
 			measure('frame block', () => store.reserveFrames({ ipKey: 'matrix-block-ip', now: clock.now(), count: DEFAULT_LIMITS.frameLease }));
+			measure('guest number block', () => store.reserveGuestNumbers(DEFAULT_LIMITS.guestNumberBlock, clock.now()));
 			measure('connection admission reservation', () => store.reserveConnection({ ipKey: 'matrix-connection-ip', tier: 'pending', now: clock.now() }));
 			measure('identity registration', () => store.registerIdentity({
 				userId: 'matrix-user',
@@ -743,13 +776,14 @@ describe('measured storage accounting', () => {
 			measure('room state announcement', () => store.getRoomState());
 			measure('room join lookup', () => store.getRoom(thread.result.room_id));
 			measure('room listing', () => store.listRooms(clock.now()));
+			measure('room members (general and one thread)', () => store.roomMembers(['general', thread.result.room_id], DEFAULT_LIMITS.roomListMembers, clock.now()));
 			measure('admission snapshot', () => store.admission());
 			clock.set(clock.now() + DAY + HOUR + 1);
 			measure('cleanup', () => store.runCleanup(clock.now()));
 			await measureAsync('alarm scheduling', () => store.scheduleAlarm(clock.now() + 1_000, clock.now()));
 
 			expect((create as { result: { message_id?: string } }).result.message_id).toBeTruthy();
-			expect(costs).toHaveLength(28);
+			expect(costs).toHaveLength(30);
 			return { costs };
 		});
 		console.info('accounting-operation-matrix', JSON.stringify(result));
@@ -788,6 +822,13 @@ describe('measured storage accounting', () => {
 					ORDER BY r.created_log_id ASC LIMIT ?`, 101),
 				dedupExpiry: explain(sql, 'EXPLAIN QUERY PLAN SELECT user_id, request_id FROM accepted_requests WHERE expires_ms <= ? ORDER BY expires_ms ASC LIMIT ?', clock.now(), 100),
 				limiterExpiry: explain(sql, 'EXPLAIN QUERY PLAN SELECT scope, principal_key FROM principal_limits WHERE updated_ms < ? ORDER BY updated_ms ASC LIMIT ?', clock.now() - DAY, 100),
+				roomMembers: explain(sql, `EXPLAIN QUERY PLAN
+					SELECT m.user_id, i.name FROM memberships m LEFT JOIN identities i ON i.user_id = m.user_id
+					WHERE m.room_id = ? ORDER BY m.user_id LIMIT ?`, 'general', 100),
+				userRooms: explain(sql, `EXPLAIN QUERY PLAN
+					SELECT m.room_id FROM memberships m INDEXED BY memberships_user_idx
+					JOIN rooms r ON r.room_id = m.room_id
+					WHERE m.user_id = ? ORDER BY r.created_log_id LIMIT ?`, 'plan-user', 101),
 			};
 			return { plans, databaseSize: store.databaseSize() };
 		});
@@ -800,5 +841,8 @@ describe('measured storage accounting', () => {
 		expect(result.plans.moveReactions.some((detail) => /SEARCH reaction_state USING/i.test(detail))).toBe(true);
 		expect(result.plans.roomListing.some((detail) => /SEARCH m USING/i.test(detail))).toBe(true);
 		expect(result.plans.dedupExpiry.some((detail) => /accepted_requests.*expiry|expiry.*accepted_requests/i.test(detail))).toBe(true);
+		expect(result.plans.roomMembers.some((detail) => /SEARCH m USING .*autoindex_memberships/i.test(detail))).toBe(true);
+		expect(result.plans.roomMembers.some((detail) => /TEMP B-TREE/i.test(detail))).toBe(false);
+		expect(result.plans.userRooms.some((detail) => /memberships_user_idx/i.test(detail))).toBe(true);
 	});
 });

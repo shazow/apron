@@ -124,6 +124,14 @@ describe('configuration policy boundaries', () => {
 		expect(() => config({}, { frameLease: 20, framesPerIpMinute: 39 })).toThrow(ConfigError);
 	});
 
+	it('bounds the guest-number block', () => {
+		expect(config().limits.guestNumberBlock).toBe(10);
+		expect(config({ LIMIT_GUEST_NUMBER_BLOCK: '1000' }).limits.guestNumberBlock).toBe(1_000);
+		expect(config({}, { guestNumberBlock: 10_000 }).limits.guestNumberBlock).toBe(10_000);
+		expect(() => config({}, { guestNumberBlock: 10_001 })).toThrow(ConfigError);
+		expect(() => config({ LIMIT_GUEST_NUMBER_BLOCK: '0' })).toThrow(ConfigError);
+	});
+
 	it('allows arbitrary guest origins with an explicit passkey allowlist', () => {
 		const open = config({ ALLOWED_ORIGINS: '*', RP_ORIGINS: 'https://web.apron.chat', RP_ID: 'apron.chat' });
 		for (const origin of ['http://localhost:1234', 'http://127.0.0.1:9876', 'http://[::1]:3000', 'http://192.168.1.2:8080', 'https://custom.example', 'null', null]) {

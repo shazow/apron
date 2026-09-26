@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { ChatClient, DEFAULT_ROOM_ID, type RoomSnapshot } from '../../clients/web/src/lib/protocol/client';
+import { ChatClient, DEFAULT_ROOM_ID, userIn, type RoomSnapshot } from '../../clients/web/src/lib/protocol/client';
 
 type ObjectValue = Record<string, unknown>;
 type Step =
@@ -114,8 +114,9 @@ function projectRoom(room: RoomSnapshot): ObjectValue {
 
 function logicalState(client: ChatClient, operations: Record<string, string>): ObjectValue {
 	const snapshot = client.snapshot();
-	// The default room before its `room_id` is known is the client's own placeholder, not a room.
-	const rooms = snapshot.rooms.filter((room) => room.id !== DEFAULT_ROOM_ID);
+	// The default room before its `room_id` is known is the client's own placeholder, not a room;
+	// a room open without joining it is not visible either.
+	const rooms = snapshot.rooms.filter((room) => room.id !== DEFAULT_ROOM_ID && room.joined);
 	return JSON.parse(JSON.stringify({
 		you: snapshot.you ?? null,
 		caps: [...(snapshot.server?.caps ?? [])].sort(byString),
@@ -124,6 +125,9 @@ function logicalState(client: ChatClient, operations: Record<string, string>): O
 			.map((entry) => ({ room_id: entry.room, from: entry.from }))
 			.sort((left, right) => byString(left.room_id, right.room_id) || byString(left.from.user_id, right.from.user_id)),
 		users: Object.fromEntries(Object.keys(snapshot.users).sort(byString).map((id) => [id, snapshot.users[id]])),
+		members: Object.fromEntries(rooms.filter((room) => room.members !== undefined).sort((left, right) => byString(left.id, right.id))
+			.map((room) => [room.id, room.members!.map((member) => member.user_id).sort(byString)])),
+		senders: Object.fromEntries(rooms.flatMap((room) => room.timeline.order.map((id) => [id, userIn(snapshot, room.timeline.events[id].from)]))),
 		notices: snapshot.rooms.flatMap((room) => room.notices)
 			.sort((left, right) => left.at - right.at || byString(left.key, right.key))
 			.map(({ room_id, from, body }) => ({ room_id, from, ...(body ? { body } : {}) })),
@@ -162,7 +166,7 @@ for (const fixture of fixtures) {
 	for (const variant of fixture.variants) {
 		for (const envelope of ['minimal', 'jsonrpc'] as const) {
 			test(`${fixture.name} / ${variant.name} / ${envelope}`, async () => {
-				expect(fixture.format).toBe(3);
+				expect(fixture.format).toBe(4);
 				expect(fixture.kind).toBe('session');
 				const client = new ChatClient(peerUrl.replace('http:', 'ws:') + '/ws');
 				const requests = new Map<string, ObjectValue>();

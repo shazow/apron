@@ -13,6 +13,7 @@ import {
 } from './reducer';
 import {
 	cloneJson,
+	decodeMembership,
 	decodeMessage,
 	decodeNotice,
 	decodeReactions,
@@ -66,13 +67,20 @@ export interface Notice {
 
 /**
  * One visible room: a room the user has joined on this connection (cap
- * `rooms`), else one a message arrived in, plus room `@server` once a notice
- * lands there. Threads are rooms with `parentRoomId` (PROTOCOL.md §3.4, §4.3).
+ * `rooms`), else one a message arrived in, or a room opened without joining
+ * it (`viewRoom`, `joined: false`). Threads are rooms with `parentRoomId`
+ * (PROTOCOL.md §3.4, §4.3).
  */
 export interface RoomSnapshot {
 	id: string;
-	/** Display title: the record's `title`, falling back to the `room_id` ("Server" for room `@server`). */
+	/** Display title: the record's `title`, falling back to the `room_id`. */
 	title: string;
+	/**
+	 * The user has joined it (or, without cap `rooms`, it is a room messages
+	 * arrive in): it delivers live. A room opened with `viewRoom` is not joined
+	 * and changes only when it loads.
+	 */
+	joined: boolean;
 	/** The stored room record (client fields plus `log_id`), without delivery fields. */
 	record?: RoomRecord;
 	/** Set for threads; fixed at creation. */
@@ -120,15 +128,13 @@ export interface RoomSnapshot {
 	/** Your read cursor in this room (§4.4), as the server last reported or you advanced it. */
 	readMessageId?: string;
 	/**
-	 * The room's members from the latest `room_list` that listed them
-	 * (§4.3.1), kept current by joins and leaves (`user` with `room_id`, §4.3.2).
-	 * Possibly partial.
+	 * The room's members (§4.3.2): started from a complete `members` listing
+	 * (`room_list` with `members`, or `room_update` `joined`) and kept current by
+	 * the memberships received live and in history. Each is the listed or
+	 * recorded user object; render it through the kept one. Undefined until
+	 * anything is known.
 	 */
 	members?: Identity[];
-	/** How many users have joined the room, as the latest listing said. */
-	memberCount?: number;
-	/** The room's `latest_log_id` in that listing: whoever posted after it was around since. */
-	membersAsOf?: string;
 	/** Transient notices shown in this room this session, in arrival order. */
 	notices: readonly Notice[];
 }
@@ -143,16 +149,15 @@ export interface RoomListing {
 	record: RoomRecord;
 	parentRoomId?: string;
 	latestLogId?: string;
+	historyLogId?: string | null;
+	/** The room's members when the listing asked for them (`members: true`), else empty. */
 	members: Identity[];
-	memberCount?: number;
 	/** The user has joined it: it is in the joined set on this connection. */
 	joined: boolean;
 }
 
 /** The room a client posts to without naming one: the server's default room (§3.5), before its `room_id` is known. */
 export const DEFAULT_ROOM_ID = '';
-/** The room of server-wide notices (Appendix A.1): every user receives it without joining. */
-export const SERVER_ROOM_ID = '@server';
 
 /** A file this client is writing to an embed's `write_url` (§4.6.3). */
 export interface UploadState {
@@ -193,20 +198,28 @@ export interface ClientSnapshot {
 	capabilities: Capabilities;
 	you?: Identity;
 	/**
-	 * Visible rooms in the order they were listed or joined (a `room_list`
-	 * lists the most recently active first); room `@server` goes last.
+	 * Visible rooms in the order they were listed, joined, or opened (a
+	 * `room_list` lists the most recently active first).
 	 */
 	rooms: RoomSnapshot[];
 	activeRoom?: string;
 	pending: PendingOperation[];
 	typing: TypingSnapshot[];
 	/**
-	 * One user object per `user_id` (§3.3), merged field by field from every
-	 * one received: `you`, `user`, `members`, `users`, and each `from` newer
-	 * than the object's position. Render every message with it. Look users up
-	 * with `userIn`, which follows renames.
+	 * One kept user object per `user_id` (§3.3), merged field by field from
+	 * every current object: `you`, `new` in `user`, and room `members` and
+	 * `users`. Recorded objects (`from`, a membership's `user`) never merge
+	 * into it. Render a user with `userIn`, which follows renames and falls
+	 * back field by field to the recorded object the frame carries.
 	 */
 	users: Record<string, Identity>;
+	/**
+	 * The latest recorded object seen per `user_id` (a message's or
+	 * reaction's `from`, a membership's `user`), by `log_id`. Never merged into
+	 * `users`: a fallback where no frame carries one, such as a mention in
+	 * text, and what tells apart users who share a display name.
+	 */
+	recordedUsers: Record<string, Identity>;
 	/** Retired `user_id`s mapped to the identity that replaced them (a `user` notification with `old`). */
 	userAliases: Record<string, string>;
 	/** Files being written to upload embeds, by `embed_id`. */
@@ -289,8 +302,18 @@ export interface ChatClientOptions {
 	onChange?: (snapshot: ClientSnapshot) => void;
 }
 
+/**
+ * How a room is in the client's rooms: `joined` (visible and live; without cap
+ * `rooms`, any room messages arrive in), `viewed` (opened without joining,
+ * loaded through history only), or `pending` (kept from the last connection
+ * and resuming its recovery while the new connection's `room_list` decides
+ * whether it is still joined; not visible).
+ */
+type RoomKind = 'joined' | 'viewed' | 'pending';
+
 interface RoomState {
 	id: string;
+	kind: RoomKind;
 	/** Known head: greatest `latest_log_id` or live record `log_id` for this room. */
 	latestLogId?: string;
 	historyLogId?: string | null;
@@ -311,8 +334,8 @@ interface RoomState {
 	 */
 	resumed?: boolean;
 	/**
-	 * A thread loaded newest-first: the `first_id` of its oldest loaded page,
-	 * below which `loadOlder` pages backward while `hasOlder`.
+	 * A thread loaded newest-first: the `first_log_id` of its oldest loaded
+	 * page, below which `loadOlder` pages backward while `hasOlder`.
 	 */
 	olderBefore?: string;
 	hasOlder?: boolean;
@@ -326,8 +349,8 @@ interface RoomState {
 	recoveredOn?: number;
 }
 
-function newRoomState(id: string): RoomState {
-	return { id, recoveryGeneration: 0, waiters: [], loadGeneration: 0, loading: false, timeline: createTimeline(id), dirty: true };
+function newRoomState(id: string, kind: RoomKind = 'joined'): RoomState {
+	return { id, kind, recoveryGeneration: 0, waiters: [], loadGeneration: 0, loading: false, timeline: createTimeline(id), dirty: true };
 }
 
 /** `embedded` marks a `reply_to`/`intro_message` snapshot, which installs regardless of its room's bound. */
@@ -344,8 +367,12 @@ interface PendingSave {
 }
 
 interface RecoveryState {
-	/** Fixed H for the whole recovery. */
-	head: string;
+	/**
+	 * Fixed H for the whole recovery. A recovery sent right behind `auth`,
+	 * before any room record is known, starts without it and takes it from its
+	 * first page's `latest_log_id` (§4.1 recovery, step 1).
+	 */
+	head?: string;
 	/** Next position to request; undefined means from the start of the log. */
 	nextAfter?: string;
 	/**
@@ -379,7 +406,6 @@ interface TypingState {
 }
 
 type ValidHistoryResponse = JsonObject & {
-	entries: JsonValue[];
 	more: boolean;
 	latest_log_id: string;
 	history_log_id: string | null;
@@ -424,18 +450,19 @@ const FIRST_LOG_ID = '1';
 const CAPABILITIES: Capability[] = ['history', 'edit', 'rooms', 'reactions', 'activity', 'embed:upload', 'embed:stream', 'command'];
 
 /**
- * A browser-only Apron protocol v5 session; instantiate one per mounted UI.
+ * A browser-only Apron protocol v6 session; instantiate one per mounted UI.
  *
- * State model: one store of room records, message snapshots, and reaction
- * sets shared by every room (PROTOCOL.md §2), projected per visible room in
- * `snapshot().rooms`. With cap `rooms` the visible rooms are the joined set,
- * listed after auth with `room_list` and kept current by `room_update`;
- * without it they are the rooms messages arrive in. Top-level rooms recover
- * history automatically when they become visible (cap `history`); threads are
- * rooms with a parent and load their history with `loadRoom` when opened.
- * Mutations return an `OperationHandle` that settles on the server's reply;
- * the authoritative state arrives as broadcasts, which may come before or
- * after the reply.
+ * State model: one store of room records, message snapshots, reaction sets,
+ * and memberships shared by every room (PROTOCOL.md §2), projected per visible
+ * room in `snapshot().rooms`. With cap `rooms` the visible rooms are the
+ * joined set, listed with `room_list` right behind `auth` (§3.2) and kept
+ * current by `room_update`; without it they are the rooms messages arrive in.
+ * Top-level rooms recover history automatically when they become visible (cap
+ * `history`); threads are rooms with a parent and load their history with
+ * `loadRoom` when opened, joined or not (`viewRoom`). Mutations return an
+ * `OperationHandle` that settles on the server's reply; the authoritative state
+ * arrives as the notifications the request caused, which the server sends
+ * before the reply (§1), though nothing here depends on that order.
  */
 export class ChatClient {
 	private readonly listeners = new Set<(snapshot: ClientSnapshot) => void>();
@@ -450,21 +477,20 @@ export class ChatClient {
 	private readonly pendingMessageSaves = new Map<string, PendingSave>();
 	/** Latest submitted client fields per room while an update is unconfirmed. */
 	private readonly pendingRoomSaves = new Map<string, PendingSave>();
-	/**
-	 * One kept user object per `user_id` (§3.3) and its position: the
-	 * `message_id` of the `from` it was last merged from, or the greatest
-	 * `log_id` received when any other user object was merged.
-	 */
-	private readonly users = new Map<string, { identity: Identity; position?: string }>();
+	/** One kept user object per `user_id` (§3.3), merged from current objects only. */
+	private readonly users = new Map<string, Identity>();
+	/** The latest recorded object per `user_id` and the `log_id` of the record that carried it. */
+	private readonly recordedUsers = new Map<string, { identity: Identity; log_id: string }>();
 	private readonly userAliases = new Map<string, string>();
-	/** The greatest `log_id` this client has received (§3.3): the position of a merged non-`from` user object. */
+	/** The greatest `log_id` this client has received: where a notice sits in its room's timeline. */
 	private greatestLogId?: string;
 	/** Read cursors per room, per user (§4.4). */
 	private readonly reads = new Map<string, Map<string, string>>();
 	private readonly uploads = new Map<string, UploadState>();
-	private readonly roomMembers = new Map<string, { members: Identity[]; count?: number; asOf?: string }>();
 	/** Transient notices per room, for the session (§3.5). */
 	private readonly notices = new Map<string, Notice[]>();
+	/** Notices that arrived before there was a room to show them in; the first room shown takes them. */
+	private orphanNotices: Array<{ from: Identity; body?: MessageBody }> = [];
 	private noticeCount = 0;
 	/** Nobody is attending this connection (§4.4); `awaySent` is what the server was last told on it. */
 	private away = false;
@@ -480,6 +506,14 @@ export class ChatClient {
 	 * history (§4.1).
 	 */
 	private readonly retainedRooms = new Map<string, RoomState>();
+	/**
+	 * The joined rooms kept from the last connection were its whole joined set
+	 * (its `room_list` arrived): a reconnect as the same identity may then list
+	 * only what changed since their checkpoints (`latest_log_id`, §4.3.1).
+	 */
+	private joinedComplete = false;
+	/** The identity whose joined rooms are kept from the last connection. */
+	private keptUserId?: string;
 	private directory?: RoomListing[];
 	private readonly threadDirectory = new Map<string, RoomListing[]>();
 	/**
@@ -488,8 +522,12 @@ export class ChatClient {
 	 * while in flight and reused while recent.
 	 */
 	private readonly listings = new Map<string, { at: number; promise: Promise<RoomListing[]>; rooms?: Set<string> }>();
-	/** The `room_list` of joined rooms on this connection (cap `rooms`), until its result arrives. */
-	private joinedListing?: string;
+	/**
+	 * The `room_list` of joined rooms on this connection (cap `rooms`), until
+	 * its result arrives; `since` and `userId` when it lists only changes since
+	 * a position, for that identity.
+	 */
+	private joinedListing?: { id: string; since?: string; userId?: string };
 	private socket?: WebSocket;
 	private reconnectTimer?: ReturnType<typeof setTimeout>;
 	private pingTimer?: ReturnType<typeof setInterval>;
@@ -684,7 +722,7 @@ export class ChatClient {
 
 	/** Selects the room (or thread) the UI shows; unknown rooms are ignored. */
 	selectRoom(roomId: string): void {
-		if (this.rooms.has(roomId)) {
+		if (this.rooms.has(roomId) && this.rooms.get(roomId)!.kind !== 'pending') {
 			this.activeRoomId = roomId;
 			this.emit();
 		}
@@ -721,9 +759,11 @@ export class ChatClient {
 				const thread = typeof record?.parent_room_id === 'string';
 				const intro = record?.intro_message ? this.store.message(record.intro_message.message_id) : undefined;
 				const renames = this.store.roomRenames(room.id);
+				const members = this.store.members(room.id);
 				return {
 					id: room.id,
 					title: roomTitle(room.id, record),
+					joined: room.kind === 'joined',
 					...(record ? { record } : {}),
 					...(thread ? { parentRoomId: record!.parent_room_id } : {}),
 					...(record?.intro_message ? { introMessageId: record.intro_message.message_id } : {}),
@@ -735,12 +775,12 @@ export class ChatClient {
 					timeline: room.timeline,
 					recovering: Boolean(room.recovery),
 					...(room.recoveryError ? { recoveryError: room.recoveryError } : {}),
-					loaded: !history || (thread ? room.loadCheckpoint !== undefined && !room.resumed : room.checkpoint !== undefined),
+					loaded: !history || (this.loadsOnOpen(room) ? this.threadLoaded(room) : room.checkpoint !== undefined),
 					loading: room.loading,
 					...(this.hasOlderRecords(room) ? { olderAvailable: true } : {}),
 					...(room.loadingOlder ? { loadingOlder: true } : {}),
 					...(this.readCursor(room.id) !== undefined ? { readMessageId: this.readCursor(room.id) } : {}),
-					...this.membersOf(room.id),
+					...(members ? { members } : {}),
 					notices: this.notices.get(room.id) ?? NO_NOTICES
 				};
 			}),
@@ -755,7 +795,8 @@ export class ChatClient {
 					createdAt
 				})),
 			typing: [...this.typing.values()].map(({ room, from }) => ({ room, from })),
-			users: Object.fromEntries([...this.users].map(([id, entry]) => [id, entry.identity])),
+			users: Object.fromEntries(this.users),
+			recordedUsers: Object.fromEntries([...this.recordedUsers].map(([id, entry]) => [id, entry.identity])),
 			userAliases: Object.fromEntries(this.userAliases),
 			uploads: Object.fromEntries(this.uploads),
 			...(this.directory ? { directory: this.directory.map((listing) => this.withJoined(listing)) } : {}),
@@ -1303,45 +1344,38 @@ export class ChatClient {
 		this.emit();
 	}
 
-	/** A room's snapshot fields from its latest listing, if it has been listed. */
-	private membersOf(roomId: string): Pick<RoomSnapshot, 'members' | 'memberCount' | 'membersAsOf'> {
-		const listed = this.roomMembers.get(roomId);
-		if (!listed) return {};
-		return {
-			members: listed.members,
-			...(listed.count !== undefined ? { memberCount: listed.count } : {}),
-			...(listed.asOf !== undefined ? { membersAsOf: listed.asOf } : {})
-		};
-	}
-
-	/** Visible rooms in listing order, with `@`-prefixed server rooms such as `@server` last. */
+	/** Visible rooms in the order they were listed, joined, or opened. */
 	private orderedRooms(): RoomState[] {
-		const rooms = [...this.rooms.values()];
-		return [...rooms.filter((room) => !room.id.startsWith('@')), ...rooms.filter((room) => room.id.startsWith('@'))];
+		return [...this.rooms.values()].filter((room) => room.kind !== 'pending');
 	}
 
 	/**
 	 * Lists visible rooms the user has not joined (cap `rooms`, §4.3.1):
-	 * top-level rooms, or with `parentRoomId` that room's threads. The result
-	 * also lands in the snapshot's `directory` or `threadDirectory`. Servers
-	 * may list only the most active rooms, so neither is complete.
+	 * top-level rooms with their members, or with `parentRoomId` that room's
+	 * threads, whose heads refresh the cards of threads not joined (they
+	 * deliver nothing live). The result also lands in the snapshot's
+	 * `directory` or `threadDirectory`. Servers may list only the most active
+	 * rooms, so neither is complete.
 	 */
 	listRooms(parentRoomId?: string, maxAgeMs = ROOM_LIST_REUSE_MS): Promise<RoomListing[]> {
-		const params: JsonObject = { ...(parentRoomId !== undefined ? { parent_room_id: parentRoomId } : {}), not_joined: true };
+		const params: JsonObject = parentRoomId !== undefined
+			? { parent_room_id: parentRoomId, filter: 'not_joined' }
+			: { filter: 'not_joined', members: true };
 		return this.cachedListing(parentRoomId ?? '', params, maxAgeMs, (listed) => {
-			if (parentRoomId === undefined) this.directory = listed.rooms;
-			else this.threadDirectory.set(parentRoomId, listed.rooms);
-			return listed.rooms;
+			if (parentRoomId === undefined) this.directory = listed.not_joined;
+			else this.threadDirectory.set(parentRoomId, listed.not_joined);
+			return listed.not_joined;
 		});
 	}
 
 	/**
-	 * Lists one room with its members (`room_list` with `room_id`, §4.3.1),
-	 * which then show in the room's snapshot as `members` and `memberCount`.
-	 * The server may truncate or omit them.
+	 * Lists one room with its members (`room_list` with `room_id` and
+	 * `members`, §4.3.1), which then show in the room's snapshot as `members`
+	 * and stay current by memberships. Joined rooms have them from their
+	 * listing already; this is for a room opened without joining.
 	 */
 	listMembers(roomId: string, maxAgeMs = ROOM_LIST_REUSE_MS): Promise<RoomListing[]> {
-		return this.cachedListing(`#${roomId}`, { room_id: roomId }, maxAgeMs, (listed) => [...listed.joined, ...listed.rooms]);
+		return this.cachedListing(`#${roomId}`, { room_id: roomId, members: true }, maxAgeMs, (listed) => [...listed.joined, ...listed.not_joined]);
 	}
 
 	/**
@@ -1350,7 +1384,7 @@ export class ChatClient {
 	 * within `maxAgeMs`, serves them all.
 	 */
 	private cachedListing(
-		key: string, params: JsonObject, maxAgeMs: number, pick: (listed: { joined: RoomListing[]; rooms: RoomListing[] }) => RoomListing[]
+		key: string, params: JsonObject, maxAgeMs: number, pick: (listed: { joined: RoomListing[]; not_joined: RoomListing[] }) => RoomListing[]
 	): Promise<RoomListing[]> {
 		const recent = this.listings.get(key);
 		if (recent && Date.now() - recent.at < maxAgeMs) return recent.promise.then((listings) => listings.map((listing) => this.withJoined(listing)));
@@ -1370,37 +1404,53 @@ export class ChatClient {
 	}
 
 	/**
-	 * Lists every room the user has joined (`room_list` with `only_joined`,
-	 * §4.3.1) after authenticating: `joined` is complete, threads included, so
-	 * it becomes the visible set, each room recovering its history as it
-	 * appears. `room_update` keeps it current from then on.
+	 * Lists every room the user has joined, threads included, with their
+	 * members (`room_list` with `filter: "joined"` and `members`, §4.3.1): the
+	 * result becomes the visible set, each room recovering its history as it
+	 * appears, and `room_update` keeps it current from then on. It may go
+	 * right behind `auth`, which finishes first (§3.2). With `since`, the
+	 * server lists only rooms whose log moved past it, plus the ones left in
+	 * `left`; rooms it leaves out are unchanged.
 	 */
-	private listJoinedRooms(): void {
+	private listJoinedRooms(since?: string): void {
 		const socket = this.socket;
-		const request = this.enqueueRequest('room_list', { only_joined: true }, { visible: false, allowBeforeAuth: false });
-		this.joinedListing = request.id;
+		const params: JsonObject = { filter: 'joined', members: true, ...(since !== undefined ? { latest_log_id: since } : {}) };
+		const request = this.enqueueRequest('room_list', params, { visible: false, allowBeforeAuth: true });
+		const listing = { id: request.id, ...(since !== undefined ? { since, ...(this.keptUserId !== undefined ? { userId: this.keptUserId } : {}) } : {}) };
+		this.joinedListing = listing;
+		this.joinedComplete = false;
 		request.promise.then((result) => {
-			if (socket !== this.socket || this.joinedListing !== request.id) return;
+			if (socket !== this.socket || this.joinedListing !== listing) return;
 			this.joinedListing = undefined;
+			if (listing.since !== undefined && this.you?.user_id !== listing.userId) {
+				// Another identity than the kept rooms': what changed since is someone else's story.
+				this.listJoinedRooms();
+				this.emit();
+				return;
+			}
 			this.applyRoomList(result, true);
+			this.joinedComplete = true;
 			this.emit();
 		}, (cause: Error) => {
-			if (socket !== this.socket || this.joinedListing !== request.id) return;
+			if (socket !== this.socket || this.joinedListing !== listing) return;
 			this.joinedListing = undefined;
-			this.error = `Unable to list your rooms: ${cause.message}`;
+			// Behind a failed `auth` every request is denied; that failure speaks for itself.
+			if (this.authenticated) this.error = `Unable to list your rooms: ${cause.message}`;
 			this.emit();
 		});
 	}
 
 	/**
-	 * Applies a `room_list` result (§4.3.1): its rooms' members, embedded
-	 * snapshots, and, for `joined` when `complete`, the visible set; then the
-	 * result's `users`, merged last (§3.3).
+	 * Applies a `room_list` result (§4.3.1): its rooms' records, members and
+	 * embedded snapshots, and the result's `users`. For the listing of joined
+	 * rooms (`joinedSet`) its `joined` becomes the visible set: with `left`,
+	 * a listing of changes, the rooms in it go and every other kept room stays;
+	 * without, a full listing, every other joined room goes.
 	 */
-	private applyRoomList(result: JsonObject, complete: boolean): { joined: RoomListing[]; rooms: RoomListing[] } {
-		const listed = { joined: [] as RoomListing[], rooms: [] as RoomListing[] };
+	private applyRoomList(result: JsonObject, joinedSet: boolean): { joined: RoomListing[]; not_joined: RoomListing[] } {
+		const listed = { joined: [] as RoomListing[], not_joined: [] as RoomListing[] };
 		const joinedIds = new Set<string>();
-		for (const [key, joined] of [['joined', true], ['rooms', false]] as const) {
+		for (const [key, joined] of [['joined', true], ['not_joined', false]] as const) {
 			const values = result[key];
 			for (const value of Array.isArray(values) ? values : []) {
 				const decoded = decodeRoom(value);
@@ -1408,48 +1458,59 @@ export class ChatClient {
 				const record = decoded.record;
 				this.observeLogId(decoded.delivery.latest_log_id);
 				this.noteMembers(record.room_id, decoded.delivery);
-				if (joined && complete) joinedIds.add(record.room_id);
-				// A joined room's record and delivery fields are the latest (§3.4).
-				if ((joined && complete) || this.rooms.has(record.room_id)) this.showRoom(decoded);
-				else for (const message of decoded.embedded) this.installEmbedded(message);
+				if (joined && joinedSet) {
+					joinedIds.add(record.room_id);
+					this.showRoom(decoded, 'joined');
+				} else if (this.rooms.has(record.room_id)) {
+					// Its record and delivery fields are the latest (§3.4); for a room
+					// opened without joining, the head is what the next load reaches.
+					this.showRoom(decoded);
+				} else {
+					this.installRoom(record);
+					for (const message of decoded.embedded) this.installEmbedded(message);
+				}
 				listed[key].push({
 					id: record.room_id,
 					title: roomTitle(record.room_id, record),
 					record,
 					...(record.parent_room_id !== undefined ? { parentRoomId: record.parent_room_id } : {}),
 					...(decoded.delivery.latest_log_id !== undefined ? { latestLogId: decoded.delivery.latest_log_id } : {}),
-					members: this.roomMembers.get(record.room_id)?.members ?? [],
-					...(decoded.delivery.member_count !== undefined ? { memberCount: decoded.delivery.member_count } : {}),
+					...(Object.hasOwn(decoded.delivery, 'history_log_id') ? { historyLogId: decoded.delivery.history_log_id } : {}),
+					members: decoded.delivery.members ?? [],
 					joined
 				});
 			}
 		}
-		if (complete) {
-			// `joined` is the whole set: anything else visible was left meanwhile.
-			for (const room of [...this.rooms.values()]) {
-				if (!joinedIds.has(room.id) && !room.id.startsWith('@') && room.id !== DEFAULT_ROOM_ID) this.hideRoom(room.id);
+		if (joinedSet) {
+			if (Array.isArray(result.left)) {
+				// Changes since `latest_log_id`: rooms left since then go; the others kept are unchanged.
+				for (const value of result.left) {
+					if (isJsonObject(value) && typeof value.room_id === 'string') this.hideRoom(value.room_id);
+				}
+				for (const room of this.rooms.values()) if (room.kind === 'pending') this.markJoined(room);
+			} else {
+				// A full listing: `joined` is the whole set; anything else joined was left meanwhile.
+				for (const room of [...this.rooms.values()]) {
+					if (room.kind !== 'viewed' && !joinedIds.has(room.id) && room.id !== DEFAULT_ROOM_ID) this.hideRoom(room.id);
+				}
 			}
 		}
 		this.noteUsers(result.users);
 		return listed;
 	}
 
-	/** A room's members and count from a listing; members it omits keep what joins and leaves taught. */
+	/**
+	 * A room's `members`, complete (§4.3.1, §4.3.3): current user objects,
+	 * merged into the kept ones, that start its member list as of the room's
+	 * `latest_log_id` in the same frame.
+	 */
 	private noteMembers(roomId: string, delivery: RoomDelivery): void {
-		if (delivery.members === undefined && delivery.member_count === undefined) return;
-		const current = this.roomMembers.get(roomId);
-		const members = delivery.members ?? current?.members;
-		for (const member of delivery.members ?? []) this.noteUser(member);
-		this.roomMembers.set(roomId, {
-			members: members ?? [],
-			...(delivery.member_count ?? current?.count) !== undefined ? { count: delivery.member_count ?? current?.count } : {},
-			...(delivery.members !== undefined
-				? (delivery.latest_log_id !== undefined ? { asOf: delivery.latest_log_id } : {})
-				: (current?.asOf !== undefined ? { asOf: current.asOf } : {}))
-		});
+		if (delivery.members === undefined) return;
+		for (const member of delivery.members) this.noteUser(member);
+		this.store.seedMembers(roomId, delivery.members, delivery.latest_log_id);
 	}
 
-	/** A result's `users` (§3.3): complete user objects, merged after the rest of the result. */
+	/** A frame's `users` (§3.3): complete current user objects. */
 	private noteUsers(users: unknown): void {
 		for (const user of Array.isArray(users) ? users : []) if (isIdentity(user)) this.noteUser(cloneJson(user));
 	}
@@ -1460,7 +1521,7 @@ export class ChatClient {
 	}
 
 	private withJoined(listing: RoomListing): RoomListing {
-		return { ...listing, joined: this.rooms.has(listing.id) };
+		return { ...listing, joined: this.rooms.get(listing.id)?.kind === 'joined' };
 	}
 
 	/**
@@ -1541,18 +1602,19 @@ export class ChatClient {
 	}
 
 	/**
-	 * Loads a room's history (§4.1). Threads never recover
-	 * automatically: call this when one is opened. It pages from the room's
-	 * lower bound (or its previous load's checkpoint) up to the head known at
-	 * the call, and resolves after the last page. For a top-level room, which
-	 * recovers automatically, it waits for the running recovery, or retries one
-	 * that failed. Without cap `history` it resolves at once.
+	 * Loads a room's history (§4.1). Threads and rooms opened without joining
+	 * never recover automatically: call this when one is opened. It loads the
+	 * newest page the first time, and afterwards pages from the previous load's
+	 * checkpoint up to the head known at the call, resolving after the last
+	 * page. For a joined top-level room, which recovers automatically, it waits
+	 * for the running recovery, or retries one that failed. Without cap
+	 * `history` it resolves at once.
 	 */
 	loadRoom(roomId: string): Promise<void> {
 		const room = this.rooms.get(roomId);
-		if (!room) return Promise.reject(new Error('Unknown room'));
+		if (!room || room.kind === 'pending') return Promise.reject(new Error('Unknown room'));
 		if (!this.hasCap('history')) return Promise.resolve();
-		if (!this.isThread(room.id)) {
+		if (!this.loadsOnOpen(room)) {
 			const head = room.latestLogId;
 			const needed = Boolean(room.recovery) || Boolean(head && (room.recoveryError || room.checkpoint === undefined || compareLogIds(head, room.checkpoint) > 0));
 			if (!needed) return Promise.resolve();
@@ -1616,7 +1678,7 @@ export class ChatClient {
 					room.resumed = false;
 					return;
 				}
-				const lastId = result.last_id;
+				const lastId = result.last_log_id;
 				if (!isLogId(lastId) || (after !== undefined && compareLogIds(lastId, after) < 0) || compareLogIds(lastId, head) >= 0) {
 					throw new Error('Invalid history continuation');
 				}
@@ -1662,9 +1724,9 @@ export class ChatClient {
 		}
 	}
 
-	/** Records where a backward page ended: its `first_id` bounds the next one. */
+	/** Records where a backward page ended: its `first_log_id` bounds the next one. */
 	private noteOlderPage(room: RoomState, result: ValidHistoryResponse): void {
-		const first = isLogId(result.first_id) ? result.first_id : undefined;
+		const first = isLogId(result.first_log_id) ? result.first_log_id : undefined;
 		if (first !== undefined) room.olderBefore = first;
 		room.hasOlder = result.more && first !== undefined;
 	}
@@ -1673,6 +1735,46 @@ export class ChatClient {
 	private hasOlderRecords(room: RoomState): boolean {
 		if (!room.hasOlder || room.olderBefore === undefined) return false;
 		return room.floor === undefined || compareLogIds(room.olderBefore, room.floor) > 0;
+	}
+
+	/**
+	 * Opens a room the user has not joined, such as a thread from its card,
+	 * without joining it: reading needs no membership (§4.1), and joining would
+	 * log a membership for everyone (§4.3.2). It shows in the snapshot with
+	 * `joined: false` and loads with `loadRoom`, but nothing about it arrives live
+	 * until it is joined, so its head moves only when a listing (`listRooms`
+	 * with its parent) reports a newer one. Its record and head come from the
+	 * latest listing that named it. Returns false for a room nothing has listed.
+	 */
+	viewRoom(roomId: string): boolean {
+		if (this.rooms.get(roomId)?.kind === 'joined' || this.rooms.get(roomId)?.kind === 'viewed') return true;
+		const listing = [...(this.directory ?? []), ...[...this.threadDirectory.values()].flat()].find((known) => known.id === roomId);
+		const record = listing?.record ?? this.store.room(roomId);
+		if (!record) return false;
+		if (this.rooms.get(roomId)?.kind === 'pending') return false;
+		const room = this.adoptRetainedRoom(roomId) ?? newRoomState(roomId, 'viewed');
+		room.kind = 'viewed';
+		this.rooms.set(roomId, room);
+		this.installRoom(record);
+		this.observeHead(room, listing?.latestLogId);
+		if (listing && listing.historyLogId !== undefined) this.observeBoundary(room, listing.historyLogId, listing.latestLogId ?? room.latestLogId);
+		this.emit();
+		return true;
+	}
+
+	/** Rooms that load with `loadRoom` when opened instead of recovering on their own: threads, and rooms not joined. */
+	private loadsOnOpen(room: RoomState): boolean {
+		return room.kind === 'viewed' || this.isThread(room.id);
+	}
+
+	/**
+	 * A room that loads on open is loaded when a load reached its checkpoint on
+	 * this connection: a joined one stays current live from there, one opened
+	 * without joining only until a listing reports a newer head.
+	 */
+	private threadLoaded(room: RoomState): boolean {
+		if (room.loadCheckpoint === undefined || room.resumed) return false;
+		return room.kind === 'joined' || room.latestLogId === undefined || compareLogIds(room.latestLogId, room.loadCheckpoint) <= 0;
 	}
 
 	private connectNow(): void {
@@ -1805,6 +1907,9 @@ export class ChatClient {
 			case 'reactions':
 				this.handleReactions(frame.params);
 				return;
+			case 'membership':
+				this.handleMembership(frame.params);
+				return;
 			case 'activity':
 				this.handleActivity(frame.params);
 				return;
@@ -1888,8 +1993,12 @@ export class ChatClient {
 		const socket = this.socket;
 		const request = this.enqueueRequest('auth', {
 			...(resume ? { scheme: 'token', token: this.sessionToken } : { scheme: 'guest' }),
-			client: 'apron-web/0.2'
+			client: 'apron-web/0.3'
 		}, { visible: false, allowBeforeAuth: true });
+		// `auth` is a barrier (§3.2): the server finishes it before reading on, so
+		// the rooms and their recovery go right behind it instead of waiting a
+		// round trip. If it fails they are denied, and that is all.
+		this.requestRooms(resume);
 		request.promise.then((result) => {
 			if (socket === this.socket) this.handleAuth(result);
 		}).catch((cause: Error) => {
@@ -1960,13 +2069,59 @@ export class ChatClient {
 		const name = this.displayName;
 		const wanted = Boolean(name) && name !== this.you?.name && (registered || this.declinedName !== name);
 		this.authNameRequest = wanted ? this.sendName() : undefined;
-		// Rooms come by request (§4.3.1); without cap `rooms` there is the default room.
-		if (this.hasCap('rooms')) this.listJoinedRooms();
-		else if (!this.rooms.size) this.showDefaultRoom();
+		// Rooms come by request (§4.3.1), usually already sent behind `auth`;
+		// without cap `rooms` there is the default room.
+		if (this.hasCap('rooms')) {
+			if (!this.joinedListing) this.requestRooms(false);
+		} else if (!this.rooms.size) {
+			this.showDefaultRoom();
+		}
 		this.awaySent = false;
 		this.syncAway();
 		this.emit();
 		return true;
+	}
+
+	/**
+	 * Asks for the joined rooms (cap `rooms`) and resumes the rooms kept from
+	 * the last connection: those opened without joining come back as they
+	 * were, and joined ones wait, hidden, for the listing to say whether they
+	 * still are, while their recovery (cap `history`) already pages forward
+	 * from their checkpoints (§4.1). `sameIdentity`: this sign-in resumes the
+	 * kept rooms' identity, so the listing may ask only for what changed since
+	 * the rooms' checkpoints (§4.3.1).
+	 */
+	private requestRooms(sameIdentity: boolean): void {
+		if (!this.hasCap('rooms')) return;
+		const since = sameIdentity ? this.keptPosition() : undefined;
+		this.listJoinedRooms(since);
+		for (const [roomId, kept] of [...this.retainedRooms]) {
+			if (this.rooms.has(roomId)) continue;
+			const room = this.adoptRetainedRoom(roomId)!;
+			this.rooms.set(roomId, room);
+			if (kept.kind === 'viewed') continue;
+			room.kind = 'pending';
+			if (this.recoversAutomatically(room) && room.checkpoint !== undefined && !room.recovery) this.startRecovery(room, undefined, false);
+		}
+	}
+
+	/**
+	 * Where every joined room kept from the last connection is known to be
+	 * complete: its recovery checkpoint (a room that recovers) or its head (a
+	 * thread, which delivers live and loads on open). Undefined when a listing of
+	 * changes since would not do: nothing kept, the kept set incomplete, or a
+	 * room without such a position.
+	 */
+	private keptPosition(): string | undefined {
+		if (!this.joinedComplete || !this.hasCap('history') || this.keptUserId === undefined) return undefined;
+		let position: string | undefined;
+		for (const room of this.retainedRooms.values()) {
+			if (room.kind === 'viewed') continue;
+			const synced = this.isThread(room.id) ? room.latestLogId : room.recoveryError ? undefined : room.checkpoint;
+			if (synced === undefined) return undefined;
+			if (position === undefined || compareLogIds(synced, position) < 0) position = synced;
+		}
+		return position;
 	}
 
 	/**
@@ -2012,86 +2167,75 @@ export class ChatClient {
 	}
 
 	/**
-	 * A `user` notification (§3.3): `you` merges into this connection's
-	 * identity; `new` is another user's current object, and with `old` the old
-	 * `user_id` now stands for the new identity. With `room_id` they are a join
-	 * (`new` alone) or a leave (`old` alone) of that room (§4.3.2), which change
-	 * its members and draw nothing.
+	 * A `user` notification (§3.3), about identity only: `you` merges into
+	 * this connection's identity, and a new `user_id` there brings its own
+	 * rooms; `new` is another user's current object, and with `old` the old
+	 * `user_id` now stands for the new identity. Joins and leaves are
+	 * memberships, not `user` notifications.
 	 */
 	private handleUser(params: JsonObject | undefined): void {
 		if (!params) return;
-		const joined = isIdentity(params.new) ? cloneJson(params.new) : undefined;
-		const left = isIdentity(params.old) ? cloneJson(params.old) : undefined;
 		if (isIdentity(params.you)) {
 			const previous = this.you?.user_id;
 			this.setYou(cloneJson(params.you));
 			// The connection now acts as another identity, with its own rooms (§3.3).
 			if (previous !== undefined && previous !== params.you.user_id && this.authenticated && this.hasCap('rooms')) this.listJoinedRooms();
-		} else if (typeof params.room_id === 'string') {
-			if (joined && !left) this.addMember(params.room_id, this.noteUser(joined));
-			else if (left && !joined) this.removeMember(params.room_id, left.user_id);
-			else return;
-		} else if (joined) {
-			this.noteUser(joined);
-			if (left && left.user_id !== joined.user_id) {
-				this.noteUser(left);
-				this.userAliases.set(left.user_id, joined.user_id);
-			}
-		} else if (left) {
-			// No longer shares any room with this user.
-			for (const roomId of this.roomMembers.keys()) this.removeMember(roomId, left.user_id);
+		} else if (isIdentity(params.new)) {
+			const current = this.noteUser(cloneJson(params.new));
+			if (isIdentity(params.old) && params.old.user_id !== current.user_id) this.userAliases.set(params.old.user_id, current.user_id);
 		} else {
 			return;
 		}
 		this.emit();
 	}
 
-	/** A join (§4.3.2): a member added to a room whose members were listed. */
-	private addMember(roomId: string, member: Identity): void {
-		const listed = this.roomMembers.get(roomId);
-		if (!listed || listed.members.some((known) => known.user_id === member.user_id)) return;
-		this.roomMembers.set(roomId, {
-			...listed,
-			members: [...listed.members, member],
-			...(listed.count !== undefined ? { count: listed.count + 1 } : {})
-		});
-	}
-
-	/** A leave (§4.3.2): a member removed from a room whose members were listed. */
-	private removeMember(roomId: string, userId: string): void {
-		const listed = this.roomMembers.get(roomId);
-		if (!listed || !listed.members.some((known) => known.user_id === userId)) return;
-		this.roomMembers.set(roomId, {
-			...listed,
-			members: listed.members.filter((known) => known.user_id !== userId),
-			...(listed.count !== undefined ? { count: Math.max(0, listed.count - 1) } : {})
-		});
+	/**
+	 * A `membership` record (§4.3.2): one entry per user, each replacing that
+	 * user's membership of the room when newer. It advances the room's head.
+	 * Its `user` is a recorded object: never merged into the kept one.
+	 */
+	private handleMembership(params: JsonObject | undefined): void {
+		const entries = decodeMembership(params);
+		if (!entries.length) return;
+		const { log_id: logId, room_id: roomId } = entries[0];
+		this.observeLogId(logId);
+		const room = this.rooms.get(roomId);
+		if (room) this.observeHead(room, logId);
+		for (const entry of entries) {
+			this.noteRecorded(entry.user, logId);
+			this.store.putMembership(entry);
+		}
+		this.emit();
 	}
 
 	/**
-	 * Merges a user object into the one kept for its `user_id` (§3.3), field by
-	 * field: a present field replaces, an empty one (`""`, `{}`) removes, and a
-	 * missing one is left alone. `from` is the `message_id` of the message whose
-	 * `from` this is (or a reaction set's `log_id`): it merges only when greater
-	 * than the kept object's position, and becomes the position. Any other
-	 * user object (`you`, `user`, `members`, `users`) moves the position to the
-	 * greatest `log_id` received; `'unplaced'` (an `activity` sender, which is
-	 * neither) merges without moving it. Returns the kept object, which is
-	 * replaced only when it changes.
+	 * Merges a current user object (`you`, `new`, room `members` and `users`)
+	 * into the one kept for its `user_id` (§3.3), field by field: a present
+	 * field replaces, an empty one (`""`, `{}`) removes, and a missing one is
+	 * left alone. Returns the kept object, which is replaced only when it
+	 * changes.
 	 */
-	private noteUser(identity: Identity, from?: string | 'unplaced'): Identity {
+	private noteUser(identity: Identity): Identity {
 		const current = this.users.get(identity.user_id);
-		if (current && from !== undefined && from !== 'unplaced' && current.position !== undefined && compareLogIds(from, current.position) <= 0) return current.identity;
-		const merged = mergeIdentity(current?.identity, identity);
-		const position = from === 'unplaced' ? current?.position : from ?? maxDefined(this.greatestLogId, current?.position);
-		if (merged !== current?.identity || position !== current?.position) {
-			this.users.set(identity.user_id, { identity: merged, ...(position !== undefined ? { position } : {}) });
-		}
+		const merged = mergeIdentity(current, identity);
+		if (merged !== current) this.users.set(identity.user_id, merged);
 		if (this.you?.user_id === identity.user_id) this.you = merged;
 		return merged;
 	}
 
-	/** Remembers the greatest `log_id` received, the position of merged user objects (§3.3). */
+	/**
+	 * Remembers the latest recorded object of a user (a `from`, a membership's
+	 * `user`) by its record's `log_id`, apart from the kept one: a fallback
+	 * where no frame carries one, and what tells apart users sharing a name.
+	 */
+	private noteRecorded(identity: Identity, logId: string): void {
+		const current = this.recordedUsers.get(identity.user_id);
+		if (current && compareLogIds(logId, current.log_id) <= 0) return;
+		const same = current !== undefined && canonicalJson(current.identity) === canonicalJson(identity);
+		this.recordedUsers.set(identity.user_id, { identity: same ? current.identity : identity, log_id: logId });
+	}
+
+	/** Remembers the greatest `log_id` received: where a notice sits in its room's timeline. */
 	private observeLogId(logId: unknown): void {
 		if (isLogId(logId) && (this.greatestLogId === undefined || compareLogIds(logId, this.greatestLogId) > 0)) this.greatestLogId = logId;
 	}
@@ -2119,15 +2263,16 @@ export class ChatClient {
 		return typeof this.store.room(roomId)?.parent_room_id === 'string';
 	}
 
-	/** Automatic recovery applies to top-level rooms when the server keeps history. */
+	/** Automatic recovery applies to joined top-level rooms when the server keeps history. */
 	private recoversAutomatically(room: RoomState): boolean {
-		return this.hasCap('history') && !this.isThread(room.id);
+		return this.hasCap('history') && !this.loadsOnOpen(room);
 	}
 
 	/**
-	 * A `room_update` (§4.3.3): `joined` rooms become visible and recover,
-	 * `updated` records replace a joined room's (or describe a new thread in
-	 * one), and `left` rooms go.
+	 * A `room_update` (§4.3.3): `joined` rooms become visible with their
+	 * members and recover, `updated` records replace a visible room's (or
+	 * describe a new or edited thread of one), and `left` rooms go. `users`
+	 * merges last.
 	 */
 	private handleRoomUpdate(params: JsonObject | undefined): void {
 		if (!params) return;
@@ -2136,7 +2281,7 @@ export class ChatClient {
 			if (!decoded) continue;
 			this.observeLogId(decoded.delivery.latest_log_id);
 			this.noteMembers(decoded.record.room_id, decoded.delivery);
-			this.showRoom(decoded);
+			this.showRoom(decoded, 'joined');
 		}
 		for (const value of Array.isArray(params.updated) ? params.updated : []) {
 			const decoded = decodeRoom(value);
@@ -2154,21 +2299,25 @@ export class ChatClient {
 		for (const value of Array.isArray(params.left) ? params.left : []) {
 			if (isJsonObject(value) && typeof value.room_id === 'string') this.hideRoom(value.room_id);
 		}
+		this.noteUsers(params.users);
 		this.emit();
 	}
 
 	/**
-	 * Makes a joined room visible, or refreshes a visible one from its latest
-	 * record: installs the record, takes its delivery fields, and starts or
-	 * resumes its automatic recovery (§4.1).
+	 * Refreshes a room from its latest record frame, making it visible first
+	 * as `kind` (a joined room's, or one opened without joining), or turning a
+	 * room viewed or kept from the last connection into a joined one: installs
+	 * the record, takes its delivery fields, and starts or resumes its
+	 * automatic recovery (§4.1).
 	 */
-	private showRoom(decoded: { record: RoomRecord; embedded: MessageRecord[]; delivery: RoomDelivery }): void {
+	private showRoom(decoded: { record: RoomRecord; embedded: MessageRecord[]; delivery: RoomDelivery }, kind?: 'joined'): void {
 		const roomId = decoded.record.room_id;
 		this.installRoom(decoded.record);
 		const existing = this.rooms.get(roomId) ?? this.adoptRetainedRoom(roomId);
 		if (!existing) this.forgetListings(decoded.record.parent_room_id);
-		const room = existing ?? newRoomState(roomId);
+		const room = existing ?? newRoomState(roomId, kind ?? 'joined');
 		this.rooms.set(roomId, room);
+		if (kind === 'joined') this.markJoined(room);
 		const listedHead = decoded.delivery.latest_log_id;
 		this.observeHead(room, listedHead);
 		// Record the head before the bound so a new recovery captures it. An
@@ -2176,10 +2325,23 @@ export class ChatClient {
 		if (Object.hasOwn(decoded.delivery, 'history_log_id')) {
 			this.observeBoundary(room, decoded.delivery.history_log_id, listedHead ?? room.latestLogId);
 		}
-		if (!decoded.record.parent_room_id && !roomId.startsWith('@')) this.activeRoomId ??= roomId;
 		this.recoverIfBehind(room, !existing);
 		// Embedded snapshots install after the bound and any rebuild, so neither drops them.
 		for (const message of decoded.embedded) this.installEmbedded(message);
+	}
+
+	/**
+	 * The room is joined now: visible and live. A thread read before without
+	 * joining it has missed what happened since its last load, which the next
+	 * `loadRoom` catches up on.
+	 */
+	private markJoined(room: RoomState): void {
+		if (room.kind === 'viewed') {
+			if (room.loadCheckpoint !== undefined) room.resumed = true;
+			this.forgetListings(this.store.room(room.id)?.parent_room_id);
+		}
+		room.kind = 'joined';
+		if (!this.isThread(room.id)) this.activeRoomId ??= room.id;
 	}
 
 	/** Starts or resumes a top-level room's automatic recovery when its head is past the checkpoint. */
@@ -2190,19 +2352,24 @@ export class ChatClient {
 		if (rebuild || compareLogIds(head, room.checkpoint!) > 0) this.startRecovery(room, head, rebuild);
 	}
 
-	/** An embedded `reply_to` or `intro_message` snapshot: its author merges as a `from`. */
+	/** An embedded `reply_to` or `intro_message` snapshot: its author is a recorded object. */
 	private installEmbedded(message: MessageRecord): void {
 		this.observeLogId(message.log_id);
-		this.noteUser(message.from, message.message_id);
+		this.noteRecorded(message.from, message.log_id);
 		this.acceptLiveMessage(message, false);
 	}
 
-	/** A room left, removed, no longer visible, or deleted (§4.3.3). */
+	/**
+	 * A room left, removed, no longer visible, or deleted (§4.3.3). A room
+	 * kept from the last connection and not joined on this one goes back to
+	 * being kept, so joining it later resumes where it stopped.
+	 */
 	private hideRoom(roomId: string): void {
 		const room = this.rooms.get(roomId);
 		if (!room) return;
 		this.discardRoom(room, 'Room left');
 		this.rooms.delete(roomId);
+		if (room.kind === 'pending') this.retainedRooms.set(roomId, room);
 		this.forgetListings(this.store.room(roomId)?.parent_room_id);
 		if (this.activeRoomId === roomId) this.activeRoomId = this.defaultRoomId();
 	}
@@ -2215,6 +2382,7 @@ export class ChatClient {
 			record,
 			...(record.parent_room_id !== undefined ? { parentRoomId: record.parent_room_id } : {}),
 			...(delivery.latest_log_id !== undefined ? { latestLogId: delivery.latest_log_id } : {}),
+			...(Object.hasOwn(delivery, 'history_log_id') ? { historyLogId: delivery.history_log_id } : {}),
 			members,
 			joined: false
 		});
@@ -2241,7 +2409,7 @@ export class ChatClient {
 
 	/** The default room's `room_id` is known: it takes the place of `DEFAULT_ROOM_ID`. */
 	private learnDefaultRoom(roomId: string): void {
-		if (this.hasCap('rooms') || roomId === DEFAULT_ROOM_ID || roomId.startsWith('@')) return;
+		if (this.hasCap('rooms') || roomId === DEFAULT_ROOM_ID) return;
 		this.defaultRoom = roomId;
 		if (!this.rooms.has(DEFAULT_ROOM_ID)) return;
 		this.rooms.delete(DEFAULT_ROOM_ID);
@@ -2257,39 +2425,51 @@ export class ChatClient {
 	/**
 	 * A room a message or notice arrived in. Without cap `rooms` every such
 	 * room is shown, titled by its `room_id` (§3.4), and the first one takes the
-	 * default room's place; room `@server` is shown on any server (Appendix A.1).
+	 * default room's place.
 	 */
 	private showMessageRoom(roomId: string): void {
-		if (this.rooms.has(roomId) || !this.authenticated) return;
-		if (this.hasCap('rooms') && roomId !== SERVER_ROOM_ID) return;
-		if (this.rooms.has(DEFAULT_ROOM_ID) && !roomId.startsWith('@') && ![...this.rooms.keys()].some((id) => id !== DEFAULT_ROOM_ID && !id.startsWith('@'))) {
+		if (this.rooms.has(roomId) || !this.authenticated || this.hasCap('rooms')) return;
+		if (this.rooms.has(DEFAULT_ROOM_ID) && ![...this.rooms.keys()].some((id) => id !== DEFAULT_ROOM_ID)) {
 			this.learnDefaultRoom(roomId);
 			return;
 		}
 		const existing = this.adoptRetainedRoom(roomId);
 		const room = existing ?? newRoomState(roomId);
 		this.rooms.set(roomId, room);
-		if (!roomId.startsWith('@')) this.activeRoomId ??= roomId;
+		this.activeRoomId ??= roomId;
 	}
 
-	/** Where a notice without `room_id` shows: the default room, or the room in view. */
-	private noticeRoom(): string {
+	/** Where a notice without `room_id` shows: the default room, else the room in view; undefined while there is none. */
+	private noticeRoom(): string | undefined {
 		if (this.defaultRoom !== undefined) return this.defaultRoom;
 		if (!this.hasCap('rooms')) return DEFAULT_ROOM_ID;
-		return this.activeRoomId ?? SERVER_ROOM_ID;
+		return this.activeRoomId ?? this.defaultRoomId();
 	}
 
 	/**
 	 * Shows a transient notice in a room for this session (§3.5). It sits
 	 * after everything received so far: any message created later has a
-	 * greater `message_id`, and history loaded later sorts above it.
+	 * greater `message_id`, and history loaded later sorts above it. Without a
+	 * room, it waits for the first one.
 	 */
-	private addNotice(roomId: string, from: Identity, body?: MessageBody): void {
+	private addNotice(roomId: string | undefined, from: Identity, body?: MessageBody): void {
+		if (roomId === undefined) {
+			this.orphanNotices.push({ from, ...(body ? { body } : {}) });
+			return;
+		}
 		this.showMessageRoom(roomId);
 		const room = this.rooms.get(roomId);
 		const after = maxDefined(this.greatestLogId, room?.latestLogId) ?? String(Date.now());
 		const notice: Notice = { key: `notice:${++this.noticeCount}`, room_id: roomId, from, ...(body ? { body } : {}), after, at: Date.now() };
 		this.notices.set(roomId, [...(this.notices.get(roomId) ?? []), notice]);
+	}
+
+	/** Notices that waited for a room go to the first one there is. */
+	private placeOrphanNotices(): void {
+		if (!this.orphanNotices.length) return;
+		const roomId = this.noticeRoom();
+		if (roomId === undefined) return;
+		for (const { from, body } of this.orphanNotices.splice(0)) this.addNotice(roomId, from, body);
 	}
 
 	private handleSnapshot(params: JsonObject | undefined): void {
@@ -2305,8 +2485,8 @@ export class ChatClient {
 		const record = decoded.record;
 		this.observeLogId(record.log_id);
 		for (const embedded of decoded.embedded) this.observeLogId(embedded.log_id);
-		this.noteUser(record.from, record.message_id);
-		for (const embedded of decoded.embedded) this.noteUser(embedded.from, embedded.message_id);
+		this.noteRecorded(record.from, record.log_id);
+		for (const embedded of decoded.embedded) this.noteRecorded(embedded.from, embedded.log_id);
 		if (this.defaultPosts.delete(record.message_id)) this.learnDefaultRoom(record.room_id);
 		this.showMessageRoom(record.room_id);
 		// A room shown for its messages has no record to say where its log
@@ -2321,7 +2501,14 @@ export class ChatClient {
 		this.acceptLiveMessage(record, true);
 		for (const embedded of decoded.embedded) this.acceptLiveMessage(embedded, false);
 		// A new message from a user ends their typing indicator in that room (§4.4).
-		if (record.log_id === record.message_id) this.removeTyping(record.room_id, record.from.user_id);
+		if (record.log_id === record.message_id) {
+			this.removeTyping(record.room_id, record.from.user_id);
+			// A server-wide notice reaches every user, joined to its room or not
+			// (Appendix A.1): one for a room that is not shown shows where you are.
+			if (record.from.user_id === '@server' && room?.kind !== 'joined' && this.hasCap('rooms')) {
+				this.addNotice(this.noticeRoom(), record.from, record.body);
+			}
+		}
 		this.emit();
 	}
 
@@ -2335,7 +2522,7 @@ export class ChatClient {
 		}
 		this.observeLogId(sets[0].log_id);
 		for (const set of sets) {
-			this.noteUser(set.from, set.log_id);
+			this.noteRecorded(set.from, set.log_id);
 			if (room?.recovery && !this.bufferLive(room, { kind: 'reaction', record: set })) return;
 			this.store.putReaction(set);
 			if (set.from.user_id === this.you?.user_id) {
@@ -2376,7 +2563,7 @@ export class ChatClient {
 		return true;
 	}
 
-	private startRecovery(room: RoomState, head: string, rebuild: boolean, preserveBuffer = false): void {
+	private startRecovery(room: RoomState, head: string | undefined, rebuild: boolean, preserveBuffer = false): void {
 		const retained = preserveBuffer
 			? (room.recovery?.buffer ?? []).filter((live) => isEmbedded(live) || room.floor === undefined || compareLogIds(live.record.log_id, room.floor) >= 0)
 			: [];
@@ -2392,14 +2579,14 @@ export class ChatClient {
 			? room.floor
 			: maxDefined(room.checkpoint === undefined ? undefined : increment(room.checkpoint), room.floor)) ?? FIRST_LOG_ID;
 		room.recovery = {
-			head,
+			...(head !== undefined ? { head } : {}),
 			nextAfter,
 			buffer: retained,
 			bufferBytes: retained.reduce((bytes, live) => bytes + recordBytes(live.record), 0),
 			generation
 		};
 		room.recoveryError = undefined;
-		if (nextAfter !== undefined && compareLogIds(nextAfter, head) > 0) {
+		if (head !== undefined && compareLogIds(nextAfter, head) > 0) {
 			this.finishRecovery(room);
 			return;
 		}
@@ -2408,9 +2595,12 @@ export class ChatClient {
 
 	private requestHistoryPage(room: RoomState, generation: number): void {
 		const recovery = room.recovery;
-		if (!recovery || recovery.generation !== generation || !this.authenticated) return;
+		if (!recovery || recovery.generation !== generation) return;
+		// A room kept from the last connection resumes right behind `auth` (§3.2).
+		const pipelined = !this.authenticated && this.authRequested;
+		if (!this.authenticated && !pipelined) return;
 		const request = this.enqueueRequest('history', historyParams(room.id, recovery.nextAfter, recovery.head), {
-			visible: false, allowBeforeAuth: false
+			visible: false, allowBeforeAuth: pipelined
 		});
 		recovery.requestId = request.id;
 		request.promise.then((result) => {
@@ -2429,10 +2619,12 @@ export class ChatClient {
 			this.abortRecovery(room, 'Invalid history response');
 			return;
 		}
+		// A recovery started without a head takes the first page's (§4.1).
+		recovery.head ??= result.latest_log_id;
 		this.observeHistoryResponse(room, result);
 		if (room.recovery !== recovery || recovery.generation !== generation) return;
 		this.applyPage(room, result);
-		const lastId = isLogId(result.last_id) ? result.last_id : undefined;
+		const lastId = isLogId(result.last_log_id) ? result.last_log_id : undefined;
 		if (result.more) {
 			if (!lastId || (recovery.nextAfter !== undefined && compareLogIds(lastId, recovery.nextAfter) < 0) || compareLogIds(lastId, recovery.head) >= 0) {
 				this.abortRecovery(room, 'History pagination did not provide a valid continuation');
@@ -2448,20 +2640,23 @@ export class ChatClient {
 		this.emit();
 	}
 
-	/** Install a page's records, skipping message and reaction records below the room's bound. */
+	/**
+	 * Install a page's records, skipping message and reaction records below
+	 * the room's bound. Memberships keep the room's member list current; a
+	 * listing's members already cover the ones at or below its head.
+	 */
 	private applyPage(room: RoomState, result: JsonObject): void {
 		const records: DecodedRecords = decodeHistoryRecords(result);
-		for (const record of [...records.rooms, ...records.messages, ...records.embedded, ...records.reactions]) this.observeLogId(record.log_id);
-		for (const record of [...records.messages, ...records.embedded]) this.noteUser(record.from, record.message_id);
-		for (const record of records.reactions) this.noteUser(record.from, record.log_id);
+		for (const record of [...records.rooms, ...records.messages, ...records.embedded, ...records.reactions, ...records.memberships]) this.observeLogId(record.log_id);
+		for (const record of [...records.messages, ...records.embedded, ...records.reactions]) this.noteRecorded(record.from, record.log_id);
+		for (const record of records.memberships) this.noteRecorded(record.user, record.log_id);
 		const retained = (logId: string) => room.floor === undefined || compareLogIds(logId, room.floor) >= 0;
 		for (const record of records.rooms) this.installRoom(record);
 		for (const record of records.messages) if (retained(record.log_id)) this.installMessage(record);
 		for (const record of records.reactions) if (retained(record.log_id)) this.store.putReaction(record);
+		for (const record of records.memberships) this.store.putMembership(record);
 		// Embedded reference snapshots install regardless of any room's bound.
 		for (const record of records.embedded) this.installMessage(record);
-		// A page's `users` are current and merge after its records (§3.3, §4.1).
-		this.noteUsers(result.users);
 	}
 
 	private applyLive(live: LiveRecord): void {
@@ -2523,7 +2718,7 @@ export class ChatClient {
 		if (recovery.nextAfter === undefined || compareLogIds(effective, recovery.nextAfter) > 0) {
 			// Keep this recovery's fixed H. Buffered live records at or above the
 			// bound survive the rebuild.
-			this.startRecovery(room, recovery.head, true, true);
+			this.startRecovery(room, recovery.head ?? room.latestLogId, true, true);
 		}
 	}
 
@@ -2577,6 +2772,8 @@ export class ChatClient {
 			this.retainedRooms.set(room.id, room);
 		}
 		this.rooms.clear();
+		// The kept joined rooms stand for this identity's whole set only if its listing arrived.
+		this.keptUserId = this.joinedComplete ? this.you?.user_id : undefined;
 		this.forgetConnectionState();
 	}
 
@@ -2604,11 +2801,15 @@ export class ChatClient {
 		this.store.clear();
 		this.store.takeTouched();
 		this.users.clear();
+		this.recordedUsers.clear();
 		this.userAliases.clear();
 		this.greatestLogId = undefined;
 		this.notices.clear();
+		this.orphanNotices = [];
 		this.defaultRoom = undefined;
 		this.defaultPosts.clear();
+		this.joinedComplete = false;
+		this.keptUserId = undefined;
 		this.forgetConnectionState();
 	}
 
@@ -2620,7 +2821,6 @@ export class ChatClient {
 		this.server = undefined;
 		this.you = undefined;
 		this.reads.clear();
-		this.roomMembers.clear();
 		this.listings.clear();
 		this.joinedListing = undefined;
 		this.directory = undefined;
@@ -2628,9 +2828,10 @@ export class ChatClient {
 		this.awaySent = false;
 	}
 
+	/** The room to show when none is chosen: the first joined top-level room, else the first joined one. */
 	private defaultRoomId(): string | undefined {
-		for (const room of this.orderedRooms()) if (!this.isThread(room.id)) return room.id;
-		return this.rooms.keys().next().value;
+		const joined = this.orderedRooms().filter((room) => room.kind === 'joined');
+		return (joined.find((room) => !this.isThread(room.id)) ?? joined[0])?.id;
 	}
 
 	/**
@@ -2642,8 +2843,8 @@ export class ChatClient {
 	private handleActivity(params: JsonObject | undefined): void {
 		if (!params || typeof params.room_id !== 'string' || !isIdentity(params.from)) return;
 		const room = params.room_id;
+		// The sender is neither a current nor a recorded object (§3.3): it renders through the kept one.
 		const from = cloneJson(params.from);
-		this.noteUser(from, 'unplaced');
 		const read = isLogId(params.read_message_id) && this.setReadCursor(room, from.user_id, params.read_message_id);
 		const seconds = params.typing;
 		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
@@ -2912,23 +3113,32 @@ export class ChatClient {
 	}
 
 	private emit(): void {
+		this.placeOrphanNotices();
 		const snapshot = this.snapshot();
 		for (const listener of this.listeners) listener(snapshot);
 	}
 }
 
-/** Messages of a room in timeline order. */
 /**
- * The latest user object for a `user_id`, following renames (§3.3): a
- * retired ID resolves to the identity that replaced it. Falls back to the
- * given `from`, so a message always has someone to show.
+ * How to render a user (§3.3): field by field, the kept object for its
+ * `user_id` (following a retired ID to the identity that replaced it), else
+ * the recorded object the frame carries (`from`, a membership's `user`), and
+ * the display name falls back to the `user_id` last. Returns the kept object
+ * itself when it has every field the recorded one has.
  */
-export function userIn(snapshot: Pick<ClientSnapshot, 'users' | 'userAliases'>, from: Identity): Identity {
-	let id = from.user_id;
+export function userIn(snapshot: Pick<ClientSnapshot, 'users' | 'userAliases'>, recorded: Identity): Identity {
+	let id = recorded.user_id;
 	for (let hops = 0; hops < 8 && snapshot.userAliases[id] !== undefined; hops += 1) id = snapshot.userAliases[id];
-	return snapshot.users[id] ?? snapshot.users[from.user_id] ?? from;
+	const kept = snapshot.users[id] ?? snapshot.users[recorded.user_id];
+	if (!kept) return recorded;
+	const missing = Object.keys(recorded).filter((key) => key !== 'user_id' && !Object.hasOwn(kept, key) && recorded[key] !== undefined && recorded[key] !== null);
+	if (!missing.length) return kept;
+	const merged: JsonObject = Object.create(null);
+	for (const key of missing) merged[key] = recorded[key];
+	return Object.assign(merged, kept) as Identity;
 }
 
+/** Messages of a room in timeline order. */
 export function timelineMessages(room: RoomSnapshot | undefined): MessageRecord[] {
 	return room ? timelineEvents(room.timeline) : [];
 }
@@ -3059,10 +3269,9 @@ function canonicalJson(value: JsonValue): string {
 /** Shared by rooms without notices, so their snapshots compare equal. */
 const NO_NOTICES: readonly Notice[] = Object.freeze([]);
 
-/** A room's display title: its record's `title`, else "Server" for room `@server`, else its `room_id` (§3.4). */
+/** A room's display title: its record's `title`, else its `room_id` (§3.4). */
 function roomTitle(roomId: string, record: RoomRecord | undefined): string {
 	if (typeof record?.title === 'string' && record.title) return record.title;
-	if (roomId === SERVER_ROOM_ID) return 'Server';
 	if (roomId === DEFAULT_ROOM_ID) return 'Default room';
 	return roomId;
 }
@@ -3105,12 +3314,17 @@ function isEmbedded(live: LiveRecord): boolean {
 	return live.kind === 'message' && live.embedded === true;
 }
 
-function historyParams(roomId: string, after: string | undefined, before: string): JsonObject {
-	return { room_id: roomId, after: after ?? FIRST_LOG_ID, before, limit: HISTORY_PAGE_SIZE };
+/** A forward page; without `before` (a recovery that has no head yet) it runs to the end of the log (§4.1). */
+function historyParams(roomId: string, after: string | undefined, before: string | undefined): JsonObject {
+	return { room_id: roomId, after: after ?? FIRST_LOG_ID, ...(before !== undefined ? { before } : {}), limit: HISTORY_PAGE_SIZE };
 }
 
+/** Record arrays that a history page may omit when empty (§4.1). */
+const HISTORY_ARRAYS = ['rooms', 'messages', 'reactions', 'membership'];
+
 function validHistoryMetadata(result: JsonObject): result is ValidHistoryResponse {
-	if (!Array.isArray(result.entries) || typeof result.more !== 'boolean' || !isLogId(result.latest_log_id)) return false;
+	if (HISTORY_ARRAYS.some((key) => result[key] !== undefined && !Array.isArray(result[key]))) return false;
+	if (typeof result.more !== 'boolean' || !isLogId(result.latest_log_id)) return false;
 	if (result.history_log_id !== null && !isLogId(result.history_log_id)) return false;
 	return result.history_log_id === null || compareLogIds(result.history_log_id, result.latest_log_id) <= 0;
 }

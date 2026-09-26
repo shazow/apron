@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "replay",
   "name": "Tombstones survive stale replay and hide reactions",
   "description": "A deletion snapshot (no body) wins over the older content snapshot however they arrive. Reaction state for the tombstoned message is kept but not projected.",
@@ -23,13 +23,13 @@
     {
       "name": "history",
       "steps": [
-        {"receive":{"id":"history","result":{"rooms":[],"entries":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}},{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}],"reactions":[{"log_id":"105","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]},{"log_id":"115","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉"]}]}],"first_id":"100","last_id":"115","more":false,"latest_log_id":"115","history_log_id":"100"}}}
+        {"receive":{"id":"history","result":{"rooms":[],"messages":[{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}},{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}],"reactions":[{"log_id":"105","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]}]},{"log_id":"115","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"carol"},"emojis":["🎉"]}]}],"first_log_id":"100","last_log_id":"115","more":false,"latest_log_id":"115","history_log_id":"100"}}}
       ]
     },
     {
       "name": "compacted-history",
       "steps": [
-        {"receive":{"id":"history","result":{"entries":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}],"reactions":[{"log_id":"115","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]},{"from":{"user_id":"carol"},"emojis":["🎉"]}]}],"first_id":"100","last_id":"115","more":false,"latest_log_id":"115","history_log_id":"100"}}},
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"deleted":true}],"reactions":[{"log_id":"115","message_id":"100","room_id":"general","reactions":[{"from":{"user_id":"bob"},"emojis":["👍"]},{"from":{"user_id":"carol"},"emojis":["🎉"]}]}],"first_log_id":"100","last_log_id":"115","more":false,"latest_log_id":"115","history_log_id":"100"}}},
         {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}}
       ]
     }

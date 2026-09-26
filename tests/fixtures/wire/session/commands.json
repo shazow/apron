@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "session",
   "name": "Commands, notices, and mentions",
   "description": "A command takes a message's params (room_id, body.text as typed, mentions) and settles on its result or error; nothing is posted. Its reply is a @private notice without message_id: shown in its room, never stored. A message lists its mentions in body.mentions.",
@@ -12,15 +12,15 @@
     {
       "name": "help-kick-mention",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["rooms","command"]}}},
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["rooms","command"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
-        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
-        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"10","title":"General"}]}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"10","title":"General","members":[{"user_id":"guest_1"}]}],"users":[{"user_id":"guest_1"}]}}},
         {"command":{"as":"help","room":"general","text":"/help"}},
         {"request":{"as":"help-request","match":{"method":"command","params":{"room_id":"general","body":{"text":"/help"}}}}},
-        {"reply":{"to":"help-request","result":{}}},
         {"receive":{"method":"message","params":{"room_id":"general","from":{"user_id":"@private","name":"Only you"},"body":{"text":"- `/kick @user [reason]`: remove someone from this room","format":"markdown"}}}},
+        {"reply":{"to":"help-request","result":{}}},
         {"expect":{"notices":[{"room_id":"general","from":{"user_id":"@private","name":"Only you"},"body":{"text":"- `/kick @user [reason]`: remove someone from this room","format":"markdown"}}],"rooms":[{"room_id":"general","log_id":"10","title":"General","messages":[]}],"operations":{"help":"fulfilled"}}},
         {"command":{"as":"kick","room":"general","text":"/kick @bob spamming","mentions":["bob"]}},
         {"request":{"as":"kick-request","match":{"method":"command","params":{"room_id":"general","body":{"text":"/kick @bob spamming","mentions":["bob"]}}}}},
@@ -28,8 +28,8 @@
         {"expect":{"operations":{"help":"fulfilled","kick":"rejected"}}},
         {"send":{"as":"mention","room":"general","text":"@bob can you check?","format":"plain","mentions":["bob"]}},
         {"request":{"as":"mention-request","match":{"method":"message","params":{"room_id":"general","body":{"text":"@bob can you check?","format":"plain","mentions":["bob"]}}}}},
-        {"reply":{"to":"mention-request","result":{"message_id":"12"}}},
-        {"receive":{"method":"message","params":{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"guest_1"},"body":{"text":"@bob can you check?","format":"plain","mentions":["bob"]}}}}
+        {"receive":{"method":"message","params":{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"guest_1"},"body":{"text":"@bob can you check?","format":"plain","mentions":["bob"]}}}},
+        {"reply":{"to":"mention-request","result":{"message_id":"12"}}}
       ]
     }
   ],

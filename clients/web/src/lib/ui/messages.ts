@@ -1,9 +1,8 @@
 import type { MentionPerson } from '$lib/protocol/markdown';
-import { compareLogIds } from '$lib/protocol/reducer';
 import { isJsonObject, type Embed, type Identity, type MessageRecord } from '$lib/protocol/types';
 import { directory } from './directory.svelte';
 
-/** The sender's latest display name (§3.3), not necessarily the one the message was posted under. */
+/** The sender's display name (§3.3): the kept one, else the one the message was posted under. */
 export function senderName(event: MessageRecord): string {
 	return directory.name(event.from);
 }
@@ -77,21 +76,18 @@ export function mentionsMe(event: MessageRecord, me: Identity | undefined): bool
 }
 
 /**
- * Who a composer can mention: the room's `members` from `room_list` (on the
- * demo worker, the users connected now) and anyone who posted after that
- * listing (`asOf`), those who spoke most recently first; without a members
- * list, the room's recent senders. The viewer is marked `me` and is always
- * present. Names and avatars are the latest known.
+ * Who a composer can mention: the room's members (§4.3.2), kept current by
+ * memberships, those who spoke most recently first; without a member list,
+ * the room's recent senders. The viewer is marked `me` and is always present.
+ * Names and avatars are the latest known.
  */
-export function peopleIn(messages: MessageRecord[], me: Identity | undefined, members?: Identity[], asOf?: string): MentionPerson[] {
+export function peopleIn(messages: MessageRecord[], me: Identity | undefined, members?: Identity[]): MentionPerson[] {
 	const people: MentionPerson[] = [];
 	const seen = new Set<string>();
 	const listed = members && new Set(members.map((member) => member.user_id));
-	const add = (from: Identity, logId?: string): void => {
+	const add = (from: Identity): void => {
 		if (!from?.user_id || seen.has(from.user_id) || from.user_id.startsWith('@')) return;
-		const around = !listed || listed.has(from.user_id) || from.user_id === me?.user_id ||
-			(asOf !== undefined && logId !== undefined && compareLogIds(logId, asOf) > 0);
-		if (!around) return;
+		if (listed && !listed.has(from.user_id) && from.user_id !== me?.user_id) return;
 		seen.add(from.user_id);
 		const latest = directory.person(from) ?? from;
 		const avatar = directory.avatar(from);
@@ -102,7 +98,7 @@ export function peopleIn(messages: MessageRecord[], me: Identity | undefined, me
 			...(from.user_id === me?.user_id ? { me: true } : {})
 		});
 	};
-	for (let index = messages.length - 1; index >= 0; index -= 1) add(messages[index].from, messages[index].log_id);
+	for (let index = messages.length - 1; index >= 0; index -= 1) add(messages[index].from);
 	for (const member of members ?? []) add(member);
 	if (me) add(me);
 	return people;

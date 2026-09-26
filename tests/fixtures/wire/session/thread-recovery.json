@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "session",
   "name": "Per-room recovery of a thread room",
   "description": "Top-level rooms recover when announced; the thread room 103 loads only on loadRoom, as its own room with H = 107: its newest page first, then an older page on loadOlder. A move (log 104) appears in both rooms' history and re-homes the message whichever page arrives first. Thread pages mix room records, snapshots, and reactions (server limit 3); a live thread record above H is buffered.",
@@ -13,46 +13,46 @@
     {
       "name": "room-then-thread",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
-        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
-        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"100"},{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},"latest_log_id":"107","history_log_id":"103"}]}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"100","members":[{"user_id":"guest_1"}]},{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},"latest_log_id":"107","history_log_id":"103","members":[{"user_id":"guest_1"}]}],"users":[{"user_id":"guest_1"}]}}},
         {"request":{"as":"general-1","match":{"method":"history","params":{"room_id":"general","after":"100","before":"108"}}}},
-        {"reply":{"to":"general-1","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"entries":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_id":"100","last_id":"102","more":true,"latest_log_id":"108","history_log_id":"100"}}},
+        {"reply":{"to":"general-1","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_log_id":"100","last_log_id":"102","more":true,"latest_log_id":"108","history_log_id":"100"}}},
         {"request":{"as":"general-2","match":{"method":"history","params":{"room_id":"general","after":"103","before":"108"}}}},
-        {"reply":{"to":"general-2","result":{"entries":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}},{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"next"}}],"first_id":"104","last_id":"108","more":false,"latest_log_id":"108","history_log_id":"100"}}},
+        {"reply":{"to":"general-2","result":{"messages":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}},{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"next"}}],"first_log_id":"104","last_log_id":"108","more":false,"latest_log_id":"108","history_log_id":"100"}}},
         {"expect":{"rooms":[{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101"},"messages":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}]},{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"next"}}]}]}},
         {"loadRoom":{"as":"load","room":"103"}},
         {"request":{"as":"thread-1","match":{"method":"history","params":{"room_id":"103","before":"107"}}}},
         {"receive":{"method":"message","params":{"message_id":"109","log_id":"109","room_id":"103","from":{"user_id":"bob"},"body":{"text":"late"}}}},
-        {"reply":{"to":"thread-1","result":{"rooms":[{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}}],"entries":[{"message_id":"105","log_id":"105","room_id":"103","from":{"user_id":"carol"},"body":{"text":"done"}}],"reactions":[{"log_id":"106","message_id":"105","room_id":"103","reactions":[{"from":{"user_id":"alice"},"emojis":["🎉"]}]}],"first_id":"105","last_id":"107","more":true,"latest_log_id":"109","history_log_id":"103"}}},
+        {"reply":{"to":"thread-1","result":{"rooms":[{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}}],"messages":[{"message_id":"105","log_id":"105","room_id":"103","from":{"user_id":"carol"},"body":{"text":"done"}}],"reactions":[{"log_id":"106","message_id":"105","room_id":"103","reactions":[{"from":{"user_id":"alice"},"emojis":["🎉"]}]}],"first_log_id":"105","last_log_id":"107","more":true,"latest_log_id":"109","history_log_id":"103"}}},
         {"expect":{"operations":{"load":"fulfilled"}}},
         {"loadOlder":{"as":"older","room":"103"}},
         {"request":{"as":"thread-2","match":{"method":"history","params":{"room_id":"103","before":"104"}}}},
-        {"reply":{"to":"thread-2","result":{"rooms":[{"room_id":"103","log_id":"103","parent_room_id":"general","title":"Deploy","intro_message":{"message_id":"101"}}],"entries":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_id":"103","last_id":"104","more":false,"latest_log_id":"109","history_log_id":"103"}}}
+        {"reply":{"to":"thread-2","result":{"rooms":[{"room_id":"103","log_id":"103","parent_room_id":"general","title":"Deploy","intro_message":{"message_id":"101"}}],"messages":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_log_id":"103","last_log_id":"104","more":false,"latest_log_id":"109","history_log_id":"103"}}}
       ]
     },
     {
       "name": "interleaved",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
-        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
-        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"100"},{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},"latest_log_id":"107","history_log_id":"103"}]}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"100","title":"General","latest_log_id":"108","history_log_id":"100","members":[{"user_id":"guest_1"}]},{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},"latest_log_id":"107","history_log_id":"103","members":[{"user_id":"guest_1"}]}],"users":[{"user_id":"guest_1"}]}}},
         {"request":{"as":"general-1","match":{"method":"history","params":{"room_id":"general","after":"100","before":"108"}}}},
         {"loadRoom":{"as":"load","room":"103"}},
         {"request":{"as":"thread-1","match":{"method":"history","params":{"room_id":"103","before":"107"}}}},
-        {"reply":{"to":"thread-1","result":{"rooms":[{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}}],"entries":[{"message_id":"105","log_id":"105","room_id":"103","from":{"user_id":"carol"},"body":{"text":"done"}}],"reactions":[{"log_id":"106","message_id":"105","room_id":"103","reactions":[{"from":{"user_id":"alice"},"emojis":["🎉"]}]}],"first_id":"105","last_id":"107","more":true,"latest_log_id":"107","history_log_id":"103"}}},
+        {"reply":{"to":"thread-1","result":{"rooms":[{"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","intro_message":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}}}],"messages":[{"message_id":"105","log_id":"105","room_id":"103","from":{"user_id":"carol"},"body":{"text":"done"}}],"reactions":[{"log_id":"106","message_id":"105","room_id":"103","reactions":[{"from":{"user_id":"alice"},"emojis":["🎉"]}]}],"first_log_id":"105","last_log_id":"107","more":true,"latest_log_id":"107","history_log_id":"103"}}},
         {"expect":{"operations":{"load":"fulfilled"}}},
         {"loadOlder":{"as":"older","room":"103"}},
         {"request":{"as":"thread-2","match":{"method":"history","params":{"room_id":"103","before":"104"}}}},
         {"receive":{"method":"message","params":{"message_id":"109","log_id":"109","room_id":"103","from":{"user_id":"bob"},"body":{"text":"late"}}}},
-        {"reply":{"to":"general-1","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"entries":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_id":"100","last_id":"102","more":true,"latest_log_id":"108","history_log_id":"100"}}},
+        {"reply":{"to":"general-1","result":{"rooms":[{"room_id":"general","log_id":"100","title":"General"}],"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"alice"},"body":{"text":"Deploy?"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_log_id":"100","last_log_id":"102","more":true,"latest_log_id":"108","history_log_id":"100"}}},
         {"request":{"as":"general-2","match":{"method":"history","params":{"room_id":"general","after":"103","before":"108"}}}},
-        {"reply":{"to":"thread-2","result":{"rooms":[{"room_id":"103","log_id":"103","parent_room_id":"general","title":"Deploy","intro_message":{"message_id":"101"}}],"entries":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_id":"103","last_id":"104","more":false,"latest_log_id":"109","history_log_id":"103"}}},
-        {"reply":{"to":"general-2","result":{"entries":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}},{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"next"}}],"first_id":"104","last_id":"108","more":false,"latest_log_id":"108","history_log_id":"100"}}}
+        {"reply":{"to":"thread-2","result":{"rooms":[{"room_id":"103","log_id":"103","parent_room_id":"general","title":"Deploy","intro_message":{"message_id":"101"}}],"messages":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}}],"first_log_id":"103","last_log_id":"104","more":false,"latest_log_id":"109","history_log_id":"103"}}},
+        {"reply":{"to":"general-2","result":{"messages":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}},{"message_id":"108","log_id":"108","room_id":"general","from":{"user_id":"alice"},"body":{"text":"next"}}],"first_log_id":"104","last_log_id":"108","more":false,"latest_log_id":"108","history_log_id":"100"}}}
       ]
     }
   ],

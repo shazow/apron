@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "replay",
   "name": "Null is a stored value",
   "description": "null has no deletion meaning: null values inside ext and embeds are stored and projected literally, distinct from absent keys.",

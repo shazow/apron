@@ -150,6 +150,7 @@ const (
 	kindRoom recordKind = iota
 	kindMessage
 	kindReactions
+	kindMembership
 )
 
 // logRecord is one committed change: raw is the complete wire object
@@ -158,41 +159,11 @@ const (
 // maps. Only redaction (§4.2) rewrites a record; raw is replaced, never
 // modified, so a reader may hold it after releasing s.mu. A record is
 // referenced from the log of every room it belongs to, so a move snapshot
-// appears in both the source and destination room logs.
+// appears in both the source and destination room logs (§4.1).
 type logRecord struct {
 	id   int64
 	kind recordKind
-	// author is the user_id of a message's author, or of the one user whose
-	// set a reactions record carries, for history's users (§4.1).
-	author string
-	raw    json.RawMessage
-}
-
-// users returns the user_ids whose objects a history page carries for the
-// record: its author, or every user of a reactions record holding several
-// sets.
-func (r *logRecord) users() []string {
-	switch {
-	case r.kind == kindRoom:
-		return nil
-	case r.author != "":
-		return []string{r.author}
-	case r.kind == kindReactions:
-		var value struct {
-			Reactions []struct {
-				From struct {
-					UserID string `json:"user_id"`
-				} `json:"from"`
-			} `json:"reactions"`
-		}
-		_ = json.Unmarshal(r.raw, &value)
-		ids := make([]string, len(value.Reactions))
-		for i, set := range value.Reactions {
-			ids[i] = set.From.UserID
-		}
-		return ids
-	}
-	return nil
+	raw  json.RawMessage
 }
 
 // newLogRecord encodes value. Values hold only JSON-decoded data and
@@ -480,6 +451,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			c.pong()
 			continue
 		}
+		// Frames are processed in order, each to completion before the next
+		// is read, which makes auth a barrier (§3.2).
 		s.processFrame(c, payload)
 	}
 }
@@ -504,8 +477,8 @@ func (s *Server) serverParams() map[string]any {
 		authSchemes = []string{"webauthn", "token", "guest"}
 	}
 	params := map[string]any{
-		"protocol": 5,
-		"name":     "apron-go/0.6",
+		"protocol": 6,
+		"name":     "apron-go/0.7",
 		"caps":     []string{"history", "edit", "rooms", "reactions", "activity", "embed:upload", "embed:stream", "command"},
 		"auth":     authSchemes,
 		"ping":     max(1, int(s.config.PingInterval/time.Second)),
@@ -662,7 +635,8 @@ func (c *client) sendError(req request, err *rpcError) {
 // operation is a request handler. When it succeeds and has already queued its
 // own reply, it reports replied. Handlers whose results describe state queue
 // them while holding s.mu, so that a result reflects every notification sent
-// before it on the connection (§1).
+// before it on the connection, and after the notifications the request
+// causes, which precede its result (§1).
 type operation func(s *Server, c *client, req request) (result any, replied bool, err *rpcError)
 
 func (s *Server) operations() map[string]operation {
@@ -704,6 +678,10 @@ func (s *Server) processFrame(c *client, payload []byte) {
 		c.pong()
 		return
 	}
+	// auth is a barrier (§3.2): the read loop processes one frame at a time,
+	// so auth finishes before any later frame on the connection is read.
+	// Requests pipelined behind a failed auth, or behind a WebAuthn begin
+	// step, find no identity below and are denied.
 	if req.method == "auth" {
 		if _, err := s.authenticate(c, req); err != nil && req.hasID {
 			c.sendError(req, err)

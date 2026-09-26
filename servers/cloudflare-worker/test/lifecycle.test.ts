@@ -104,10 +104,11 @@ it("restores hibernated socket attachment state without re-announcing the sessio
 			method: "message",
 			params: { room_id: "general", body: { format: "plain", text: "after hibernation" } },
 		}));
+		// The broadcast comes before the result on the sender's connection (§1).
+		const broadcast = await peer.next();
 		const reply = await peer.next();
 		expect(reply.id).toBe("after-eviction");
 		expect(reply.result?.message_id).toMatch(/^[1-9][0-9]*$/);
-		const broadcast = await peer.next();
 		expect(broadcast.method).toBe("message");
 		expect(broadcast.params?.body?.text).toBe("after hibernation");
 		expect(broadcast.params?.room_id).toBe("general");

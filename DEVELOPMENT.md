@@ -47,9 +47,11 @@ Open `http://localhost:5173`. The development server proxies `/ws` to
 `127.0.0.1:8080`. Open another browser tab to chat with a second client.
 
 To use the Cloudflare backend locally, follow its secret setup and run
-`make dev-worker` instead of `make dev-server`. The worker speaks protocol
-v5 like the web client and the Go server, within the demo's budgets and
-policies (only threads under `general` can be created). `make test-worker` runs its
+`make dev-worker` instead of `make dev-server`. The web client, the Go
+server, and the worker speak protocol v6; the worker does so within the
+demo's budgets and policies (only threads under `general` can be created,
+and guests' memberships are not logged, so its `room_list` ignores
+`latest_log_id`). `make test-worker` runs its
 Workers runtime suite; `make test-worker-browser` tests browser passkeys against
 local Wrangler. The public demo has persistent passkeys and rolling history;
 its passkey registration creates a new identity instead of upgrading guest
@@ -68,12 +70,22 @@ Use `localhost` for the default passkey configuration; see
 ## Threads
 
 A thread is a room with a `parent_room_id` (PROTOCOL.md [§3.4](PROTOCOL.md#34-rooms), [§4.3.4](PROTOCOL.md#434-creating-and-editing)). Rooms
-are not announced: after signing in the client lists the rooms you have joined
-with `room_list`, threads included, and follows `room_update` from then on
-([§4.3](PROTOCOL.md#43-rooms)). The sidebar lists top-level rooms; the open room's joined threads
-are listed under it, and every thread of the room, joined or not, is shown as a
-card in its feed. Opening a thread you haven't joined joins it; only joined
-threads deliver live. Start a thread from any message in a room (Start
+are not announced: the client lists the rooms you have joined with `room_list`,
+threads included, with their members, sent right behind `auth` without waiting
+for its result ([§3.2](PROTOCOL.md#32-authentication)), and follows `room_update` from then on ([§4.3](PROTOCOL.md#43-rooms)). After
+a dropped connection it resumes each room's history from where it stopped in
+the same way, and a resumed passkey session lists only the rooms that changed
+since. Member lists start from those listings and follow the `membership`
+records of joins and leaves ([§4.3.2](PROTOCOL.md#432-membership)), which also show in the room's
+timeline as quiet "Ada joined" lines, merged and netted out between messages so
+guest churn stays quiet. The sidebar lists top-level rooms; the
+open room's joined threads are listed under it, and every thread of the room,
+joined or not, is shown as a card in its feed. Only joined threads deliver
+live. Opening a thread you haven't joined reads it through `history` without
+joining it (joining is a logged membership everyone sees): its header offers
+Join, and replying joins it first. The cards of threads you haven't joined
+refresh when the room is opened or its threads are listed, with `room_list`
+and the room as `parent_room_id`. Start a thread from any message in a room (Start
 thread in its toolbar; cap `rooms`): the client creates a room under the
 current one with `room_set`, titled after the message's first line, with the
 message as its `intro_message`, which joins you to it. The message stays where
@@ -117,11 +129,13 @@ shows an `@` badge on a room you aren't reading (a thread's mentions badge its
 parent room) or a rust jump bar when it landed above the fold; text that merely
 contains your ID does not. Messages from history, including a thread's
 history loaded when it is opened, never ping. Typing `@` in the composer lists
-the room's members (`room_list` with its `room_id`), or its recent senders on a
-server without `room_list`; a picked person, or a finished `@name` or `@user_id`
-that names exactly one of them, becomes a chip showing their name that is sent
-as `@user_id` and listed in `body.mentions`. Message headers show each sender as
-their name with the muted `@user_id` beside it.
+the room's members, or its recent senders on a server without `room_list`; a
+picked person, or a finished `@name` or `@user_id` that names exactly one of
+them, becomes a chip showing their name that is sent as `@user_id` and listed
+in `body.mentions`. Message headers show each sender as their name with the
+muted `@user_id` beside it, always when another user known to the client shows
+under the same name ([§3.3](PROTOCOL.md#33-identity)). A sender's name and avatar come from the latest
+profile the server sent for them, else from the message itself.
 
 With cap `command` ([PROTOCOL.md §4.8](PROTOCOL.md#48-command)), composer text starting with one `/` is
 a command: the composer tags it, and Run sends it as a `command` request
@@ -155,8 +169,9 @@ reactions.
 
 The Go server keeps rooms, threads, reactions, and uploads in memory. A new
 guest has joined `general`; other rooms are joined from Browse rooms, and
-threads from their cards or More threads…. A thread's members are only those
-who joined it (its creator first), independent of its parent room. Empty
+threads from More threads…, a thread's Join, or by replying in it. A thread's
+members are only those who joined it (its creator first), independent of its
+parent room. Empty
 threads remain available; deleting or moving their intro message does not
 remove them. With the Go server the client also sends attachments and
 voice clips, shows live streams, sets avatars, marks where you stopped reading,

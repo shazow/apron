@@ -64,28 +64,31 @@ export class FakeSocket {
 	/**
 	 * Runs the greeting, answers the auth request, and answers the client's
 	 * `room_list` of joined rooms with one room. Cap `rooms` is added unless
-	 * `rooms: false`; without it no listing is sent.
+	 * `rooms: false`; without it no listing is sent. The client sends the
+	 * listing right behind `auth` (§3.2), before its result, which is answered
+	 * first, as a server finishes `auth` first.
 	 */
 	async greet(caps: string[] = [], options: {
 		auth?: string[]; token?: string; room?: Record<string, unknown>; ext?: Record<string, unknown>; ping?: number; rooms?: boolean;
+		you?: Record<string, unknown>;
 	} = {}): Promise<void> {
 		const advertised = options.rooms === false || caps.includes('rooms') ? caps : [...caps, 'rooms'];
 		this.open();
 		this.receive({
 			method: 'server',
 			params: {
-				protocol: 5, name: 'fake', auth: options.auth ?? ['guest'], caps: advertised,
+				protocol: 6, name: 'fake', auth: options.auth ?? ['guest'], caps: advertised,
 				...(options.ext ? { ext: options.ext } : {}), ...(options.ping ? { ping: options.ping } : {})
 			}
 		});
 		const auth = this.sent.find((frame) => frame.method === 'auth');
 		if (!auth) throw new Error('client did not authenticate');
-		this.receive({ id: auth.id, result: { you: { user_id: 'guest_1', name: 'Guest' }, ...(options.token ? { token: options.token } : {}) } });
+		const listing = [...this.sent].reverse().find((frame) => frame.method === 'room_list' && (frame.params as Record<string, unknown>)?.filter === 'joined');
+		if (advertised.includes('rooms') && !listing) throw new Error('client did not list its joined rooms behind auth');
+		this.receive({ id: auth.id, result: { you: options.you ?? { user_id: 'guest_1', name: 'Guest' }, ...(options.token ? { token: options.token } : {}) } });
 		// The auth response settles through a promise before the client applies it.
 		await settle();
-		if (!advertised.includes('rooms')) return;
-		const listing = [...this.sent].reverse().find((frame) => frame.method === 'room_list' && (frame.params as Record<string, unknown>)?.only_joined === true);
-		if (!listing) throw new Error('client did not list its joined rooms');
+		if (!listing) return;
 		this.receive({ id: listing.id, result: { joined: [options.room ?? { room_id: 'lobby', title: 'Lobby' }] } });
 		await settle();
 	}

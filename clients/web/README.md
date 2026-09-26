@@ -44,30 +44,45 @@ Explicit server URLs keep their path: a bare hostname connects at `/`, while
 servers that require `/ws` should be entered with that suffix.
 
 The client keeps one user object per `user_id` ([PROTOCOL.md §3.3](../../PROTOCOL.md#33-identity)) and merges
-every one it receives into it field by field — `you`, `user` notifications,
-`room_list` members and `users`, a history page's `users`, and each message's
-`from` — so a rename or a new avatar shows on earlier messages too. A present
-field replaces, an empty one (`""`, `{}`) removes, and a missing one changes
-nothing. A `from` merges only when its `message_id` is newer than what the kept
-object came from, so an edit of an old message never brings back an old name;
-a result's `users` merge after the rest of it. A `user` notification with
-`new` and `old` maps the retired ID to the new identity; with `room_id` it is a
-join or a leave, which updates the room's members and draws nothing. Message
-headers show the name with the muted `@user_id` beside it. Without an avatar, a
+every current object into it field by field — `you`, `user` notifications, and
+room `members` and `users` in `room_list` and `room_update` — so a rename or a
+new avatar shows on earlier messages too. A present field replaces, an empty
+one (`""`, `{}`) removes, and a missing one changes nothing. Recorded objects,
+a message's or reaction's `from` and a membership's `user`, describe the user
+as of their record and never merge. A user renders field by field: the kept
+object, else the recorded one the message carries, else the `user_id`. A
+`user` notification with `new` and `old` maps the retired ID to the new
+identity. Message headers show the name with the muted `@user_id` beside it,
+always when another user the client knows of shows under the same name, so no
+one can pass as someone else. Without an avatar, a
 person's initials sit on a muted tint whose hue is hashed from their `user_id`,
 so the same person has the same color on every client. Senders whose `user_id`
 starts with `@` render as quiet system lines; `@private` ones, and every
 `message` without a `message_id` (such as a command's reply), are transient
 notices: shown in their room with a dashed outline and "Only you" for the
-session, never stored, and gone on reload. Room `@server`, where server-wide
-notices land, is listed last as "Server".
+session, never stored, and gone on reload. A server-wide `@server` notice names
+a room like any message; one for a room you haven't joined also shows as a
+notice where you are. Room IDs starting with `@` are ordinary rooms.
+
+Joins and leaves show in a room's timeline as the quietest system line, at
+each `membership` record's `log_id` among the messages: "Ada joined", with the
+time on hover. Records with nothing else between them (a message, a card, a
+notice, or a date divider) make one line, netted out per user, so someone who
+joins and leaves again (or leaves and comes back) in between shows on neither
+side, and a run that nets to nothing shows no line at all: "Ada and Bob joined
+· Carol left", and past three names "Ada, Bob, and 4 others joined", with
+everyone in the tooltip. A record joining more than 20 users at once is a
+baseline, not an event, and gets no line. Names render like any other user,
+with the `@user_id` when someone else shows under the same name. The lines
+never count as unread or mention you, and a message after one starts a new
+sender group.
 
 Mentions follow the `@user_id` convention ([PROTOCOL.md Appendix A.3](../../PROTOCOL.md#a3-mention-text)). Typing `@` in the
-composer opens the mention picker over the room's members (`room_list` with
-the room's `room_id`, kept current by joins and leaves) and anyone who posted
-since that listing, or the room's recent senders on a server without `room_list`,
-filtered by name or ID. The members are listed again when the picker opens on a list more than
-15 seconds old, and after every reconnect. Arrows move, Tab or Enter picks,
+composer opens the mention picker over the room's members (from the room's
+listing, kept current by the `membership` records of joins and leaves), or the
+room's recent senders on a server without `room_list`, filtered by name or ID.
+A thread you read without joining lists its members with `room_list` and its
+`room_id`. Arrows move, Tab or Enter picks,
 Escape dismisses. A picked person becomes a chip showing their name, and a
 typed `@name` (case-insensitive, spaces allowed) or `@user_id` collapses into
 the same chip once finished, when exactly one person in the room goes by it;
@@ -100,11 +115,12 @@ read cursor (`read_message_id`), which the server syncs across your
 connections. Opening a room places a **New** divider above the first message
 after the cursor as it was when you arrived; it stays put while you read.
 
-With the `rooms` cap, rooms come by request ([PROTOCOL.md §4.3](../../PROTOCOL.md#43-rooms)): after
-authenticating, the client lists the rooms you have joined with `room_list`
-(`only_joined`), which is the complete set, threads included, and keeps it
-current from `room_update` (`joined`, `left`, `updated`). Only joined rooms
-deliver live. Without the cap there is the server's default room, posted to
+With the `rooms` cap, rooms come by request ([PROTOCOL.md §4.3](../../PROTOCOL.md#43-rooms)): right behind
+`auth`, without waiting for its result ([PROTOCOL.md §3.2](../../PROTOCOL.md#32-authentication)), the client lists
+the rooms you have joined with `room_list` (`filter: "joined"`, `members:
+true`), which is the complete set, threads included, and keeps it current from
+`room_update` (`joined`, `left`, `updated`) and each room's members from
+`membership` records. Only joined rooms deliver live. Without the cap there is the server's default room, posted to
 without a `room_id` until a message names it, plus any room a message arrives
 in, titled by its `room_id`.
 
@@ -112,7 +128,10 @@ Threads are rooms with a `parent_room_id`. The sidebar lists top-level rooms
 and the open room's joined threads under it; the room feed shows each thread as
 a card that previews its intro message (or, without one, its latest loaded
 message), including threads you haven't joined, which `room_list` with the
-room's `parent_room_id` finds. Opening one of those joins it.
+room's `parent_room_id` finds whenever the room is opened or its threads are
+listed; that listing is also what refreshes their cards, since they deliver
+nothing live. Opening one of those reads it through `history` without joining
+it: its header offers **Join**, and replying joins it first.
 With the `rooms` cap, **Start thread** on a message creates a thread under the
 room with that message as its intro; the message stays in the room, where its
 card stands in for it, and leads the thread's timeline, pinned under the header.
@@ -243,15 +262,18 @@ reactive state behind it lives in `src/lib/ui` as small classes — `SessionView
 (the last authenticated view, held through a reconnect), `MentionTracker`,
 `MessageSelection`, `FeedbackState`, `SidebarLayout` — beside pure, unit-tested
 helpers: `timeline.ts` groups threads under their rooms and builds the room and
-thread views, `reactions.ts` turns reaction summaries into chips, `emoji.ts`
+thread views, `membership.ts` nets runs of joins and leaves and words their
+lines, `reactions.ts` turns reaction summaries into chips, `emoji.ts`
 places and themes the emoji picker (`emoji-picker.svelte.ts` keeps the one open
 picker and loads emoji-mart), `draft.ts` edits the composer's draft, `messages.ts`
 and `time.ts` read messages, `connection.ts` words the connection state, and
 `storage.ts` keeps everything remembered between visits under `apron.*` keys.
 
 Protocol types, replay reduction, and the WebSocket session live under
-`src/lib/protocol` and speak Apron protocol v5. `reducer.ts` keeps one store
-of room records, message snapshots, and per-user reaction sets for every room;
+`src/lib/protocol` and speak Apron protocol v6. `reducer.ts` keeps one store
+of room records, message snapshots, per-user reaction sets, and memberships
+for every room, and beside the latest membership per user, each room's
+membership records in `log_id` order for the timeline's join and leave lines;
 each record replaces the stored one only when its `log_id` is greater, so
 overlapping history and live delivery cannot revert newer state, and a move
 snapshot re-homes a message into its new room. Embedded `reply_to` and
@@ -271,11 +293,15 @@ the effective bound is `latest_log_id + 1`. Sparse timestamp log IDs are
 expected. Threads are rooms with a `parent_room_id`; they load their own
 history with `loadRoom` when opened: the newest page (`before` the head, no
 `after`), then older pages with `loadOlder` (`before` the oldest loaded
-`first_id`) until one reports `more: false` or the bound passes it. A lost connection keeps each room's
-records, bound and checkpoint: a room the next connection's `room_list` lists
-as joined resumes from its checkpoint (or rebuilds if retention passed it), and
-a thread reopened after a reconnect loads only what came after its own
-checkpoint. Signing out or switching servers still starts over. The UI displays
+`first_log_id`) until one reports `more: false` or the bound passes it. A lost
+connection keeps each room's records, members, bound and checkpoint: the next
+connection resumes each kept room's recovery from its checkpoint right behind
+`auth`, before any head is known (the first page reports it), and the room
+stays if that connection's `room_list` lists it as joined. A resumed passkey
+session asks only for the rooms whose `latest_log_id` passed the kept
+checkpoints (`latest_log_id` in `room_list`): rooms in `left` go and the rest
+stay; a result without `left` is a full listing. A thread reopened after a
+reconnect loads only what came after its own checkpoint. Signing out or switching servers still starts over. The UI displays
 a notice that the demo retains roughly the last day (from the worker's
 `server.ext.demo` hints) and honors server retry delays with jittered reconnect
 backoff. When the `server` frame carries `ping` ([PROTOCOL.md §1](../../PROTOCOL.md#1-transport--framing)), the client sends
@@ -290,6 +316,8 @@ existing `message_id`, and resubmit every client field of the latest snapshot
 (`room_id`, `body`, a bare `reply_to`, and `ext` unchanged). A move is a save
 with another `room_id`. Rooms and threads are created and updated with the
 `room_set` request (cap `rooms`); updates resubmit `title`, a bare
-`intro_message`, and `ext`, and the result follows as a `room_update`.
+`intro_message`, and `ext`, and the change arrives as a `room_update`. The
+client does not depend on the notifications a request causes arriving before
+its result, as servers send them.
 `room_join` and `room_leave` take only the `room_id`. Reactions use the
 `reactions` request (cap `reactions`) with your complete emoji set.

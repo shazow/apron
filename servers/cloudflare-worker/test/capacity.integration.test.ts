@@ -32,10 +32,11 @@ it('bounds admission at 100 live sockets and delivers one ordered maximum fan-ou
 		expect(rejected.status).toBe(429);
 		const text = 'x'.repeat(4096);
 		peers[0].socket.send(JSON.stringify({ id: 'fanout', method: 'message', params: { room_id: 'general', body: { text } } }));
+		// Every member gets the broadcast; the sender's comes before its result (§1).
+		const frames = await Promise.all(peers.map(peer => peer.next()));
 		const reply = await peers[0].next();
 		expect(reply.id).toBe('fanout');
 		expect(reply.result.message_id).toBeTruthy();
-		const frames = await Promise.all(peers.map(peer => peer.next()));
 		for (const frame of frames) {
 			expect(frame.method).toBe('message');
 			expect(frame.params.body.text).toBe(text);

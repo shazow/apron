@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ProtocolStore, applyRecords, decodeHistoryRecords, type DecodedRecords } from './reducer';
-import { decodeMessage, decodeNotice, decodeReactions, decodeRoom, type MessageRecord } from './types';
+import { ProtocolStore, applyRecords, decodeHistoryRecords, emptyRecords, type DecodedRecords } from './reducer';
+import { decodeMembership, decodeMessage, decodeNotice, decodeReactions, decodeRoom, type MessageRecord } from './types';
 
 type WireRecord = Record<string, unknown>;
 interface Projection { rooms: unknown[] }
@@ -39,7 +39,7 @@ if (!fixtures.length) throw new Error('No replay fixtures found');
 describe('wire replay fixtures', () => {
 	for (const [fixtureFile, fixture] of fixtures) {
 		it(`${fixtureFile} reduces every variant with both envelopes`, () => {
-			expect(fixture.format).toBe(3);
+			expect(fixture.format).toBe(4);
 			expect(fixture.kind).toBe('replay');
 			expect(Object.keys(fixture).sort()).toEqual(['description', 'expected', 'format', 'kind', 'name', 'references', 'variants']);
 			expect(fixture.variants.length).toBeGreaterThan(0);
@@ -85,7 +85,7 @@ function applyFrame(store: ProtocolStore, frame: WireRecord): void {
 	if (frame.method === 'message') {
 		const decoded = decodeMessage(frame.params);
 		if (decoded) {
-			applyRecords(store, { rooms: [], messages: [decoded.record], reactions: [], embedded: decoded.embedded });
+			applyRecords(store, { ...emptyRecords(), messages: [decoded.record], embedded: decoded.embedded });
 			return;
 		}
 		// A transient notice is rendered, never installed (§3.5).
@@ -94,13 +94,19 @@ function applyFrame(store: ProtocolStore, frame: WireRecord): void {
 	}
 	if (frame.method === 'room_update') {
 		const params = (frame.params ?? {}) as WireRecord;
-		applyRecords(store, roomRecords([...array(params.joined), ...array(params.updated)]));
+		applyRooms(store, [...array(params.joined), ...array(params.updated)]);
 		return;
 	}
 	if (frame.method === 'reactions') {
 		const sets = decodeReactions(frame.params);
 		if (!sets.length) throw new Error(`Invalid reactions record: ${JSON.stringify(frame)}`);
-		applyRecords(store, { rooms: [], messages: [], reactions: sets, embedded: [] });
+		applyRecords(store, { ...emptyRecords(), reactions: sets });
+		return;
+	}
+	if (frame.method === 'membership') {
+		const memberships = decodeMembership(frame.params);
+		if (!memberships.length) throw new Error(`Invalid membership record: ${JSON.stringify(frame)}`);
+		applyRecords(store, { ...emptyRecords(), memberships });
 		return;
 	}
 	if (frame.method === undefined && Object.hasOwn(frame, 'result')) {
@@ -108,15 +114,15 @@ function applyFrame(store: ProtocolStore, frame: WireRecord): void {
 			throw new Error('a result must have a fixed string request ID');
 		}
 		const result = frame.result as WireRecord;
-		if (Array.isArray(result?.entries)) {
+		if (typeof result?.more === 'boolean') {
 			applyRecords(store, decodeHistoryRecords(result));
 			return;
 		}
-		if (Array.isArray(result?.joined) || Array.isArray(result?.rooms)) {
-			applyRecords(store, roomRecords([...array(result.joined), ...array(result.rooms)]));
+		if (Array.isArray(result?.joined) || Array.isArray(result?.not_joined)) {
+			applyRooms(store, [...array(result.joined), ...array(result.not_joined)]);
 			return;
 		}
-		throw new Error('a result must be a history page (entries) or a room_list (joined, rooms)');
+		throw new Error('a result must be a history page (more) or a room_list (joined, not_joined)');
 	}
 	throw new Error(`Unsupported replay fixture frame: ${JSON.stringify(frame)}`);
 }
@@ -125,22 +131,28 @@ function array(value: unknown): unknown[] {
 	return Array.isArray(value) ? value : [];
 }
 
-/** Room records from `room_list` or `room_update`, with their embedded snapshots; delivery fields are not records. */
-function roomRecords(values: unknown[]): DecodedRecords {
-	const decoded: DecodedRecords = { rooms: [], messages: [], reactions: [], embedded: [] };
+/**
+ * Room records from `room_list` or `room_update`, with their embedded
+ * snapshots; delivery fields are not records, but a room's `members` start its
+ * member list as of its `latest_log_id` (README "Decoding").
+ */
+function applyRooms(store: ProtocolStore, values: unknown[]): void {
+	const decoded: DecodedRecords = emptyRecords();
 	for (const value of values) {
 		const room = decodeRoom(value);
 		if (!room) throw new Error(`Invalid room record: ${JSON.stringify(value)}`);
 		decoded.rooms.push(room.record);
 		decoded.embedded.push(...room.embedded);
+		if (room.delivery.members) store.seedMembers(room.record.room_id, room.delivery.members, room.delivery.latest_log_id);
 	}
-	return decoded;
+	applyRecords(store, decoded);
 }
 
 /** The logical projection of README "Room projection" / "Message projection". */
 function project(store: ProtocolStore): Projection {
 	const rooms = store.roomIds().sort(compareStrings).map((roomId) => {
 		const record = store.room(roomId);
+		const members = store.members(roomId);
 		return {
 			room_id: roomId,
 			...(record && Object.hasOwn(record, 'log_id') ? { log_id: record.log_id } : {}),
@@ -148,6 +160,7 @@ function project(store: ProtocolStore): Projection {
 			...(record && Object.hasOwn(record, 'title') ? { title: record.title } : {}),
 			...(record?.intro_message ? { intro_message: { message_id: record.intro_message.message_id } } : {}),
 			...(record && Object.hasOwn(record, 'ext') ? { ext: record.ext } : {}),
+			...(members ? { members: [...members].sort((left, right) => compareStrings(left.user_id, right.user_id)) } : {}),
 			messages: store.messagesIn(roomId).map((message) => projectMessage(message, store))
 		};
 	});

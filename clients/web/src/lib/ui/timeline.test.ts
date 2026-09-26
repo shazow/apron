@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTimeline, type TimelineState } from '$lib/protocol/reducer';
+import { ProtocolStore, applyRecords, createTimeline, decodeHistoryRecords, timelineEvents, type MembershipRecord, type TimelineState } from '$lib/protocol/reducer';
 import type { RoomSnapshot } from '$lib/protocol/client';
 import type { MessageRecord } from '$lib/protocol/types';
 import { buildRoomTimeline, buildThreadTimeline, homeRoomOf, sidebarRooms, threadEntries, threadEntry, threadPreview, threadTitleFor, type TimelineItem } from './timeline';
@@ -24,7 +24,7 @@ function timeline(roomId: string, messages: MessageRecord[]): TimelineState {
 }
 
 function room(id: string, messages: MessageRecord[] = [], fields: Partial<RoomSnapshot> = {}): RoomSnapshot {
-	return { id, title: id, timeline: timeline(id, messages), recovering: false, loaded: true, loading: false, notices: [], ...fields };
+	return { id, title: id, joined: true, timeline: timeline(id, messages), recovering: false, loaded: true, loading: false, notices: [], ...fields };
 }
 
 const kinds = (items: TimelineItem[]) => items.map((item) => item.kind);
@@ -193,12 +193,12 @@ describe('message helpers', () => {
 	it('offers only the listed members when the room has a members list', () => {
 		const me = { user_id: 'sam', name: 'Sam' };
 		const messages = [message(0, 'alice'), message(1, 'bob'), message(2, 'carol')];
-		// Bob has disconnected; Dana is connected but has not spoken.
+		// Bob has left; Dana has joined but has not spoken.
 		const people = peopleIn(messages, me, [{ user_id: 'alice' }, { user_id: 'carol' }, { user_id: 'dana' }]);
 		expect(people.map((p) => p.id)).toEqual(['carol', 'alice', 'dana', 'sam']);
 		expect(peopleIn(messages, me, []).map((p) => p.id)).toEqual(['sam']);
-		// Whoever posted after the listing was around since it was taken.
-		expect(peopleIn(messages, me, [{ user_id: 'alice' }], String(base + 1)).map((p) => p.id)).toEqual(['carol', 'alice', 'sam']);
+		// Memberships keep the list current: posting without joining does not make a member.
+		expect(peopleIn(messages, me, [{ user_id: 'alice' }]).map((p) => p.id)).toEqual(['alice', 'sam']);
 	});
 
 	it('fills ranges along the timeline order', () => {
@@ -230,6 +230,14 @@ describe('transient notices and threads not joined', () => {
 		expect(kinds(thread)).toEqual(['message', 'replies', 'message', 'notice']);
 	});
 
+	it('lists a thread open without joining as a card, but never as a room of its own', () => {
+		const viewed = room('t3', [message(5, 'bob', { room_id: 't3' })], { parentRoomId: 'general', title: 'Read only', joined: false });
+		const orphan = room('t4', [], { parentRoomId: 'gone', title: 'Orphan', joined: false });
+		expect(sidebarRooms([room('general'), viewed, orphan]).map((entry) => entry.id)).toEqual(['general']);
+		const [entry] = threadEntries([room('general'), viewed], 'general');
+		expect(entry).toMatchObject({ id: 't3', joined: false, loaded: true, count: 1 });
+	});
+
 	it('gives a listed thread not joined a card, anchored at its intro', () => {
 		const intro = message(0, 'alice');
 		const joined = room('t1', [], { parentRoomId: 'general', title: 'Deploy' });
@@ -245,5 +253,123 @@ describe('transient notices and threads not joined', () => {
 		expect(card.count).toBeUndefined();
 		// The card stands in for its intro in the room.
 		expect(kinds(buildRoomTimeline({ messages: [intro], threads: entries }))).toEqual(['date', 'thread', 'thread']);
+	});
+});
+
+describe('join and leave lines', () => {
+	const now = new Date(base + 2 * DAY);
+	const joins = (offset: number, ...entries: [string, boolean][]): MembershipRecord => ({
+		log_id: String(base + offset),
+		entries: entries.map(([id, joined]) => ({ user: { user_id: id, name: id[0].toUpperCase() + id.slice(1) }, joined }))
+	});
+	/** Each item as a short label: a message by sender (`+` when grouped), a line by who joined and left. */
+	const shape = (items: TimelineItem[]) => items.map((item) => {
+		if (item.kind === 'message') return `${item.event.from.user_id}${item.grouped ? '+' : ''}`;
+		if (item.kind === 'members') return `+${item.joined.map((user) => user.user_id).join(',')}/-${item.left.map((user) => user.user_id).join(',')}`;
+		return item.kind;
+	});
+
+	it('places each record at its log_id among the messages, and a message after a line starts a new group', () => {
+		const items = buildRoomTimeline({
+			messages: [message(0, 'alice'), message(2000, 'alice'), message(4000, 'alice')],
+			threads: [],
+			memberships: [joins(1000, ['bob', true]), joins(5000, ['carol', false])],
+			now
+		});
+		expect(shape(items)).toEqual(['date', 'alice', '+bob/-', 'alice', 'alice+', '+/-carol']);
+		expect(items[2]).toMatchObject({ key: `members:${base + 1000}`, logId: String(base + 1000) });
+	});
+
+	it('merges consecutive records into one line, keyed by the first and timed by the last', () => {
+		const items = buildRoomTimeline({
+			messages: [message(0, 'alice'), message(9000, 'alice')],
+			threads: [],
+			memberships: [joins(1000, ['bob', true]), joins(2000, ['carol', true]), joins(3000, ['dave', false])],
+			now
+		});
+		expect(shape(items)).toEqual(['date', 'alice', '+bob,carol/-dave', 'alice']);
+		expect(items[2]).toMatchObject({ key: `members:${base + 1000}`, logId: String(base + 3000) });
+	});
+
+	it('leaves no line for a run that nets to nothing, and does not break the group around it', () => {
+		const items = buildRoomTimeline({
+			messages: [message(0, 'alice'), message(3000, 'alice')],
+			threads: [],
+			memberships: [joins(1000, ['guest_1', true]), joins(2000, ['guest_1', false])],
+			now
+		});
+		expect(shape(items)).toEqual(['date', 'alice', 'alice+']);
+	});
+
+	it('breaks a run at a message, a thread card, a notice, and a date divider', () => {
+		const card = threadEntry(room(String(base + 1500), [], { parentRoomId: 'general', title: 'Card' }));
+		const items = buildRoomTimeline({
+			messages: [message(0, 'alice'), message(4000, 'alice')],
+			threads: [card],
+			notices: [{ key: 'n', room_id: 'general', from: { user_id: '@private' }, body: { text: 'n' }, after: String(base + 4000), at: base }],
+			memberships: [
+				joins(1000, ['bob', true]), joins(2000, ['bob', false]), joins(3000, ['carol', true]),
+				joins(5000, ['dave', true]), joins(DAY, ['erin', true]), joins(DAY + 1000, ['erin', false])
+			],
+			now
+		});
+		// bob joined before the card and left after it: two lines. The next day's churn nets to nothing, and gets no divider.
+		expect(shape(items)).toEqual(['date', 'alice', '+bob/-', 'thread', '+carol/-bob', 'alice', 'notice', '+dave/-']);
+	});
+
+	it('orders a notice and a line in the same gap by time', () => {
+		const notice = (at: number) => ({ key: 'n', room_id: 'general', from: { user_id: '@private' }, body: { text: 'n' }, after: String(base), at });
+		const input = { messages: [message(0, 'alice')], threads: [], memberships: [joins(1000, ['bob', true])], now };
+		expect(shape(buildRoomTimeline({ ...input, notices: [notice(base + 500)] }))).toEqual(['date', 'alice', 'notice', '+bob/-']);
+		expect(shape(buildRoomTimeline({ ...input, notices: [notice(base + 1500)] }))).toEqual(['date', 'alice', '+bob/-', 'notice']);
+	});
+
+	it('gives a line on a new day its date divider', () => {
+		const items = buildRoomTimeline({ messages: [message(0, 'alice')], threads: [], memberships: [joins(1000, ['bob', true]), joins(DAY, ['carol', true])], now });
+		expect(shape(items)).toEqual(['date', 'alice', '+bob/-', 'date', '+carol/-']);
+		expect(items[3]).toMatchObject({ label: 'Yesterday' });
+	});
+
+	it('shows a compacted record’s entries as one line, and skips a baseline without breaking the run', () => {
+		const baseline = joins(2000, ...Array.from({ length: 25 }, (_, index): [string, boolean] => [`member${index}`, true]));
+		const items = buildRoomTimeline({
+			messages: [message(0, 'alice')],
+			threads: [],
+			memberships: [joins(1000, ['bob', true], ['carol', true], ['dave', false]), baseline, joins(3000, ['erin', true])],
+			now
+		});
+		expect(shape(items)).toEqual(['date', 'alice', '+bob,carol,erin/-dave']);
+		expect(shape(buildRoomTimeline({ messages: [message(0, 'alice')], threads: [], memberships: [baseline], now }))).toEqual(['date', 'alice']);
+	});
+
+	it('orders memberships that history delivered out of order by log_id', () => {
+		const store = new ProtocolStore();
+		const membership = (offset: number, id: string, joined: boolean) => ({ log_id: String(base + offset), room_id: 'general', members: [{ user: { user_id: id, name: id }, joined }] });
+		// The newest page first, then an older one, with a live record repeated in history.
+		store.putMembership({ log_id: String(base + 5000), room_id: 'general', user: { user_id: 'dave', name: 'dave' }, joined: true });
+		applyRecords(store, decodeHistoryRecords({
+			messages: [message(2000, 'alice'), message(4000, 'alice')],
+			membership: [membership(5000, 'dave', true), membership(3000, 'carol', true)]
+		}));
+		applyRecords(store, decodeHistoryRecords({
+			messages: [message(0, 'alice')],
+			membership: [membership(1000, 'bob', true), { log_id: String(base + 500), room_id: 'general', members: [{ user: { user_id: 'bob' }, joined: false }, { user: { user_id: 'erin' }, joined: true }] }]
+		}));
+		const state = store.timeline('general');
+		expect(state.memberships.map((record) => [record.log_id, record.entries.length])).toEqual([
+			[String(base + 500), 2], [String(base + 1000), 1], [String(base + 3000), 1], [String(base + 5000), 1]
+		]);
+		// The member list keeps only the latest per user; the log keeps every record.
+		expect(store.members('general')?.map((user) => user.user_id)).toEqual(['dave', 'carol', 'bob', 'erin']);
+		const items = buildRoomTimeline({ messages: timelineEvents(state), threads: [], memberships: state.memberships, now });
+		// bob left and came back with nothing between: of that run, only erin's join shows.
+		expect(shape(items)).toEqual(['date', 'alice', '+erin/-', 'alice', '+carol/-', 'alice', '+dave/-']);
+		// The log is published as the same array until it changes.
+		expect(store.timeline('general').memberships).toBe(state.memberships);
+		store.putMembership({ log_id: String(base + 6000), room_id: 'general', user: { user_id: 'carol' }, joined: false });
+		expect(store.timeline('general').memberships).not.toBe(state.memberships);
+		// Retention drops the records below the bound with the messages.
+		store.evictBefore('general', String(base + 3000));
+		expect(store.timeline('general').memberships.map((record) => record.log_id)).toEqual([String(base + 3000), String(base + 5000), String(base + 6000)]);
 	});
 });
