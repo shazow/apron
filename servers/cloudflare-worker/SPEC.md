@@ -34,7 +34,7 @@ Use MUST for required behavior and SHOULD for preferences. Centralize all limits
 
 ### Non-goals
 
-No public workspace creation, top-level room creation, federation, multiplexing proxy, presence service, read cursors, member counts, avatars, uploads (`embed:upload`, `/avatar`), streams (`embed:stream`), R2, push, email, external URL previews, outbound bots, RTC, arbitrary search, FTS, or third-party analytics. Do not advertise unsupported capabilities. Passkeys do not establish one-human-one-account or solve Sybil resistance.
+No public workspace creation, top-level room creation, federation, multiplexing proxy, presence service, read cursors, avatars, uploads (`embed:upload`, `/avatar`), streams (`embed:stream`), R2, push, email, external URL previews, outbound bots, RTC, arbitrary search, FTS, or third-party analytics. Do not advertise unsupported capabilities. Passkeys do not establish one-human-one-account or solve Sybil resistance.
 
 ## 2. User scenarios
 
@@ -88,14 +88,14 @@ API reference: [Durable Object state](https://developers.cloudflare.com/durable-
 An illustrative initial announcement is:
 
 ```json
-{"method":"server","params":{"protocol":6,"name":"apron-cloudflare-demo/5","caps":["history","edit","rooms","reactions","command"],"auth":["webauthn","token","guest"],"ping":45,"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"room_list_members":100,"read_cursors":false}}}}
+{"method":"server","params":{"protocol":6,"name":"apron-cloudflare-demo/6","caps":["history","edit","rooms","reactions","command"],"auth":["webauthn","token","guest"],"ping":45,"ext":{"demo":{"retention_seconds":86400,"cleanup_seconds":3600,"max_frame_bytes":16384,"max_message_text_bytes":4096,"max_snapshot_bytes":8192,"guest_posts_per_minute":5,"registered_posts_per_minute":20,"server_frames_per_minute":300,"room_list_per_minute":6,"room_list_members":100,"read_cursors":false}}}}
 ```
 
 `ext.demo` is additive server-announcement policy metadata in the standard `ext` object. Authentication uses the canonical `webauthn` scheme in protocol [§4.9](../../PROTOCOL.md#49-webauthn-authentication), without an extension flag. Every later `server` announcement is a full replacement, including auth/caps/policy metadata. Temporary throttling does not mean a capability is unimplemented.
 
 History availability is part of the base protocol's `history` capability, with no extension negotiation. Use `latest_log_id` and nullable `history_log_id` in room records (`room_list`, `room_update`) and history results, following protocol [section 3.4](../../PROTOCOL.md#34-rooms) and [§4.1](../../PROTOCOL.md#41-history). Both are per room.
 
-After final authentication, reply with `result.you` (`user_id` and `name` only; the internal quota tier is private). Rooms are not announced: the client lists its joined rooms with `room_list` (`filter: "joined"`), and live delivery for them starts with the auth result. `auth` is a barrier ([PROTOCOL.md §3.2](../../PROTOCOL.md#32-authentication)): each connection's frames are processed one at a time in arrival order, through an in-memory per-connection queue, because the Durable Object runtime delivers further `webSocketMessage` events while a handler awaits (WebAuthn verification, key-value session reads). Requests pipelined behind `auth`, such as `room_list` and `history`, therefore run as the new identity, and are `denied` when the `auth` failed or was a WebAuthn `begin` step. A `user_id` or `name` requested in `auth` is not honored: guests get `guest_<n>` from a server-wide counter, never reissued, and the name `Guest <n>`, and registered identities come from the verified credential or session. Do not send room records to unauthenticated sockets.
+After final authentication, reply with `result.you` (`user_id` and `name` only; the internal quota tier is private). The client lists its joined rooms with `room_list` (`filter: "joined"`), and live delivery for them starts with the auth result. `auth` is a barrier ([PROTOCOL.md §3.2](../../PROTOCOL.md#32-authentication)): each connection's frames are processed one at a time in arrival order, through an in-memory per-connection queue, because the Durable Object runtime delivers further `webSocketMessage` events while a handler awaits (WebAuthn verification, key-value session reads). Requests pipelined behind `auth`, such as `room_list` and `history`, therefore run as the new identity, and are `denied` when the `auth` failed or was a WebAuthn `begin` step. A `user_id` or `name` requested in `auth` is not honored: guests get `guest_<n>` from a server-wide counter, never reissued, and the name `Guest <n>`, and registered identities come from the verified credential or session. Do not send room records to unauthenticated sockets.
 
 ### Framing, ordering, and errors
 
@@ -124,7 +124,7 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 
 ### Messages, edits, rooms, and reactions
 
-- Every record (room record, message snapshot, reaction set) receives the next `log_id = max(now_ms, last_log_id + 1)` from one server-wide sequence, checked below `2^53`; use integer columns and decimal strings on the wire. A new message's `message_id` equals its creation `log_id`, so it is unique across rooms. Room IDs of threads are their creation `log_id`.
+- Every record (room record, message snapshot, reaction set, membership) receives the next `log_id = max(now_ms, last_log_id + 1)` from one server-wide sequence, checked below `2^53`; use integer columns and decimal strings on the wire. A new message's `message_id` equals its creation `log_id`, so it is unique across rooms. Room IDs of threads are their creation `log_id`.
 - Maintain `last_log_id` even after the entire log has expired. Clock rollback must not reuse IDs.
 - Store each accepted record as a complete authoritative snapshot. Message notifications and history `messages` are the same flat object: `message_id`, `log_id`, `room_id`, `from`, `body`, optional `reply_to` (bare `{message_id}`), `deleted`, and `ext`. `body.format` defaults to `plain`. Deliver to every authenticated connection whose user has joined a room the record belongs to, including the sender's; a record is sent once per connection even when it belongs to two rooms. A thread's records go to the thread's members only; its parent's members receive only its room record, as `room_update` `updated`, when it is created or saved. Every room is visible to every client, so anyone may page any room's history, and posting does not require joining: a poster who has not joined gets only the result.
 - Only the original author may replace/delete/restore/move their retained message. Preserve immutable author/ID fields. A save replaces every client field (`room_id`, `body`, `reply_to`, `deleted`, `ext`); it is not a patch/merge. Tombstones omit `body`. A request without `room_id` (a new message or a save) is in the default room, `general`.
@@ -147,7 +147,7 @@ For oversized frames, reject before parsing. If an ID cannot be safely obtained,
 
 The protocol logs every membership change, and lets a server keep some out of the log, such as ephemeral guests' ([PROTOCOL.md §4.3.2](../../PROTOCOL.md#432-membership)). The demo logs what is durable already and keeps the rest out:
 
-- A registered user's membership is stored (the `memberships` table) and each change is a logged `membership` record in the room's log: `{log_id, room_id, members: [{user: {user_id, name}, joined}]}`, one entry, with the user as a recorded object. Logged changes are `room_join`, `room_leave`, the creator's join when a registered user creates a thread, and each starting room of a new registration (the guest's rooms it replaces, or `general`). A record advances the room's `latest_log_id`, is delivered to the room's members before and after the change (so to the joining or leaving user's connections too), before the `room_update`, and is returned in `history`'s `membership` array. The joins and leaves count as posts, as they did when only the identity row changed; an unchanged join or leave writes nothing.
+- A registered user's membership is stored (the `memberships` table) and each change is a logged `membership` record in the room's log: `{log_id, room_id, members: [{user: {user_id, name}, joined}]}`, one entry, with the user as a recorded object. Logged changes are `room_join`, `room_leave`, the creator's join when a registered user creates a thread, and each starting room of a new registration (the guest's rooms it replaces, or `general`). A record advances the room's `latest_log_id`, is delivered to the room's members before and after the change (so to the joining or leaving user's connections too), before the `room_update`, and is returned in `history`'s `membership` array. The joins and leaves count as posts; an unchanged join or leave writes nothing.
 - A guest's memberships live in its connection attachment, like the guest identity, and are not logged: no `membership` record is sent for them and they cost no writes. Logging them would cost a durable write per guest join (every guest joins `general` at `auth`) and per leave of each room when the connection closes, for identities that end with their connection. Clients learn guest members from `room_list` and `room_update`.
 - Because guest joins and leaves are not in the log, `room_list` ignores `latest_log_id` and never sends `left`: its result is a full listing, which the protocol lets such a server send. A delta could miss a guest's join or leave.
 - `members` lists every connected member, guests included, and the registered members stored with the room in `user_id` order, at most `room_list_members` (100) per room. A room with more registered members lists the first 100 by `user_id` besides those connected: a documented deviation from complete `members`, since the protocol has no paging yet and each listed member costs two indexed reads. Listing all 101 rooms at that cap reads about 20,200 rows (see [cost report](docs/cost-report.md)).
@@ -350,14 +350,13 @@ Suggested logical schema; physical layout may change to reduce measured costs:
 
 | Table/state | Required contents |
 | --- | --- |
-| room_state | Fixed room ID, last log ID, monotonic history floor, last commit time, metadata |
 | log_state | Server-wide last log ID, monotonic history floor F, last commit time |
 | rooms | Room ID, fixed parent, creation/current record log IDs, per-room head, intro message reference, bounded client fields; one top-level room plus at most 100 threads |
 | memberships | Each registered identity's joined rooms, one row per room and user: by room (the primary key) for `members`, and by user for the user's rooms; guests' live in connection attachments |
 | records | Room/log primary key, internal commit time, record kind, complete record JSON; a move is stored in both rooms |
 | message_state | Message ID primary key, current room, latest log ID, latest snapshot and author |
 | reaction_state | Message/user primary key, latest log ID, reacting identity, emoji set |
-| identities/credentials | Stable user ID, unique credential ID, public key, required verifier state, bounded name, joined rooms |
+| identities/credentials | Stable user ID, unique credential ID, public key, required verifier state, bounded name |
 | accepted_requests | User/request primary key, canonical method+params digest, original result, expiry |
 | resource_budgets | UTC day, charged/reserved reads/writes/frames/admissions/posts/registrations |
 | principal_limits | Bounded IP/user counters and rolling posting timestamps |
@@ -449,7 +448,7 @@ The implementing harness must add this behavior to the demo client:
 6. Each room's checkpoint is independent; threads are separate rooms. Eviction and asynchronous older pages must never resurrect snapshots below the current floor or overwrite a newer snapshot.
 7. Room record updates (`room_update`, listings) do not advance checkpoints or replace an active fixed recovery head by themselves. The floor only invalidates unavailable history.
 
-Update clients to the base-protocol fields; clients using the previous wire contract are not guaranteed correct recovery. Include a visible demo notice that only roughly the last day is retained.
+Include a visible demo notice that only roughly the last day is retained.
 
 ### Cleanup algorithm and failure recovery
 

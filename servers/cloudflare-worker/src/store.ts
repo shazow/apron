@@ -1763,8 +1763,8 @@ export class Store {
   }
 
   /**
-   * Every visible room record, oldest first, for authentication announcements.
-   * Maintenance callers (retention re-announcements) charge the maintenance
+   * Every visible room record, oldest first, for `room_list`. Maintenance
+   * callers (the retention `room_update` `updated` listing) charge the maintenance
    * budget, and may keep only rooms whose history_log_id differs from what it
    * was under an earlier retention floor.
    */
@@ -3053,7 +3053,7 @@ export class Store {
     const selected: Array<{ logId: number; kind: string; value: Record<string, unknown> }> = [];
     for (const row of rows.slice(0, limit + 1)) {
       const value = parseJson<Record<string, unknown>>(row.record_json);
-      // Room records carry this client's delivery fields, as announcements do.
+      // Room records carry this client's delivery fields, as `room_list` and `room_update` records do.
       if (row.kind === "room") Object.assign(value, { latest_log_id: latestLogId, history_log_id: historyLogId });
       const entryBytes = utf8Bytes(JSON.stringify(value));
       if (entryBytes + bytes + responseOverhead + 1 > maxBytes) {

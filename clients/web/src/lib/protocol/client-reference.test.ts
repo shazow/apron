@@ -57,7 +57,7 @@ describe('ChatClient reference features', () => {
 		socket.receive({ method: 'user', params: { new: { user_id: 'ada', name: 'Ada' }, old: { user_id: 'guest_9', name: 'Guest 9' } } });
 		expect(userIn(snapshot, { user_id: 'guest_9' })).toEqual({ user_id: 'ada', name: 'Ada' });
 		expect(snapshot.users.guest_9).toBeUndefined();
-		// `old` alone, or `user` with a room_id, says nothing about identity any more.
+		// `old` alone, or `user` with a room_id, is not an identity change (§3.3).
 		socket.receive({ method: 'user', params: { old: { user_id: 'bob' } } });
 		socket.receive({ method: 'user', params: { room_id: 'general', old: { user_id: 'bob' } } });
 		expect(snapshot.users.bob).toEqual({ user_id: 'bob', name: 'Bobby' });

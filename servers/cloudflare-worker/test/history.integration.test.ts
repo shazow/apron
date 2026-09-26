@@ -166,7 +166,7 @@ it("counts records of every kind toward limit and spans first_log_id/last_log_id
 		expect(messagesOf(first).map((entry) => entry.log_id)).toEqual([all[1]]);
 		expect(first.reactions).toBeUndefined();
 		expect([first.first_log_id, first.last_log_id, first.more]).toEqual([all[0], all[1], true]);
-		// Room records in history carry the room's delivery fields, like announcements.
+		// Room records in history carry the room's delivery fields, as room_list's do.
 		expect(first.rooms?.[0]).toMatchObject({ title: "Mixed", latest_log_id: all[4], history_log_id: all[0] });
 
 		const second = store.history({ roomId, after: BigInt(first.last_log_id!) + 1n, limit: 2, now: clock.value });
@@ -324,7 +324,7 @@ it("removes thread rooms whose entire log expired and keeps rooms with retained 
 		expect(errorCode(() => store.history({ roomId: stale, now: clock.value }))).toBe("invalid_params");
 
 		// The active thread's creation record expired, so its room record is
-		// still announced (with its original log_id) while history starts later.
+		// still listed (with its original log_id) while history starts later.
 		const kept = store.getRoomState(active);
 		expect(kept.log_id).toBe(active);
 		expect(BigInt(kept.history_log_id!)).toBeGreaterThan(BigInt(active));

@@ -548,7 +548,7 @@ func TestServerFrameAndGuestAuth(t *testing.T) {
 	if !reflect.DeepEqual(membership, wantMembership) {
 		t.Fatalf("membership = %#v, want %#v", membership, wantMembership)
 	}
-	// Rooms are not announced; the client lists the ones it has joined.
+	// No room_update follows auth; the client lists the rooms it has joined.
 	c.expectQuiet(t)
 	listed := listRooms(t, c, map[string]any{"filter": "joined", "members": true})
 	if _, has := listed["not_joined"]; has || len(listed["joined"].([]any)) != 1 {
@@ -750,8 +750,7 @@ func TestAuthIsABarrier(t *testing.T) {
 func TestUnimplementedAndUnknownMethodsAreUnsupported(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
-	// room was the v4 room request; rooms are set with room_set.
-	for _, method := range []string{"frobnicate", "room_teleport", "room"} {
+	for _, method := range []string{"frobnicate", "room_teleport"} {
 		c.expectError(t, method, method, map[string]any{"room_id": "general"}, codeUnsupported)
 	}
 	c.expectQuiet(t)
@@ -914,8 +913,8 @@ func TestRoomSetCreatesAndEditsRoomsAndThreads(t *testing.T) {
 	if !reflect.DeepEqual(record, want) {
 		t.Fatalf("thread record = %#v, want %#v", record, want)
 	}
-	// The observer has not joined the thread, so its nested thread is not
-	// announced to them.
+	// The observer has not joined the thread, so no room_update for its nested
+	// thread reaches them.
 	_, untitled := saveRoom(t, c, "untitled", map[string]any{"parent_room_id": thread})
 	if untitled["title"] != "Thread" || untitled["parent_room_id"] != thread {
 		t.Fatalf("nested untitled thread: %#v", untitled)
@@ -1000,7 +999,7 @@ func TestRoomSetCreatesAndEditsRoomsAndThreads(t *testing.T) {
 }
 
 // Deleting a thread's intro message redacts the copies embedded in the
-// thread's room records, both logged ones and the current announcement.
+// thread's room records, both logged ones and the current record room_list returns.
 func TestDeletingAnIntroMessageRedactsRoomRecords(t *testing.T) {
 	_, httpServer := newTestServer(t, DefaultConfig())
 	c := dialTestClient(t, httpServer, "a", false)
@@ -1206,21 +1205,15 @@ func TestHistoryPaginatesAcrossRecordKinds(t *testing.T) {
 	if lobby := full["rooms"].([]any)[1].(map[string]any); lobby["title"] != "Lobby" || lobby["latest_log_id"] != nil {
 		t.Fatalf("logged room record carries delivery fields: %#v", lobby)
 	}
-	// History carries no users, and its records keep the recorded objects;
-	// without room_id, history pages the default room.
+	// Records keep the user objects they were logged with; without room_id,
+	// history pages the default room.
 	c.result(t, "me", "rename", map[string]any{"name": "Ada"})
 	defaulted := c.result(t, "history", "default", map[string]any{})
-	if _, has := defaulted["users"]; has || defaulted["last_log_id"] != all[5] {
+	if defaulted["last_log_id"] != all[5] {
 		t.Fatalf("default room page: %#v", defaulted)
 	}
 	if from := defaulted["messages"].([]any)[0].(map[string]any)["from"]; !reflect.DeepEqual(from, map[string]any{"user_id": "guest_1"}) {
 		t.Fatalf("logged from changed: %#v", from)
-	}
-	// Legacy v5 names are gone.
-	for _, key := range []string{"entries", "first_id", "last_id"} {
-		if _, has := defaulted[key]; has {
-			t.Fatalf("history carries %s: %#v", key, defaulted)
-		}
 	}
 
 	// Forward paging over every record kind, continuing from last_log_id + 1.

@@ -173,10 +173,7 @@ IPv6 is grouped by /64. No IP secret or backup is needed. These internal hashes
 are compact identifiers, not anonymization: candidate IPs can be hashed to
 recover a match. Neither raw IPs nor these keys are sent to chat clients.
 
-Switching from the former keyed hashes resets per-IP buckets once as clients
-reconnect; existing buckets expire through normal cleanup. User and global
-quotas, credentials, and chat history are unchanged. Keep the hash format stable
-across future deployments to preserve active IP windows.
+Keep the hash format stable across deployments to preserve active IP windows.
 
 The public Worker reaches exactly `DEMO.getByName("public-demo-v1")`. URL,
 query, room, and identity input cannot select another object. Do not expose a
@@ -252,7 +249,7 @@ For direct Wrangler production commands, always pass
    Wrangler deployment workflow. Do not rename or recreate the production
    object to work around a quota or schema issue. Stored data is not migrated
    between schema versions: a deploy that changes the storage schema resets the
-   demo on the object's first wake (the protocol v6 release moved to schema 4; see
+   demo on the object's first wake (the current schema is 4; see
    [SPEC section 8](SPEC.md#schema-versions)). All chat history, passkey
    identities, sessions, and limiter windows are deleted; users must register
    their passkeys again, and saved session tokens fall back to sign-in. Only the

@@ -1,6 +1,6 @@
-# Bottomless Chat web client
+# Apron web client
 
-This is a Svelte 5 / SvelteKit 2 + TypeScript client for the Bottomless Chat protocol. It
+This is a Svelte 5 / SvelteKit 2 + TypeScript client for the Apron Chat Protocol. It
 builds as a static shell with `adapter-static`; the browser opens the WebSocket
 from `onMount`, so the generated site can be served by the Go server.
 
@@ -62,7 +62,8 @@ starts with `@` render as quiet system lines; `@private` ones, and every
 notices: shown in their room with a dashed outline and "Only you" for the
 session, never stored, and gone on reload. A server-wide `@server` notice names
 a room like any message; one for a room you haven't joined also shows as a
-notice where you are. Room IDs starting with `@` are ordinary rooms.
+notice where you are. `@server`, `@room`, and `@private` are sender scopes, not rooms (Appendix A.1); a
+room ID starting with `@` is an ordinary room.
 
 Joins and leaves show in a room's timeline as the quietest system line, at
 each `membership` record's `log_id` among the messages: "Ada joined", with the
@@ -143,8 +144,9 @@ included.
 
 With the `rooms` cap the header also offers **Leave**, which leaves the room or
 the thread; a thread is a room of its own, so leaving its parent keeps it.
-**Browse rooms** in the sidebar lists, via `room_list` with `not_joined`, the
-most active visible rooms you haven't joined, and **More threads…** under the
+**Browse rooms** in the sidebar lists, via `room_list` with
+`filter: "not_joined"`, the most active visible rooms you haven't joined, and
+**More threads…** under the
 open room lists its threads you haven't joined; picking one joins it and opens
 it once its `room_update` arrives.
 

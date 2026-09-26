@@ -63,7 +63,7 @@
 		if (browseOpen) list();
 	}
 
-	/** Threads not joined come from `room_list` with the parent and `not_joined` (§4.3.1). */
+	/** Threads not joined come from `room_list` with `parent_room_id` and `filter: "not_joined"` (§4.3.1). */
 	function showMoreThreads(parentRoomId: string): void {
 		moreThreadsFor = moreThreadsFor === parentRoomId ? undefined : parentRoomId;
 		if (moreThreadsFor) list(parentRoomId);

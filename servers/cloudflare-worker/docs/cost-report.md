@@ -1,12 +1,14 @@
 # Cloudflare Worker storage cost report
 
 This report records local native SQLite measurements used for the storage
-accounting review. It describes the schema and the Workers test runtime; it
-does not claim a deployed account billing rate or a free-plan capacity.
+accounting review. It describes the current schema (schema 4: one server-wide
+record log of room records, message snapshots, reaction sets, and
+memberships, plus a `memberships` table of registered users' rooms, keyed by
+room with an index by user) and the Workers test runtime; it does not claim a
+deployed account billing rate or a free-plan capacity.
 
-The focused run was first made on 2026-09-20 and repeated on 2026-09-22 for
-the protocol v3 schema (schema 2: one server-wide record log, room records,
-reaction sets) with the repository's workerd launcher:
+The figures were measured on 2026-09-26 with the repository's workerd
+launcher:
 
 ```sh
 devenv shell -- npm --prefix servers/cloudflare-worker test -- \
@@ -15,129 +17,102 @@ devenv shell -- npm --prefix servers/cloudflare-worker test -- \
 
 The test uses ten separate Durable Objects through `runInDurableObject` and
 constructs a `Store` over each object's native SQLite state with a fake clock.
-The traffic tests start at `2026-09-22T12:00:00Z`, cross three UTC posting
-days, advance cleanup to `2026-09-25T01:00:00Z`, and evict/reinitialize one
-object to check persisted limiter state.
+The traffic tests start at a future UTC noon, cross three UTC posting days,
+run cleanup a day and a half later, and evict/reinitialize one object to check
+persisted limiter state.
 
 ## Reservation accounting
 
-The reservations below gate work before it runs. Since 2026-09-24 the unused
-part of each finished SQL reservation, measured from its cursors, is credited
-back in one budget-row update, so the daily counters are charged about the rows
-actually used plus one. A guest reconnect (admission, auth, one history page,
-room listing) is charged about 61 writes instead of 176, a post about 39 instead
-of 280, and an idle alarm run about 14 instead of 30. The reservation sizes still
-matter: they decide whether an operation is admitted near the ceiling.
-
-Also since 2026-09-24, only a `message` mutation naming a `message_id` (an edit,
-which may be a move) keeps the 256-write floor; creates, reactions, rooms and
-renames, measured at most 37 writes, reserve a 96-write floor. History pages
-reserve a 32-write floor (about 20 observed for a first request). Reads keep
-their floors. The figures below predate these changes.
+The reservations below gate work before it runs. The unused part of each
+finished SQL reservation, measured from its cursors, is credited back in one
+budget-row update, so the daily counters are charged about the rows actually
+used plus one. A guest reconnect (admission, auth, one history page, room
+listing) is charged about 61 writes, a post about 39, and an idle alarm run
+about 14. The reservation sizes still matter: they decide whether an operation
+is admitted near the ceiling.
 
 `reserveCost` adds eight read and eight write rows for its bounded control
 work. The first reservation after a wake or UTC-day handover also carries an
-eight-row handover allowance. A normal mutation has a conservative 256/256
-mutation floor, so its steady-state mutation reservation is 264/264.
-Request-ID mutations also do an 8/8 pre-duplicate lookup, which reserves
-16/16 after control overhead; the steady-state full request-ID mutation is
-280/280. A mutation without a request ID reserves 264/264. A cleanup run has
-a bounded due-check reservation plus a 1,032/1,032 batch reservation; the
-latest first-maintenance handover measured 1,068/1,058 in total (the due check now reserves twelve reads for its six indexed existence probes).
-
-The protocol v3 operations (reaction sets, thread room creation and saves,
-moves that re-log reactions) run through the same mutation path and fit the
-existing 256/256 floor, so the mutation reservation was not changed. Room
-listing now embeds each room's intro message and was re-derived from the
-thread ceiling (see below).
+eight-row handover allowance. Only a `message` mutation naming a `message_id`
+(an edit, which may be a move) has the conservative 256-write mutation floor;
+creates, reactions, rooms and renames, measured at most 37 writes, have a
+96-write floor. Request-ID mutations also do an 8/8 pre-duplicate lookup,
+which reserves 16/16 after control overhead, so a steady-state request-ID
+create reserves 120 writes and a request-ID edit 280 (104 and 264 without a
+request ID). History pages reserve a 32-write floor. A cleanup run has a
+bounded due-check reservation (14 reads for its seven indexed existence
+probes, one of them the purge list) plus a 1,032/1,032 batch reservation.
 
 The table below includes the reservation SQL in the observed cursor counts.
 Every operation in the runtime reservation matrix is listed so the claimed
 upper bounds can be compared with the measured worst case.
 
-| Operation | Observed reads | Observed writes | Reserved reads | Reserved writes | Result |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Auth attempt reservation | 10 | 8 | 48 | 32 | accepted |
-| History quota reservation | 15 | 15 | 72 | 24 | accepted |
-| Frame reservation (one frame) | 15 | 15 | 28 | 24 | accepted |
-| Frame block (10 frames) | 11 | 10 | 64 | 24 | accepted |
-| Connection admission reservation | 16 | 15 | 72 | 40 | accepted |
-| Identity registration | 24 | 23 | 136 | 72 | accepted |
-| Credential lookup | 3 | 1 | 16 | 8 | accepted |
-| Identity lookup | 4 | 1 | 24 | 8 | accepted |
-| Identity count | 3 | 1 | 16 | 8 | accepted |
-| Credential IDs lookup | 3 | 1 | 40 | 8 | accepted |
-| Credential counter update | 4 | 2 | 16 | 16 | accepted |
-| Message create with request ID | 31 | 35 | 280 | 280 | accepted |
-| Deduplicated mutation retry | 4 | 1 | 16 | 16 | accepted |
-| Reaction set | 25 | 25 | 280 | 280 | accepted |
-| Thread room create (with intro message) | 27 | 25 | 280 | 280 | accepted |
-| Thread room save | 19 | 17 | 280 | 280 | accepted |
-| Message move with one reaction set | 25 | 30 | 280 | 280 | accepted |
-| Registered name mutation | 21 | 17 | 280 | 280 | accepted |
-| History page | 10 | 1 | 264 | 40 | accepted |
-| Room record lookup (`general`) | 4 | 1 | 24 | 8 | accepted |
-| Room join lookup | 4 | 1 | 24 | 8 | accepted |
-| Room listing (representative matrix) | 7 | 1 | 444 | 8 | accepted |
-| Admission snapshot | 5 | 1 | 40 | 24 | accepted |
-| Cleanup | 104 | 40 | 1,068 | 1,058 | accepted |
-| Alarm scheduling | 7 | 3 | 24 | 12 | accepted |
+| Operation | Observed reads | Observed writes | Reserved reads | Reserved writes |
+| --- | ---: | ---: | ---: | ---: |
+| Auth attempt reservation | 11 | 9 | 48 | 32 |
+| History quota reservation | 16 | 16 | 72 | 24 |
+| Frame reservation (one frame) | 16 | 16 | 28 | 24 |
+| Frame block (10 frames) | 12 | 11 | 64 | 24 |
+| Guest number block | 4 | 4 | 16 | 16 |
+| Connection admission reservation | 17 | 16 | 72 | 40 |
+| Identity registration (starts in `general`, logs that membership) | 29 | 33 | 338 | 880 |
+| Identity registration starting in 100 rooms | 228 | 825 | 338 | 880 |
+| Credential lookup | 4 | 2 | 16 | 8 |
+| Identity lookup (with the user's rooms) | 8 | 2 | 434 | 8 |
+| Identity count | 4 | 2 | 16 | 8 |
+| Credential IDs lookup | 4 | 2 | 40 | 8 |
+| Credential counter update | 5 | 3 | 16 | 16 |
+| Message create with request ID | 33 | 37 | 280 | 120 |
+| Empty new message (not logged) | 4 | 2 | 16 | 8 |
+| Deduplicated mutation retry | 5 | 2 | 16 | 16 |
+| Reaction set | 27 | 27 | 280 | 120 |
+| Thread room create by a registered user (stores and logs the membership) | 31 | 35 | 280 | 120 |
+| Thread room save | 21 | 19 | 280 | 120 |
+| Message move with one reaction set | 27 | 32 | 280 | 280 |
+| Registered name mutation | 23 | 19 | 280 | 120 |
+| Registered room leave (logs the membership) | 24 | 20 | 482 | 72 |
+| Registered room join (logs the membership) | 23 | 17 | 482 | 72 |
+| Registered room join at the 100-thread ceiling | 333 | 32 | 482 | 72 |
+| History page | 12 | 2 | 264 | 40 |
+| Room record lookup (`general`) | 5 | 2 | 24 | 8 |
+| Room join lookup | 5 | 2 | 24 | 8 |
+| Room listing (representative matrix) | 8 | 2 | 444 | 8 |
+| Room members, `general` and one thread | 8 | 2 | 424 | 8 |
+| Room members, 101 rooms with 100 registered members each | 20,203 | 2 | 20,620 | 8 |
+| Admission snapshot | 6 | 2 | 40 | 24 |
+| Cleanup (matrix, one day later) | 128 | 51 | 1,070 | 1,058 |
+| Alarm scheduling | 8 | 4 | 24 | 12 |
 
 The matrix uses a fresh object and one representative operation for each
-boundary. The room-listing test separately populated the 100-thread policy
-ceiling, each thread with an intro message embedded from current message
-state; listing all 101 rooms measured 306/1 against its 452/16 reservation.
-That reservation is now derived from the calibrated thread ceiling
-(`32 + 4 * 101` rows plus reservation control), up from the fixed 256-row
-listing reservation, because each room adds an indexed intro-message lookup.
-A 180-record fixture mixing room, message, and reaction records returned a
-50-record forward page (`more: true`, first/last spanning all kinds) at 60/5
-against its 272/48 reservation. The maximum snapshot test used a 4,096-byte
-text body plus an `ext` field and produced an 8,154-byte serialized snapshot.
-Its maximum observed accepted mutation was 32/35, below the 280/280 request-ID
-bound.
+boundary; every operation stayed within its reservation. The room-listing test
+separately populated the 100-thread policy ceiling, each thread with an intro
+message embedded from current message state; listing all 101 rooms measured
+307/2 against its 452/16 reservation, which is derived from that ceiling
+(`32 + 4 * 101` rows plus reservation control) because each room adds an
+indexed intro-message lookup. A 180-record fixture mixing room, message, and
+reaction records returned a 50-record forward page (`more: true`,
+`first_log_id`/`last_log_id` spanning all kinds) at 61/6 against its 272/48
+reservation. The maximum snapshot test used a 4,096-byte text body plus an
+`ext` field and produced an 8,154-byte serialized snapshot. Its maximum
+observed accepted mutation was 34/37, below the 288/128 request-ID create
+reservation of the first operation after a handover.
 
 The worst move was measured at the calibrated reaction ceilings rather than
 the defaults: 64 reacting users, each with 16 distinct 64-byte emoji and a
-320-byte name. Each reaction set measured at most 91/30. Moving the message
-re-logged all 64 sets in one 92,693-byte reaction record and measured 214/156
+320-byte name. Each reaction set measured at most 93/32. Moving the message
+re-logged all 64 sets in one 92,693-byte reaction record and measured 216/158
 against its 280/280 reservation; the record still fit one history response.
 The per-message cap is what bounds this move: without it, the re-logged set
 count would be limited only by posting quotas.
 
-## Protocol v6 operations
+Memberships:
 
-Measured on 2026-09-26 with the same operation matrix after the protocol v6
-changes (schema 4: membership records in the log, and a `memberships` table of
-registered users' rooms, keyed by room with an index by user, which replaces
-schema 3's per-identity room list). These figures include the credit-back and
-the 96-write floor described above, so they are the current ones; the
-operations not listed here did not change.
-
-| Operation | Observed reads | Observed writes | Reserved reads | Reserved writes |
-| --- | ---: | ---: | ---: | ---: |
-| Identity registration (starts in `general`, logs that membership) | 29 | 33 | 338 | 880 |
-| Identity registration starting in 100 rooms | 228 | 825 | 338 | 880 |
-| Identity lookup (with the user's rooms) | 8 | 2 | 434 | 8 |
-| Message create with request ID | 33 | 37 | 280 | 120 |
-| Thread room create by a registered user (stores and logs the membership) | 31 | 35 | 280 | 120 |
-| Thread room save | 21 | 19 | 280 | 120 |
-| Registered room leave (logs the membership) | 24 | 20 | 482 | 72 |
-| Registered room join (logs the membership) | 23 | 17 | 482 | 72 |
-| Registered room join at the 100-thread ceiling | 333 | 32 | 482 | 72 |
-| History page (no `users`) | 12 | 2 | 264 | 40 |
-| Room listing (representative matrix) | 8 | 2 | 444 | 8 |
-| Room members, `general` and one thread | 8 | 2 | 424 | 8 |
-| Room members, 101 rooms with 100 registered members each | 20,203 | 2 | 20,620 | 8 |
-| Cleanup (matrix, one day later) | 128 | 51 | 1,070 | 1,058 |
-
-- A registered user's join or leave is still one reservation that counts as a
-  post; it now also appends one membership record and advances the room's
-  head, about 8 more writes than the identity-row update it replaces, within
-  the same 64-write floor. It no longer prunes against the rooms table; the
-  read floor instead covers the user's rooms, read by the user index and
-  joined to `rooms` (`8 + 2 × (101 + 100)` rows for live rooms and removed
-  rooms awaiting purge). A join or leave that changes nothing writes nothing.
+- A registered user's join or leave is one reservation that counts as a post.
+  It stores or removes the membership row, appends one membership record, and
+  advances the room's head, within the 64-write floor. The read floor covers
+  the user's rooms, read by the user index and joined to `rooms`
+  (`8 + 2 × (101 + 100)` rows for live rooms and removed rooms awaiting
+  purge). A join or leave that changes nothing writes nothing.
 - A registration logs a membership in each starting room (at most the 101
   rooms), so its write floor is `64 + 8 × 101`. Registrations are capped at
   100 a day; the credit-back returns the unused part.
@@ -150,16 +125,14 @@ operations not listed here did not change.
   connection attachments. A user in `general` and a few threads reads about
   two rows per registered member of those rooms; the worst case, a listing of
   all 101 rooms each at the cap, measured 20,203 reads, which the 2,500,000
-  foreground reads a day allow about 120 times. Listings without `members`
-  cost what they did.
-- History pages no longer look up `users`, and membership records are read
-  from the same room range as every other record.
+  foreground reads a day allow about 120 times.
+- History pages read membership records from the same room range as every
+  other record, and look up no user objects.
 - Cleanup purges a removed thread's membership rows in the same bounded
-  batch, after its other deletions; its due check reserves 14 reads (seven
-  probes, one of them the purge list). The full-batch test now also purges one
+  batch, after its other deletions. The full-batch test also purges one
   membership per removed room within the 1,032/1,032 batch reservation.
-- `room_list` ignores `latest_log_id`, so a reconnect's listing is always the
-  full joined listing it was under protocol v5.
+- `room_list` ignores `latest_log_id`, so a reconnect's listing is always a
+  full joined listing.
 - `@private` throttle notices and `/help` replies carry no `log_id`, so they
   need no SQL.
 
@@ -174,11 +147,8 @@ For the three-day traffic sample, the operation rows were:
 | Cleanup | 61 / 18 | 1,070 / 1,058 |
 | History after cleanup | 8 / 2 | 264 / 40 |
 
-The final counters for that sample were 217 observed reads and 142 observed
-writes, against 2,518 reserved reads and 1,786 reserved writes. The native
-SQLite file reported `databaseSize = 147,456` bytes (135,168 under schema 3;
-the new table and index add pages). These values are a small schema/data
-sample and are not a per-message capacity estimate.
+The native SQLite file reported `databaseSize = 147,456` bytes. These values
+are a small schema/data sample and are not a per-message capacity estimate.
 
 ## Guest numbers
 
@@ -212,7 +182,7 @@ memory. Guest auth still stores no identity row.
 
 ## Frame blocks, activity, and throttle notices
 
-Measured on 2026-09-24 with the operation matrix above. A single-frame
+With the operation matrix above, a single-frame
 reservation reserves 28 reads and 24 writes. Connections now reserve frames in
 blocks of 10 for 64 reads and 24 writes, so each frame's own bookkeeping is 2.4
 reserved writes instead of 24. The 60,000-row foreground write ceiling
@@ -221,10 +191,8 @@ connection that sends one frame and closes still pays a whole block, which is
 what a single frame cost before.
 
 Blocks change what frames without SQL work of their own cost (`room_join`
-lookups aside, notifications, rejected frames). They barely change posting: a
-post is one frame plus its mutation reservation (264–280 writes), so the
-foreground ceiling still allows about 210 posts a day (`60,000 / 282.4`), up
-from about 197 (`60,000 / 304`). The mutation floor below is what bounds posts.
+lookups aside, notifications, rejected frames). A post is one frame plus its
+mutation, which is charged about 39 writes after the credit-back.
 
 `activity` is off by default (`ACTIVITY=true` enables it). When it is on, the
 web client sends a typing update when typing starts, every 12 seconds while it
@@ -237,7 +205,7 @@ A throttled sender's `@private` notice is sent to that connection only, at
 most once per user per minute, and needs no SQL. `room_list` reuses the
 room-listing reservation (444 reads, 8 writes) and adds no writes; with
 `members: true` it also reads each listed room's registered members (see
-Protocol v6 operations), and its connected members come from connection
+Memberships above), and its connected members come from connection
 attachments.
 
 The liveness ping (`{"method":"ping"}` every `server.ping` = 45 seconds, from
@@ -250,14 +218,15 @@ allowance). Pings are not rate limited by the demo; a client flooding them can
 spend that allowance, which the account-usage stop and the platform's own Free
 limits bound.
 
-The default foreground write ceiling is 60,000 rows per UTC day. At the
-current conservative floor this permits at most 227 mutations without a
-request-ID (`60,000 / 264`) or 214 full request-ID mutations
-(`60,000 / 280`), before other foreground operations consume the same daily
-budget. The 256-row mutation floor is the configured conservative upper bound
-for the complete posting path and its indexed control rows; the measured
-maximum accepted mutation is much smaller, so lowering that floor requires a
-separate proof for every allowed mutation shape and its control rows.
+The default foreground write ceiling is 60,000 rows per UTC day. Charged at
+about 39 writes each, that is roughly 1,500 posts a day before other
+foreground operations consume the same daily budget; near the ceiling a post
+is admitted only while its full reservation (120 writes with a request ID, 280
+for an edit) still fits. The 96- and 256-row mutation floors are the
+configured conservative upper bounds for the posting and editing paths and
+their indexed control rows; the measured maximum accepted mutation is much
+smaller, so lowering a floor requires a separate proof for every allowed
+mutation shape and its control rows.
 
 Rejected work is charged when it reaches a reservation boundary. Depending on
 which bounded admission check rejects a request, a post-limit failure may have
@@ -282,20 +251,19 @@ record and two creates), removed the unreferenced old current message, and kept
 the edited message whose latest record was still inside the retention window. It also removed two expired accepted-request rows without changing
 the room head.
 
-The maintenance-reserve test accepted three mutations under an explicit
+The maintenance-reserve test accepted 35 mutations under an explicit
 1,000/1,000 foreground ceiling, rejected the next mutation, then ran cleanup
-on `2026-09-23`. The previous day's foreground counter was 880 while the new
-day's cleanup consumed 1,058 maintenance writes and removed four records
-(three creates and the seeded room record), three messages, three request
-rows, and three limiter rows. The
-current budget row must be read by day; calling `budget()` after midnight
+the next UTC day. The previous day's foreground counter was 793 while the new
+day's cleanup was charged 112 maintenance writes (269/112 observed) and
+removed 36 records (the creates and the seeded room record), 35 messages, and
+29 request rows. The current budget row must be read by day; calling `budget()` after midnight
 correctly returns the new day's foreground counters rather than the exhausted
 previous day.
 
 After `evictDurableObject`, a fresh Store instance observed a bounded set of
 schema, effective-clock, and budget-cache reads and zero schema writes. The persisted principal-limit rows retained the
 original daily post count and the second mutation was rejected by that daily
-limit. The SQLite file remained 135,168 bytes across eviction.
+limit. The SQLite file remained 147,456 bytes across eviction.
 
 ## Storage pressure and page reuse
 

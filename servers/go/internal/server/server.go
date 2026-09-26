@@ -256,12 +256,10 @@ type Server struct {
 
 	mu sync.RWMutex
 	// lastID is the single log_id sequence shared by every record kind and room.
-	lastID int64
-	rooms  map[string]*roomState
-	// roomOrder lists room IDs in creation order, so parents precede threads.
-	roomOrder []string
-	messages  map[string]*messageState
-	clients   map[*client]struct{}
+	lastID   int64
+	rooms    map[string]*roomState
+	messages map[string]*messageState
+	clients  map[*client]struct{}
 	// users holds every live identity: connected guests and passkey users.
 	users map[string]*userState
 	// usedIDs holds every user_id ever assigned, lowercased, so none is
@@ -478,7 +476,7 @@ func (s *Server) serverParams() map[string]any {
 	}
 	params := map[string]any{
 		"protocol": 6,
-		"name":     "apron-go/0.7",
+		"name":     "apron-go/6",
 		"caps":     []string{"history", "edit", "rooms", "reactions", "activity", "embed:upload", "embed:stream", "command"},
 		"auth":     authSchemes,
 		"ping":     max(1, int(s.config.PingInterval/time.Second)),
@@ -748,12 +746,6 @@ func (s *Server) processFrame(c *client, payload []byte) {
 		close(entry.done)
 		s.mu.Unlock()
 	}
-}
-
-func (c *client) isAuthenticated() bool {
-	c.server.mu.RLock()
-	defer c.server.mu.RUnlock()
-	return c.user != nil
 }
 
 // nextIDLocked returns the next log_id in the server-wide sequence: the commit

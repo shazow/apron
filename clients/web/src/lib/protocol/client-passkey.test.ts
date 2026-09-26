@@ -241,7 +241,7 @@ describe('passkey autofill', () => {
 
 describe('a failed session resume never prompts on its own', () => {
 	const key = 'apron.session:ws://fake.test/';
-	const server = { method: 'server', params: { protocol: 4, auth: ['webauthn', 'token', 'guest'], caps: [] } };
+	const server = { method: 'server', params: { protocol: 6, auth: ['webauthn', 'token', 'guest'], caps: [] } };
 
 	async function resuming(): Promise<{ client: ChatClient; socket: FakeSocket; auth: { id: string } }> {
 		vi.useFakeTimers();

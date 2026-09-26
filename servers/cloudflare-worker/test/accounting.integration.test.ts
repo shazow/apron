@@ -166,7 +166,7 @@ describe('measured storage accounting', () => {
 			return {
 				base,
 				cleanup: cleanupResult,
-				history: { floor: history.history_log_id, entries: messagesOf(history).map((entry) => ({ log_id: entry.log_id, message_id: entry.message_id })) },
+				history: { floor: history.history_log_id, messages: messagesOf(history).map((entry) => ({ log_id: entry.log_id, message_id: entry.message_id })) },
 				operationCosts,
 				budget,
 				observed,
@@ -773,7 +773,7 @@ describe('measured storage accounting', () => {
 				params: { name: 'Matrix renamed' }, identity,
 			}));
 			measure('history page', () => store.historyPage({ roomId: 'general', limit: 50, now: clock.now() }));
-			measure('room state announcement', () => store.getRoomState());
+			measure('room record lookup', () => store.getRoomState());
 			measure('room join lookup', () => store.getRoom(thread.result.room_id));
 			measure('room listing', () => store.listRooms(clock.now()));
 			measure('room members (general and one thread)', () => store.roomMembers(['general', thread.result.room_id], DEFAULT_LIMITS.roomListMembers, clock.now()));
