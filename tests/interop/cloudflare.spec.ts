@@ -1,10 +1,31 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { createServer } from 'node:http';
 import { composer, disablePasskeyAutofill, editMessage, openThread, reactionChip, reactTo, sendMessage, startThread, userIdOf, waitForMessage } from './test-helpers';
 
+/** A virtual authenticator that answers this page's passkey prompts on its own. */
+async function addAuthenticator(page: Page): Promise<void> {
+	const cdp = await page.context().newCDPSession(page);
+	await cdp.send('WebAuthn.enable');
+	await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
+		protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
+		hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true
+	} });
+}
+
+/** Signs a guest in from the read-only bar: the connect screen creates a passkey on this device. */
+async function signInFromReadOnlyBar(page: Page): Promise<void> {
+	await page.getByTestId('read-only-signin').click();
+	const card = page.getByRole('form', { name: 'Connect to a backend' });
+	await card.getByRole('button', { name: 'Continue with passkey', exact: true }).click();
+	await expect(card).toHaveCount(0);
+	await expect(page.getByTestId('read-only-bar')).toHaveCount(0);
+	await expect(composer(page)).toBeEnabled();
+}
+
 // This exercises browser-generated credentials and the actual Workers verifier.
 // Runtime/storage policy cases live in servers/cloudflare-worker/test.
-test('Worker verifies discoverable passkeys, rejects replay and bad signatures, and restores identity', async ({ page, context }) => {
+test('Worker verifies discoverable passkeys, rejects replay and bad signatures, restores identity, and invites a bot', async ({ page, context }) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	const cdp = await context.newCDPSession(page);
 	await cdp.send('WebAuthn.enable');
 	const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
@@ -157,28 +178,58 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	await expect(reply).toBeVisible();
 	await openThread(page, threadId, { join: true });
 	await expect(row).toHaveCount(1);
+
+	// The owner invites a bot from the composer. The Worker allows ten
+	// connection attempts a minute from this one IP, so the bot rides this
+	// signed-in page rather than a test of its own.
+	await page.getByRole('button', { name: 'Back to room', exact: true }).click();
+	await composer(page).fill('/invite-bot');
+	await page.getByRole('button', { name: 'Run command', exact: true }).click();
+	// The token comes in a private notice, in a code block with a Copy button.
+	const notice = page.getByTestId('notice').filter({ hasText: 'Your bot signs in as' });
+	await expect(notice).toBeVisible();
+	await expect(notice.locator('.ap-notice-title')).toHaveText('System message to you');
+	const botName = (await notice.locator('strong').first().textContent())!;
+	expect(botName).toMatch(/^Bot of /);
+	const block = notice.locator('pre').first();
+	const token = (await block.locator('code').textContent())!.trim();
+	expect(token).toMatch(/^apron_bot_[A-Za-z0-9_-]+$/);
+	await block.getByRole('button', { name: 'Copy', exact: true }).click();
+	await expect(block.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(token);
+	// A new bot joins General, which the room shows like any join.
+	await expect(page.getByTestId('membership-line').filter({ hasText: botName })).toBeVisible();
+
+	// The bot is a program, not a browser: it connects from Node, without an Origin.
+	const bot = new WebSocket('ws://localhost:8788/ws');
+	const frames: any[] = [];
+	const waiters: Array<{ match: (frame: any) => boolean; resolve: (frame: any) => void }> = [];
+	bot.addEventListener('message', (event) => {
+		const frame = JSON.parse(String(event.data));
+		const index = waiters.findIndex((waiter) => waiter.match(frame));
+		if (index >= 0) waiters.splice(index, 1)[0].resolve(frame); else frames.push(frame);
+	});
+	const next = (match: (frame: any) => boolean): Promise<any> => {
+		const index = frames.findIndex(match);
+		if (index >= 0) return Promise.resolve(frames.splice(index, 1)[0]);
+		return new Promise((resolve) => waiters.push({ match, resolve }));
+	};
+	try {
+		const server = await next((frame) => frame.method === 'server');
+		expect(server.params.auth).toEqual(['token', 'guest']);
+		bot.send(JSON.stringify({ method: 'auth', id: 'auth', params: { scheme: 'token', token } }));
+		const auth = await next((frame) => frame.id === 'auth');
+		expect(auth.result.you.user_id).toMatch(/^bot_u_/);
+		expect(auth.result.you.name).toBe(botName);
+		bot.send(JSON.stringify({ method: 'message', id: 'post', params: { room_id: 'general', body: { text: 'beep from the bot' } } }));
+		expect((await next((frame) => frame.id === 'post')).result.message_id).toBeTruthy();
+		await expect(await waitForMessage(page, 'beep from the bot')).toContainText(botName);
+	} finally {
+		bot.close();
+	}
 });
 
-test('built frontend connects to the Worker and recovers retained history', async ({ page }) => {
-	await page.goto('/');
-	await expect(page.getByTestId('connection-status')).toHaveText('Connected');
-	await expect(page.getByText('This demo keeps roughly the last day of history; older messages may expire.')).toBeVisible();
-	await expect(page.getByLabel('Loading history', { exact: true })).toHaveCount(0);
-	const message = `worker-ui-${Date.now()}`;
-	await page.getByRole('textbox', { name: 'Message', exact: true }).fill(message);
-	await page.getByRole('button', { name: 'Send message', exact: true }).click();
-	await expect(page.locator('article[data-message-id]').filter({ hasText: message })).toBeVisible();
-	// The demo denies guest renames; the profile editor says so and keeps the old handle.
-	await page.getByRole('button', { name: /^Your profile on/ }).click();
-	const dialog = page.getByRole('dialog', { name: 'Edit profile' });
-	await dialog.getByTestId('display-name-input').fill('Renamed guest');
-	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
-	await expect(dialog.getByRole('alert')).toHaveText(
-		'The server declined this handle (Only registered users may change their name). Sign in with a passkey and it’s applied once you’re signed in.'
-	);
-});
-
-test('custom frontend origins share guest quotas and cannot use passkeys', async ({ page }) => {
+test('custom frontend origins read as guests, cannot post, and cannot use passkeys', async ({ page }) => {
 	const frontend = createServer((req, res) => {
 		res.setHeader('Content-Type', 'text/html');
 		if (req.url === '/opaque') res.setHeader('Content-Security-Policy', 'sandbox allow-scripts');
@@ -210,45 +261,28 @@ test('custom frontend origins share guest quotas and cannot use passkeys', async
 				try {
 					const auth = await request('auth', { scheme: 'guest' });
 					const passkey = await request('auth', { scheme: 'webauthn', action: 'register', step: 'begin' });
-					let operations: any[] = [];
-					if (index === 0) {
-						const post = await request('message', { room_id: 'general', body: { text: 'custom frontend' } });
-						if (!post.result) throw new Error(JSON.stringify(post));
-						const message_id = post.result.message_id;
-						operations = [post,
-							await request('message', { room_id: 'general', message_id, body: { text: 'custom edit' } }),
-							await request('message', { room_id: 'general', message_id, deleted: true })];
-						// Earlier browser tests may have used part of this IP's allowance.
-						// Spend the remaining allowance on the same tombstone, then ensure
-						// another origin cannot reset it. These are local runtime requests.
-						for (let i = 0; i < 6; i++) {
-							const next = await request('message', { room_id: 'general', message_id, deleted: true });
-							if (next.error) break;
-						}
-					}
 					const history = await request('history', { room_id: 'general' });
-					const limited = await request('message', { room_id: 'general', body: { text: 'must be rate limited' } });
-					return { announcement, auth, passkey, operations, history, limited };
+					const post = await request('message', { room_id: 'general', body: { text: 'custom frontend' } });
+					return { announcement, auth, passkey, history, post };
 				} finally {
 					await new Promise<void>(resolve => { socket.onclose = () => resolve(); socket.close(); });
 				}
 			}, index);
-			expect(result.announcement.auth).toEqual(['guest']);
+			// `token` is for bot tokens; passkeys and their sessions stay on the demo's own origin.
+			expect(result.announcement.auth).toEqual(['token', 'guest']);
+			expect(result.announcement.ext.demo.guest_posting).toBe(false);
 			expect(result.auth.result.you.user_id).toBeTruthy();
 			expect(result.passkey.error.code).toBe(-32001);
-			for (const operation of result.operations) expect(operation.error).toBeUndefined();
 			expect(result.history.result.messages).toBeInstanceOf(Array);
-			expect(result.history.result.entries).toBeUndefined();
-			expect(result.limited.error.code).toBe(-32002);
-			expect(result.limited.error.data.retry_after).toBeGreaterThanOrEqual(1);
-			expect(Number.isInteger(result.limited.error.data.retry_after)).toBe(true);
+			expect(result.post.error.code).toBe(-32001);
+			expect(result.post.error.message).toMatch(/sign in/);
 		}
 	} finally {
 		await new Promise<void>((resolve, reject) => frontend.close(error => error ? reject(error) : resolve()));
 	}
 });
 
-test('Worker leaves typing off, lists rooms, lets guests leave and rejoin General, colors guest avatars by user_id, and offers room members to mention', async ({ browser }) => {
+test('Worker keeps guests read-only, leaves typing off, lists rooms, lets guests leave and rejoin General, colors avatars by user_id, and offers room members to mention', async ({ browser }) => {
 	const writer = await browser.newContext();
 	const reader = await browser.newContext();
 	try {
@@ -256,10 +290,30 @@ test('Worker leaves typing off, lists rooms, lets guests leave and rejoin Genera
 		const pageB = await reader.newPage();
 		// The picker lists members again when its list is over 15 seconds old; the test skips ahead.
 		await pageA.clock.install();
+		await addAuthenticator(pageA);
+		await disablePasskeyAutofill(pageA);
 		for (const page of [pageA, pageB]) {
 			await page.goto('/');
 			await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 		}
+		// Guests only read: the server says so in a private notice, and the
+		// composer gives way to a sign-in bar. The reader stays a guest.
+		await expect(pageB.getByText('This demo keeps roughly the last day of history; older messages may expire.')).toBeVisible();
+		await expect(pageB.getByTestId('notice').filter({ hasText: 'You’re reading as a guest.' })).toBeVisible();
+		await expect(pageB.getByTestId('read-only-bar')).toContainText('Sign in to post, react, and start threads.');
+		await expect(composer(pageB)).toHaveCount(0);
+		// The demo denies guest renames; the profile editor says so and keeps the old handle.
+		await pageB.getByRole('button', { name: /^Your profile on/ }).click();
+		const dialog = pageB.getByRole('dialog', { name: 'Edit profile' });
+		await dialog.getByTestId('display-name-input').fill('Renamed guest');
+		await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+		await expect(dialog.getByRole('alert')).toHaveText(
+			'The server declined this handle (Only registered users may change their name). Sign in with a passkey and it’s applied once you’re signed in.'
+		);
+		await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+		await expect(dialog).toHaveCount(0);
+		// The writer signs in from the bar.
+		await signInFromReadOnlyBar(pageA);
 		// The demo does not advertise `activity`, so typing is never sent or shown.
 		// Nothing is posted, so posting quotas are untouched.
 		await pageA.getByRole('textbox', { name: 'Message', exact: true }).pressSequentially('hello');
