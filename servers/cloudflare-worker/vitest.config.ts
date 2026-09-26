@@ -5,6 +5,9 @@ export default defineConfig({
 	plugins: [
 		cloudflareTest({
 			wrangler: { configPath: "./wrangler.toml" },
+			// Most suites use guests as convenient posters; test/read-only-guests
+			// turns this off to cover the deployed default, where guests only read.
+			miniflare: { bindings: { GUEST_POSTING: "true" } },
 		}),
 	],
 	test: {

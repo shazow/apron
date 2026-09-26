@@ -138,7 +138,8 @@ const ids = (rooms: Array<{ room_id: string }> | undefined) => (rooms ?? []).map
 it('admits clients without Origin as guests without advertising or allowing passkeys', async () => {
 	const peer = await connect(undefined, '/', null);
 	try {
-		expect((await peer.next()).params.auth).toEqual(['guest']);
+		// `token` is for bot tokens (/invite-bot); passkey sessions stay on their origin.
+		expect((await peer.next()).params.auth).toEqual(['token', 'guest']);
 		peer.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
 		expect((await peer.next()).result.you.user_id).toMatch(/^guest_/);
 		peer.send({ id: 'passkey', method: 'auth', params: { scheme: 'webauthn', action: 'register', step: 'begin' } });
