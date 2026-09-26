@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/shazow/apron/servers/go/internal/server"
+	"github.com/shazow/apron/servers/go/internal/store"
 )
 
 // Options are the command line flags, which a TOML file given with
@@ -41,6 +43,7 @@ type Options struct {
 	MaxListenerConnections int      `long:"max-listener-connections" description:"Maximum concurrent TCP connections on the listener, HTTP included; 0 is unlimited"`
 	MessagesPerMinute      int      `long:"messages-per-minute" description:"Burst of new messages, room_set requests, and /avatar commands per user, refilled over a minute; 0 is unlimited"`
 	DebugAddr              string   `long:"debug-addr" description:"Listen address for unauthenticated pprof and expvar under /debug/, such as 127.0.0.1:6060; empty disables"`
+	Store                  string   `long:"store" description:"Where state is kept: sqlite:<path> for a SQLite database, or memory to keep nothing across restarts"`
 
 	WebAuthn struct {
 		RPID    string   `long:"rp-id" default:"localhost" description:"Passkey relying party domain; empty disables passkeys"`
@@ -48,7 +51,7 @@ type Options struct {
 	} `group:"Passkeys" namespace:"webauthn"`
 
 	Upload struct {
-		Dir          string `long:"dir" description:"Directory holding uploaded files; upload files left by a previous run are removed at start"`
+		Dir          string `long:"dir" description:"Directory holding uploaded files; upload files the store does not refer to are removed at start"`
 		MaxMB        int64  `long:"max-mb" default:"20" description:"Maximum size of one upload, in MiB"`
 		MaxMessageMB int64  `long:"max-message-mb" default:"20" description:"Maximum total size of one message's uploads, in MiB"`
 		MaxStorageMB int64  `long:"max-storage-mb" default:"1000" description:"Total size of hosted uploads, in MiB, beyond which the oldest are removed from their messages"`
@@ -70,7 +73,8 @@ type Options struct {
 
 func main() {
 	var options Options
-	options.Upload.Dir = userCacheDir("uploads")
+	options.Store = "sqlite:" + filepath.Join(userDataDir(), "aprond.db")
+	options.Upload.Dir = filepath.Join(userDataDir(), "uploads")
 	options.TLS.CacheDir = userCacheDir("autocert")
 	parser := flags.NewParser(&options, flags.Default)
 	if _, err := parser.Parse(); err != nil {
@@ -101,6 +105,7 @@ func main() {
 }
 
 // serverConfig turns options into the server's configuration.
+// The caller closes config.Store unless it hands it to a server.
 func serverConfig(options Options) (server.Config, error) {
 	config := server.DefaultConfig()
 	config.StaticDir = options.StaticDir
@@ -143,7 +148,15 @@ func run(logger *slog.Logger, options Options) error {
 	defer stop()
 	group, ctx := errgroup.WithContext(ctx)
 
-	app := server.New(config)
+	config.Store, err = store.Open(options.Store)
+	if err != nil {
+		return err
+	}
+	app, err := server.Open(config)
+	if err != nil {
+		config.Store.Close()
+		return fmt.Errorf("restoring state from %s: %w", options.Store, err)
+	}
 	var servers []*http.Server
 	serve := func(name string, srv *http.Server, listener net.Listener) {
 		servers = append(servers, srv)
@@ -213,7 +226,7 @@ func run(logger *slog.Logger, options Options) error {
 		}
 		serve("debug server", newServer(debugHandler()), listener)
 	}
-	logger.Info("serving", "static_dir", options.StaticDir, "upload_dir", options.Upload.Dir)
+	logger.Info("serving", "store", options.Store, "static_dir", options.StaticDir, "upload_dir", options.Upload.Dir)
 
 	group.Go(func() error {
 		<-ctx.Done()
@@ -230,10 +243,29 @@ func run(logger *slog.Logger, options Options) error {
 	return group.Wait()
 }
 
+// userDataDir is aprond in the user's data directory: $XDG_DATA_HOME,
+// usually ~/.local/share, on Linux and other Unix systems, and the
+// application data directory on macOS and Windows.
+func userDataDir() string {
+	switch runtime.GOOS {
+	case "darwin", "windows", "ios", "plan9":
+		if dir, err := os.UserConfigDir(); err == nil {
+			return filepath.Join(dir, "aprond")
+		}
+	default:
+		if dir := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(dir) {
+			return filepath.Join(dir, "aprond")
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ".local", "share", "aprond")
+		}
+	}
+	return "aprond"
+}
+
 // userCacheDir is aprond/<name> in the user's cache directory
-// ($XDG_CACHE_HOME, usually ~/.cache, on Linux). Uploads last only as long
-// as the process, like the rest of the server's state, so they are cache.
-// Empty, when there is no cache directory, uses a temporary directory.
+// ($XDG_CACHE_HOME, usually ~/.cache, on Linux), or empty when there is
+// none.
 func userCacheDir(name string) string {
 	cache, err := os.UserCacheDir()
 	if err != nil {

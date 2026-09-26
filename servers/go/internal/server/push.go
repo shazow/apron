@@ -64,7 +64,7 @@ func (s *Server) registerPush(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, invalidParams("%s", problem)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	count := 0
 	for _, registration := range s.pushes {
 		if registration.userID == c.user.id && registration.url != endpoint {
@@ -75,6 +75,7 @@ func (s *Server) registerPush(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, &rpcError{Code: codeDenied, Message: "Too many push endpoints; unregister one first"}
 	}
 	s.pushes[endpoint] = &pushRegistration{userID: c.user.id, kind: kind, url: endpoint, token: token}
+	s.touchPush(endpoint)
 	return map[string]any{}, false, nil
 }
 
@@ -86,9 +87,10 @@ func (s *Server) unregisterPush(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	if registration := s.pushes[endpoint]; registration != nil && registration.userID == c.user.id {
 		delete(s.pushes, endpoint)
+		s.touchPush(endpoint)
 	}
 	return map[string]any{}, false, nil
 }
@@ -152,8 +154,9 @@ func (s *Server) wakeLocked(m *messageState, snapshot, previous map[string]any) 
 				s.mu.Lock()
 				if current := s.pushes[registration.url]; current != nil && current.userID == registration.userID {
 					delete(s.pushes, registration.url)
+					s.touchPush(registration.url)
 				}
-				s.mu.Unlock()
+				s.unlock()
 			}
 		})
 	}

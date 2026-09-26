@@ -6,9 +6,9 @@ not the designs under consideration, multiplexing
 ([Appendix C.2](../../PROTOCOL.md#c2-multiplexing-envelope))
 and WebRTC
 ([Appendix C.1](../../PROTOCOL.md#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)).
-State is in memory; restarting the process clears messages, identities,
-uploads, passkeys, and sessions. Uploaded files are kept on disk in the
-upload directory while the process runs; a restart removes those left over.
+State is kept in a store, by default a SQLite database in the user data
+directory, so rooms, history, passkey users, sessions, uploads, and push
+registrations survive a restart; see [Storage](#storage).
 
 ```sh
 go run ./cmd/aprond
@@ -39,6 +39,10 @@ Flags (`aprond --help` lists them all):
   current settings, with descriptions, in that form, so
   `aprond --print-config > aprond.toml` starts a config file. Unknown keys
   are an error.
+- `--store sqlite:<path>` keeps state in a SQLite database, by default
+  `aprond/aprond.db` in the user data directory (`$XDG_DATA_HOME`, usually
+  `~/.local/share`, on Linux); `--store memory` keeps nothing across
+  restarts.
 - `--static-dir <directory>` serves a built frontend from the same listener:
   files, but never directory listings or names starting with `.`; a
   directory is served only through its `index.html`.
@@ -63,10 +67,9 @@ Flags (`aprond --help` lists them all):
   (repeat for more; `http://localhost:5173` and `http://localhost:8080`)
   configure passkeys; `--webauthn.rp-id ''` disables them.
 - `--upload.dir <directory>` holds uploaded files, by default
-  `aprond/uploads` in the user cache directory (`$XDG_CACHE_HOME`, usually
-  `~/.cache`, on Linux). Uploads last only as long as the process, so at
-  start the server removes files named `*.upload` there, left by an earlier
-  run, and nothing else.
+  `aprond/uploads` in the user data directory. At start the server removes
+  files named `*.upload` there that the store does not refer to, and nothing
+  else.
 - `--upload.max-mb <n>` (20) bounds one upload, `--upload.max-message-mb <n>`
   (20) all of one message's uploads, and `--upload.max-storage-mb <n>`
   (1000) every hosted upload together, all in MiB. Past the storage bound the
@@ -90,6 +93,33 @@ Flags (`aprond --help` lists them all):
 
 The listeners run together: SIGINT or SIGTERM, or any listener failing,
 shuts them all down, telling open WebSockets to reconnect shortly.
+
+## Storage
+
+The server keeps its working state in memory and writes every change
+through to a store. Each request's changes, and each timer's or upload's,
+form one batch that the store applies atomically; a single writer applies
+batches in order, outside the server's lock, so a slow disk delays
+persistence rather than requests. At start the server rebuilds its state
+from the store.
+
+The store holds opaque entries by kind and ID (`internal/store`), so a
+backend only keeps entries and applies batches:
+
+- `sqlite:<path>` ([modernc.org/sqlite](https://modernc.org/sqlite), pure
+  Go) keeps them in one table of a WAL-mode database file, created with
+  mode `0600` because it holds passkey credentials and session hashes.
+- `memory` keeps them in the process; a new server starts empty.
+
+What survives a restart: rooms and threads with their complete logs, message
+state and reactions, read cursors, passkey users with their credentials,
+profiles, memberships, and push registrations, unexpired sessions, finished
+uploads and their files, and the `log_id`, guest, and embed counters, so no
+`log_id` or `user_id` is reused. What does not: connections, request
+deduplication, and live streams. Guests exist only while connected, so at
+start every guest left in the store is retired as if its last connection had
+just closed, logging its leaves; a write that had not finished fails, and
+its message is republished without the embed.
 
 ## Connections and liveness
 

@@ -98,7 +98,7 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	u := c.user
 	c.away = false
 	destination := s.rooms[roomID]
@@ -221,6 +221,7 @@ func (s *Server) commitSnapshotLocked(m *messageState, snapshot map[string]any, 
 	m.roomID = destination.id
 	record := newLogRecord(logID, kindMessage, snapshot)
 	m.records = append(m.records, record)
+	s.touchMessage(m)
 	s.appendLocked(record, rooms...)
 	s.deliverLocked(rawNotification("message", record.raw), rooms...)
 	return moved
@@ -247,6 +248,7 @@ func (s *Server) republishLocked(m *messageState, edit func(body map[string]any)
 func (s *Server) redactLocked(m *messageState) {
 	for _, record := range m.records {
 		record.rewrite(tombstone)
+		s.touchRecord(record)
 	}
 	s.untitleLocked(m)
 }
@@ -404,13 +406,14 @@ func (s *Server) react(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	m := s.messages[messageID]
 	if m == nil {
 		return nil, false, invalidParams("Unknown message %q", messageID)
 	}
 	u := c.user
 	if !sameEmojiSet(m.reactions[u.id].emojis, emojis) {
+		s.touchMessage(m)
 		from := u.from()
 		if len(emojis) == 0 {
 			delete(m.reactions, u.id)
