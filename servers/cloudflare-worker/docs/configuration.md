@@ -100,6 +100,7 @@ defaults:
 - A moved message re-logs every reaction set in one record, so
   `reactionUsersPerMessage` times the per-user bound (emoji at most 64 UTF-8
   bytes each, escaped, plus the user's name) must fit `historyMaxResponseBytes`.
+- `guestNumberBlock` is at most 10,000 guest numbers.
 - Foreground plus maintenance SQL budgets must fit the daily SQL ceilings.
   Each maintenance budget is at least 520 operations, covering the one-time
   512-row bootstrap reservation and eight control rows for deferred cleanup.
@@ -113,7 +114,8 @@ registered identities and limiter records 10,000 each, processed frames
 connection frame rate 120/minute, server-wide frames 1,000/minute (at least one
 IP's minute), per-type throttles 60/minute, frame blocks
 20 frames (and one block per anonymous connection must fit the IP's frame
-minute), `room_list` registered members 200 per room, SQL writes 80,000/day, SQL reads 3,000,000/day,
+minute), `room_list` registered members 200 per room, guest-number blocks
+10,000 numbers, SQL writes 80,000/day, SQL reads 3,000,000/day,
 database high-water 96 MiB and hard target 128 MiB, cleanup 100 records,
 thread rooms 100 with 2 KiB of client fields, reactions 64 users per message
 and 16 emoji per user, and credentials/challenges 16 KiB. Operators
@@ -146,6 +148,19 @@ them. Cleanup and deduplication run in bounded batches/records, while
 `intro_message` reference, `ext`). The `anonymous*` variables configure the
 guest tier (the `guest` auth scheme).
 
+Guests are numbered `guest_1`, `guest_2`, … from a server-wide counter. The
+object reserves `guestNumberBlock` numbers at a time by advancing a stored
+high-water mark (one `_meta` row, about four written rows with the
+reservation's bookkeeping), then hands them out from memory. A restart,
+eviction, or hibernation wake forgets the in-memory block, so the next guest
+reserves a fresh block and the unused numbers are skipped; numbers are never
+reissued. The default of 10 favours a meaningful count over saved writes:
+this object sleeps between quiet visits, and each visit after a sleep burns
+the rest of a block whatever its size, so a block of 1,000 would number
+occasional visitors 1, 1001, 2001, … while saving at most about 800 written rows
+a day (at most 200 blocks for the 2,000 guest admissions a day, against
+about 60 rows each guest connection already writes). Raise it only for a deployment that stays awake.
+
 The numeric rows are grouped by their unit and enforcement scope:
 
 - Durations: `retentionSeconds`, `cleanupSeconds`, `challengeTtlSeconds`,
@@ -162,12 +177,13 @@ The numeric rows are grouped by their unit and enforcement scope:
   `registeredConnectionsPerUser`, `connectionsPerIp`,
   `pendingFramesPerConnection`, `repeatedPolicyViolations`, `cleanupBatch`,
   `threadLimit`, `reactionUsersPerMessage`, `reactionEmojisPerUser`,
-  `limiterRecordCap`, `frameLease`, `roomListMembers`,
+  `limiterRecordCap`, `frameLease`, `roomListMembers`, `guestNumberBlock`,
   `activityMaxTypingSeconds`, `pingSeconds` (advertised as `server.ping`), `pingTimeoutSeconds`
   (seconds; the timeout must be at least twice the interval). `roomListMembers`
   is how many registered members each room lists in `members`, in `user_id`
   order, besides every connected member; each costs two indexed reads per
-  listed room.
+  listed room. `guestNumberBlock` is how many guest numbers (`guest_<n>`) one
+  durable write reserves; see below.
 - Rolling minute budgets: `historyRequestsPerUserMinute`,
   `historyRequestsPerIpMinute`, `anonymousPostsPerMinute`,
   `registeredPostsPerMinute`, `ipPostsPerMinute`, `globalPostsPerMinute`,
@@ -236,6 +252,7 @@ The numeric rows are grouped by their unit and enforcement scope:
 | `roomListMembers` | 100 |
 | `pingSeconds` | 45 |
 | `pingTimeoutSeconds` | 150 |
+| `guestNumberBlock` | 10 |
 | `sqlWritesPerDay` | 80000 |
 | `sqlReadsPerDay` | 3000000 |
 | `foregroundWritesPerDay` | 60000 |

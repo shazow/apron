@@ -10,7 +10,13 @@ nullable `history_log_id`, without extension negotiation. See
 WebAuthn uses the canonical [optional authentication scheme](../../../PROTOCOL.md#49-webauthn-authentication),
 advertised through `auth: ["webauthn", "token", "guest"]` only on connections whose
 origin is in `RP_ORIGINS`. Other connections advertise `auth: ["guest"]`
-and reject WebAuthn requests. Guest user IDs begin with `guest_`. Server
+and reject WebAuthn requests. Guest user IDs are `guest_<n>` from a
+server-wide counter, with the name `Guest <n>`; a requested `user_id` or
+`name` is ignored. Numbers are reserved in blocks of `guestNumberBlock` (10)
+with one durable write per block, are never reissued (not across restarts,
+hibernation, or schema resets either), and skip the unused rest of a block
+after a restart or wake, so the latest number overstates the guest count by
+at most a block per wake. Server
 announcements are complete replacements.
 
 Production admits guest connections from any frontend origin, including opaque

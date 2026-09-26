@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -594,25 +593,61 @@ func TestAuthHonorsRequestedUserIDs(t *testing.T) {
 		_, result := c.request(t, "auth", id, params)
 		return result["you"].(map[string]any)["user_id"].(string)
 	}
+	// An honored request takes no guest number.
 	if got := auth("ada", map[string]any{"user_id": "ada", "name": "Ada"}); got != "ada" {
 		t.Fatalf("requested user_id: %q", got)
 	}
-	// A used ID, in any case, a system identity, a room, and IDs outside the
-	// mentionable set are not honored; the server assigns a guest ID.
-	for i, requested := range []string{"ada", "ADA", "@server", "general", "1724803200042", "bad id", "trailing.", "", "guest_1"} {
-		if got := auth(fmt.Sprint("r", i), map[string]any{"user_id": requested}); got == requested || !strings.HasPrefix(got, "guest_") {
+	// A used ID, in any case, a system identity, a room, IDs outside the
+	// mentionable set, and anything in the counter's guest_ namespace are not
+	// honored; each such auth takes the next guest number.
+	next := 1
+	for i, requested := range []string{"ada", "ADA", "@server", "general", "1724803200042", "bad id", "trailing.", "", "guest_1", "guest_99", "GUEST_98", "Guest_7", "guest_05", "guest_abc", "guest_"} {
+		want := fmt.Sprintf("guest_%d", next)
+		if got := auth(fmt.Sprint("r", i), map[string]any{"user_id": requested}); got != want {
+			t.Fatalf("requested %q was assigned %q, want %q", requested, got, want)
+		}
+		next++
+	}
+	// Refused guest_<n> requests claimed nothing: the counter reaches those
+	// numbers in sequence.
+	for i := next; i <= 99; i++ {
+		if got, want := auth(fmt.Sprint("n", i), map[string]any{}), fmt.Sprintf("guest_%d", i); got != want {
+			t.Fatalf("guest %d was assigned %q", i, got)
+		}
+	}
+	// Prefixes that merely resemble the namespace are ordinary requests.
+	for _, requested := range []string{"guest", "guest-1", "guests_1"} {
+		if got := auth(requested, map[string]any{"user_id": requested}); got != requested {
 			t.Fatalf("requested %q was assigned %q", requested, got)
 		}
 	}
-	// The guest counter skips a requested guest ID.
-	if got := auth("claim", map[string]any{"user_id": "guest_11"}); got != "guest_11" {
-		t.Fatalf("unused guest-shaped ID: %q", got)
-	}
-	if first, second := auth("n1", map[string]any{}), auth("n2", map[string]any{}); first != "guest_10" || second != "guest_12" {
-		t.Fatalf("counter after a claimed ID: %q, %q", first, second)
+	if got := auth("last", map[string]any{}); got != "guest_100" {
+		t.Fatalf("counter after honored requests: %q", got)
 	}
 	c, _ := dialRaw(t, httpServer)
 	c.expectError(t, "auth", "bad", map[string]any{"scheme": "guest", "user_id": 5}, codeInvalidParams)
+}
+
+func TestGuestNumbersAreSequentialAndNeverReused(t *testing.T) {
+	_, httpServer := newTestServer(t, DefaultConfig())
+	clients := dialGroup(t, httpServer, "a", "b", "c")
+	// Retire guest_1: its last connection closes, and guest_2 sees the leave.
+	if err := clients[0].ws.Close(websocket.StatusNormalClosure, "bye"); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	for _, observer := range clients[1:] {
+		expectMembership(t, observer, "general", "guest_1", false)
+	}
+	// Neither a new guest nor a request for the retired ID gets guest_1.
+	d := dialTestClient(t, httpServer, "d", false)
+	if d.userID != "guest_4" {
+		t.Fatalf("guest after a retirement was assigned %q", d.userID)
+	}
+	e, _ := dialRaw(t, httpServer)
+	_, result := e.request(t, "auth", "e", map[string]any{"scheme": "guest", "user_id": "guest_1"})
+	if got := result["you"].(map[string]any)["user_id"]; got != "guest_5" {
+		t.Fatalf("request for a retired guest ID was assigned %q", got)
+	}
 }
 
 func TestLivenessPing(t *testing.T) {

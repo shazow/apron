@@ -155,9 +155,26 @@ func validAvatar(value string) bool {
 // like a system identity or a log_id-derived room_id.
 var requestableUserID = regexp.MustCompile(`^[A-Za-z](?:[A-Za-z0-9_.-]{0,62}[A-Za-z0-9_])?$`)
 
-// assignUserIDLocked honors a requested user_id when it has the requestable
-// shape and was never assigned, ignoring case, nor names a room; otherwise
-// it assigns the next unused guest_<n> (§3.2).
+// guestIDPrefix starts every counter-assigned guest ID. The guest_
+// namespace, ignoring case, belongs to the counter: requests in it are never
+// honored, so guest numbers are taken only in sequence and the latest one
+// counts the guests the server has admitted.
+const guestIDPrefix = "guest_"
+
+// requestable reports whether a guest may request id: it has the requestable
+// shape and lies outside the counter's guest_ namespace.
+func requestable(id string) bool {
+	if len(id) >= len(guestIDPrefix) && strings.EqualFold(id[:len(guestIDPrefix)], guestIDPrefix) {
+		return false
+	}
+	return requestableUserID.MatchString(id)
+}
+
+// assignUserIDLocked honors a requested user_id when it is requestable and
+// was never assigned, ignoring case, nor names a room; otherwise it assigns
+// the next unused guest_<n> (§3.2). Each call that does not honor a request
+// takes exactly one counter value: with guest_ requests refused, only the
+// counter assigns guest_<n>, so the skip over taken IDs is a safeguard.
 func (s *Server) assignUserIDLocked(requested string) string {
 	claim := func(id string) bool {
 		key := strings.ToLower(id)
@@ -167,12 +184,12 @@ func (s *Server) assignUserIDLocked(requested string) string {
 		s.usedIDs[key] = true
 		return true
 	}
-	if requestableUserID.MatchString(requested) && claim(requested) {
+	if requestable(requested) && claim(requested) {
 		return requested
 	}
 	for {
 		s.guestNumber++
-		if id := fmt.Sprintf("guest_%d", s.guestNumber); claim(id) {
+		if id := fmt.Sprintf("%s%d", guestIDPrefix, s.guestNumber); claim(id) {
 			return id
 		}
 	}

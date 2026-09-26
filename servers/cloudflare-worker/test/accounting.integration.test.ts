@@ -719,6 +719,7 @@ describe('measured storage accounting', () => {
 			measure('history quota reservation', () => store.reserveHistory({ userId: 'matrix-history-user', ipKey: 'matrix-history-ip', now: clock.now() }));
 			measure('frame reservation', () => store.reserveFrames({ ipKey: 'matrix-frame-ip', now: clock.now(), count: 1 }));
 			measure('frame block', () => store.reserveFrames({ ipKey: 'matrix-block-ip', now: clock.now(), count: DEFAULT_LIMITS.frameLease }));
+			measure('guest number block', () => store.reserveGuestNumbers(DEFAULT_LIMITS.guestNumberBlock, clock.now()));
 			measure('connection admission reservation', () => store.reserveConnection({ ipKey: 'matrix-connection-ip', tier: 'pending', now: clock.now() }));
 			measure('identity registration', () => store.registerIdentity({
 				userId: 'matrix-user',
@@ -782,7 +783,7 @@ describe('measured storage accounting', () => {
 			await measureAsync('alarm scheduling', () => store.scheduleAlarm(clock.now() + 1_000, clock.now()));
 
 			expect((create as { result: { message_id?: string } }).result.message_id).toBeTruthy();
-			expect(costs).toHaveLength(29);
+			expect(costs).toHaveLength(30);
 			return { costs };
 		});
 		console.info('accounting-operation-matrix', JSON.stringify(result));
