@@ -624,6 +624,10 @@ export class ApronDemoServer extends DurableObject<Env> {
 		this.ctx.acceptWebSocket(server);
 		writeAttachment(server, attachment);
 		this.send(server, this.serverAnnouncement(origin));
+		// Where guests only read, a welcome says so before any auth (§3.2,
+		// Appendix B): to this connection only, with no room_id, since the
+		// client knows no rooms yet.
+		if (!this.config.guestPosting) this.send(server, this.readOnlyWelcome(origin));
 		await this.rescheduleAlarm();
 		return new Response(null, { status: 101, webSocket: pair[0] });
 	}
@@ -787,6 +791,15 @@ export class ApronDemoServer extends DurableObject<Env> {
 				},
 			},
 		};
+	}
+
+	/** The `@private` welcome for a server whose guests only read, worded for what this origin can sign in with. */
+	private readOnlyWelcome(origin: string | null): Record<string, unknown> {
+		const passkeys = origin !== null && this.config.rpOrigins.includes(origin);
+		const text = passkeys
+			? "Guests can read along. **Sign in with a passkey** to post, react, join rooms, and start threads."
+			: "Guests can read along. Posting takes a passkey on the demo's own site, or a bot token from `/invite-bot` there.";
+		return { method: "message", params: { from: { ...PRIVATE_IDENTITY }, body: { text, format: "markdown" } } };
 	}
 
 	private send(socket: WebSocketConnection, value: unknown): boolean {
@@ -1019,17 +1032,6 @@ export class ApronDemoServer extends DurableObject<Env> {
 			attachment.rooms = [...DEFAULT_JOINED_ROOMS];
 			delete attachment.listedJoined;
 			writeAttachment(socket, attachment);
-			// A notice this auth causes comes before its result (§1).
-			if (!this.config.guestPosting) {
-				this.deliverTo(socket, {
-					method: "message",
-					params: {
-						room_id: ROOM_ID,
-						from: { ...PRIVATE_IDENTITY },
-						body: { text: "You’re reading as a guest. Sign in with a passkey to post, react, join rooms, and start threads.", format: "plain" },
-					},
-				});
-			}
 			this.reply(socket, request, { you: publicIdentity(attachment) });
 			await this.rescheduleAlarm();
 			return;

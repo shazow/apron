@@ -94,7 +94,8 @@ socket.onmessage = ({ data }) => {
 setInterval(() => socket.send('{"method":"ping"}'), 45_000);
 ```
 
-A guest only reads: `auth` is answered with a `@private` notice saying so, and
+A guest only reads: each connection gets a `@private` welcome saying so right
+after the `server` frame, before any `auth`, and
 `message`, `reactions`, `room_set`, `room_join`, and `room_leave` are `denied`;
 `room_list` and `history` work for any room without joining it. To exercise posting,
 editing, deletion/restoration, moves, threads, and reactions from your own

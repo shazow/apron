@@ -98,13 +98,15 @@ it('tells a guest it only reads, then denies its writes, joins and leaves includ
 	try {
 		const server = await guest.next();
 		expect(server.params.ext.demo.guest_posting).toBe(false);
+		// A welcome follows the server frame, before any auth (Appendix B):
+		// transient (§3.5), with no room_id since the client knows no rooms yet.
+		const welcome = await guest.next();
+		expect(welcome.method).toBe('message');
+		expect(welcome.params.from.user_id).toBe('@private');
+		expect(welcome.params.room_id).toBeUndefined();
+		expect(welcome.params.message_id).toBeUndefined();
+		expect(welcome.params.body.text).toMatch(/Sign in with a passkey/);
 		guest.send({ id: 'auth', method: 'auth', params: { scheme: 'guest' } });
-		// The notice auth causes comes before its result (§1), and is transient (§3.5).
-		const notice = await guest.next();
-		expect(notice.method).toBe('message');
-		expect(notice.params).toMatchObject({ room_id: 'general', from: { user_id: '@private' } });
-		expect(notice.params.message_id).toBeUndefined();
-		expect(notice.params.body.text).toMatch(/reading as a guest/);
 		const auth = await guest.next();
 		expect(auth.id).toBe('auth');
 		expect(auth.result.you.user_id).toMatch(/^guest_/);
@@ -208,6 +210,37 @@ it('replaces a bot token on a new invite, signing out the old one, and renames t
 		await fresh.next();
 		expect((await request(fresh, 'auth', 'auth', { scheme: 'token', token: newToken })).result.you).toEqual({ user_id: 'bot_u_rotating', name: 'Bot of Rotated' });
 	} finally { owner.close(); first.close(); stale.close(); fresh.close(); }
+});
+
+it('lets a bot send auth and a post together before the server frame, and retry the post without posting twice', async () => {
+	await guestsReadOnly();
+	const { peer: owner } = await signedIn('u_deployer');
+	try {
+		const { token } = await inviteBot(owner, 'invite');
+		// A deploy hook (Appendix B): both frames at once, without waiting for `server`.
+		const post = { room_id: 'general', body: { text: 'Deployed v1.4.2' } };
+		const hook = await connect(null);
+		hook.send({ id: 'auth', method: 'auth', params: { scheme: 'token', token, client: 'deploy-hook/1.0' } });
+		hook.send({ id: 'deploy-7f3a', method: 'message', params: post });
+		const server = await hook.next();
+		expect(server.method).toBe('server');
+		// Guests only read, and a bot has no Origin: its welcome points at the demo's site.
+		const welcome = await hook.next();
+		expect(welcome.params.body.text).toMatch(/bot token/);
+		expect((await hook.next()).result.you.user_id).toBe('bot_u_deployer');
+		// The bot joined general when it was made, so its broadcast comes first (§1).
+		const posted = (await until(hook, (frame) => frame.id === 'deploy-7f3a')).frame;
+		expect(posted.result.message_id).toBeDefined();
+		hook.close();
+		// The same id and params on a new connection return the original result.
+		const retry = await connect(null);
+		retry.send({ id: 'auth', method: 'auth', params: { scheme: 'token', token } });
+		retry.send({ id: 'deploy-7f3a', method: 'message', params: post });
+		expect((await until(retry, (frame) => frame.id === 'deploy-7f3a')).frame.result).toEqual(posted.result);
+		const page = await request(owner, 'history', 'history', { room_id: 'general' });
+		expect(page.result.messages.filter((message: { body: { text: string } }) => message.body.text === 'Deployed v1.4.2')).toHaveLength(1);
+		retry.close();
+	} finally { owner.close(); }
 });
 
 it('rejects a made-up bot token', async () => {

@@ -109,8 +109,9 @@ Guests only read unless the deployment sets `GUEST_POSTING=true`
 history without joining it, and run `/help`, and stay in `general`, where
 authentication put them. Posting, reacting, joining, leaving, and creating or
 editing threads are writes, `denied` ("Guests can only read here; sign in with
-a passkey to post or join rooms"). Guest `auth` sends a `@private` notice in
-`general` saying so, before its result.
+a passkey to post or join rooms"). Every connection gets a `@private` welcome
+saying so right after the `server` frame, before any `auth`, with no
+`room_id` (protocol Appendix B).
 
 A registered user's `/invite-bot` creates or renames their bot, `bot_<their
 user_id>` named "Bot of <their name>", and returns its bearer token in a

@@ -63,8 +63,12 @@ titled "System message to you" (`@private`), "System message to this room"
 (`@room`), or "System message to everyone" (`@server`). `@private` ones, and
 every `message` without a `message_id` (such as a command's reply), are
 transient notices: a dashed card for the session, never stored, and gone on
-reload. A code block in a notice wraps and has a Copy button, such as for the
-token `/invite-bot` gives on the demo worker. A server-wide `@server` notice names
+reload. A notice sent before authentication, such as a server's welcome
+(PROTOCOL.md Appendix B), shows in the first room once one is listed; the next
+connection's welcome replaces it, and signing in with a passkey or a stored
+session drops it, since it speaks to whoever connected. A code block in a
+notice wraps and has a Copy button, such as for the token `/invite-bot` gives
+on the demo worker. A server-wide `@server` notice names
 a room like any message; one for a room you haven't joined also shows as a
 notice where you are. `@server`, `@room`, and `@private` are sender scopes, not rooms (Appendix A.1); a
 room ID starting with `@` is an ordinary room.

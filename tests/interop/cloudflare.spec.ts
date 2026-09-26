@@ -299,7 +299,7 @@ test('Worker keeps guests read-only, leaves typing off, lists rooms, lets guests
 		// Guests only read: the server says so in a private notice, and the
 		// composer gives way to a sign-in bar. The reader stays a guest.
 		await expect(pageB.getByText('This demo keeps roughly the last day of history; older messages may expire.')).toBeVisible();
-		await expect(pageB.getByTestId('notice').filter({ hasText: 'You’re reading as a guest.' })).toBeVisible();
+		await expect(pageB.getByTestId('notice').filter({ hasText: 'Guests can read along.' })).toHaveCount(1);
 		await expect(pageB.getByTestId('read-only-bar')).toContainText('Sign in to post, react, join rooms, and start threads.');
 		await expect(composer(pageB)).toHaveCount(0);
 		// The demo denies guest renames; the profile editor says so and keeps the old handle.

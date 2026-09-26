@@ -326,6 +326,25 @@ describe('persisted session tokens', () => {
 		}
 	});
 
+	it('drops a welcome sent before auth once a stored session signs in', async () => {
+		storage.set('apron.session:ws://fake.test/', 'session-4');
+		const client = new ChatClient('ws://fake.test/');
+		client.subscribe((next) => (snapshot = next));
+		client.start();
+		latest().open();
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['webauthn', 'token', 'guest'], caps: ['rooms'] } });
+		latest().receive({ method: 'message', params: { from: { user_id: '@private' }, body: { text: 'Guests can read along.' } } });
+		const auth = latest().sent.find((frame) => frame.method === 'auth')!;
+		latest().receive({ id: auth.id, result: { you: { user_id: 'u_1', name: 'Ada' }, token: 'session-4' } });
+		await Promise.resolve();
+		await Promise.resolve();
+		const listing = latest().sent.find((frame) => frame.method === 'room_list')!;
+		latest().receive({ id: listing.id, result: { joined: [{ room_id: 'general', title: 'General' }] } });
+		await Promise.resolve();
+		expect(snapshot.rooms.find((room) => room.id === 'general')?.notices).toEqual([]);
+		client.stop();
+	});
+
 	it('does not persist a token when the server cannot resume with it', async () => {
 		const client = new ChatClient('ws://fake.test/');
 		client.start();
