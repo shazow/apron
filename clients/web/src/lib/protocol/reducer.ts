@@ -27,6 +27,18 @@ export interface TimelineState {
 	 * not tombstones and have at least one non-empty set (§4.5).
 	 */
 	reactions: Readonly<Record<string, ReactionSummary[]>>;
+	/**
+	 * The room's membership records (§4.3.2) as logged, each at its own
+	 * `log_id`, ascending: what join and leave lines are drawn from. Unlike the
+	 * member list, superseded records stay: every change keeps its place.
+	 */
+	memberships: readonly MembershipRecord[];
+}
+
+/** One logged membership record of a room: its entries, one per user, at one `log_id`. */
+export interface MembershipRecord {
+	log_id: string;
+	entries: readonly { user: Identity; joined: boolean }[];
 }
 
 /** One emoji on one message, aggregated across every user's set. */
@@ -42,8 +54,10 @@ export interface ReactionSummary {
 }
 
 export function createTimeline(room: string): TimelineState {
-	return { room, events: Object.create(null), order: [], reactions: Object.create(null) };
+	return { room, events: Object.create(null), order: [], reactions: Object.create(null), memberships: NO_MEMBERSHIPS };
 }
+
+const NO_MEMBERSHIPS: readonly MembershipRecord[] = Object.freeze([]);
 
 export function timelineEvents(state: TimelineState): MessageRecord[] {
 	return state.order.map((id) => state.events[id]);
@@ -95,6 +109,17 @@ interface MemberState {
 }
 
 /**
+ * A room's membership records in log order. Records are immutable: adding an
+ * entry to one replaces it, and the published list is rebuilt only after a
+ * change, so snapshots can compare it by identity.
+ */
+interface MembershipLog {
+	/** Ascending by `log_id`; live records land at the end. */
+	records: MembershipRecord[];
+	published?: readonly MembershipRecord[];
+}
+
+/**
  * The client-side record stores (PROTOCOL.md §2): one room record per
  * `room_id`, one message snapshot per `message_id`, one reaction set per
  * `(message_id, user_id)`, one membership per `(room_id, user_id)`. Every
@@ -119,6 +144,7 @@ export class ProtocolStore {
 	private readonly reactionSets = new Map<string, Map<string, ReactionSet>>();
 	private readonly homes = new Map<string, Set<string>>();
 	private readonly memberships = new Map<string, MemberState>();
+	private readonly membershipLogs = new Map<string, MembershipLog>();
 	private touched = new Set<string>();
 
 	room(roomId: string): RoomRecord | undefined {
@@ -259,8 +285,13 @@ export class ProtocolStore {
 		this.touched.add(roomId);
 	}
 
-	/** Install one user's membership by the replay rule (§4.3.2). Returns whether it changed the room's members. */
+	/**
+	 * Install one user's membership by the replay rule (§4.3.2). Returns whether
+	 * it changed the room's members. The entry is also kept in the room's
+	 * membership log at its `log_id`, superseded or not.
+	 */
 	putMembership(entry: MembershipEntry): boolean {
+		this.logMembership(entry);
 		let state = this.memberships.get(entry.room_id);
 		if (state?.asOf !== undefined && compareLogIds(entry.log_id, state.asOf) <= 0) return false;
 		const current = state?.entries.get(entry.user.user_id);
@@ -284,8 +315,45 @@ export class ProtocolStore {
 		return state.list;
 	}
 
-	/** Drop the room's messages whose latest snapshot is below `floor` (retention eviction). */
+	/**
+	 * The room's membership records, ascending by `log_id`: the same array
+	 * until the log changes.
+	 */
+	membershipLog(roomId: string): readonly MembershipRecord[] {
+		const log = this.membershipLogs.get(roomId);
+		if (!log) return NO_MEMBERSHIPS;
+		log.published ??= Object.freeze([...log.records]);
+		return log.published;
+	}
+
+	/** Keep one entry in its room's log, in place by `log_id`; a repeat of an entry already kept is ignored. */
+	private logMembership(entry: MembershipEntry): void {
+		let log = this.membershipLogs.get(entry.room_id);
+		if (!log) this.membershipLogs.set(entry.room_id, (log = { records: [] }));
+		const { records } = log;
+		// Live records arrive in order, so the place is almost always the end.
+		let index = records.length;
+		while (index > 0 && compareLogIds(records[index - 1].log_id, entry.log_id) > 0) index--;
+		const current = index > 0 && records[index - 1].log_id === entry.log_id ? records[index - 1] : undefined;
+		const added = { user: entry.user, joined: entry.joined };
+		if (current) {
+			if (current.entries.some((kept) => kept.user.user_id === entry.user.user_id)) return;
+			records[index - 1] = { log_id: entry.log_id, entries: [...current.entries, added] };
+		} else {
+			records.splice(index, 0, { log_id: entry.log_id, entries: [added] });
+		}
+		log.published = undefined;
+		this.touched.add(entry.room_id);
+	}
+
+	/** Drop the room's messages whose latest snapshot is below `floor` (retention eviction), and memberships logged below it. */
 	evictBefore(roomId: string, floor: string): void {
+		const log = this.membershipLogs.get(roomId);
+		if (log?.records.length && compareLogIds(log.records[0].log_id, floor) < 0) {
+			log.records = log.records.filter((record) => compareLogIds(record.log_id, floor) >= 0);
+			log.published = undefined;
+			this.touched.add(roomId);
+		}
 		for (const id of [...(this.homes.get(roomId) ?? [])]) {
 			const message = this.messageRecords.get(id)!;
 			if (compareLogIds(message.log_id, floor) >= 0) continue;
@@ -296,7 +364,10 @@ export class ProtocolStore {
 
 	/**
 	 * Clear a room's messages and their reaction sets (a history rebuild), and
-	 * reaction sets logged in the room for messages that are not loaded.
+	 * reaction sets logged in the room for messages that are not loaded. Its
+	 * membership log stays: records never change at a `log_id`, the rebuild's
+	 * history repeats the ones it still has, and live ones that arrived during
+	 * it are not buffered for a replay.
 	 */
 	clearRoom(roomId: string): void {
 		for (const id of [...(this.homes.get(roomId) ?? [])]) {
@@ -320,6 +391,7 @@ export class ProtocolStore {
 		this.reactionSets.clear();
 		this.homes.clear();
 		this.memberships.clear();
+		this.membershipLogs.clear();
 	}
 
 	/** Rooms whose projection changed since the last call. */
@@ -339,7 +411,7 @@ export class ProtocolStore {
 			const summary = this.reactions(id, you);
 			if (summary) reactions[id] = summary;
 		}
-		return { room: roomId, events, order, reactions };
+		return { room: roomId, events, order, reactions, memberships: this.membershipLog(roomId) };
 	}
 
 	private home(roomId: string, messageId: string): void {

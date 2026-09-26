@@ -18,6 +18,7 @@
 	import ThreadEditor from '$lib/components/ThreadEditor.svelte';
 	import TypingDots from '$lib/components/TypingDots.svelte';
 	import NoticeLine from '$lib/components/NoticeLine.svelte';
+	import MembershipLine from '$lib/components/MembershipLine.svelte';
 	import { composerAction } from '$lib/ui/commands';
 	import { backendHost, demoRetentionNotice, statusLabel } from '$lib/ui/connection';
 	import { directory } from '$lib/ui/directory.svelte';
@@ -137,7 +138,7 @@
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
 	let timeline = $derived(activeThread
 		? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames, moreReplies: Boolean(threadRoom?.olderAvailable), notices: paneRoom?.notices })
-		: buildRoomTimeline({ messages, threads, notices: paneRoom?.notices }));
+		: buildRoomTimeline({ messages, threads, notices: paneRoom?.notices, memberships: paneRoom?.timeline.memberships }));
 	let shownTimeline = $derived(hiddenItems > 0 ? timeline.slice(Math.min(hiddenItems, timeline.length)) : timeline);
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
 	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members));
@@ -1133,6 +1134,8 @@
 							<ThreadCard entry={item.entry} onopen={() => openThreadCard(item.entry.id)} />
 						{:else if item.kind === 'notice'}
 							<NoticeLine notice={item.notice} onopenroom={openMentionedRoom} />
+						{:else if item.kind === 'members'}
+							<MembershipLine joined={item.joined} left={item.left} logId={item.logId} />
 						{:else if item.kind === 'renamed'}
 							<div data-timeline-item class="ap-msg ap-msg-system" data-testid="thread-renamed">
 								<div class="ap-msg-system-body">{#if item.title}Thread renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}Thread name cleared{/if}</div>

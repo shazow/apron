@@ -74,7 +74,9 @@ for its result ([§3.2](PROTOCOL.md#32-authentication)), and follows `room_updat
 a dropped connection it resumes each room's history from where it stopped in
 the same way, and a resumed passkey session lists only the rooms that changed
 since. Member lists start from those listings and follow the `membership`
-records of joins and leaves ([§4.3.2](PROTOCOL.md#432-membership)). The sidebar lists top-level rooms; the
+records of joins and leaves ([§4.3.2](PROTOCOL.md#432-membership)), which also show in the room's
+timeline as quiet "Ada joined" lines, merged and netted out between messages so
+guest churn stays quiet. The sidebar lists top-level rooms; the
 open room's joined threads are listed under it, and every thread of the room,
 joined or not, is shown as a card in its feed. Only joined threads deliver
 live. Opening a thread you haven't joined reads it through `history` without
