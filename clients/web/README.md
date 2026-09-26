@@ -18,8 +18,10 @@ npm run preview
 The default connection is same-origin `/ws` in a browser unless
 `VITE_DEFAULT_SERVER_URL` is set at build time. `make deploy-web` from the
 repository root builds with `wss://server.apron.chat/` and deploys the static
-frontend to `https://web.apron.chat` using `wrangler.toml`. Deploy the backend
-separately with `make deploy-worker`. The apex `apron.chat` is reserved for docs.
+frontend to `https://web.apron.chat` using `wrangler.toml`. The backend deploys
+separately, from
+[apron-chat/apron-server-cloudflare](https://github.com/apron-chat/apron-server-cloudflare).
+The apex `apron.chat` is reserved for docs.
 Local development and ordinary builds retain the same-origin default.
 After a failed WebSocket handshake, the client makes a bounded HTTP diagnostic
 request to the same URL with `?apron_connection_status=1`. Supporting servers

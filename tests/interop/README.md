@@ -18,8 +18,6 @@ same-origin. Rooms follow protocol v6: a new guest has joined only `general`,
 and a thread's members are those who joined it, so a second browser opens
 another's thread from its card, which reads it without joining it
 (`openThread` in `test-helpers.ts`); only joining, or replying, makes it live.
-`cloudflare.spec.ts` (run with `cloudflare.config.ts`) targets the Cloudflare
-worker, which also speaks protocol v6; it is not part of the default run.
 The WebAuthn suite uses Chromium's virtual authenticator against the real Go
 verifier. It covers passkey registration, login, sign-out, session resumption,
 message ownership, and recovery from an invalid signature. These tests use
