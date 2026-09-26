@@ -245,8 +245,8 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 }
 
 // switchUserLocked makes user the connection's identity and replies with
-// extra fields beside `you` (§3.2, §3.3). Rooms are not announced: the client
-// lists them.
+// extra fields beside `you` (§3.2, §3.3). No room_update is sent for the new
+// identity's rooms: the client lists them with room_list.
 func (s *Server) switchUserLocked(c *client, req request, user *userState, extra map[string]any) map[string]any {
 	s.attachLocked(c, user)
 	result := map[string]any{"you": user.profile()}

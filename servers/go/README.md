@@ -80,8 +80,7 @@ before discarding a prefix.
 partitioned into `rooms`, `messages`, `reactions`, and `membership`; an empty
 array is omitted. `limit` (default 100, clamped to 1000) counts records of
 every kind, and `first_log_id`/`last_log_id` span all of them; an empty window
-has neither. Records keep the user objects they were logged with, and history
-carries no `users`. A window bounded to one `log_id` (`after` equal to
+has neither. Records keep the user objects they were logged with. A window bounded to one `log_id` (`after` equal to
 `before`) returns exactly that record from the room's log, so a client walks a
 message's edits back through `prev_log_id`, asking the room in `prev_room_id`
 after a move. Every room is visible, so any user may page any room's history,
@@ -115,7 +114,8 @@ and reactions, `user` in memberships) carry only `user_id` and `name` as they
 were when logged. Room `members` are bare `{user_id}` objects whose complete
 objects are in the accompanying `users`.
 
-`user` notifications announce identity changes only. A profile change sends
+`user` notifications carry profile and identity changes; joins and leaves
+are memberships. A profile change sends
 `user` with `you` to the user's other connections and with `new` to everyone
 who shares a room with them. When a sign-in replaces a guest identity on a
 connection, the guest is retired: a leave is logged in every room it had
@@ -127,8 +127,9 @@ registrations across connections.
 
 ## Rooms, threads, and membership
 
-Every room is visible to every user. Rooms are never announced: after `auth`
-the client lists them with `room_list`. `auth` is a barrier: each
+Every room is visible to every user. The server does not push a room list at
+sign-in: after `auth` the client lists its rooms with `room_list`, and later
+changes arrive as `room_update`. `auth` is a barrier: each
 connection's frames are processed one at a time, so requests sent right
 behind `auth`, such as `room_list` and `history`, run as the new identity, and
 are `denied` if the `auth` failed or was a WebAuthn `begin` step on a

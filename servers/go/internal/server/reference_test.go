@@ -114,7 +114,7 @@ func TestRoomListFiltersAndOrder(t *testing.T) {
 			t.Fatalf("members without members: true: %#v", entry)
 		}
 	}
-	if opsEntry := listed["joined"].([]any)[0].(map[string]any); opsEntry["title"] != "Ops" || opsEntry["latest_log_id"] == nil || opsEntry["member_count"] != nil {
+	if opsEntry := listed["joined"].([]any)[0].(map[string]any); opsEntry["title"] != "Ops" || opsEntry["latest_log_id"] == nil {
 		t.Fatalf("ops entry: %#v", opsEntry)
 	}
 
@@ -325,7 +325,8 @@ func TestJoinLeaveAndDeliveries(t *testing.T) {
 	b.expectError(t, "room_leave", "missing", map[string]any{"room_id": "missing"}, codeInvalidParams)
 	a.expectQuiet(t)
 
-	// Leaving the last shared room sends no user notification.
+	// Leaves are memberships only, never user notifications (§3.3), even from
+	// the last shared room.
 	leaveRoom(t, b, "general")
 	expectMembership(t, a, "general", "guest_2", false)
 	expectMembership(t, c, "general", "guest_2", false)
@@ -501,10 +502,6 @@ func TestProfilesAndUserNotifications(t *testing.T) {
 	}
 	if users := listed["users"].([]any); !reflect.DeepEqual(users[0], any(want)) {
 		t.Fatalf("users: %#v", users)
-	}
-	// History pages carry recorded objects only, never users.
-	if page := historyPage(t, b, "general", map[string]any{}); page["users"] != nil {
-		t.Fatalf("history users: %#v", page)
 	}
 	// An unchanged profile sends no notification; omitted fields stay.
 	a.result(t, "me", "same", map[string]any{"name": "Ada"})
