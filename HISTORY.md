@@ -1,0 +1,64 @@
+# Protocol History
+
+Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest first.
+
+## v6
+
+- Joins and leaves are logged `membership` records instead of `user` notifications.
+- `user` notifications carry only identity changes.
+- `auth` is a barrier: requests sent behind it run after it succeeds.
+- `from` is a recorded display fallback; only current user objects (`you`, `new`, `members`, `users`) update the kept profile.
+- `room_list` takes `filter` (`joined` / `not_joined` / `all`), returns `joined` and `not_joined` arrays, members only with `members: true`, and `left` rooms when `latest_log_id` is given.
+- Thread messages go only to thread members; parent room members get thread room changes via `room_update`.
+- `history` returns `messages` with `first_log_id`/`last_log_id` (renamed from `entries`, `first_id`/`last_id`).
+- `@server`, `@room`, `@private` are scope identities, not rooms.
+- Notifications a request causes precede its result.
+- Server notices may be sent before auth; added a valid scenarios appendix.
+
+## v5
+
+- Rooms are no longer announced: `room_list` by request, `room_update` for joined/left/updated, `room_set` to create and edit.
+- Core no longer requires rooms: message `room_id` is optional and defaults to the server's default room.
+- Ping liveness via `server.ping`.
+- `auth` accepts a requested `user_id`.
+- Mentions listed explicitly in `body.mentions`.
+- User objects merge field by field; an older `from` doesn't overwrite a newer profile.
+- `activity` gains optional `away`.
+- New `command` cap for server-specific slash commands (with `/help`).
+- Scoped system notices from `@server`, `@room`, `@private`.
+- Capabilities restructured as numbered sections (§4.x); appendices are informative.
+- Multiplexing moved to Under consideration.
+
+## v4
+
+- `protocol` increments with each spec revision; best-effort interoperability with fallbacks.
+- Unknown caps ignored; third-party caps use an `ext:` prefix.
+- `user` notification (`you` / `new` / `old`) replaces `you`; `room_list` added (cap `rooms`).
+- Servers SHOULD (not MUST) announce rooms after auth.
+- Optional `prev_log_id` links records to their predecessor.
+- `activity` cap replaces typing, with read markers (`read_message_id`).
+- `me` replaces `name` for profile updates.
+- Embeds get `embed_id`; new `embed:upload` and `embed:stream` caps; OpenGraph `og` describes embeds.
+- Push kinds via `server.push`; payload is a message object.
+- Errors not tied to a request omit `id`; rate limits use `retry_after` in seconds.
+
+## v3
+
+- Rooms are the only scope: threads are rooms with `parent_room_id` (thread method and `thread_id` removed).
+- Server-wide log sequence; `log_id` is the commit timestamp; `message_id` globally unique.
+- Self-describing message objects (no `params.message` wrapper); `reply_to` and `intro_message` are message objects.
+- `room` is bidirectional and replaces `room_create`; `title`/`intro_message` replace `name`/`topic`.
+- Room state is logged; new `reactions` cap.
+- Redaction via tombstones; compacted retention instead of discarding history.
+- No request-order guarantee; transport-neutral framing (WebSocket or NDJSON).
+- Opaque `ext` field replaces retained unknown keys.
+- Auth scheme `anonymous` renamed `guest`.
+- Spec restructured into mandatory core plus capabilities; "Level 0" replaced by core / minimal server.
+
+## v2
+
+- Initial published spec.
+- Single envelope form (JSON-RPC 2.0 shapes without `jsonrpc`).
+- `auth` accepts a requested display name; `nick` renamed `name`.
+- Removed `echo` field from message broadcasts.
+- Optional passkey session resume via `token`.
