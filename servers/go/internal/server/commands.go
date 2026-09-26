@@ -18,9 +18,9 @@ type serverCommand struct {
 	help  string
 	// available reports whether the sender may use the command in r.
 	available func(u *userState, r *roomState) bool
-	// run executes the command. On success it replies with its result
-	// before sending the frames the command causes.
-	run func(s *Server, c *client, reply func(result map[string]any), r *roomState, body map[string]any, args string) *rpcError
+	// run executes the command, sending the frames it causes, and returns
+	// its result, which the caller sends after them (§1).
+	run func(s *Server, c *client, r *roomState, body map[string]any, args string) (map[string]any, *rpcError)
 }
 
 // serverCommands lists the commands in the order /help shows them. It is
@@ -50,7 +50,8 @@ func init() {
 // line, and mentions, reply_to, and embeds are arguments that notify no one.
 // Without room_id it runs in the default room. The result is {} or, for new
 // upload embeds, their write URLs; replies arrive as scoped system notices
-// (Appendix A.1) and effects as the frames they cause.
+// (Appendix A.1) and effects as the frames they cause, all before the
+// result (§1).
 func (s *Server) command(c *client, req request) (any, bool, *rpcError) {
 	for _, name := range []string{"message_id", "deleted"} {
 		if _, has := req.params[name]; has {
@@ -98,15 +99,12 @@ func (s *Server) command(c *client, req request) (any, bool, *rpcError) {
 	}
 	for _, command := range serverCommands {
 		if command.name == name {
-			var result map[string]any
-			reply := func(value map[string]any) {
-				result = value
-				if req.hasID {
-					c.sendResult(req, value)
-				}
-			}
-			if err := command.run(s, c, reply, r, body, strings.TrimSpace(args)); err != nil {
+			result, err := command.run(s, c, r, body, strings.TrimSpace(args))
+			if err != nil {
 				return nil, false, err
+			}
+			if req.hasID {
+				c.sendResult(req, result)
 			}
 			return result, true, nil
 		}
@@ -130,7 +128,7 @@ func (s *Server) postRoomNoticeLocked(r *roomState, text string) {
 	logID := s.nextIDLocked()
 	messageID := formatID(logID)
 	from := map[string]any{"user_id": roomNoticeID, "name": r.title()}
-	m := &messageState{id: messageID, from: from, owner: roomNoticeID, reactions: make(map[string]reactionSet), reactionLogIDs: make(map[string]int64)}
+	m := &messageState{id: messageID, from: from, owner: roomNoticeID, reactions: make(map[string]reactionSet)}
 	s.messages[messageID] = m
 	s.commitSnapshotLocked(m, map[string]any{
 		"message_id": messageID,
@@ -143,65 +141,63 @@ func (s *Server) postRoomNoticeLocked(r *roomState, text string) {
 
 // helpCommand replies with a @private notice listing the commands available
 // to the sender in the room.
-func (s *Server) helpCommand(c *client, reply func(map[string]any), r *roomState, _ map[string]any, _ string) *rpcError {
+func (s *Server) helpCommand(c *client, r *roomState, _ map[string]any, _ string) (map[string]any, *rpcError) {
 	var lines []string
 	for _, command := range serverCommands {
 		if command.available == nil || command.available(c.user, r) {
 			lines = append(lines, fmt.Sprintf("- `%s`: %s", command.usage, command.help))
 		}
 	}
-	reply(map[string]any{})
 	c.enqueue(privateNotice(r, strings.Join(lines, "\n")))
-	return nil
+	return map[string]any{}, nil
 }
 
 // avatarCommand takes exactly one upload embed, whose file becomes the
 // sender's avatar when its write finishes (§4.6.6). The result carries the
 // write URL.
-func (s *Server) avatarCommand(c *client, reply func(map[string]any), _ *roomState, body map[string]any, _ string) *rpcError {
+func (s *Server) avatarCommand(c *client, _ *roomState, body map[string]any, _ string) (map[string]any, *rpcError) {
 	embeds := asList(body["embeds"])
 	if len(embeds) != 1 || embeds[0].(map[string]any)["kind"] != "upload" {
-		return invalidParams("/avatar takes exactly one upload embed: attach an image")
+		return nil, invalidParams("/avatar takes exactly one upload embed: attach an image")
 	}
 	s.embedNumber++
 	e := s.newWriteLocked(c, fmt.Sprintf("embed_%d", s.embedNumber), "upload", "")
 	e.avatarFor = c.user
-	reply(map[string]any{
+	return map[string]any{
 		"embeds": []any{map[string]any{"embed_id": e.id, "kind": "upload", "write_url": e.baseURL + writePath + e.token}},
-	})
-	return nil
+	}, nil
 }
 
-// kickCommand removes the one mentioned user from the room: they receive
-// room_update left, the other members a `user` notification, and the room a
-// @room notice. Only the room's creator may kick.
-func (s *Server) kickCommand(c *client, reply func(map[string]any), r *roomState, body map[string]any, args string) *rpcError {
+// kickCommand removes the one mentioned user from the room: the room's
+// members, the target included, receive the logged leave membership
+// (§4.3.2), the target room_update left, and the remaining members a @room
+// notice with the reason. Only the room's creator may kick.
+func (s *Server) kickCommand(c *client, r *roomState, body map[string]any, args string) (map[string]any, *rpcError) {
 	u := c.user
 	targets := mentions(body)
 	if len(targets) != 1 {
-		return invalidParams("Usage: /kick @user [reason], mentioning exactly one user")
+		return nil, invalidParams("Usage: /kick @user [reason], mentioning exactly one user")
 	}
 	if r.creator != u.id {
-		return &rpcError{Code: codeDenied, Message: fmt.Sprintf("Only the creator of %s can remove people from it", r.title())}
+		return nil, &rpcError{Code: codeDenied, Message: fmt.Sprintf("Only the creator of %s can remove people from it", r.title())}
 	}
 	target := r.members[targets[0]]
 	if target == nil {
-		return invalidParams("@%s is not in %s", targets[0], r.title())
+		return nil, invalidParams("@%s is not in %s", targets[0], r.title())
 	}
 	if target == u {
-		return invalidParams("You cannot remove yourself; leave the room instead")
+		return nil, invalidParams("You cannot remove yourself; leave the room instead")
 	}
 	// The first argument names the target as the user typed it.
 	reason := args
 	if first, rest, _ := strings.Cut(args, " "); strings.HasPrefix(first, "@") {
 		reason = strings.TrimSpace(rest)
 	}
-	reply(map[string]any{})
 	s.leaveLocked(target, r)
 	text := fmt.Sprintf("@%s was removed by @%s", target.id, u.id)
 	if reason != "" {
 		text += ": " + reason
 	}
 	s.postRoomNoticeLocked(r, text)
-	return nil
+	return map[string]any{}, nil
 }

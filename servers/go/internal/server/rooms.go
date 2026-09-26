@@ -9,13 +9,9 @@ import (
 	"strings"
 )
 
-const (
-	// maxListedMembers caps `members` in each room_list entry (§4.3.1).
-	maxListedMembers = 100
-	// maxListedRooms caps `rooms`, the unjoined rooms of a room_list result;
-	// `joined` is never truncated (§4.3.1).
-	maxListedRooms = 200
-)
+// maxListedRooms caps `not_joined` in a room_list result; `joined` is never
+// truncated (§4.3.1).
+const maxListedRooms = 200
 
 // roomState is a room's current record, its log, and its members. Every room,
 // including threads (rooms with parent_room_id), is visible to every
@@ -139,66 +135,80 @@ func roomUpdate(field string, records ...any) json.RawMessage {
 	return notification("room_update", map[string]any{field: records})
 }
 
-// addMemberLocked joins u to r and announces the join to the room's other
-// members with a `user` notification carrying room_id (§4.3.2). It reports
-// whether u was not a member before.
+// logMembershipLocked logs one membership record (§4.3.2) of u in r,
+// advancing the room's latest_log_id, and returns its notification for
+// delivery. The record carries u as a recorded object: user_id and name.
+func (s *Server) logMembershipLocked(u *userState, r *roomState, joined bool) json.RawMessage {
+	logID := s.nextIDLocked()
+	record := newLogRecord(logID, kindMembership, map[string]any{
+		"log_id":  formatID(logID),
+		"room_id": r.id,
+		"members": []any{map[string]any{"user": u.from(), "joined": joined}},
+	})
+	s.appendLocked(record, r)
+	if !joined {
+		u.leftAt[r.id] = logID
+	}
+	return rawNotification("membership", record.raw)
+}
+
+// addMemberLocked joins u to r and delivers the logged membership to the
+// room's members, u's connections included (§4.3.2). It reports whether u
+// was not a member before.
 func (s *Server) addMemberLocked(u *userState, r *roomState) bool {
 	if u.joined[r.id] != nil {
 		return false
 	}
-	announcement := notification("user", map[string]any{"room_id": r.id, "new": u.profile()})
-	for _, member := range r.members {
-		member.send(announcement)
-	}
 	u.joined[r.id] = r
 	r.members[u.id] = u
+	delete(u.leftAt, r.id)
+	s.deliverLocked(s.logMembershipLocked(u, r, true), r)
 	return true
 }
 
-// joinLocked joins u to r and sends the room to all of u's connections as a
-// room_update (§4.3.3). It reports whether u was not a member before.
+// joinLocked joins u to r: the membership goes to the room's members, then
+// the room to all of u's connections as room_update joined (§4.3.3). It
+// reports whether u was not a member before.
 func (s *Server) joinLocked(u *userState, r *roomState) bool {
 	if !s.addMemberLocked(u, r) {
 		return false
 	}
-	u.send(roomUpdate("joined", s.roomParamsLocked(r)))
+	u.send(s.joinedUpdateLocked(r))
 	return true
 }
 
-// leaveLocked removes u from r: u's connections receive room_update left, the
-// remaining members a `user` notification with room_id and `old`, and those
-// who no longer share any room with u one with `old` alone (§3.3, §4.3.2).
+// joinedUpdateLocked renders room_update joined for r: its record with its
+// complete members, as bare user objects, and their current objects in
+// `users` (§4.3.3).
+func (s *Server) joinedUpdateLocked(r *roomState) json.RawMessage {
+	record := s.roomParamsLocked(r)
+	record["members"] = memberRefs(r)
+	return notification("room_update", map[string]any{"joined": []any{record}, "users": profiles(r.members)})
+}
+
+// memberRefs lists a room's members as user objects carrying only user_id,
+// ordered by user_id.
+func memberRefs(r *roomState) []any {
+	ids := slices.Sorted(maps.Keys(r.members))
+	refs := make([]any, len(ids))
+	for i, id := range ids {
+		refs[i] = map[string]any{"user_id": id}
+	}
+	return refs
+}
+
+// leaveLocked removes u from r (§4.3.2): the logged membership goes to the
+// room's members, u's connections included, and then u's connections
+// receive room_update left. It reports whether u was a member.
 func (s *Server) leaveLocked(u *userState, r *roomState) bool {
 	if u.joined[r.id] == nil {
 		return false
 	}
+	s.deliverLocked(s.logMembershipLocked(u, r, false), r)
 	delete(u.joined, r.id)
 	delete(r.members, u.id)
 	u.send(roomUpdate("left", map[string]any{"room_id": r.id}))
-	old := map[string]any{"user_id": u.id}
-	left := notification("user", map[string]any{"room_id": r.id, "old": old})
-	gone := notification("user", map[string]any{"old": old})
-	for _, member := range r.members {
-		if sharesRoom(u, member) {
-			member.send(left)
-		} else {
-			member.send(left, gone)
-		}
-	}
 	return true
-}
-
-// sharesRoom reports whether two users have joined a common room.
-func sharesRoom(a, b *userState) bool {
-	if len(a.joined) > len(b.joined) {
-		a, b = b, a
-	}
-	for id := range a.joined {
-		if b.joined[id] != nil {
-			return true
-		}
-	}
-	return false
 }
 
 // commitRoomLocked logs a room record holding fields, the client fields other
@@ -244,8 +254,9 @@ func (s *Server) commitRoomLocked(roomID string, parent *roomState, fields map[s
 // updates. Any authenticated user may create rooms and threads and update any
 // room's client fields.
 //
-// A new room joins only its creator, whose connections receive it as
-// room_update joined; a new thread goes to the parent's other members as
+// A new room joins only its creator, logging the creator's membership: the
+// creator's connections receive room_update joined, then the membership,
+// then the result. A new thread goes to the parent's other members as
 // room_update updated, without joining them. An edit goes as updated to the
 // room's members, to the parent's members for a thread, and to the editor.
 func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
@@ -327,7 +338,13 @@ func (s *Server) setRoom(c *client, req request) (any, bool, *rpcError) {
 			member.send(frame)
 		}
 	} else {
-		s.joinLocked(u, r)
+		// The room record and the membership are both logged before the
+		// room_update, whose latest_log_id is then the membership's.
+		u.joined[r.id] = r
+		r.members[u.id] = u
+		membership := s.logMembershipLocked(u, r, true)
+		u.send(s.joinedUpdateLocked(r))
+		s.deliverLocked(membership, r)
 		if parent != nil {
 			frame := roomUpdate("updated", s.roomParamsLocked(r))
 			for id, member := range parent.members {
@@ -367,16 +384,34 @@ func (s *Server) threadTitleLocked(introID string) string {
 
 // listRooms answers room_list (§4.3.1): the rooms matching its filters,
 // joined ones in `joined` (never truncated) and visible unjoined ones in
-// `rooms` (the most recently active maxListedRooms), each most recently
-// active first. Every room carries member_count and up to maxListedMembers
-// bare members, whose complete objects are in `users`. The result is
-// followed by the read cursors kept for the listed rooms (§4.4).
+// `not_joined` (the most recently active maxListedRooms), each most recently
+// active first. `filter` leaves either array out; one it asks for is present
+// even when empty. With `members: true` every room carries its complete
+// members as bare user objects, whose complete objects are in `users`.
+//
+// With `latest_log_id`, only rooms whose latest_log_id is greater are
+// listed, and a result with `joined` carries `left`: the rooms among the
+// candidates the user left after that position. The server logs every
+// membership, so a left room's latest_log_id is at least its leave; a left
+// room that is top-level, or a thread listed with parent_room_id or
+// room_id, is in `not_joined` too when the filter asks for it.
+//
+// The result is followed by the read cursors kept for the listed rooms
+// (§4.4).
 func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
-	onlyJoined, err := parseBool(req.params, "only_joined", false)
+	filter, err := parseString(req.params, "filter", false)
 	if err != nil {
 		return nil, false, err
 	}
-	notJoined, err := parseBool(req.params, "not_joined", false)
+	switch filter {
+	case "":
+		filter = "all"
+	case "all", "joined", "not_joined":
+	default:
+		return nil, false, invalidParams("filter must be joined, not_joined, or all")
+	}
+	wantJoined, wantOthers := filter != "not_joined", filter != "joined"
+	withMembers, err := parseBool(req.params, "members", false)
 	if err != nil {
 		return nil, false, err
 	}
@@ -418,18 +453,23 @@ func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 			candidates = append(candidates, s.rooms[id])
 		}
 	}
-	var joined, others []*roomState
+	var joined, others, left []*roomState
 	for _, r := range candidates {
-		switch {
-		case hasSince && r.latestID <= since:
-		case u.joined[r.id] != nil:
-			if !notJoined {
+		if hasSince && r.latestID <= since {
+			continue
+		}
+		if u.joined[r.id] != nil {
+			if wantJoined {
 				joined = append(joined, r)
 			}
-		case onlyJoined:
-		case hasRoom || hasParent || r.parent == nil:
-			// Without parent_room_id, unjoined threads are left to their
-			// parent's listing.
+			continue
+		}
+		if hasSince && wantJoined && u.leftAt[r.id] > since {
+			left = append(left, r)
+		}
+		// Without parent_room_id or room_id, unjoined threads are left to
+		// their parent's listing.
+		if wantOthers && (hasRoom || hasParent || r.parent == nil) {
 			others = append(others, r)
 		}
 	}
@@ -438,6 +478,7 @@ func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 	}
 	slices.SortFunc(joined, byActivity)
 	slices.SortFunc(others, byActivity)
+	slices.SortFunc(left, byActivity)
 	if len(others) > maxListedRooms {
 		others = others[:maxListedRooms]
 	}
@@ -447,29 +488,29 @@ func (s *Server) listRooms(c *client, req request) (any, bool, *rpcError) {
 		entries := make([]any, len(rooms))
 		for i, r := range rooms {
 			entry := s.roomParamsLocked(r)
-			ids := slices.Sorted(maps.Keys(r.members))
-			entry["member_count"] = len(ids)
-			if len(ids) > maxListedMembers {
-				ids = ids[:maxListedMembers]
+			if withMembers {
+				entry["members"] = memberRefs(r)
+				maps.Copy(users, r.members)
 			}
-			members := make([]any, len(ids))
-			for j, id := range ids {
-				members[j] = map[string]any{"user_id": id}
-				users[id] = r.members[id]
-			}
-			entry["members"] = members
 			entries[i] = entry
 		}
 		return entries
 	}
 	result := map[string]any{}
-	if !notJoined {
+	if wantJoined {
 		result["joined"] = renderRooms(joined)
 	}
-	if !onlyJoined {
-		result["rooms"] = renderRooms(others)
+	if wantOthers {
+		result["not_joined"] = renderRooms(others)
 	}
-	if len(users) > 0 {
+	if hasSince && wantJoined {
+		gone := make([]any, len(left))
+		for i, r := range left {
+			gone[i] = map[string]any{"room_id": r.id}
+		}
+		result["left"] = gone
+	}
+	if withMembers {
 		result["users"] = profiles(users)
 	}
 	frames := []any{response(req.id, req.full, result)}
@@ -493,9 +534,11 @@ func profiles(users map[string]*userState) []any {
 	return list
 }
 
-// joinRoom joins a visible room (§4.3.2): the user's connections receive
-// room_update joined, and the room's members a `user` notification. Joining a
-// room already joined re-sends its record to the calling connection only.
+// joinRoom joins a visible room (§4.3.2): the logged membership goes to the
+// room's members, the user's connections included, then room_update joined
+// to the user's connections, then the result. Joining a room already joined
+// logs nothing and re-sends room_update joined to the calling connection
+// only.
 func (s *Server) joinRoom(c *client, req request) (any, bool, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
@@ -508,7 +551,7 @@ func (s *Server) joinRoom(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, invalidParams("Unknown room %q", roomID)
 	}
 	if !s.joinLocked(c.user, r) {
-		c.enqueue(roomUpdate("joined", s.roomParamsLocked(r)))
+		c.enqueue(s.joinedUpdateLocked(r))
 	}
 	result := map[string]any{}
 	if req.hasID {
@@ -517,8 +560,10 @@ func (s *Server) joinRoom(c *client, req request) (any, bool, *rpcError) {
 	return result, true, nil
 }
 
-// leaveRoom leaves a room (§4.3.2); it stays visible in room_list. Leaving a
-// room not joined changes nothing.
+// leaveRoom leaves a room (§4.3.2): the logged membership goes to the room's
+// members, the leaving user's connections included, then room_update left to
+// the user's connections, then the result. The room stays visible in
+// room_list. Leaving a room not joined changes nothing.
 func (s *Server) leaveRoom(c *client, req request) (any, bool, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", true)
 	if err != nil {
@@ -540,14 +585,15 @@ func (s *Server) leaveRoom(c *client, req request) (any, bool, *rpcError) {
 
 // history returns a window of one room's log (§4.1), the default room's
 // without room_id. limit counts records of every kind; the slice is
-// partitioned into rooms, entries, and reactions, and `users` holds the
-// current objects of the page's authors and reactors. The server retains all
-// records and does not compact. Every room is visible, so history needs no
-// membership.
+// partitioned into rooms, messages, reactions, and membership, each omitted
+// when empty. The server retains all records and does not compact, and it
+// discards no prefix, so it never appends a full-member record. Every room is
+// visible, so history needs no membership.
 //
-// A window bounded to one log_id (after == before) returns that record even
-// when it left the room's log, such as a moved message's earlier snapshot,
-// so prev_log_id walks back through every record of a key (§2).
+// A move snapshot is in both rooms' logs and names the source room in
+// prev_room_id, so a window bounded to one log_id (after == before) in the
+// room a snapshot names walks prev_log_id back through a message's edits
+// (§2).
 func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", false)
 	if err != nil {
@@ -576,14 +622,6 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, invalidParams("Unknown room %q", roomID)
 	}
 	matching := window(r.log, after, hasAfter, before, hasBefore)
-	if len(matching) == 0 && hasAfter && hasBefore && after == before {
-		for _, id := range s.roomOrder {
-			if found := window(s.rooms[id].log, after, true, before, true); len(found) > 0 {
-				matching = found
-				break
-			}
-		}
-	}
 	more := len(matching) > limit
 	if more {
 		if hasAfter {
@@ -592,33 +630,29 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 			matching = matching[len(matching)-limit:]
 		}
 	}
-	rooms := make([]any, 0)
-	entries := make([]any, 0, len(matching))
-	reactions := make([]any, 0)
-	authors := make(map[string]*userState)
+	var rooms, messages, reactions, membership []any
 	for _, record := range matching {
 		switch record.kind {
 		case kindRoom:
 			rooms = append(rooms, record.raw)
 		case kindMessage:
-			entries = append(entries, record.raw)
+			messages = append(messages, record.raw)
 		case kindReactions:
 			reactions = append(reactions, record.raw)
-		}
-		for _, id := range record.users() {
-			if u := s.users[id]; u != nil {
-				authors[id] = u
-			}
+		case kindMembership:
+			membership = append(membership, record.raw)
 		}
 	}
-	result := map[string]any{"rooms": rooms, "entries": entries, "reactions": reactions, "more": more}
+	result := map[string]any{"more": more}
+	for key, list := range map[string][]any{"rooms": rooms, "messages": messages, "reactions": reactions, "membership": membership} {
+		if len(list) > 0 {
+			result[key] = list
+		}
+	}
 	maps.Copy(result, r.deliveryFields())
 	if len(matching) > 0 {
-		result["first_id"] = formatID(matching[0].id)
-		result["last_id"] = formatID(matching[len(matching)-1].id)
-	}
-	if len(authors) > 0 {
-		result["users"] = profiles(authors)
+		result["first_log_id"] = formatID(matching[0].id)
+		result["last_log_id"] = formatID(matching[len(matching)-1].id)
 	}
 	if req.hasID {
 		c.sendResult(req, result)
@@ -718,9 +752,12 @@ func (s *Server) activity(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, invalidParams("Unknown read_message_id %q", readID)
 	}
 	result := map[string]any{}
-	if req.hasID {
-		c.sendResult(req, result)
-	}
+	// The relays this request causes precede its result (§1).
+	defer func() {
+		if req.hasID {
+			c.sendResult(req, result)
+		}
+	}()
 	if inRoom {
 		c.away = false
 	}

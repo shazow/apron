@@ -97,13 +97,15 @@ func (s *Server) checkPushURL(endpoint string) string {
 // (§3.5) and, for a new message, to the author of the message it replies to.
 // previous is the snapshot the save replaced, nil for a new message: an edit
 // wakes only the users it adds to body.mentions. Wake policy is
-// server-defined (§4.7); this server follows the suggested convention and
-// wakes a user only for rooms they have joined, when every connection of
-// theirs is away or gone (§4.4).
+// server-defined (§4.7); this server follows the suggested convention: a
+// mention wakes a user in any room they can see, which is every room, and a
+// reply wakes its target's author only in a room they have joined, in both
+// cases only when every connection of theirs is away or gone (§4.4).
 func (s *Server) wakeLocked(m *messageState, snapshot, previous map[string]any) {
 	if len(s.pushes) == 0 || snapshot["deleted"] == true {
 		return
 	}
+	// targets maps each user to wake to whether the message mentions them.
 	targets := make(map[string]bool)
 	body, _ := snapshot["body"].(map[string]any)
 	for _, id := range mentions(body) {
@@ -111,8 +113,8 @@ func (s *Server) wakeLocked(m *messageState, snapshot, previous map[string]any) 
 	}
 	if previous == nil {
 		if ref, ok := snapshot["reply_to"].(map[string]any); ok {
-			if target := s.messages[ref["message_id"].(string)]; target != nil {
-				targets[target.owner] = true
+			if target := s.messages[ref["message_id"].(string)]; target != nil && !targets[target.owner] {
+				targets[target.owner] = false
 			}
 		}
 	} else {
@@ -125,7 +127,8 @@ func (s *Server) wakeLocked(m *messageState, snapshot, previous map[string]any) 
 	var payload []byte
 	for _, registration := range s.pushes {
 		user := s.users[registration.userID]
-		if !targets[registration.userID] || user == nil || user.joined[m.roomID] == nil || user.attending() {
+		mentioned, targeted := targets[registration.userID]
+		if !targeted || user == nil || (!mentioned && user.joined[m.roomID] == nil) || user.attending() {
 			continue
 		}
 		if payload == nil {

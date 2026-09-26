@@ -57,6 +57,10 @@ type peer struct {
 type dialOptions struct {
 	// noRead leaves the connection unread, as a stalled client would.
 	noRead bool
+	// list pipelines room_list {filter: joined, members: true} right behind
+	// auth without waiting for its result, as clients do (auth is a
+	// barrier), and checks that it lists general with the new guest in it.
+	list   bool
 	notify func(method string, frame []byte)
 }
 
@@ -92,7 +96,14 @@ func (h *hammer) dialGuest(ctx context.Context, name string, options dialOptions
 		}
 		return p, nil
 	}
-	raw, err := p.call(ctx, "auth", map[string]any{"scheme": "guest", "name": name})
+	auth := map[string]any{"scheme": "guest", "name": name}
+	if options.list {
+		if err := p.authAndList(ctx, auth); err != nil {
+			return nil, err
+		}
+		return p, nil
+	}
+	raw, err := p.call(ctx, "auth", auth)
 	if err != nil {
 		p.close()
 		return nil, fmt.Errorf("auth: %w", err)
@@ -108,6 +119,70 @@ func (h *hammer) dialGuest(ctx context.Context, name string, options dialOptions
 	}
 	p.userID = result.You.UserID
 	return p, nil
+}
+
+// authAndList sends auth and room_list back to back, then waits for both.
+func (p *peer) authAndList(ctx context.Context, auth map[string]any) error {
+	fail := func(err error) error {
+		p.close()
+		return err
+	}
+	authCh, err := p.expect("auth")
+	if err != nil {
+		return fail(err)
+	}
+	listCh, err := p.expect("list")
+	if err != nil {
+		return fail(err)
+	}
+	if err := p.send(ctx, "auth", "auth", auth); err != nil {
+		return fail(err)
+	}
+	if err := p.send(ctx, "list", "room_list", map[string]any{"filter": "joined", "members": true}); err != nil {
+		return fail(err)
+	}
+	raw, err := p.wait(ctx, "auth", authCh)
+	if err != nil {
+		return fail(fmt.Errorf("auth: %w", err))
+	}
+	var result struct {
+		You struct {
+			UserID string `json:"user_id"`
+		} `json:"you"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fail(fmt.Errorf("auth result: %w", err))
+	}
+	p.userID = result.You.UserID
+	raw, err = p.wait(ctx, "list", listCh)
+	if err != nil {
+		return fail(fmt.Errorf("room_list behind auth: %w", err))
+	}
+	var listed struct {
+		Joined []struct {
+			RoomID  string `json:"room_id"`
+			Members []struct {
+				UserID string `json:"user_id"`
+			} `json:"members"`
+		} `json:"joined"`
+		NotJoined json.RawMessage   `json:"not_joined"`
+		Users     []json.RawMessage `json:"users"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		return fail(fmt.Errorf("room_list result: %w", err))
+	}
+	member := false
+	for _, room := range listed.Joined {
+		if room.RoomID == generalRoom {
+			for _, m := range room.Members {
+				member = member || m.UserID == p.userID
+			}
+		}
+	}
+	if !member || listed.NotJoined != nil || len(listed.Users) == 0 {
+		p.h.protocolViolation("room_list joined with members behind auth did not list %s in %s: %s", p.userID, generalRoom, raw)
+	}
+	return nil
 }
 
 var notificationPrefix = []byte(`{"method":"`)

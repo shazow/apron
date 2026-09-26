@@ -23,9 +23,6 @@ type messageState struct {
 	owner     string
 	roomID    string
 	reactions map[string]reactionSet
-	// reactionLogIDs maps each user to the last reactions record that set
-	// their emoji on this message, for prev_log_id.
-	reactionLogIDs map[string]int64
 	// records are every logged snapshot, for redaction; the last is current.
 	records []*logRecord
 	// introRecords are the room records embedding a snapshot of this message
@@ -48,9 +45,12 @@ func (m *messageState) snapshot() map[string]any {
 // room_id the message goes to the default room (§3.5). A save naming a
 // different room_id moves the message; the snapshot is logged in and
 // broadcast to both rooms, followed by a reactions record in the destination
-// when the message has reactions. Posting does not join the room (§4.3.5): a
-// poster who has not joined gets only the result. A new message with no text
-// and no embeds is neither logged nor broadcast, and its result is {}.
+// when the message has reactions. The broadcasts precede the result (§1),
+// so a sender who has joined receives a new upload's pending snapshot before
+// the result carrying its write URL. Posting does not join the room
+// (§4.3.5): a poster who has not joined gets only the result. A new message
+// with no text and no embeds is neither logged nor broadcast, and its
+// result is {}.
 func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 	roomID, err := parseString(req.params, "room_id", false)
 	if err != nil {
@@ -174,15 +174,8 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 		snapshot["ext"] = ext
 	}
 
-	result := map[string]any{"message_id": messageID}
-	if len(written) > 0 {
-		result["embeds"] = written
-	}
-	if req.hasID {
-		c.sendResult(req, result)
-	}
 	if current == nil {
-		current = &messageState{id: messageID, from: from, owner: u.id, reactions: make(map[string]reactionSet), reactionLogIDs: make(map[string]int64)}
+		current = &messageState{id: messageID, from: from, owner: u.id, reactions: make(map[string]reactionSet)}
 		s.messages[messageID] = current
 	}
 	moved := s.commitSnapshotLocked(current, snapshot, logID)
@@ -193,13 +186,23 @@ func (s *Server) saveMessage(c *client, req request) (any, bool, *rpcError) {
 		s.commitReactionsLocked(current, current.reactionElements())
 	}
 	s.wakeLocked(current, snapshot, previous)
+	result := map[string]any{"message_id": messageID}
+	if len(written) > 0 {
+		result["embeds"] = written
+	}
+	if req.hasID {
+		c.sendResult(req, result)
+	}
 	return result, true, nil
 }
 
 // commitSnapshotLocked logs and delivers a message snapshot, adding
-// prev_log_id, in the message's room and, for a move, the previous one too.
-// It reports whether the snapshot moved the message.
+// prev_log_id, in the message's room and, for a move, the previous one too;
+// a move snapshot names the previous room in prev_room_id, since the
+// previous snapshot is in that room's log (§2). It reports whether the
+// snapshot moved the message.
 func (s *Server) commitSnapshotLocked(m *messageState, snapshot map[string]any, logID int64) bool {
+	delete(snapshot, "prev_room_id")
 	if m.logID != 0 {
 		snapshot["prev_log_id"] = formatID(m.logID)
 	}
@@ -208,11 +211,11 @@ func (s *Server) commitSnapshotLocked(m *messageState, snapshot map[string]any, 
 	moved := m.roomID != "" && m.roomID != destination.id
 	if moved {
 		rooms = []*roomState{s.rooms[m.roomID], destination}
+		snapshot["prev_room_id"] = m.roomID
 	}
 	m.logID = logID
 	m.roomID = destination.id
 	record := newLogRecord(logID, kindMessage, snapshot)
-	record.author = m.owner
 	m.records = append(m.records, record)
 	s.appendLocked(record, rooms...)
 	s.deliverLocked(rawNotification("message", record.raw), rooms...)
@@ -383,7 +386,8 @@ const (
 )
 
 // react replaces the caller's complete reaction set on one message
-// (§4.5). Duplicates collapse; an unchanged set logs nothing.
+// (§4.5). Duplicates collapse; an unchanged set logs nothing. The broadcast
+// precedes the result (§1).
 func (s *Server) react(c *client, req request) (any, bool, *rpcError) {
 	messageID, err := parseString(req.params, "message_id", true)
 	if err != nil {
@@ -400,47 +404,33 @@ func (s *Server) react(c *client, req request) (any, bool, *rpcError) {
 		return nil, false, invalidParams("Unknown message %q", messageID)
 	}
 	u := c.user
+	if !sameEmojiSet(m.reactions[u.id].emojis, emojis) {
+		from := u.from()
+		if len(emojis) == 0 {
+			delete(m.reactions, u.id)
+		} else {
+			m.reactions[u.id] = reactionSet{from: from, emojis: emojis}
+		}
+		s.commitReactionsLocked(m, []any{map[string]any{"from": cloneObject(from), "emojis": slices.Clone(emojis)}})
+	}
 	result := map[string]any{}
 	if req.hasID {
 		c.sendResult(req, result)
 	}
-	if sameEmojiSet(m.reactions[u.id].emojis, emojis) {
-		return result, true, nil
-	}
-	from := u.from()
-	if len(emojis) == 0 {
-		delete(m.reactions, u.id)
-	} else {
-		m.reactions[u.id] = reactionSet{from: from, emojis: emojis}
-	}
-	s.commitReactionsLocked(m, []any{map[string]any{"from": cloneObject(from), "emojis": slices.Clone(emojis)}})
 	return result, true, nil
 }
 
 // commitReactionsLocked logs and delivers one reactions record in the
-// message's current room. A record for one user links to that user's
-// previous set with prev_log_id; a record re-logging several sets after a
-// move has no single predecessor and carries none.
+// message's current room. Reaction sets carry no prev_log_id (§2).
 func (s *Server) commitReactionsLocked(m *messageState, elements []any) {
 	logID := s.nextIDLocked()
-	value := map[string]any{
+	r := s.rooms[m.roomID]
+	record := newLogRecord(logID, kindReactions, map[string]any{
 		"log_id":     formatID(logID),
 		"message_id": m.id,
 		"room_id":    m.roomID,
 		"reactions":  elements,
-	}
-	for i, element := range elements {
-		userID := element.(map[string]any)["from"].(map[string]any)["user_id"].(string)
-		if previous, ok := m.reactionLogIDs[userID]; ok && len(elements) == 1 && i == 0 {
-			value["prev_log_id"] = formatID(previous)
-		}
-		m.reactionLogIDs[userID] = logID
-	}
-	r := s.rooms[m.roomID]
-	record := newLogRecord(logID, kindReactions, value)
-	if len(elements) == 1 {
-		record.author = elements[0].(map[string]any)["from"].(map[string]any)["user_id"].(string)
-	}
+	})
 	s.appendLocked(record, r)
 	s.deliverLocked(rawNotification("reactions", record.raw), r)
 }

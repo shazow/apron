@@ -20,12 +20,12 @@ Restart the server between runs you want to compare.
 
 | Scenario   | Load |
 |------------|------|
-| `churn`    | connect, sign in as a guest, and disconnect as fast as possible |
-| `flood`    | every client posts to `general` with one request in flight; checks each connection sees log_ids in order |
+| `churn`    | connect, sign in as a guest, and disconnect as fast as possible; each guest's join to `general` at sign-in and its leave on disconnect are logged memberships |
+| `flood`    | every client posts to `general` with one request in flight; checks each connection sees each room's log_ids (messages, reactions, memberships) in order |
 | `activity` | every client sends typing activity to `general` |
 | `slow`     | half the clients stop reading while the rest post 4 KiB messages; the server should drop the stalled ones |
 | `history`  | seed a room with 20,000 messages, then page it with `limit` 100 and 1000 |
-| `threads`  | create 1,000 threads with `room_set`, then concurrently `room_list` them, or sign in, `room_list` joined rooms, and `room_join` one |
+| `threads`  | create 1,000 threads with `room_set`, then concurrently `room_list` them (`filter: "not_joined"`) and the joined rooms with `members: true`, or sign in with `room_list` (`filter: "joined"`, `members: true`) pipelined behind `auth`, then `room_join` and `room_leave` a thread |
 | `edits`    | post, edit three times, react, clear, and delete, in a loop |
 | `embeds`   | 64 KiB uploads read back from their file URLs, and two-second live streams read while they are written |
 

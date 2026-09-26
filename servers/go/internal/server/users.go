@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -35,6 +36,9 @@ type userState struct {
 
 	clients map[*client]struct{}
 	joined  map[string]*roomState
+	// leftAt maps each room the user left, and has not rejoined, to the
+	// log_id of the leave, for room_list's `left` (§4.3.1).
+	leftAt  map[string]int64
 	dedup   dedupCache
 	passkey *passkeyUser
 	// posts holds recent message creation times for MessagesPerMinute.
@@ -47,11 +51,13 @@ func newUserState(id, name string) *userState {
 		name:    name,
 		clients: make(map[*client]struct{}),
 		joined:  make(map[string]*roomState),
+		leftAt:  make(map[string]int64),
 	}
 }
 
-// from is the author identity carried in logged records: user_id and name.
-// Avatars and ext travel only in you, user, and members (§4.6.6). Every
+// from is the recorded user object carried in logged records (a message's
+// or reaction's from, a membership's user): user_id and name. Avatars and
+// ext travel only in current objects (§3.3, §4.6.6). Every
 // record by the user shares the returned map until the name changes, so it
 // must not be modified.
 func (u *userState) from() map[string]any {
@@ -64,7 +70,8 @@ func (u *userState) from() map[string]any {
 	return u.fromValue
 }
 
-// profile is the complete user object for you, user, and members.
+// profile is the complete current user object for you, user, and users
+// (§3.3).
 func (u *userState) profile() map[string]any {
 	value := maps.Clone(u.from())
 	if u.avatar != "" {
@@ -207,41 +214,57 @@ func (s *Server) authenticate(c *client, req request) (any, *rpcError) {
 	}
 	user := newUserState(s.assignUserIDLocked(requested), normalizeName(name))
 	s.users[user.id] = user
-	// A new guest joins the default room, so their room list is not empty;
-	// the client lists it with room_list rather than being sent it.
+	s.attachLocked(c, user)
+	// A new guest joins the default room, so their room list is not empty.
+	// The join is a logged membership, delivered to general's members, this
+	// connection included, before the result (§1, §4.3.2); the client lists
+	// the room with room_list rather than being sent a room_update.
 	s.addMemberLocked(user, s.rooms[defaultRoomID])
-	return s.switchUserLocked(c, req, user, nil), nil
+	result := map[string]any{"you": user.profile()}
+	if req.hasID {
+		c.sendResult(req, result)
+	}
+	return result, nil
 }
 
 // switchUserLocked makes user the connection's identity and replies with
 // extra fields beside `you` (§3.2, §3.3). Rooms are not announced: the client
-// lists them. A guest identity left without connections is retired; others
-// who shared a room with it learn of the change through a `user`
-// notification with `new` and `old`.
+// lists them.
 func (s *Server) switchUserLocked(c *client, req request, user *userState, extra map[string]any) map[string]any {
-	previous := c.user
+	s.attachLocked(c, user)
 	result := map[string]any{"you": user.profile()}
 	maps.Copy(result, extra)
-	if previous != user {
-		if previous != nil {
-			delete(previous.clients, c)
-		}
-		c.user = user
-		user.clients[c] = struct{}{}
-	}
 	if req.hasID {
 		c.sendResult(req, result)
 	}
-	if previous != nil && previous != user && len(previous.clients) == 0 && previous.passkey == nil {
-		frame := notification("user", map[string]any{"new": user.profile(), "old": previous.profile()})
-		for _, other := range s.sharersLocked(previous) {
-			if other != user {
-				other.send(frame)
-			}
-		}
-		s.retireLocked(previous, false)
-	}
 	return result
+}
+
+// attachLocked makes user the connection's identity. A guest identity left
+// without connections is retired, logging its leaves, and then others who
+// shared a room with it learn of the user_id change through a `user`
+// notification with `new` and `old` (§3.3).
+func (s *Server) attachLocked(c *client, user *userState) {
+	previous := c.user
+	if previous == user {
+		return
+	}
+	if previous != nil {
+		delete(previous.clients, c)
+	}
+	c.user = user
+	user.clients[c] = struct{}{}
+	if previous == nil || len(previous.clients) > 0 || previous.passkey != nil {
+		return
+	}
+	sharers := s.sharersLocked(previous)
+	frame := notification("user", map[string]any{"new": user.profile(), "old": previous.profile()})
+	s.retireLocked(previous)
+	for _, other := range sharers {
+		if other != user {
+			other.send(frame)
+		}
+	}
 }
 
 // detachLocked forgets a closed connection, retiring its guest identity.
@@ -253,25 +276,22 @@ func (s *Server) detachLocked(c *client) {
 	delete(user.clients, c)
 	c.user = nil
 	if len(user.clients) == 0 && user.passkey == nil {
-		s.retireLocked(user, true)
+		s.retireLocked(user)
 	}
 }
 
-// retireLocked removes a guest identity for good, leaving every room. Its
-// user_id is never reissued; its records keep it (§3.3). With announce, those
-// who shared a room with it receive `user` with `old` alone.
-func (s *Server) retireLocked(u *userState, announce bool) {
-	if announce {
-		frame := notification("user", map[string]any{"old": map[string]any{"user_id": u.id}})
-		for _, other := range s.sharersLocked(u) {
-			other.send(frame)
-		}
-	}
-	for _, r := range u.joined {
-		delete(r.members, u.id)
+// retireLocked removes a guest identity for good. It leaves every room it
+// joined, logging each leave as a membership for the remaining members
+// (§4.3.2). Its user_id is never reissued, so its records stay consistent
+// (§3.3).
+func (s *Server) retireLocked(u *userState) {
+	rooms := slices.SortedFunc(maps.Values(u.joined), func(a, b *roomState) int {
+		return cmp.Compare(a.createdID, b.createdID)
+	})
+	for _, r := range rooms {
+		s.leaveLocked(u, r)
 		delete(r.reads, u.id)
 	}
-	clear(u.joined)
 	for key, registration := range s.pushes {
 		if registration.userID == u.id {
 			delete(s.pushes, key)
