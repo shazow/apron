@@ -16,7 +16,7 @@ go run ./cmd/aprond
 
 Defaults:
 
-- HTTP and WebSocket listener: `127.0.0.1:8080` (`-addr`)
+- HTTP and WebSocket listener: `127.0.0.1:8080` (`--addr`)
 - WebSocket endpoint: `/ws`; health endpoint: `/healthz`
 - embed endpoints: `/write/<token>`, `/files/<embed_id>/<secret>`,
   `/streams/<embed_id>/<secret>`
@@ -30,45 +30,66 @@ Defaults:
 - passkey RP ID: `localhost`; frontend origins: `http://localhost:5173` and
   `http://localhost:8080`
 
-Flags:
+Flags (`aprond --help` lists them all):
 
-- `-static-dir <directory>` serves a built frontend from the same listener.
-- `-origin <pattern,...>` sets a deployment-specific origin allowlist;
-  `-allow-any-origin` only when the deployment has its own cross-site
-  protections. `-addr` changes the listener address; `-addr :8080` listens on
-  every interface.
-- `-static-dir <directory>` serves files but never directory listings or
-  names starting with `.`; a directory is served only through its
-  `index.html`.
-- `-public-url https://chat.example` sets the base of write, file, and stream
-  URLs. Without it they use the host each WebSocket request arrived on, which
-  suits local development but lets a client choose the host in URLs others
-  see; set it in any deployment.
-- `-max-connections <n>` refuses connections beyond `n` with an error without
-  `id` (`retry_after`), then closes them.
-- `-messages-per-minute <n>` limits each user's new messages, `room_set`
+- `--config aprond.toml` loads settings from a TOML file; flags given on the
+  command line take precedence. Top-level keys are flag names, and each
+  group is a table: `[upload] max-mb = 5` sets `--upload.max-mb 5`. A list
+  in the file replaces the flag's default. `--print-config` prints the
+  current settings, with descriptions, in that form, so
+  `aprond --print-config > aprond.toml` starts a config file. Unknown keys
+  are an error.
+- `--static-dir <directory>` serves a built frontend from the same listener:
+  files, but never directory listings or names starting with `.`; a
+  directory is served only through its `index.html`.
+- `--origin <pattern>` (repeat for more) sets a deployment-specific origin
+  allowlist; `--allow-any-origin` only when the deployment has its own
+  cross-site protections. `--addr` changes the listener address;
+  `--addr :8080` listens on every interface.
+- `--public-url https://chat.example` sets the base of write, file, and
+  stream URLs. Without it they use the host each WebSocket request arrived
+  on (or `https://` and the first `--tls.domain`), which suits local
+  development but lets a client choose the host in URLs others see; set it
+  in any deployment.
+- `--max-connections <n>` refuses WebSockets beyond `n` with an error without
+  `id` (`retry_after`), then closes them. `--max-listener-connections <n>`
+  caps concurrent TCP connections on the listener, HTTP included; further
+  connections wait to be accepted.
+- `--messages-per-minute <n>` limits each user's new messages, `room_set`
   requests, and `/avatar` commands together: a burst of `n`, refilled evenly
   over a minute. The excess gets `retry_after` with `data.retry_after` in
-  seconds. Edits, reactions, and activity are not
-  counted.
-- `-upload-dir <directory>` holds uploaded files, by default
+  seconds. Edits, reactions, and activity are not counted.
+- `--webauthn.rp-id <domain>` (`localhost`) and `--webauthn.origin <origin>`
+  (repeat for more; `http://localhost:5173` and `http://localhost:8080`)
+  configure passkeys; `--webauthn.rp-id ''` disables them.
+- `--upload.dir <directory>` holds uploaded files, by default
   `aprond/uploads` in the user cache directory (`$XDG_CACHE_HOME`, usually
   `~/.cache`, on Linux). Uploads last only as long as the process, so at
   start the server removes files named `*.upload` there, left by an earlier
   run, and nothing else.
-- `-max-upload-mb <n>` (20) bounds one upload, `-max-message-upload-mb <n>`
-  (20) all of one message's uploads, and `-max-upload-storage-mb <n>` (1000)
-  every hosted upload together, all in MiB. Past the storage bound the oldest
-  message uploads are removed: their files are deleted and each affected
-  message is republished without them. Avatars count toward the bound but are
-  never removed.
-- `-disable-push` removes push; `-allow-insecure-push` accepts `http` and
+- `--upload.max-mb <n>` (20) bounds one upload, `--upload.max-message-mb <n>`
+  (20) all of one message's uploads, and `--upload.max-storage-mb <n>`
+  (1000) every hosted upload together, all in MiB. Past the storage bound the
+  oldest message uploads are removed: their files are deleted and each
+  affected message is republished without them. Avatars count toward the
+  bound but are never removed.
+- `--push.disable` removes push; `--push.allow-insecure` accepts `http` and
   internal push endpoints (development only).
-- `-debug-addr 127.0.0.1:6060` serves `net/http/pprof` and `expvar` under
+- `--tls.domain <domain>` (repeat for more) serves HTTPS itself, with
+  certificates from Let's Encrypt, on `--tls.addr` (`:443`) in place of
+  `--addr`, and answers ACME challenges and redirects to HTTPS on
+  `--tls.http-addr` (`:80`). Certificates are cached in `--tls.cache-dir`
+  (`aprond/autocert` in the user cache directory); `--tls.email` is the
+  contact address given to Let's Encrypt. Behind a reverse proxy that
+  terminates TLS, leave it unset.
+- `--debug-addr 127.0.0.1:6060` serves `net/http/pprof` and `expvar` under
   `/debug/` on a separate listener; keep it off public interfaces (the server
   warns at start when it is not bound to loopback).
   [`cmd/apron-hammer`](cmd/apron-hammer/README.md) load-tests the server and
   reads it to report heap and goroutines.
+
+The listeners run together: SIGINT or SIGTERM, or any listener failing,
+shuts them all down, telling open WebSockets to reconnect shortly.
 
 ## Connections and liveness
 
@@ -351,7 +372,7 @@ that connection, or the connection closing.
 
 `server.push` offers the `relay` kind. `push_register` takes
 `{kind: "relay", url, token?}`; `url` (at most 2,048 bytes) must be `https`
-(unless `-allow-insecure-push`) and identifies the registration, so
+(unless `--push.allow-insecure`) and identifies the registration, so
 registering it again replaces it, even another user's: the URL names a
 device, which may sign in as someone else; a user may hold ten. `push_unregister` removes the caller's
 registration for a `url`. Registrations belong to the user, so they matter for
@@ -389,7 +410,7 @@ runs again. Unknown requests return `unsupported`.
 
 Errors not tied to a request omit `id`. On shutdown every connection
 receives `retry_after` (`data.retry_after: 5`) before it closes; over
-`-max-connections` a new connection receives the `server` frame and then
+`--max-connections` a new connection receives the `server` frame and then
 `retry_after` (`data.retry_after: 30`).
 
 ## Passkeys
@@ -405,16 +426,16 @@ Use explicit settings for an HTTPS deployment (origins refer to the page running
 the frontend, which may differ from the WebSocket server):
 
 ```sh
-go run ./cmd/aprond -static-dir ../../clients/web/build \
-  -origin https://chat.example.com \
-  -webauthn-rp-id chat.example.com \
-  -webauthn-origin https://chat.example.com
+go run ./cmd/aprond --static-dir ../../clients/web/build \
+  --origin https://chat.example.com \
+  --webauthn.rp-id chat.example.com \
+  --webauthn.origin https://chat.example.com
 ```
 
-`-webauthn-rp-id ''` disables passkeys. `-webauthn-origin` accepts a comma-separated
-list of exact origins, including ports. The RP ID must be a domain valid for the
+`--webauthn.rp-id ''` disables passkeys. `--webauthn.origin`, repeated, lists
+exact origins, including ports. The RP ID must be a domain valid for the
 frontend origin. Changing the RP ID creates a different credential scope.
-`-allow-any-origin` does not relax WebAuthn origin validation. The default
+`--allow-any-origin` does not relax WebAuthn origin validation. The default
 `127.0.0.1` chat URL still supports guest chat; use `localhost` for passkeys.
 
 The implementation uses [go-webauthn](https://github.com/go-webauthn/webauthn)

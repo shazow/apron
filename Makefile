@@ -58,7 +58,7 @@ build: build-web
 	cd servers/go && go build -o ../../build/aprond ./cmd/aprond
 
 serve:
-	./build/aprond -static-dir clients/web/build
+	./build/aprond --static-dir clients/web/build
 
 run: build
 	$(MAKE) serve

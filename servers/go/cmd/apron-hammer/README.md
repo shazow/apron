@@ -8,7 +8,7 @@ second and compares what the server retains before and after each scenario.
 
 ```sh
 # Terminal 1: the server, with pprof and expvar on a separate listener.
-go run ./cmd/aprond -debug-addr 127.0.0.1:6060
+go run ./cmd/aprond --debug-addr 127.0.0.1:6060
 
 # Terminal 2: every scenario, 50 clients, 10 seconds each.
 go run ./cmd/apron-hammer -profile-dir /tmp/apron-profiles
