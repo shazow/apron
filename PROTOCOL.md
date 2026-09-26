@@ -1686,6 +1686,27 @@ implementations accept them. Each follows from the sections it cites.
   {"id": "c1", "result": {"you": {"user_id": "guest_1234"}}}
   ```
 
+- **A bot connects, posts once, and disconnects.** A deploy hook or cron
+  job needs no rooms. It MAY send `auth` and `message` together without
+  waiting for `server`, since `auth` is a barrier ([§3.2](#32-authentication)). Posting does
+  not require joining ([§3.5](#35-messages)), so the bot receives no broadcast; the
+  `message_id` result is its confirmation, and it closes the connection
+  once that arrives. If the connection drops first, it resends the same
+  `id` and `params` on a new connection, and the server returns the
+  original result rather than posting twice ([§1.2](#12-retries-and-deduplication)).
+
+  ```jsonc
+  // -> both at once, before server arrives
+  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "deploy-hook/1.0"}}
+  {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
+  // <-
+  {"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["token"]}}
+  // <-
+  {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
+  // <- then the bot closes the connection
+  {"id": "deploy-7f3a", "result": {"message_id": "1724803200042"}}
+  ```
+
 ---
 
 ## Appendix C — Under consideration
