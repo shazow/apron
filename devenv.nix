@@ -10,8 +10,7 @@
     package = pkgs.go_1_27;
   };
 
-  # wrangler deploys the web client (make deploy-web).
-  packages = [ pkgs.git pkgs.gnumake pkgs.stdenv.cc pkgs.wrangler ];
+  packages = [ pkgs.git pkgs.gnumake pkgs.stdenv.cc ];
 
   # Use a Nix-patched browser on Linux, including NixOS.
   env = lib.optionalAttrs pkgs.stdenv.isLinux {

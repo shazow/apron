@@ -16,3 +16,6 @@ test-results/
 devenv.local.nix
 devenv.local.yaml
 __pycache__/
+
+# Checkout of apron-chat/apron-web for the browser tests (make install)
+.apron-web/
