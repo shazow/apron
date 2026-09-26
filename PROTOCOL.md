@@ -480,10 +480,10 @@ clients always take the latest values, even if `log_id` did not change.
 | `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
 | `latest_log_id`           | delivery | greatest `log_id` in the room's log, memberships included                         |
 | `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
-| `member_count`, `members` | delivery | optional, in `room_list` only ([§4.3.1](#431-listing))                            |
+| `members`                 | delivery | in `room_list` only ([§4.3.1](#431-listing))                                      |
 
 A room record is complete ([§2](#2-identifiers)); omitted fields are cleared, except
-`member_count` and `members`.
+`members`, which only `room_list` carries.
 
 `intro_message` is a message like any other. Servers SHOULD embed its
 snapshot in room records so clients can render it without history; editing
@@ -917,14 +917,19 @@ share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
       {
         "room_id": "general", "log_id": "1724800000000", "title": "General",
         "latest_log_id": "1724803500000", "history_log_id": "1724800000000",
-        "member_count": 12
+        "members": [{"user_id": "alice"}, {"user_id": "bob"}, {"user_id": "carol"}]
       },
       {
         "room_id": "1724803312001", "log_id": "1724803312001",
         "parent_room_id": "general", "title": "Deploy", "intro_message": {...},
         "latest_log_id": "1724803400000", "history_log_id": "1724803312001",
-        "member_count": 2
+        "members": [{"user_id": "alice"}, {"user_id": "bob"}]
       }
+    ],
+    "users": [
+      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
+      {"user_id": "bob", "name": "Bob"},
+      {"user_id": "carol", "name": "Carol"}
     ]
   }
 }
@@ -939,26 +944,8 @@ share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
 }
 // -> general's threads I have not joined
 {"method": "room_list", "id": "c22", "params": {"parent_room_id": "general", "filter": "not_joined"}}
-// -> one room, with its members
-{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001", "members": true}}
-// <-
-{
-  "id": "c23", "result": {
-    "joined": [
-      {
-        "room_id": "1724803312001", "log_id": "1724803312001",
-        "parent_room_id": "general", "title": "Deploy", "intro_message": {...},
-        "latest_log_id": "1724803400000", "history_log_id": "1724803312001",
-        "member_count": 2,
-        "members": [{"user_id": "alice"}, {"user_id": "bob"}]
-      }
-    ],
-    "users": [
-      {"user_id": "alice", "name": "Alice", "avatar": "https://..."},
-      {"user_id": "bob", "name": "Bob"}
-    ]
-  }
-}
+// -> one room, such as for its members
+{"method": "room_list", "id": "c23", "params": {"room_id": "1724803312001"}}
 ```
 
 Every filter is optional:
@@ -981,19 +968,17 @@ Every filter is optional:
   be in `left` too. Without cap `members`, a client lists without this
   filter after reconnecting, since membership changes leave no trace in
   `latest_log_id`.
-- `members: true` adds each room's `members` (below).
 
 A result lists rooms matching its filters, most recently active first.
 `joined` lists every match and is never truncated; servers MAY list only
 the most recently active of `not_joined`, and a room left out is still
 visible and can be joined.
 
-Each room MAY carry `member_count`, how many users have joined it. With
-`members: true`, each room also carries `members`, user objects ([§3.3](#33-identity)):
-either complete, or `user_id` only with the complete objects in the
-result's `users`. `members` lists every member of the room; a later
-revision may add paging for large rooms. Servers MAY refuse `members: true`
-without `room_id` as too costly (`too_large`).
+Each room in `joined` and `not_joined` carries `members`, every user who has
+joined it, as user objects ([§3.3](#33-identity)): complete, or partial, such as `user_id`
+only. The result MAY carry `users`, complete current objects for the users
+in its `members`, each user once however many rooms list them, so `members`
+can stay partial. A later revision may add paging for large rooms.
 
 #### 4.3.2 Membership
 
@@ -1047,9 +1032,9 @@ one entry per user, each with the user as a recorded object ([§3.3](#33-identit
 - A membership record is delivered to the room's members before and after
   the change, so both the joining and the leaving user receive it. It
   advances the room's `latest_log_id`.
-- Clients start a room's member list from `room_list` with `room_id` and
-  `members: true`, which is complete, and keep it current from the
-  memberships they receive live and in history.
+- Clients start a room's member list from its `members` in `room_list`,
+  which is complete, and keep it current from the memberships they receive
+  live and in history.
 - Without cap `members`, membership is server state outside the log: no
   membership records exist, and clients learn members only from
   `room_list`.
