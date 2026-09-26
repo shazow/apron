@@ -2271,8 +2271,8 @@ export class ChatClient {
 	/**
 	 * A `room_update` (§4.3.3): `joined` rooms become visible with their
 	 * members and recover, `updated` records replace a visible room's (or
-	 * describe a new or edited thread of one), and `left` rooms go. `users`
-	 * merges last.
+	 * describe a new or edited thread of one) and carry no members, and `left`
+	 * rooms go. `users` merges last.
 	 */
 	private handleRoomUpdate(params: JsonObject | undefined): void {
 		if (!params) return;
@@ -2287,7 +2287,6 @@ export class ChatClient {
 			const decoded = decodeRoom(value);
 			if (!decoded) continue;
 			this.observeLogId(decoded.delivery.latest_log_id);
-			this.noteMembers(decoded.record.room_id, decoded.delivery);
 			if (this.rooms.has(decoded.record.room_id)) {
 				this.showRoom(decoded);
 			} else {
@@ -2950,7 +2949,7 @@ export class ChatClient {
 	private sendRequest(request: PendingRequest): void {
 		if (!this.canSend(request) || request.sentConnection === this.connectionId) return;
 		request.sentConnection = this.connectionId;
-		this.sendFrame({ jsonrpc: '2.0', method: request.method, id: request.id, params: request.params });
+		this.sendFrame({ method: request.method, id: request.id, params: request.params });
 	}
 
 	private sendFrame(frame: WireFrame): void {
@@ -3365,7 +3364,6 @@ function userFacingRpcError(error: RpcError): string {
 	return error.message || `Request failed (${error.code})`;
 }
 
-/** Exposed for deterministic UI/client tests without relying on timer scheduling. */
 /** Whether the page is hidden or the browser reports no network; false outside a browser. */
 function absent(): boolean {
 	return globalThis.document?.visibilityState === 'hidden' || globalThis.navigator?.onLine === false;

@@ -1032,7 +1032,7 @@
 
 <svelte:head>
 	<title>{tabTitle(unread.total, titleFlash)}</title>
-	<meta name="description" content="Apron, a chat frontend for the Bottomless Chat protocol." />
+	<meta name="description" content="Apron, a chat frontend for the Apron Chat Protocol." />
 </svelte:head>
 
 {#if !client}

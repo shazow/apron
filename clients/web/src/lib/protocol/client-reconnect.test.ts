@@ -91,7 +91,7 @@ describe('transport reconnects', () => {
 
 	/** Replaces the server frame, advertising cap `activity`. */
 	function advertiseActivity(socket = latest()): void {
-		socket.receive({ method: 'server', params: { protocol: 4, name: 'fake', auth: ['guest'], caps: ['activity'] } });
+		socket.receive({ method: 'server', params: { protocol: 6, name: 'fake', auth: ['guest'], caps: ['activity'] } });
 	}
 
 	it('bounds typing traffic while refreshing it before expiry', () => {
@@ -160,7 +160,7 @@ describe('transport reconnects', () => {
 		expect(snapshot.typing).toHaveLength(1);
 		activity({ typing: 0 });
 		expect(snapshot.typing).toEqual([]);
-		// The old `typing` method is not a typing indicator any more.
+		// An unknown `typing` notification is ignored (§1).
 		latest().receive({ method: 'typing', params: { room_id: 'lobby', from: bob, active: true } });
 		expect(snapshot.typing).toEqual([]);
 	});
@@ -294,7 +294,7 @@ describe('persisted session tokens', () => {
 		const elsewhere = new ChatClient('ws://other.test/');
 		elsewhere.start();
 		latest().open();
-		latest().receive({ method: 'server', params: { protocol: 4, auth: ['webauthn', 'token', 'guest'], caps: [] } });
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['webauthn', 'token', 'guest'], caps: [] } });
 		expect(authParams()).toEqual(expect.objectContaining({ scheme: 'guest' }));
 		elsewhere.stop();
 	});
@@ -313,7 +313,7 @@ describe('persisted session tokens', () => {
 		client.subscribe((next) => (snapshot = next));
 		client.start();
 		latest().open();
-		latest().receive({ method: 'server', params: { protocol: 4, auth: ['webauthn', 'token', 'guest'], caps: [] } });
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['webauthn', 'token', 'guest'], caps: [] } });
 		const auth = latest().sent.find((frame) => frame.method === 'auth')!;
 		expect(auth.params).toEqual(expect.objectContaining({ scheme: 'token', token: 'stale' }));
 		latest().receive({ id: auth.id, error: { code: -32001, message: 'Session expired; sign in with your passkey' } });
