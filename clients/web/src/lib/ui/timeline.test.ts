@@ -24,7 +24,7 @@ function timeline(roomId: string, messages: MessageRecord[]): TimelineState {
 }
 
 function room(id: string, messages: MessageRecord[] = [], fields: Partial<RoomSnapshot> = {}): RoomSnapshot {
-	return { id, title: id, timeline: timeline(id, messages), recovering: false, loaded: true, loading: false, notices: [], ...fields };
+	return { id, title: id, joined: true, timeline: timeline(id, messages), recovering: false, loaded: true, loading: false, notices: [], ...fields };
 }
 
 const kinds = (items: TimelineItem[]) => items.map((item) => item.kind);
@@ -193,12 +193,12 @@ describe('message helpers', () => {
 	it('offers only the listed members when the room has a members list', () => {
 		const me = { user_id: 'sam', name: 'Sam' };
 		const messages = [message(0, 'alice'), message(1, 'bob'), message(2, 'carol')];
-		// Bob has disconnected; Dana is connected but has not spoken.
+		// Bob has left; Dana has joined but has not spoken.
 		const people = peopleIn(messages, me, [{ user_id: 'alice' }, { user_id: 'carol' }, { user_id: 'dana' }]);
 		expect(people.map((p) => p.id)).toEqual(['carol', 'alice', 'dana', 'sam']);
 		expect(peopleIn(messages, me, []).map((p) => p.id)).toEqual(['sam']);
-		// Whoever posted after the listing was around since it was taken.
-		expect(peopleIn(messages, me, [{ user_id: 'alice' }], String(base + 1)).map((p) => p.id)).toEqual(['carol', 'alice', 'sam']);
+		// Memberships keep the list current: posting without joining does not make a member.
+		expect(peopleIn(messages, me, [{ user_id: 'alice' }]).map((p) => p.id)).toEqual(['alice', 'sam']);
 	});
 
 	it('fills ranges along the timeline order', () => {
@@ -228,6 +228,14 @@ describe('transient notices and threads not joined', () => {
 			.toEqual(['first', 'between', 'second', 'third+', 'late']);
 		const thread = buildThreadTimeline({ messages: [first, second], intro: first, notices: [notice('reply', second.message_id)] });
 		expect(kinds(thread)).toEqual(['message', 'replies', 'message', 'notice']);
+	});
+
+	it('lists a thread open without joining as a card, but never as a room of its own', () => {
+		const viewed = room('t3', [message(5, 'bob', { room_id: 't3' })], { parentRoomId: 'general', title: 'Read only', joined: false });
+		const orphan = room('t4', [], { parentRoomId: 'gone', title: 'Orphan', joined: false });
+		expect(sidebarRooms([room('general'), viewed, orphan]).map((entry) => entry.id)).toEqual(['general']);
+		const [entry] = threadEntries([room('general'), viewed], 'general');
+		expect(entry).toMatchObject({ id: 't3', joined: false, loaded: true, count: 1 });
 	});
 
 	it('gives a listed thread not joined a card, anchored at its intro', () => {

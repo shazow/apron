@@ -33,8 +33,8 @@ export interface ThreadEntry {
 	anchor?: string;
 	/**
 	 * The viewer has joined the thread (§4.3.2). A thread not joined is known
-	 * from `room_list` or a `room_update`: it still gets a card, and opening it
-	 * joins it.
+	 * from `room_list` or a `room_update`, or open without joining: it still
+	 * gets a card, opening it reads its history, and only joining makes it live.
 	 */
 	joined: boolean;
 }
@@ -48,12 +48,13 @@ export type TimelineItem =
 	| { kind: 'notice'; key: string; notice: Notice };
 
 /**
- * The rooms the sidebar lists at the top level: rooms without a parent, and
- * threads whose parent is not visible (so they stay reachable).
+ * The rooms the sidebar lists at the top level: joined rooms without a
+ * parent, and joined threads whose parent is not visible (so they stay
+ * reachable). A room opened without joining shows only while it is open.
  */
 export function sidebarRooms(rooms: readonly RoomSnapshot[]): RoomSnapshot[] {
 	const visible = new Set(rooms.map((room) => room.id));
-	return rooms.filter((room) => room.parentRoomId === undefined || !visible.has(room.parentRoomId));
+	return rooms.filter((room) => room.joined && (room.parentRoomId === undefined || !visible.has(room.parentRoomId)));
 }
 
 /** The top-level room a room belongs to: its parent for a visible thread, else itself. */
@@ -85,7 +86,7 @@ export function threadEntry(room: RoomSnapshot): ThreadEntry {
 		lastReply: latest ? eventTime(latest) : '',
 		...(latest ? { latestMessage: latest } : {}),
 		...(anchor !== undefined ? { anchor } : {}),
-		joined: true
+		joined: room.joined
 	};
 }
 
@@ -109,8 +110,9 @@ export function unjoinedThreadEntry(listing: RoomListing, message?: (messageId: 
 }
 
 /**
- * The threads of a room: the joined ones in listing order, then the ones
- * listed as not joined (`unjoined`, from `room_list` with `parent_room_id`).
+ * The threads of a room: the ones the client has, joined or open without
+ * joining, in listing order, then the others listed as not joined
+ * (`unjoined`, from `room_list` with `parent_room_id`).
  */
 export function threadEntries(
 	rooms: readonly RoomSnapshot[], parentRoomId: string | undefined, unjoined: readonly RoomListing[] = [],

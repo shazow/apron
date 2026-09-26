@@ -33,6 +33,9 @@ describe('reaction chips', () => {
 		expect(whoReacted(crowd, 'you')).toBe('You, A1, A2, A3, A4, A5, A6 and 3 others');
 		const unnamed: ReactionSummary = { emoji: '👀', count: 1, user_ids: ['guest_1'], users: [{ user_id: 'guest_1' }], mine: false };
 		expect(whoReacted(unnamed, undefined)).toBe('guest_1');
+		// Callers render reactors through the kept user objects (§3.3).
+		expect(whoReacted(summary('👍', ['ada', 'bob']), 'you', (user) => `${user.user_id}!`)).toBe('ada! and bob!');
+		expect(reactionChips([summary('👍', ['ada'])], 'you', false, () => 'Kept')[0].title).toBe('Kept reacted with 👍');
 	});
 
 	it('offers a small fixed palette of distinct emoji', () => {

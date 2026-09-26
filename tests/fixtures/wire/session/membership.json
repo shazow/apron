@@ -1,9 +1,11 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "session",
   "name": "Room membership",
-  "description": "With cap rooms the visible rooms are the joined set: room_list with only_joined after authentication (threads included), then room_update. listRooms asks for rooms not joined; joinRoom and leaveRoom send only room_id and settle on {}, while the room itself comes and goes by room_update joined and left, which also covers being removed. An updated record of a thread not joined is not visible.",
+  "description": "With cap rooms the visible rooms are the joined set: room_list with filter joined and members, sent right behind auth (threads included), then room_update. Every join and leave is a logged membership, delivered to the room's members before and after the change and before the room_update and result the request causes; the guest's own join at auth may arrive before the auth result. Member lists start from each joined room's members and follow memberships. listRooms asks for rooms not joined, with their members; joinRoom and leaveRoom send only room_id and settle on {}, while the room itself comes and goes by room_update joined and left, which also covers being removed. An updated record of a thread not joined is not visible.",
   "references": [
+    "PROTOCOL.md#1-transport--framing",
+    "PROTOCOL.md#32-authentication",
     "PROTOCOL.md#34-rooms",
     "PROTOCOL.md#431-listing",
     "PROTOCOL.md#432-membership",
@@ -13,38 +15,46 @@
     {
       "name": "join-and-leave",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
-        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
-        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
-        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","latest_log_id":"102"},{"room_id":"general","log_id":"90","title":"General","latest_log_id":"90","member_count":2}]}}},
-        {"expect":{"rooms":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","messages":[]},{"room_id":"general","log_id":"90","title":"General","messages":[]}]}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"receive":{"method":"membership","params":{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":true}]}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Guest"}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","latest_log_id":"103","members":[{"user_id":"bob"},{"user_id":"guest_1"}]},{"room_id":"general","log_id":"90","title":"General","latest_log_id":"103","members":[{"user_id":"bob"},{"user_id":"guest_1"}]}],"users":[{"user_id":"bob","name":"Bob"},{"user_id":"guest_1","name":"Guest"}]}}},
+        {"expect":{"rooms":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","messages":[]},{"room_id":"general","log_id":"90","title":"General","messages":[]}],"members":{"102":["bob","guest_1"],"general":["bob","guest_1"]}}},
         {"listRooms":{"as":"browse"}},
-        {"request":{"as":"browse-request","match":{"method":"room_list","params":{"not_joined":true}}}},
-        {"reply":{"to":"browse-request","result":{"rooms":[{"room_id":"ops","log_id":"95","title":"Ops","latest_log_id":"95","member_count":1}]}}},
+        {"request":{"as":"browse-request","match":{"method":"room_list","params":{"filter":"not_joined","members":true}}}},
+        {"reply":{"to":"browse-request","result":{"not_joined":[{"room_id":"ops","log_id":"95","title":"Ops","latest_log_id":"95","members":[{"user_id":"bob"}]}],"users":[{"user_id":"bob","name":"Bob"}]}}},
         {"expect":{"directory":["ops"],"operations":{"browse":"fulfilled"}}},
         {"joinRoom":{"as":"join","room":"ops"}},
         {"request":{"as":"join-request","match":{"method":"room_join","params":{"room_id":"ops"}}}},
+        {"receive":{"method":"membership","params":{"log_id":"104","room_id":"ops","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":true}]}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"ops","log_id":"95","title":"Ops","latest_log_id":"104","members":[{"user_id":"bob"},{"user_id":"guest_1"}]}],"users":[{"user_id":"bob","name":"Bob"},{"user_id":"guest_1","name":"Guest"}]}}},
         {"reply":{"to":"join-request","result":{}}},
-        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"ops","log_id":"95","title":"Ops","latest_log_id":"95","member_count":2}]}}},
-        {"expect":{"rooms":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","messages":[]},{"room_id":"general","log_id":"90","title":"General","messages":[]},{"room_id":"ops","log_id":"95","title":"Ops","messages":[]}],"operations":{"browse":"fulfilled","join":"fulfilled"}}},
+        {"expect":{"rooms":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","messages":[]},{"room_id":"general","log_id":"90","title":"General","messages":[]},{"room_id":"ops","log_id":"95","title":"Ops","messages":[]}],"members":{"102":["bob","guest_1"],"general":["bob","guest_1"],"ops":["bob","guest_1"]},"operations":{"browse":"fulfilled","join":"fulfilled"}}},
         {"receive":{"method":"room_update","params":{"updated":[{"room_id":"110","log_id":"110","parent_room_id":"general","title":"Incident","latest_log_id":"110"}]}}},
         {"receive":{"method":"message","params":{"message_id":"111","log_id":"111","room_id":"general","from":{"user_id":"bob"},"body":{"text":"see the incident thread"}}}},
         {"leaveRoom":{"as":"leave","room":"102"}},
         {"request":{"as":"leave-request","match":{"method":"room_leave","params":{"room_id":"102"}}}},
-        {"reply":{"to":"leave-request","result":{}}},
+        {"receive":{"method":"membership","params":{"log_id":"112","room_id":"102","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":false}]}}},
         {"receive":{"method":"room_update","params":{"left":[{"room_id":"102"}]}}},
-        {"expect":{"rooms":[{"room_id":"general","log_id":"90","title":"General","messages":[{"message_id":"111","log_id":"111","room_id":"general","from":{"user_id":"bob"},"body":{"text":"see the incident thread"}}]},{"room_id":"ops","log_id":"95","title":"Ops","messages":[]}]}},
+        {"reply":{"to":"leave-request","result":{}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"90","title":"General","messages":[{"message_id":"111","log_id":"111","room_id":"general","from":{"user_id":"bob"},"body":{"text":"see the incident thread"}}]},{"room_id":"ops","log_id":"95","title":"Ops","messages":[]}],"members":{"general":["bob","guest_1"],"ops":["bob","guest_1"]}}},
+        {"receive":{"method":"membership","params":{"log_id":"113","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}}},
+        {"receive":{"method":"membership","params":{"log_id":"114","room_id":"ops","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}}},
+        {"expect":{"members":{"general":["bob","carol","guest_1"],"ops":["guest_1"]},"users":{"bob":{"user_id":"bob","name":"Bob"},"guest_1":{"user_id":"guest_1","name":"Guest"}}}},
+        {"receive":{"method":"membership","params":{"log_id":"115","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":false}]}}},
         {"receive":{"method":"room_update","params":{"left":[{"room_id":"general"}]}}}
       ]
     }
   ],
   "expected": {
-    "you": {"user_id":"guest_1"},
+    "you": {"user_id":"guest_1","name":"Guest"},
     "caps": ["rooms"],
     "rooms": [
       {"room_id":"ops","log_id":"95","title":"Ops","messages":[]}
     ],
+    "members": {"ops":["guest_1"]},
     "operations": {"browse":"fulfilled","join":"fulfilled","leave":"fulfilled"}
   }
 }

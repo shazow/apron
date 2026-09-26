@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "session",
   "name": "Request errors keep the session usable",
   "description": "Denied sends, saves, and room creations reject their operations without changing state; a later operation with a new request ID succeeds.",
@@ -13,12 +13,12 @@
     {
       "name": "denied-then-accepted",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_7"}}}},
         {"expect":{"you":{"user_id":"guest_7"}}},
-        {"request":{"as":"rooms","match":{"method":"room_list","params":{"only_joined":true}}}},
-        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","title":"General"}]}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","title":"General","members":[{"user_id":"guest_7"}]}],"users":[{"user_id":"guest_7"}]}}},
         {"send":{"as":"denied","room":"general","text":"denied","format":"plain"}},
         {"request":{"as":"denied-request","match":{"method":"message","params":{"room_id":"general","body":{"text":"denied","format":"plain"}}}}},
         {"reply":{"to":"denied-request","error":{"code":-32001,"message":"Denied by fixture policy"}}},
@@ -26,8 +26,8 @@
         {"send":{"as":"accepted","room":"general","text":"allowed","format":"plain"}},
         {"request":{"as":"accepted-request","match":{"method":"message","params":{"room_id":"general","body":{"text":"allowed","format":"plain"}}}}},
         {"receive":{"method":"message","params":{"message_id":"1724803200300","log_id":"1724803200300","room_id":"general","from":{"user_id":"guest_7"},"body":{"text":"allowed","format":"plain"}}}},
-        {"reply":{"to":"accepted-request","result":{"message_id":"1724803200300"}}},
         {"receive":{"method":"message","params":{"message_id":"1724803200301","log_id":"1724803200301","room_id":"general","from":{"user_id":"bob"},"body":{"text":"not yours","format":"plain"}}}},
+        {"reply":{"to":"accepted-request","result":{"message_id":"1724803200300"}}},
         {"editMessage":{"as":"edit-denied","message_id":"1724803200301","text":"mine now"}},
         {"request":{"as":"edit-denied-request","match":{"method":"message","params":{"message_id":"1724803200301","room_id":"general","body":{"text":"mine now","format":"plain"}}}}},
         {"reply":{"to":"edit-denied-request","error":{"code":-32001,"message":"Only the author may edit"}}},

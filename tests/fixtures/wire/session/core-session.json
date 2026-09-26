@@ -1,8 +1,8 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "session",
   "name": "Core session",
-  "description": "A server without cap rooms: guest authentication, a first post without room_id into the default room, whose room_id the broadcast reveals (with either confirmation order), typing activity, a bare reply_to answered by an embedded snapshot, a transient @private notice without message_id that is shown but never stored, server frame replacement, unknown notifications, and rooms learned from the messages that arrive in them, room @server included.",
+  "description": "A server without cap rooms: guest authentication, a first post without room_id into the default room, whose room_id the broadcast reveals before the result confirms it, typing activity, a bare reply_to answered by an embedded snapshot, a transient @private notice without message_id that is shown but never stored, server frame replacement, unknown notifications, rooms learned from the messages that arrive in them (a room_id starting with @ is an ordinary room), and a logged @server notice, an ordinary message in the room it names.",
   "references": [
     "PROTOCOL.md#11-envelope-and-replies",
     "PROTOCOL.md#31-server-frame",
@@ -14,40 +14,9 @@
   ],
   "variants": [
     {
-      "name": "result-before-broadcast",
+      "name": "session",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["edit","activity"],"future_hint":{"ignored":true}}}},
-        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
-        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
-        {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"caps":["activity","edit"],"rooms":[]}},
-        {"send":{"as":"message","text":"hello","format":"plain"}},
-        {"request":{"as":"send","match":{"method":"message","params":{"body":{"text":"hello","format":"plain"}}}}},
-        {"reply":{"to":"send","result":{"message_id":"1724803200001"}}},
-        {"receive":{"method":"message","params":{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}}}},
-        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}}]}],"operations":{"message":"fulfilled"}}},
-        {"receive":{"method":"activity","params":{"room_id":"general","from":{"user_id":"bob","name":"Bob"},"typing":8}}},
-        {"expect":{"typing":[{"room_id":"general","from":{"user_id":"bob","name":"Bob"}}]}},
-        {"receive":{"method":"activity","params":{"room_id":"general","from":{"user_id":"bob","name":"Bob"}}}},
-        {"expect":{"typing":[{"room_id":"general","from":{"user_id":"bob","name":"Bob"}}]}},
-        {"receive":{"method":"activity","params":{"room_id":"general","from":{"user_id":"bob","name":"Bob"},"typing":0}}},
-        {"expect":{"typing":[]}},
-        {"send":{"as":"reply","room":"general","text":"**re**","format":"markdown","reply_to":"1724803200001"}},
-        {"request":{"as":"send-reply","match":{"method":"message","params":{"room_id":"general","body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}}}}},
-        {"reply":{"to":"send-reply","result":{"message_id":"1724803200002"}}},
-        {"receive":{"method":"message","params":{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}}}}},
-        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}}]}],"operations":{"message":"fulfilled","reply":"fulfilled"}}},
-        {"receive":{"method":"message","params":{"room_id":"general","from":{"user_id":"@private","name":"Only you"},"body":{"text":"Welcome to General!"}}}},
-        {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}}]}],"notices":[{"room_id":"general","from":{"user_id":"@private","name":"Only you"},"body":{"text":"Welcome to General!"}}]}},
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"]}}},
-        {"receive":{"method":"future_notice","params":{"room_id":"general","text":"not a message"}}},
-        {"receive":{"method":"message","params":{"message_id":"1724803200003","log_id":"1724803200003","room_id":"other","from":{"user_id":"bob","name":"Bob"},"body":{"text":"elsewhere"}}}},
-        {"receive":{"method":"message","params":{"message_id":"1724803200004","log_id":"1724803200004","room_id":"@server","from":{"user_id":"@server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}}}
-      ]
-    },
-    {
-      "name": "broadcast-before-result",
-      "steps": [
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"],"caps":["edit","activity"],"future_hint":{"ignored":true}}}},
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["edit","activity"],"future_hint":{"ignored":true}}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
         {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"caps":["activity","edit"],"rooms":[]}},
@@ -69,10 +38,11 @@
         {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}}]}],"operations":{"message":"fulfilled","reply":"fulfilled"}}},
         {"receive":{"method":"message","params":{"room_id":"general","from":{"user_id":"@private","name":"Only you"},"body":{"text":"Welcome to General!"}}}},
         {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}}]}],"notices":[{"room_id":"general","from":{"user_id":"@private","name":"Only you"},"body":{"text":"Welcome to General!"}}]}},
-        {"receive":{"method":"server","params":{"protocol":5,"auth":["guest"]}}},
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"]}}},
         {"receive":{"method":"future_notice","params":{"room_id":"general","text":"not a message"}}},
         {"receive":{"method":"message","params":{"message_id":"1724803200003","log_id":"1724803200003","room_id":"other","from":{"user_id":"bob","name":"Bob"},"body":{"text":"elsewhere"}}}},
-        {"receive":{"method":"message","params":{"message_id":"1724803200004","log_id":"1724803200004","room_id":"@server","from":{"user_id":"@server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}}}
+        {"receive":{"method":"message","params":{"message_id":"1724803200004","log_id":"1724803200004","room_id":"@ops","from":{"user_id":"bob","name":"Bob"},"body":{"text":"an ordinary room"}}}},
+        {"receive":{"method":"message","params":{"message_id":"1724803200005","log_id":"1724803200005","room_id":"general","from":{"user_id":"@server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}}}
       ]
     }
   ],
@@ -80,8 +50,8 @@
     "you": {"user_id":"guest_1","name":"Ada"},
     "caps": [],
     "rooms": [
-      {"room_id":"@server","messages":[{"message_id":"1724803200004","log_id":"1724803200004","room_id":"@server","from":{"user_id":"@server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}]},
-      {"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}}]},
+      {"room_id":"@ops","messages":[{"message_id":"1724803200004","log_id":"1724803200004","room_id":"@ops","from":{"user_id":"bob","name":"Bob"},"body":{"text":"an ordinary room"}}]},
+      {"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}},{"message_id":"1724803200005","log_id":"1724803200005","room_id":"general","from":{"user_id":"@server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}]},
       {"room_id":"other","messages":[{"message_id":"1724803200003","log_id":"1724803200003","room_id":"other","from":{"user_id":"bob","name":"Bob"},"body":{"text":"elsewhere"}}]}
     ],
     "notices": [{"room_id":"general","from":{"user_id":"@private","name":"Only you"},"body":{"text":"Welcome to General!"}}],

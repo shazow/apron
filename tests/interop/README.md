@@ -14,12 +14,12 @@ and errors shown only to you, leaving and rejoining rooms and threads through
 `room_list`, the New divider from read cursors, and `@user_id` and room
 mentions. It creates streams and raw embeds with a small protocol client
 connected through the Vite proxy, so the URLs the server mints load
-same-origin. Rooms follow protocol v5: a new guest has joined only `general`,
+same-origin. Rooms follow protocol v6: a new guest has joined only `general`,
 and a thread's members are those who joined it, so a second browser opens
-another's thread from its card, which joins it (`openThread` in
-`test-helpers.ts`).
+another's thread from its card, which reads it without joining it
+(`openThread` in `test-helpers.ts`); only joining, or replying, makes it live.
 `cloudflare.spec.ts` (run with `cloudflare.config.ts`) targets the Cloudflare
-worker, which also speaks protocol v5; it is not part of the default run.
+worker, which still speaks protocol v5; it is not part of the default run.
 The WebAuthn suite uses Chromium's virtual authenticator against the real Go
 verifier. It covers passkey registration, login, sign-out, session resumption,
 message ownership, and recovery from an invalid signature. These tests use

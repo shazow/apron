@@ -1,5 +1,5 @@
 /**
- * Wire types and decoders for Apron protocol v5 (PROTOCOL.md at the repository
+ * Wire types and decoders for Apron protocol v6 (PROTOCOL.md at the repository
  * root). Decoders normalize server records to the fields the protocol defines
  * and drop unknown top-level keys (§1: unknown keys MAY be dropped), while
  * copying known values exactly, including `ext`, literal `null`s, unknown embed
@@ -17,7 +17,12 @@ export interface JsonObject {
  */
 export type Capability = 'history' | 'edit' | 'rooms' | 'reactions' | 'activity' | 'embed:upload' | 'embed:stream' | 'command';
 
-/** A user object (§3.3): `you`, `from`, `members`, `users`, and `user` notifications. */
+/**
+ * A user object (§3.3). Current objects (`you`, `new` in `user`, room
+ * `members` and `users`) merge into the one kept per `user_id`; recorded ones
+ * (a message's or reaction's `from`, a membership's `user`) describe the user
+ * as of their record and are never merged.
+ */
 export interface Identity extends JsonObject {
 	user_id: string;
 	name?: string;
@@ -153,21 +158,40 @@ export interface DemoParams extends JsonObject {
 export interface RoomDelivery {
 	latest_log_id?: string;
 	history_log_id?: string | null;
-	/** How many users have joined the room, in `room_list` only (§4.3.1). */
-	member_count?: number;
-	/** The room's members, possibly `user_id` only, in `room_list` only (§4.3.1). */
+	/**
+	 * Every user who has joined the room, as current user objects (possibly
+	 * `user_id` only): in `room_list` with `members: true` and in
+	 * `room_update` `joined` (§4.3.1, §4.3.3).
+	 */
 	members?: Identity[];
 }
 
+/**
+ * A history page (§4.1). Every array MAY be omitted when empty; clients treat
+ * a missing array as empty. An empty slice has neither bound.
+ */
 export interface HistoryResult {
 	rooms?: unknown[];
-	entries: unknown[];
+	messages?: unknown[];
 	reactions?: unknown[];
-	first_id?: string;
-	last_id?: string;
+	membership?: unknown[];
+	first_log_id?: string;
+	last_log_id?: string;
 	more: boolean;
 	latest_log_id: string;
 	history_log_id: string | null;
+}
+
+/**
+ * One user's membership of one room at one `log_id` (§4.3.2): an element of a
+ * `membership` record's `members`, keyed by `(room_id, user.user_id)`. `user`
+ * is a recorded object.
+ */
+export interface MembershipEntry {
+	log_id: string;
+	room_id: string;
+	user: Identity;
+	joined: boolean;
 }
 
 export interface RpcError extends JsonObject {
@@ -278,7 +302,6 @@ export function decodeRoom(value: unknown): { record: RoomRecord; embedded: Mess
 	const delivery: RoomDelivery = {};
 	if (value.latest_log_id !== undefined && isLogId(value.latest_log_id)) delivery.latest_log_id = value.latest_log_id;
 	if (value.history_log_id === null || isLogId(value.history_log_id)) delivery.history_log_id = value.history_log_id;
-	if (typeof value.member_count === 'number' && Number.isFinite(value.member_count) && value.member_count >= 0) delivery.member_count = value.member_count;
 	if (Array.isArray(value.members)) delivery.members = value.members.filter(isIdentity).map((member) => cloneJson(member));
 	return { record, embedded, delivery };
 }
@@ -314,4 +337,15 @@ export function decodeReactions(value: unknown): ReactionSet[] {
 		});
 	}
 	return sets;
+}
+
+/** Decode a `membership` record (a notification's params or a history element) into one entry per member (§4.3.2). */
+export function decodeMembership(value: unknown): MembershipEntry[] {
+	if (!isJsonObject(value) || !isLogId(value.log_id) || typeof value.room_id !== 'string' || !Array.isArray(value.members)) return [];
+	const entries: MembershipEntry[] = [];
+	for (const element of value.members) {
+		if (!isJsonObject(element) || !isIdentity(element.user) || typeof element.joined !== 'boolean') continue;
+		entries.push({ log_id: value.log_id, room_id: value.room_id, user: cloneJson(element.user), joined: element.joined });
+	}
+	return entries;
 }

@@ -9,7 +9,7 @@
 		client: ChatClient;
 		session: SessionView;
 		backendLabel: string;
-		/** The active room's threads (rooms whose parent it is), listed under it. */
+		/** The active room's threads (rooms whose parent it is) to list under it: joined ones, and the open one. */
 		threads: ThreadEntry[];
 		activeThread?: string;
 		/** Mentions of you that landed in rooms you weren't reading. */
@@ -38,10 +38,11 @@
 	let unjoinedThreads = $derived(session.activeRoomId ? (session.snapshot.threadDirectory[session.activeRoomId] ?? []).filter((listing) => !listing.joined) : []);
 
 	/** Changes whenever a room or thread is joined or left. */
-	let joinedKey = $derived(session.rooms.map((room) => room.id).join('\u0000'));
+	let joinedKey = $derived(session.rooms.filter((room) => room.joined).map((room) => room.id).join('\u0000'));
 
 	// Browse rooms and More threads… show only when there is something to join, so list both in the background
-	// (the rooms, and the active room's threads) whenever the active room or what you've joined changes.
+	// (the rooms, and the active room's threads) whenever the active room or what you've joined changes. Threads
+	// you haven't joined deliver nothing live (§3.4): this listing is also what brings their cards up to date.
 	$effect(() => {
 		const roomId = session.activeRoomId;
 		void joinedKey;
@@ -139,11 +140,11 @@
 						<!-- Servers may list only the most active rooms (§4.3.1), so this never claims to be all of them. -->
 						<p class="muted">Most active rooms</p>
 						{#each unjoined as listing (listing.id)}
-							{@const members = listing.memberCount ?? listing.members.length}
+							{@const members = listing.members.length}
 							<button class="ap-room" type="button" data-join={listing.id} onclick={() => onjoin(listing.id)}>
 								<span class="ap-room-text">
 									<span class="ap-room-name">{listing.title}</span>
-									<span class="ap-room-topic">{members} {members === 1 ? 'member' : 'members'} · Join</span>
+									<span class="ap-room-topic">{#if members > 0}{members} {members === 1 ? 'member' : 'members'} · {/if}Join</span>
 								</span>
 							</button>
 						{/each}

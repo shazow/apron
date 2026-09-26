@@ -4,7 +4,7 @@ import { connectionStateOf, demoRetentionNotice, statusLabel } from './connectio
 import { retryAfterLabel } from './time';
 
 const snapshot = (fields: Partial<ClientSnapshot>): ClientSnapshot => ({
-	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], users: {}, userAliases: {}, uploads: {}, threadDirectory: {}, showReconnectDivider: false, ...fields
+	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], users: {}, recordedUsers: {}, userAliases: {}, uploads: {}, threadDirectory: {}, showReconnectDivider: false, ...fields
 });
 
 describe('connection state', () => {

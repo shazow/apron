@@ -136,16 +136,26 @@ export async function startThread(page: Page, message: Locator): Promise<string>
 
 /**
  * Opens a thread: its sidebar row once this page has joined it, else its card
- * in the room, which joins it (a thread's members are only those who joined,
- * PROTOCOL.md §4.3.2). Waits until it is the open pane.
+ * in the room, which reads it through history without joining it (a thread's
+ * members are only those who joined, PROTOCOL.md §4.3.2, and only they receive
+ * its messages live). Waits until it is the open pane; with `join`, until it
+ * is joined as well.
  */
-export async function openThread(page: Page, threadId: string): Promise<void> {
+export async function openThread(page: Page, threadId: string, options: { join?: boolean } = {}): Promise<void> {
 	const row = page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
 	const card = page.locator(`[data-testid="thread-card"][data-thread="${threadId}"]`);
 	await expect(row.or(card).first()).toBeVisible();
 	if (await row.count()) await row.click();
 	else await card.click();
 	await expect(page.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"][aria-current="page"]`)).toHaveCount(1);
+	if (!options.join) return;
+	// `join`: make it live too, with the header's Join when this page hasn't joined it.
+	const join = page.getByTestId('join-room');
+	if (await join.count()) {
+		await join.click();
+		await expect(join).toHaveCount(0);
+	}
+	await expect(page.getByTestId('leave-room')).toBeVisible();
 }
 
 /** The full emoji picker's popover (emoji-mart inside it, in a shadow root Playwright's locators pierce). */

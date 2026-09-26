@@ -20,12 +20,18 @@
 		editDisabled: boolean;
 		/** Offer Leave for the pane's room or thread (cap `rooms`). */
 		canLeave: boolean;
+		/** Offer Join for a thread open without joining it (cap `rooms`). */
+		canJoin?: boolean;
 		onback: () => void;
 		onroom: () => void;
 		onedit: () => void;
 		onleave: () => void;
+		onjoin?: () => void;
 	}
-	let { room, pane, threadTitle, typing, replyCount, moreReplies = false, canEditThread, editorOpen, editDisabled, canLeave, onback, onroom, onedit, onleave }: Props = $props();
+	let {
+		room, pane, threadTitle, typing, replyCount, moreReplies = false, canEditThread, editorOpen, editDisabled, canLeave, canJoin = false,
+		onback, onroom, onedit, onleave, onjoin
+	}: Props = $props();
 </script>
 
 <header class="ap-roomhead">
@@ -51,8 +57,11 @@
 	{:else if pane.recoveryError}
 		<span class="ap-roomhead-sub" role="status">History unavailable</span>
 	{/if}
-	{#if canEditThread || canLeave}
+	{#if canEditThread || canLeave || canJoin}
 		<div class="ap-roomhead-actions">
+			{#if canJoin}
+				<button class="ap-btn ap-btn-sm" type="button" data-testid="join-room" aria-label={threadTitle !== undefined ? 'Join thread' : 'Join room'} disabled={editDisabled} onclick={onjoin}>Join</button>
+			{/if}
 			{#if canEditThread}
 				<button class="ap-btn ap-btn-ghost ap-btn-sm" type="button" aria-label="Edit thread" aria-expanded={editorOpen} disabled={editDisabled} onclick={onedit}>Edit</button>
 			{/if}

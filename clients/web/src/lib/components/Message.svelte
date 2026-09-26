@@ -76,8 +76,12 @@
 	let longPress: ReturnType<typeof setTimeout> | undefined;
 
 	let name = $derived(senderName(event));
-	/** Name (@user_id) (§3.3): the handle shows beside a display name that differs from it. */
+	/**
+	 * Name (@user_id) (§3.3): the handle shows beside a display name that
+	 * differs from it, and always when another user shows under the same name.
+	 */
 	let handle = $derived(directory.person(event.from)?.user_id ?? event.from.user_id);
+	let showHandle = $derived(Boolean(handle) && (handle !== name || directory.sharesName(event.from)));
 	/** Who else got a system message (Appendix A.1): everyone on the server, the room, or only you. */
 	let scope = $derived(event.from.user_id === '@server' ? 'server' : event.from.user_id === '@room' ? 'room' : event.from.user_id === '@private' ? 'private' : undefined);
 	let time = $derived(eventTime(event));
@@ -213,7 +217,7 @@
 		{#if !grouped}
 			<header class="ap-msg-head">
 				<span class="ap-msg-sender">{name}</span>
-				{#if handle && handle !== name}<span class="ap-msg-handle" data-testid="sender-handle">@{handle}</span>{/if}
+				{#if showHandle}<span class="ap-msg-handle" data-testid="sender-handle">@{handle}</span>{/if}
 				<span class="ap-msg-meta">{#if time}<time datetime={isoTime} title={fullTime}>{time}</time>{/if}</span>
 			</header>
 		{/if}
