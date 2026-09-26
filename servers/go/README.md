@@ -371,6 +371,10 @@ registration.
 
 ## Requests and errors
 
+Frames must be I-JSON ([RFC 7493](https://www.rfc-editor.org/rfc/rfc7493)):
+a frame repeating an object key or holding invalid UTF-8 is a parse error.
+The server encodes JSON with `encoding/json/v2` and needs Go 1.27.
+
 Request IDs deduplicate per user, across all of that user's connections: a
 retry returns the original result without re-executing or rebroadcasting, a
 concurrent duplicate waits for the original, and reuse with a different

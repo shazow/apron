@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -524,7 +524,7 @@ func upload(ctx context.Context, p *peer, payload []byte) error {
 	var put struct {
 		URL string `json:"url"`
 	}
-	err = json.NewDecoder(response.Body).Decode(&put)
+	err = json.UnmarshalRead(response.Body, &put)
 	response.Body.Close()
 	if response.StatusCode != http.StatusCreated || err != nil {
 		return fmt.Errorf("PUT: %s", response.Status)

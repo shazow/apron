@@ -2,7 +2,8 @@ package server
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"maps"
 	"slices"
 	"strconv"
@@ -110,23 +111,22 @@ func (s *Server) deliverLocked(frame any, rooms ...*roomState) {
 }
 
 // render encodes a frame once for sending to many connections.
-func render(frame any) json.RawMessage {
-	if payload, rendered := frame.(json.RawMessage); rendered {
+func render(frame any) jsontext.Value {
+	if payload, rendered := frame.(jsontext.Value); rendered {
 		return payload
 	}
-	payload, _ := json.Marshal(frame)
-	return payload
+	return encodeJSON(frame)
 }
 
 // roomUpdate renders a room_update notification (§4.3.3) with one field.
-func roomUpdate(field string, records ...any) json.RawMessage {
+func roomUpdate(field string, records ...any) jsontext.Value {
 	return notification("room_update", map[string]any{field: records})
 }
 
 // logMembershipLocked logs one membership record (§4.3.2) of u in r,
 // advancing the room's latest_log_id, and returns its notification for
 // delivery. The record carries u as a recorded object: user_id and name.
-func (s *Server) logMembershipLocked(u *userState, r *roomState, joined bool) json.RawMessage {
+func (s *Server) logMembershipLocked(u *userState, r *roomState, joined bool) jsontext.Value {
 	logID := s.nextIDLocked()
 	record := newLogRecord(logID, kindMembership, map[string]any{
 		"log_id":  formatID(logID),
@@ -168,7 +168,7 @@ func (s *Server) joinLocked(u *userState, r *roomState) bool {
 // joinedUpdateLocked renders room_update joined for r: its record with its
 // complete members, as bare user objects, and their current objects in
 // `users` (§4.3.3).
-func (s *Server) joinedUpdateLocked(r *roomState) json.RawMessage {
+func (s *Server) joinedUpdateLocked(r *roomState) jsontext.Value {
 	record := s.roomParamsLocked(r)
 	record["members"] = memberRefs(r)
 	return notification("room_update", map[string]any{"joined": []any{record}, "users": profiles(r.members)})
@@ -687,7 +687,7 @@ func (s *Server) history(c *client, req request) (any, bool, *rpcError) {
 			break
 		}
 	}
-	result := json.RawMessage(renderHistory(r, matching, more, size))
+	result := jsontext.Value(renderHistory(r, matching, more, size))
 	// The records are already JSON: the reply is assembled from them without
 	// decoding or re-encoding.
 	if req.hasID {
@@ -761,7 +761,7 @@ func compareLogID(record *logRecord, id int64) int {
 	return cmp.Compare(record.id, id)
 }
 
-func parseBound(params map[string]json.RawMessage, name string) (int64, bool, *rpcError) {
+func parseBound(params map[string]jsontext.Value, name string) (int64, bool, *rpcError) {
 	raw, ok := params[name]
 	if !ok {
 		return 0, false, nil
@@ -777,7 +777,7 @@ func parseBound(params map[string]json.RawMessage, name string) (int64, bool, *r
 	return number, true, nil
 }
 
-func parseLimit(params map[string]json.RawMessage, defaultLimit int) (int, *rpcError) {
+func parseLimit(params map[string]jsontext.Value, defaultLimit int) (int, *rpcError) {
 	raw, ok := params["limit"]
 	if !ok {
 		return defaultLimit, nil

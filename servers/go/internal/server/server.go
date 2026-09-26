@@ -5,7 +5,8 @@ import (
 	"container/list"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -198,7 +199,7 @@ const (
 type logRecord struct {
 	id    int64
 	kind  recordKind
-	raw   json.RawMessage
+	raw   jsontext.Value
 	intro *logRecord
 }
 
@@ -230,17 +231,23 @@ func (r *logRecord) wireLen() int {
 	return len(r.raw) + len(r.intro.raw) + len(`,"intro_message":`)
 }
 
-// encodeJSON encodes a value without escaping <, >, and &, which only matter
-// for JSON embedded in HTML and would otherwise make stored text up to six
-// times larger than it arrived.
+// jsonOptions encode deterministically, sorting object keys, and keep
+// encoding/json's null for nil slices and maps. encoding/json/v2 never
+// escapes <, >, and &, which only matter for JSON embedded in HTML and would
+// make stored text up to six times larger than it arrived.
+var jsonOptions = json.JoinOptions(
+	json.Deterministic(true),
+	json.FormatNilSliceAsNull(true),
+	json.FormatNilMapAsNull(true),
+)
+
+// encodeJSON encodes a value with jsonOptions, or returns nil if it cannot.
 func encodeJSON(value any) []byte {
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
+	payload, err := json.Marshal(value, jsonOptions)
+	if err != nil {
 		return nil
 	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	return payload
 }
 
 // value decodes the record.
@@ -260,17 +267,17 @@ func (r *logRecord) rewrite(edit func(value map[string]any)) {
 // pingFrame is the exact client liveness ping (§1); pongFrame answers it.
 var (
 	pingFrame = []byte(`{"method":"ping"}`)
-	pongFrame = json.RawMessage(`{"method":"pong"}`)
+	pongFrame = jsontext.Value(`{"method":"pong"}`)
 )
 
 // notification renders a frame once, for sending to many connections.
-func notification(method string, params any) json.RawMessage {
+func notification(method string, params any) jsontext.Value {
 	return encodeJSON(map[string]any{"method": method, "params": params})
 }
 
 // rawNotification renders a frame around params that are already JSON, as
 // notification would with the decoded params ("method" sorts first).
-func rawNotification(method string, params json.RawMessage) json.RawMessage {
+func rawNotification(method string, params jsontext.Value) jsontext.Value {
 	payload := make([]byte, 0, len(method)+len(params)+24)
 	payload = append(payload, `{"method":`...)
 	payload = strconv.AppendQuote(payload, method)
@@ -281,7 +288,7 @@ func rawNotification(method string, params json.RawMessage) json.RawMessage {
 
 // rawResponse renders a result reply around a result that is already JSON,
 // as response would with the decoded result.
-func rawResponse(id string, full bool, result []byte) json.RawMessage {
+func rawResponse(id string, full bool, result []byte) jsontext.Value {
 	payload := make([]byte, 0, len(id)+len(result)+40)
 	payload = append(payload, '{')
 	if full {
@@ -696,8 +703,8 @@ func (c *client) stopConnection() {
 // (PROTOCOL.md §1.1), after the frames already queued, then closes the
 // connection.
 func (c *client) closeWithError(e *rpcError) {
-	payload, err := json.Marshal(errorResponse(nil, false, e))
-	if err != nil || !c.closing.CompareAndSwap(false, true) {
+	payload := encodeJSON(errorResponse(nil, false, e))
+	if payload == nil || !c.closing.CompareAndSwap(false, true) {
 		return
 	}
 	select {
@@ -722,7 +729,7 @@ func (c *client) enqueueBatch(values ...any) bool {
 	for _, value := range values {
 		// A frame rendered once for many connections is shared as is; the
 		// writer never modifies it.
-		payload, rendered := value.(json.RawMessage)
+		payload, rendered := value.(jsontext.Value)
 		if !rendered {
 			if payload = encodeJSON(value); payload == nil {
 				c.stopConnection()

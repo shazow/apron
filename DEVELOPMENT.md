@@ -30,7 +30,7 @@ devenv shell -- make install
 devenv up
 ```
 
-The locked environment provides Node.js 24, npm, Go 1.26, Make, a C compiler
+The locked environment provides Node.js 24, npm, Go 1.27, Make, a C compiler
 for Go race tests, and Chromium on Linux. `devenv up` starts the Go backend and
 Vite frontend; Ctrl-C stops both. Use `devenv shell` for an interactive shell
 with the same tools. Dependency installation is explicit; rerun `make install`
@@ -38,7 +38,7 @@ after manifest or lockfile changes.
 For background processes, use `devenv up --detach` and stop them with
 `devenv down`.
 
-Without Nix, install Node.js 24 LTS, npm, Go 1.26+, Make, and a C compiler.
+Without Nix, install Node.js 24 LTS, npm, Go 1.27+, Make, and a C compiler.
 Run `make install`, then `make dev-server` and `make dev-web` in separate
 terminals. All Make commands below work inside `devenv shell` or with those
 tools installed directly.

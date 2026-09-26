@@ -2,7 +2,7 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"image"
 	"image/png"
@@ -950,7 +950,7 @@ func TestPushWakesMentionedUsersWhoAreAway(t *testing.T) {
 	received := make(chan relayRequest, 16)
 	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&payload)
+		_ = json.UnmarshalRead(r.Body, &payload)
 		received <- relayRequest{path: r.URL.Path, authorization: r.Header.Get("Authorization"), payload: payload}
 		if r.URL.Path == "/gone" {
 			w.WriteHeader(http.StatusGone)
