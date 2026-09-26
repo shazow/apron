@@ -84,7 +84,7 @@ type ThrottledType = "activity" | "room_list";
 const THROTTLED_TYPES: readonly ThrottledType[] = ["activity", "room_list"];
 const THROTTLE_WINDOW_MS = 60_000;
 /** The system identity for notices to one user only, never logged (Appendix A.1). */
-const PRIVATE_IDENTITY = { user_id: "@private", name: "Only you" } as const;
+const PRIVATE_IDENTITY = { user_id: "@private", name: "System message to you" } as const;
 /**
  * The liveness ping clients send every `server.ping` seconds, byte for byte,
  * and its answer (§1). The runtime answers it without waking the object.

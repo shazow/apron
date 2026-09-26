@@ -58,9 +58,10 @@ one can pass as someone else. Without an avatar, a
 person's initials sit on a muted tint whose hue is hashed from their `user_id`,
 so the same person has the same color on every client. Senders whose `user_id`
 starts with `@` render as quiet centered system lines, except the three that
-state a scope, which render as the design system's notice card: left-aligned,
-titled "System message to you" (`@private`), "System message to this room"
-(`@room`), or "System message to everyone" (`@server`). `@private` ones, and
+state a scope (`@private`, `@room`, `@server`), which render as the design
+system's notice card: left-aligned, and titled by the sender as the server
+names it, `Name (@user_id)`, such as "System message to you (@private)" from
+this repository's servers. `@private` ones, and
 every `message` without a `message_id` (such as a command's reply), are
 transient notices: a dashed card for the session, never stored, and gone on
 reload. A notice sent before authentication, such as a server's welcome

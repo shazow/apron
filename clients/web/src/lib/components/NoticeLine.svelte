@@ -26,6 +26,6 @@
 </script>
 
 <SystemNotice
-	scope={noticeScope(notice.from.user_id) ?? 'private'} html={body} plain={!markdown} testid="notice"
+	scope={noticeScope(notice.from.user_id) ?? 'private'} from={notice.from} html={body} plain={!markdown} testid="notice"
 	time={{ short: idTime(at), iso: idIso(at), full: idDateTime(at) }} onclick={click}
 />

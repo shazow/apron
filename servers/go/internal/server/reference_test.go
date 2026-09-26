@@ -848,7 +848,7 @@ func TestCommands(t *testing.T) {
 		notice := notificationParams(t, before[0], "message")
 		body := notice["body"].(map[string]any)
 		if _, has := notice["message_id"]; has || notice["log_id"] != nil || notice["room_id"] != roomID || body["format"] != "markdown" ||
-			!reflect.DeepEqual(notice["from"], map[string]any{"user_id": "@private", "name": "Only you"}) {
+			!reflect.DeepEqual(notice["from"], map[string]any{"user_id": "@private", "name": "System message to you"}) {
 			t.Fatalf("help notice: %#v", notice)
 		}
 		return body["text"].(string)

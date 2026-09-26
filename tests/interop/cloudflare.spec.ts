@@ -188,7 +188,7 @@ test('Worker verifies discoverable passkeys, rejects replay and bad signatures, 
 	// The token comes in a private notice, in a code block with a Copy button.
 	const notice = page.getByTestId('notice').filter({ hasText: 'Your bot signs in as' });
 	await expect(notice).toBeVisible();
-	await expect(notice.locator('.ap-notice-title')).toHaveText('System message to you');
+	await expect(notice.locator('.ap-notice-title')).toHaveText('System message to you (@private)');
 	const botName = (await notice.locator('strong').first().textContent())!;
 	expect(botName).toMatch(/^Bot of /);
 	const block = notice.locator('pre').first();

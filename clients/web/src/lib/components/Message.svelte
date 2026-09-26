@@ -174,7 +174,7 @@
 
 {#if system && !selecting && scope}
 	<!-- A scoped system message (Appendix A.1): a left-aligned card titled by who got it. -->
-	<SystemNotice {scope} html={body} plain={event.body?.format !== 'markdown'} deleted={event.deleted} messageId={event.message_id}
+	<SystemNotice {scope} from={event.from} html={body} plain={event.body?.format !== 'markdown'} deleted={event.deleted} messageId={event.message_id}
 		time={time ? { short: time, iso: isoTime, full: fullTime } : undefined} onclick={click} />
 {:else if system && !selecting}
 	<!-- Another system identity (Appendix A.1): a quiet centered line, no avatar, actions or grouping. -->

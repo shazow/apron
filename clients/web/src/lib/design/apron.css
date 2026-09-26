@@ -358,8 +358,8 @@ a.ap-embed-card:hover { background: var(--bg-300); }
 .ap-msg-system-who { font-weight: 600; color: var(--ink-muted); }
 .ap-msg-system-body .ap-msg-text { color: var(--ink); }
 .ap-msg-system-time { font-size: 11px; font-variant-numeric: tabular-nums; }
-/* Scoped system messages (Appendix A.1): @private, @room, @server. A left-aligned card titled by who got it,
-   "System message to you", "… to this room", "… to everyone"; never centered, since they run to paragraphs and code.
+/* Scoped system messages (Appendix A.1): @private, @room, @server. A left-aligned card titled by its sender as the
+   server names it, "Name (@user_id)"; never centered, since they run to paragraphs and code.
    Private ones are dashed: never stored, gone on reload. A code block in one wraps, with a Copy button clear of the text. */
 .ap-notice { margin: var(--space-3) var(--space-4) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-200); font-size: 14px; line-height: 20px; color: var(--ink); text-align: left; }
 .ap-notice-private { border: 1px dashed var(--line-strong); background: transparent; }
