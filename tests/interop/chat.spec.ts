@@ -85,7 +85,8 @@ test.describe('chat protocol interoperability', () => {
 			const renamed = `Thread renamed to “${token}-renamed”`;
 			await expect(pageB.getByTestId('thread-renamed')).toContainText(renamed);
 			await pageB.reload();
-			await cardB.click();
+			// B, a new guest again, reads the thread through its history, then joins it to follow it live.
+			await openThread(pageB, threadId, { join: true });
 			await expect(pageB.getByTestId('thread-renamed')).toContainText(renamed);
 			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
 			await expect(cardB).toContainText(`${token}-renamed`);
@@ -289,7 +290,7 @@ test.describe('chat protocol interoperability', () => {
 		const selected = page.locator('[data-testid="thread-list"] button[data-thread][aria-current="page"]');
 		await expect(selected).toHaveAttribute('data-thread', targetThreadId);
 		await expect(stableTarget).toBeFocused();
-		// After a reload this is a new guest, who has joined neither thread: the card joins it.
+		// After a reload this is a new guest, who has joined neither thread: the card opens it without joining.
 		await page.reload();
 		await openThread(page, replyThreadId);
 		await expect(stableReply.getByTestId('reply-reference')).toContainText(`${token}-target`);
@@ -363,6 +364,51 @@ test.describe('chat protocol interoperability', () => {
 			await expect(await waitForMessage(pageC, text)).toContainText(text);
 		} finally {
 			await Promise.all([contextA.close(), contextB.close(), contextC.close()]);
+		}
+	});
+
+	test('shows who joined as a quiet line, and no line for a join and leave with nothing between', async ({ browser }) => {
+		const contexts = await Promise.all([browser.newContext(), browser.newContext(), browser.newContext(), browser.newContext()]);
+		const [watcher, joiner, churner, reader] = await Promise.all(contexts.map((context) => context.newPage()));
+		try {
+			await openChat(watcher);
+			const token = `members-${Date.now().toString(36)}`;
+			/** The join and leave lines right after a message, up to the next message. */
+			const linesAfter = (page: typeof watcher, messageId: string) =>
+				page.locator(`article[data-message-id="${messageId}"] + [data-testid="membership-line"]`);
+			await sendMessage(watcher, `${token}-before`);
+			const before = (await (await waitForMessage(watcher, `${token}-before`)).getAttribute('data-message-id'))!;
+
+			// A guest joins General as it signs in: the watcher sees a quiet line, not a message.
+			await openChat(joiner);
+			const joinerId = await userIdOf(joiner);
+			const joined = linesAfter(watcher, before);
+			await expect(joined.locator('.ap-msg-system-body')).toHaveText(`${joinerId} joined`);
+			await expect(joined.locator('time')).toHaveAttribute('title', /\d/);
+			await expect(joined.locator('.ap-avatar, button')).toHaveCount(0);
+			// The line renders its user as every row does: a rename shows on it.
+			const name = `Zed ${token}`;
+			await setDisplayName(joiner, name);
+			await expect(joined.locator('.ap-msg-system-body')).toHaveText(`${name} joined`);
+
+			// Another guest joins and leaves with no message between: the line it had goes away.
+			await sendMessage(watcher, `${token}-after`);
+			const after = (await (await waitForMessage(watcher, `${token}-after`)).getAttribute('data-message-id'))!;
+			await openChat(churner);
+			const churnerId = await userIdOf(churner);
+			await expect(linesAfter(watcher, after).locator('.ap-msg-system-body')).toHaveText(`${churnerId} joined`);
+			await contexts[2].close();
+			await expect(linesAfter(watcher, after)).toHaveCount(0);
+			// Messages on either side of the netted run still group.
+			await sendMessage(watcher, `${token}-grouped`);
+			await expect(await waitForMessage(watcher, `${token}-grouped`)).toHaveClass(/ap-msg-grouped/);
+
+			// A new reader gets the same lines from history.
+			await openChat(reader);
+			await expect(linesAfter(reader, before).locator('.ap-msg-system-body')).toHaveText(`${name} joined`);
+			await expect(linesAfter(reader, after)).toHaveCount(0);
+		} finally {
+			await Promise.all(contexts.map((context) => context.close()));
 		}
 	});
 
@@ -521,13 +567,15 @@ test.describe('chat protocol interoperability', () => {
 			await expect(pageB.locator(`article[data-message-id="${replyId}"]`)).toHaveCount(0);
 			expect(await roomB.locator('article[data-message-id]').count()).toBe(roomArticlesBefore);
 
-			// B has not joined A's thread: its card joins it, and only then does it deliver.
+			// B has not joined A's thread: its card reads it through history without joining it.
+			// Moves still reach B through the room both belong to.
 			const threadButtonB = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
 			await expect(threadButtonB).toHaveCount(0);
 			await openThread(pageB, threadId);
 			await expect(await waitForMessage(pageB, replyText)).toContainText(replyText);
 			await expect(rootB).toBeVisible();
 			await expect(threadButtonB.locator('small')).toHaveText('1');
+			await expect(pageB.getByTestId('join-room')).toBeVisible();
 
 			// A room message moves into the thread (with its reactions) and back out.
 			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
@@ -571,6 +619,51 @@ test.describe('chat protocol interoperability', () => {
 			await expect(threadButton.locator('small')).toHaveText('1');
 		} finally {
 			await contextA.setOffline(false).catch(() => undefined);
+			await Promise.all([contextA.close(), contextB.close()]);
+		}
+	});
+
+	test('reads a thread without joining it, and follows it live once joined', async ({ browser }) => {
+		const contextA = await browser.newContext();
+		const contextB = await browser.newContext();
+		try {
+			const pageA = await contextA.newPage();
+			const pageB = await contextB.newPage();
+			await Promise.all([openChat(pageA), openChat(pageB)]);
+			const token = `readonly-${Date.now().toString(36)}`;
+			await sendMessage(pageA, `${token}-root`);
+			await waitForMessage(pageB, `${token}-root`);
+			const threadId = await startThread(pageA, await waitForMessage(pageA, `${token}-root`));
+			await sendMessage(pageA, `${token}-first`);
+			await waitForMessage(pageA, `${token}-first`);
+
+			// Reading needs no membership: B's card opens the thread through its history, offering Join.
+			await openThread(pageB, threadId);
+			await waitForMessage(pageB, `${token}-first`);
+			await expect(pageB.getByTestId('join-room')).toBeVisible();
+			await expect(pageB.getByTestId('leave-room')).toHaveCount(0);
+			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
+
+			// Only members receive a thread's messages: B hears the room, not the thread.
+			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
+			await openThread(pageA, threadId);
+			await sendMessage(pageA, `${token}-second`);
+			const secondId = await (await waitForMessage(pageA, `${token}-second`)).getAttribute('data-message-id');
+			await pageA.getByRole('button', { name: 'Back to room', exact: true }).click();
+			await sendMessage(pageA, `${token}-in-room`);
+			await waitForMessage(pageB, `${token}-in-room`);
+			await openThread(pageB, threadId);
+			await waitForMessage(pageB, `${token}-first`);
+			await expect(pageB.locator(`article[data-message-id="${secondId}"]`)).toHaveCount(0);
+
+			// Joining catches up on what it missed, and from then on the thread is live.
+			await pageB.getByTestId('join-room').click();
+			await expect(pageB.getByTestId('leave-room')).toBeVisible();
+			await expect(pageB.locator(`article[data-message-id="${secondId}"]`)).toBeVisible();
+			await openThread(pageA, threadId);
+			await sendMessage(pageA, `${token}-third`);
+			await waitForMessage(pageB, `${token}-third`);
+		} finally {
 			await Promise.all([contextA.close(), contextB.close()]);
 		}
 	});
@@ -774,8 +867,8 @@ test.describe('chat protocol interoperability', () => {
 			const token = `threadping-${Date.now().toString(36)}`;
 			await sendMessage(pageA, `${token}-root`);
 			const threadId = await startThread(pageA, await waitForMessage(pageA, `${token}-root`));
-			// B joins the thread (its card), then goes back to the room.
-			await openThread(pageB, threadId);
+			// B joins the thread (its card, then Join), then goes back to the room.
+			await openThread(pageB, threadId, { join: true });
 			await pageB.getByRole('button', { name: 'Back to room', exact: true }).click();
 			const row = pageB.locator(`[data-testid="thread-list"] button[data-thread="${threadId}"]`);
 			await expect(row).toBeVisible();
@@ -809,7 +902,7 @@ test.describe('chat protocol interoperability', () => {
 			await sendMessage(pageA, `${handle}-first-reply`);
 			await waitForMessage(pageA, `${handle}-first-reply`);
 
-			await openThread(pageB, threadId);
+			await openThread(pageB, threadId, { join: true });
 			await waitForMessage(pageB, `${handle}-first-reply`);
 			await pageB.getByTestId('message-list').evaluate((node) => { node.scrollTop = 0; });
 			await expect(pageB.getByTestId('jump-button')).toHaveAccessibleName('Jump to latest');

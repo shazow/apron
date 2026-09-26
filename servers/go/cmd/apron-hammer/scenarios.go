@@ -116,7 +116,8 @@ func createRoom(ctx context.Context, p *peer, params map[string]any) (string, er
 	return result.RoomID, err
 }
 
-// orderCheck verifies that a connection sees each room's log_ids increase.
+// orderCheck verifies that a connection sees each room's log_ids increase
+// across every logged kind it checks: messages, reactions, and memberships.
 type orderCheck struct {
 	h        *hammer
 	last     map[string]int64
@@ -129,7 +130,7 @@ func newOrderCheck(h *hammer) *orderCheck {
 
 // notify runs on the peer's read goroutine.
 func (o *orderCheck) notify(method string, frame []byte) {
-	if method != "message" && method != "reactions" {
+	if method != "message" && method != "reactions" && method != "membership" {
 		return
 	}
 	var f struct {
@@ -168,6 +169,10 @@ func runChurn(h *hammer, st *stats) {
 				return err
 			})
 			if err != nil {
+				// The window may end after a successful sign-in.
+				if p != nil {
+					p.close()
+				}
 				continue
 			}
 			// Alternate the close handshake with dropped connections.
@@ -361,28 +366,44 @@ func runThreads(h *hammer, st *stats) {
 	defer cancel()
 	defer st.finish()
 	run(h.clients, func(i int) {
-		for ctx.Err() == nil {
+		for n := 0; ctx.Err() == nil; n++ {
 			if i < len(listers) {
-				_ = measure(ctx, st, "room_list threads", func() error {
-					_, err := listers[i].call(ctx, "room_list", map[string]any{"parent_room_id": generalRoom})
-					return err
-				})
+				// Alternate the threads a client could join with the joined
+				// rooms and their members.
+				if n%2 == 0 {
+					_ = measure(ctx, st, "room_list not_joined", func() error {
+						_, err := listers[i].call(ctx, "room_list", map[string]any{"parent_room_id": generalRoom, "filter": "not_joined"})
+						return err
+					})
+				} else {
+					_ = measure(ctx, st, "room_list members", func() error {
+						_, err := listers[i].call(ctx, "room_list", map[string]any{"filter": "joined", "members": true})
+						return err
+					})
+				}
 				continue
 			}
-			// A client signs in, lists its rooms, and joins a thread.
+			// A client signs in and lists its joined rooms with their
+			// members in one round trip, then joins and leaves a thread;
+			// each join and leave is a logged membership.
 			var p *peer
-			if measure(ctx, st, "connect+auth", func() (err error) {
-				p, err = h.dialGuest(ctx, "joiner", dialOptions{})
+			if measure(ctx, st, "auth+room_list", func() (err error) {
+				p, err = h.dialGuest(ctx, "joiner", dialOptions{list: true})
 				return err
 			}) != nil {
+				// The window may end after a successful sign-in.
+				if p != nil {
+					p.close()
+				}
 				continue
 			}
-			_ = measure(ctx, st, "room_list joined", func() error {
-				_, err := p.call(ctx, "room_list", map[string]any{"only_joined": true})
+			thread := threads[(i+n)%len(threads)]
+			_ = measure(ctx, st, "room_join", func() error {
+				_, err := p.call(ctx, "room_join", map[string]any{"room_id": thread})
 				return err
 			})
-			_ = measure(ctx, st, "room_join", func() error {
-				_, err := p.call(ctx, "room_join", map[string]any{"room_id": threads[i%len(threads)]})
+			_ = measure(ctx, st, "room_leave", func() error {
+				_, err := p.call(ctx, "room_leave", map[string]any{"room_id": thread})
 				return err
 			})
 			p.close()

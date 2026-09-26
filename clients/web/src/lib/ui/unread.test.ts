@@ -12,7 +12,7 @@ const message = (id: number, roomId: string, from = 'ada', fields: Partial<Messa
 
 function room(id: string, messages: MessageRecord[], fields: Partial<RoomSnapshot> = {}): RoomSnapshot {
 	const timeline = { ...createTimeline(id), events: Object.fromEntries(messages.map((event) => [event.message_id, event])), order: messages.map((event) => event.message_id) };
-	return { id, title: id, timeline, recovering: false, loaded: true, loading: false, notices: [], ...fields };
+	return { id, title: id, joined: true, timeline, recovering: false, loaded: true, loading: false, notices: [], ...fields };
 }
 
 describe('unread tracking', () => {

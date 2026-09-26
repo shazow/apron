@@ -18,6 +18,7 @@ function snapshot(users: Identity[], fields: Partial<ClientSnapshot> = {}): Clie
 		authenticated: true,
 		you: ada,
 		users: Object.fromEntries(users.map((user) => [user.user_id, user])),
+		recordedUsers: {},
 		userAliases: {},
 		rooms: [],
 		directory: [listing('lobby', 'Lobby')],
@@ -68,5 +69,37 @@ describe('directory', () => {
 		flushSync();
 		expect(rows.html()[0]).toContain('Front hall');
 		rows.stop();
+	});
+
+	it('renders field by field: the kept object, then the recorded one, then the user_id', () => {
+		directory.apply(snapshot([ada, { user_id: 'bo', avatar: 'https://example.com/bo.png' }]), 'https://example.com');
+		// Bo's kept object has no name: the message's from supplies it, the kept one the avatar.
+		expect(directory.name({ user_id: 'bo', name: 'Bo then' })).toBe('Bo then');
+		expect(directory.avatar({ user_id: 'bo', name: 'Bo then' })).toBe('https://example.com/bo.png');
+		// Ada's kept name wins over an old from.
+		expect(directory.name({ user_id: 'ada', name: 'Ada Lovelace' })).toBe('Ada');
+		// No kept object and no name anywhere: the user_id.
+		expect(directory.name({ user_id: 'guest_7' })).toBe('guest_7');
+	});
+
+	it('resolves a mention of someone known only from a record by the recorded name', () => {
+		directory.apply(snapshot([ada], { recordedUsers: { guest_7: { user_id: 'guest_7', name: 'Seven' } } }), undefined);
+		expect(directory.resolve('guest_7')).toEqual({ kind: 'user', id: 'guest_7', name: 'Seven', me: false });
+		expect(directory.resolve('guest_8')).toBeUndefined();
+	});
+
+	it('tells when another known user shows under the same name', () => {
+		const impostor = { user_id: 'guest_9', name: 'Ada' };
+		directory.apply(snapshot([ada, bo], { recordedUsers: { guest_9: impostor, bo: { user_id: 'bo', name: 'Bo' } } }), undefined);
+		// A kept user and one known only from a message share "Ada": both show their handle.
+		expect(directory.sharesName(impostor)).toBe(true);
+		expect(directory.sharesName(ada)).toBe(true);
+		// Bo's kept and recorded objects are the same user.
+		expect(directory.sharesName({ user_id: 'bo', name: 'Bo' })).toBe(false);
+		// An old message of Ada's renders under her kept name, and a retired ID counts as the identity that replaced it.
+		directory.apply(snapshot([ada, bo], { recordedUsers: { guest_2: { user_id: 'guest_2', name: 'Ada' } }, userAliases: { guest_2: 'ada' } }), undefined);
+		expect(directory.name({ user_id: 'guest_2', name: 'Guest' })).toBe('Ada');
+		expect(directory.sharesName({ user_id: 'guest_2', name: 'Guest' })).toBe(false);
+		expect(directory.sharesName(ada)).toBe(false);
 	});
 });

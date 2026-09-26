@@ -1,6 +1,7 @@
 import { childRooms, timelineMessages, type Notice, type RoomListing, type RoomRename, type RoomSnapshot } from '$lib/protocol/client';
-import { compareLogIds } from '$lib/protocol/reducer';
+import { compareLogIds, type MembershipRecord } from '$lib/protocol/reducer';
 import { isLogId, type Identity, type MessageRecord } from '$lib/protocol/types';
+import { isBaseline, MembershipRun } from './membership';
 import { embedsOf, senderName, textOf } from './messages';
 import { dayKey, dayKeyOf, dayLabel, dayLabelOf, eventTime, idTime, isGrouped } from './time';
 
@@ -33,8 +34,8 @@ export interface ThreadEntry {
 	anchor?: string;
 	/**
 	 * The viewer has joined the thread (§4.3.2). A thread not joined is known
-	 * from `room_list` or a `room_update`: it still gets a card, and opening it
-	 * joins it.
+	 * from `room_list` or a `room_update`, or open without joining: it still
+	 * gets a card, opening it reads its history, and only joining makes it live.
 	 */
 	joined: boolean;
 }
@@ -45,15 +46,18 @@ export type TimelineItem =
 	| { kind: 'thread'; key: string; entry: ThreadEntry }
 	| { kind: 'replies'; key: string; count: number; more?: boolean }
 	| { kind: 'renamed'; key: string; logId: string; title: string }
-	| { kind: 'notice'; key: string; notice: Notice };
+	| { kind: 'notice'; key: string; notice: Notice }
+	/** Consecutive memberships netted out (see `MembershipRun`); `logId` is the last one's. */
+	| { kind: 'members'; key: string; logId: string; joined: Identity[]; left: Identity[] };
 
 /**
- * The rooms the sidebar lists at the top level: rooms without a parent, and
- * threads whose parent is not visible (so they stay reachable).
+ * The rooms the sidebar lists at the top level: joined rooms without a
+ * parent, and joined threads whose parent is not visible (so they stay
+ * reachable). A room opened without joining shows only while it is open.
  */
 export function sidebarRooms(rooms: readonly RoomSnapshot[]): RoomSnapshot[] {
 	const visible = new Set(rooms.map((room) => room.id));
-	return rooms.filter((room) => room.parentRoomId === undefined || !visible.has(room.parentRoomId));
+	return rooms.filter((room) => room.joined && (room.parentRoomId === undefined || !visible.has(room.parentRoomId)));
 }
 
 /** The top-level room a room belongs to: its parent for a visible thread, else itself. */
@@ -85,7 +89,7 @@ export function threadEntry(room: RoomSnapshot): ThreadEntry {
 		lastReply: latest ? eventTime(latest) : '',
 		...(latest ? { latestMessage: latest } : {}),
 		...(anchor !== undefined ? { anchor } : {}),
-		joined: true
+		joined: room.joined
 	};
 }
 
@@ -109,8 +113,9 @@ export function unjoinedThreadEntry(listing: RoomListing, message?: (messageId: 
 }
 
 /**
- * The threads of a room: the joined ones in listing order, then the ones
- * listed as not joined (`unjoined`, from `room_list` with `parent_room_id`).
+ * The threads of a room: the ones the client has, joined or open without
+ * joining, in listing order, then the others listed as not joined
+ * (`unjoined`, from `room_list` with `parent_room_id`).
  */
 export function threadEntries(
 	rooms: readonly RoomSnapshot[], parentRoomId: string | undefined, unjoined: readonly RoomListing[] = [],
@@ -153,6 +158,8 @@ export interface RoomTimelineInput {
 	threads: ThreadEntry[];
 	/** Transient notices shown in the room (§3.5), in arrival order. */
 	notices?: readonly Notice[];
+	/** The room's membership records (§4.3.2), ascending by `log_id`. */
+	memberships?: readonly MembershipRecord[];
 	now?: Date;
 }
 
@@ -176,8 +183,13 @@ function noticeQueue(notices: readonly Notice[]): (before?: string) => Notice[] 
  * that is the intro of one of the room's threads is shown as that thread's
  * card; other threads' cards sit where they were started (their anchor).
  * Date dividers split days.
+ *
+ * Join and leave lines sit at their records' `log_id`s among the messages
+ * and cards. Records with nothing else between them (a date divider counts)
+ * make one line, netted out: a run that nets to nothing leaves no line and
+ * does not break a sender's group. Baseline records are skipped (`isBaseline`).
  */
-export function buildRoomTimeline({ messages, threads, notices = [], now = new Date() }: RoomTimelineInput): TimelineItem[] {
+export function buildRoomTimeline({ messages, threads, notices = [], memberships = [], now = new Date() }: RoomTimelineInput): TimelineItem[] {
 	const here = new Set(messages.map((event) => event.message_id));
 	const byIntro = new Map<string, ThreadEntry[]>();
 	const floating: ThreadEntry[] = [];
@@ -194,43 +206,92 @@ export function buildRoomTimeline({ messages, threads, notices = [], now = new D
 	const items: TimelineItem[] = [];
 	let lastDay = '';
 	let previous: MessageRecord | undefined;
+	/** The membership run being collected, and the day it is on; it becomes a line when anything else comes. */
+	let run: MembershipRun | undefined;
+	let runDay = '';
+	const closeRun = () => {
+		if (!run) return;
+		const { joined, left } = run.net();
+		const logId = run.lastLogId, key = `members:${run.firstLogId}`;
+		run = undefined;
+		if (!joined.length && !left.length) return;
+		pushDate(runDay, () => dayLabelOf(logId, now));
+		items.push({ kind: 'members', key, logId, joined, left });
+		previous = undefined;
+	};
 	const pushDate = (day: string, label: () => string) => {
 		if (day && day !== lastDay) {
+			closeRun();
 			items.push({ kind: 'date', key: `date:${day}`, label: label() });
 			lastDay = day;
 			previous = undefined;
 		}
 	};
 	const pushCard = (entry: ThreadEntry) => {
+		closeRun();
 		if (entry.anchor !== undefined) pushDate(dayKeyOf(entry.anchor), () => dayLabelOf(entry.anchor!, now));
 		items.push({ kind: 'thread', key: `thread:${entry.id}`, entry });
 		previous = undefined;
 	};
-	const pending = noticeQueue(notices);
-	// A notice is a system line: it never groups with the messages around it.
-	const pushNotices = (before?: string) => {
-		for (const notice of pending(before)) {
-			items.push({ kind: 'notice', key: notice.key, notice });
-			previous = undefined;
+	const pushMembership = (record: MembershipRecord) => {
+		if (isBaseline(record)) return;
+		const day = dayKeyOf(record.log_id);
+		// A date divider breaks a run: the day's first line comes after it.
+		if (run && day !== runDay) closeRun();
+		if (run) run.add(record);
+		else {
+			run = new MembershipRun(record);
+			runDay = day;
 		}
 	};
+	const pending = noticeQueue(notices);
+	// A notice is a system line: it never groups with the messages around it.
+	const pushNotice = (notice: Notice) => {
+		closeRun();
+		items.push({ kind: 'notice', key: notice.key, notice });
+		previous = undefined;
+	};
 	let next = 0;
-	for (const event of messages) {
-		while (next < floating.length && floating[next].anchor !== undefined && compareLogIds(floating[next].anchor!, event.message_id) < 0) {
-			pushCard(floating[next++]);
+	let nextMembership = 0;
+	/**
+	 * Everything before `before` (all when undefined) that is not a message:
+	 * cards and membership records merged by log position, then the notices
+	 * that followed the last message. A notice and a membership record in the
+	 * same gap go by time, since a record's `log_id` is its commit time.
+	 */
+	const pushGap = (before?: string) => {
+		const due = (position: string) => before === undefined || compareLogIds(position, before) < 0;
+		const gapNotices = pending(before);
+		let notice = 0;
+		for (;;) {
+			const card = next < floating.length && (floating[next].anchor === undefined ? before === undefined : due(floating[next].anchor!)) ? floating[next] : undefined;
+			const record = nextMembership < memberships.length && due(memberships[nextMembership].log_id) ? memberships[nextMembership] : undefined;
+			if (!card && !record) break;
+			if (record && (!card || card.anchor === undefined || compareLogIds(record.log_id, card.anchor) < 0)) {
+				while (notice < gapNotices.length && gapNotices[notice].at < Number(record.log_id)) pushNotice(gapNotices[notice++]);
+				pushMembership(record);
+				nextMembership++;
+			} else {
+				pushCard(card!);
+				next++;
+			}
 		}
-		pushNotices(event.message_id);
+		while (notice < gapNotices.length) pushNotice(gapNotices[notice++]);
+	};
+	for (const event of messages) {
+		pushGap(event.message_id);
 		const cards = byIntro.get(event.message_id);
 		if (cards) {
 			for (const entry of cards) pushCard(entry);
 			continue;
 		}
+		closeRun();
 		pushDate(dayKey(event), () => dayLabel(event, now));
 		items.push({ kind: 'message', key: event.message_id, event, grouped: isGrouped(previous, event) });
 		previous = event;
 	}
-	while (next < floating.length) pushCard(floating[next++]);
-	pushNotices();
+	pushGap();
+	closeRun();
 	return items;
 }
 

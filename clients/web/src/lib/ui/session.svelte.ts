@@ -8,7 +8,7 @@ type HeldSession = { rooms: RoomSnapshot[]; activeRoom?: string; you?: Identity;
 export const RECONNECT_STALL_MS = 10_000;
 
 export const blankSnapshot = (): ClientSnapshot => ({
-	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], users: {}, userAliases: {}, uploads: {}, threadDirectory: {}, showReconnectDivider: false
+	status: 'idle', authenticated: false, capabilities: capabilitiesOf(undefined), rooms: [], pending: [], typing: [], users: {}, recordedUsers: {}, userAliases: {}, uploads: {}, threadDirectory: {}, showReconnectDivider: false
 });
 
 /**

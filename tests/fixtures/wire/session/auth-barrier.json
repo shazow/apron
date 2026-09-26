@@ -1,0 +1,40 @@
+{
+  "format": 4,
+  "kind": "session",
+  "name": "Auth barrier",
+  "description": "auth is a barrier: the server finishes it before processing later frames, so the client sends room_list (filter joined, with members) right behind it, before its result. After a successful auth the listing is answered as usual and the rooms recover. When auth fails, the requests behind it are denied: the client stays unauthenticated with no rooms, and the denied listing changes nothing.",
+  "references": [
+    "PROTOCOL.md#1-transport--framing",
+    "PROTOCOL.md#32-authentication",
+    "PROTOCOL.md#431-listing"
+  ],
+  "variants": [
+    {
+      "name": "pipelined",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["history","rooms"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"expect":{"you":null,"rooms":[]}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"rooms":[]}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"10","title":"General","latest_log_id":"11","history_log_id":"10","members":[{"user_id":"guest_1"}]}],"users":[{"user_id":"guest_1","name":"Ada"}]}}},
+        {"request":{"as":"history","match":{"method":"history","params":{"room_id":"general","after":"10","before":"11"}}}},
+        {"reply":{"to":"history","result":{"rooms":[{"room_id":"general","log_id":"10","title":"General"}],"membership":[{"log_id":"11","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Ada"},"joined":true}]}],"first_log_id":"10","last_log_id":"11","more":false,"latest_log_id":"11","history_log_id":"10"}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"caps":["history","rooms"],"rooms":[{"room_id":"general","log_id":"10","title":"General","messages":[]}],"members":{"general":["guest_1"]}}}
+      ]
+    },
+    {
+      "name": "denied",
+      "steps": [
+        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["history","rooms"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth","error":{"code":-32001,"message":"Guests are not accepted right now"}}},
+        {"reply":{"to":"rooms","error":{"code":-32001,"message":"Not authenticated"}}},
+        {"expect":{"you":null,"caps":["history","rooms"],"rooms":[],"members":{}}}
+      ]
+    }
+  ],
+  "expected": {}
+}

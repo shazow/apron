@@ -18,6 +18,7 @@
 	import ThreadEditor from '$lib/components/ThreadEditor.svelte';
 	import TypingDots from '$lib/components/TypingDots.svelte';
 	import NoticeLine from '$lib/components/NoticeLine.svelte';
+	import MembershipLine from '$lib/components/MembershipLine.svelte';
 	import { composerAction } from '$lib/ui/commands';
 	import { backendHost, demoRetentionNotice, statusLabel } from '$lib/ui/connection';
 	import { directory } from '$lib/ui/directory.svelte';
@@ -126,7 +127,10 @@
 	/** The active room's threads: the joined ones, then those listed as not joined, which get cards too. */
 	let threads = $derived(threadEntries(session.rooms, activeRoom?.id, activeRoom ? snapshot.threadDirectory[activeRoom.id] : undefined, resolveMessage));
 	let joinedThreads = $derived(threads.filter((entry) => entry.joined));
-	let activeThreadEntry = $derived(activeThread ? joinedThreads.find((entry) => entry.id === activeThread) : undefined);
+	/** The sidebar lists joined threads, and a thread open without joining while it is open. */
+	let listedThreads = $derived(threads.filter((entry) => entry.joined || entry.id === activeThread));
+	/** The open thread, joined or read without joining; the client holds either as a room. */
+	let activeThreadEntry = $derived(activeThread && session.rooms.some((room) => room.id === activeThread) ? threads.find((entry) => entry.id === activeThread) : undefined);
 	let threadRoom = $derived(activeThreadEntry ? session.rooms.find((room) => room.id === activeThreadEntry.id) : undefined);
 	/** The room the pane shows and the composer posts to: the open thread (itself a room), else the room. */
 	let paneRoom = $derived(activeThread ? threadRoom : activeRoom);
@@ -134,10 +138,10 @@
 	let intro = $derived(activeThread ? activeThreadEntry?.introMessage : undefined);
 	let timeline = $derived(activeThread
 		? buildThreadTimeline({ messages, intro, renames: paneRoom?.renames, moreReplies: Boolean(threadRoom?.olderAvailable), notices: paneRoom?.notices })
-		: buildRoomTimeline({ messages, threads, notices: paneRoom?.notices }));
+		: buildRoomTimeline({ messages, threads, notices: paneRoom?.notices, memberships: paneRoom?.timeline.memberships }));
 	let shownTimeline = $derived(hiddenItems > 0 ? timeline.slice(Math.min(hiddenItems, timeline.length)) : timeline);
 	let canCompose = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
-	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members, paneRoom?.membersAsOf));
+	let people = $derived(peopleIn([...(activeThread ? timelineMessages(activeRoom) : []), ...(intro ? [intro] : []), ...messages], session.you, paneRoom?.members));
 	let typingNames = $derived(snapshot.typing
 		.filter((entry) => entry.room === paneRoom?.id && entry.from.user_id !== session.you?.user_id)
 		.map((entry) => directory.name(entry.from)));
@@ -218,9 +222,9 @@
 		untrack(() => client?.markRead(room.id, last.message_id));
 	});
 
-	// Members for the mention picker come from `room_list` with `room_id` (cap `rooms`): listed
-	// whenever the pane has none (a room not listed yet, or a new connection),
-	// and again when the picker opens on a stale list, since people come and go.
+	// Members for the mention picker come with each joined room's listing and stay current by
+	// memberships (§4.3.2); a pane without them (a thread read without joining) lists its room
+	// with `room_list` and `room_id` (cap `rooms`).
 	$effect(() => {
 		const room = paneRoom;
 		if (!client || !room || !session.ready || !session.canManageRooms || room.members !== undefined) return;
@@ -518,6 +522,20 @@
 		composer?.focus();
 	}
 
+	/**
+	 * A thread card opens its thread. One you haven't joined is read through
+	 * its history without joining it (joining logs a membership for everyone,
+	 * §4.3.2); replying or Join makes it live.
+	 */
+	function openThreadCard(thread: string): void {
+		if (!client) return;
+		if (!session.rooms.some((room) => room.id === thread) && !client.viewRoom(thread)) {
+			joinRoom(thread);
+			return;
+		}
+		chooseThread(thread);
+	}
+
 	/** Loads a thread's history (§4.1); a failure the client recorded is reported once. */
 	function loadThread(roomId: string): void {
 		client?.loadRoom(roomId).catch((cause: unknown) => {
@@ -578,7 +596,16 @@
 		const options = { ...(reply ? { replyTo: reply } : {}), ...(mentions.length ? { mentions } : {}) };
 		if (action.kind === 'message') {
 			if (!action.text.trim()) return;
-			feedback.track(chat.send(roomId, action.text, 'markdown', options), 'Sending…', restore);
+			const post = () => feedback.track(chat.send(roomId, action.text, 'markdown', options), 'Sending…', restore);
+			const joining = joinFirst(chat, paneRoom);
+			if (joining) {
+				joining.then(post, (cause: unknown) => {
+					feedback.error(cause, 'Unable to join the thread');
+					restore();
+				});
+			} else {
+				post();
+			}
 			stickToBottom = true;
 		} else {
 			const failed = (cause: unknown) => {
@@ -638,7 +665,13 @@
 		const text = action.kind === 'message' ? action.text : composerText;
 		const mentions = composerMentions;
 		const options = { ...(reply ? { replyTo: reply } : {}), ...(mentions.length ? { mentions } : {}) };
-		const { sent, uploaded } = chat.sendFiles(roomId, text, files, 'markdown', options, command);
+		const joining = command ? undefined : joinFirst(chat, paneRoom);
+		const { sent, uploaded } = joining
+			? (() => {
+				const posted = joining.then(() => chat.sendFiles(roomId, text, files, 'markdown', options, command));
+				return { sent: posted.then(({ sent }) => sent), uploaded: posted.then(({ uploaded }) => uploaded) };
+			})()
+			: chat.sendFiles(roomId, text, files, 'markdown', options, command);
 		feedback.pending(files.length === 1 ? `Uploading ${files[0].name || 'file'}…` : `Uploading ${files.length} files…`);
 		sent.then(() => {
 			clearComposer(roomId);
@@ -672,6 +705,22 @@
 		if (!confirm(`Leave ${leaving.title}? You can join it again from Browse rooms.`)) return;
 		if (activeThread && activeRoom) backToRoom();
 		feedback.track(client.leaveRoom(leaving.id), 'Leaving…');
+	}
+
+	/** Joins the thread open without joining (cap `rooms`): from then on it delivers live. */
+	function joinPane(): void {
+		if (!client || !paneRoom || paneRoom.joined) return;
+		feedback.track(client.joinRoom(paneRoom.id), 'Joining…');
+	}
+
+	/**
+	 * Posting needs no membership (§4.3.5), but a poster who hasn't joined
+	 * doesn't receive the broadcast: a reply in a thread read without joining
+	 * joins it first, so the reply and what follows arrive.
+	 */
+	function joinFirst(chat: ChatClient, room: RoomSnapshot): Promise<unknown> | undefined {
+		if (room.joined || !session.canManageRooms) return undefined;
+		return chat.joinRoom(room.id).promise;
 	}
 
 	/** A room mention in a message was clicked: open it, or join it when you haven't. */
@@ -725,7 +774,7 @@
 	/** A message's reaction chips, from the timeline of the room it lives in (an intro may live in the parent). */
 	function reactionsFor(event: MessageRecord): ReactionChip[] {
 		const room = session.rooms.find((candidate) => candidate.id === event.room_id);
-		return reactionChips(room?.timeline.reactions[event.message_id], session.you?.user_id, event.deleted === true);
+		return reactionChips(room?.timeline.reactions[event.message_id], session.you?.user_id, event.deleted === true, (user) => directory.name(user));
 	}
 
 	function react(event: MessageRecord, emoji: string): void {
@@ -1003,7 +1052,7 @@
 	style:--sidebar-w="{sidebar.collapsed ? 0 : sidebar.width}px"
 >
 	<Sidebar
-		{client} {session} {backendLabel} threads={joinedThreads} {activeThread} mentions={mentions.byRoom} bind:displayName {passkeyUnavailable}
+		{client} {session} {backendLabel} threads={listedThreads} {activeThread} mentions={mentions.byRoom} bind:displayName {passkeyUnavailable}
 		onconnect={() => openConnect()} onsignin={(name) => openConnect({ passkey: true, name })}
 		onroom={chooseRoom} onthread={chooseThread} onjoin={joinRoom} onsignout={() => session.forget()}
 	/>
@@ -1021,8 +1070,9 @@
 				canEditThread={Boolean(activeThread && session.canManageRooms && activeThreadEntry)}
 				editorOpen={threadEditorOpen}
 				editDisabled={!canCompose}
-				canLeave={session.canLeaveRooms && Boolean(paneRoom)}
-				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)} onleave={leavePane}
+				canLeave={session.canLeaveRooms && Boolean(paneRoom?.joined)}
+				canJoin={session.canManageRooms && Boolean(paneRoom) && !paneRoom?.joined}
+				onback={() => (mobilePane = 'rooms')} onroom={backToRoom} onedit={() => (threadEditorOpen = !threadEditorOpen)} onleave={leavePane} onjoin={joinPane}
 			/>
 			{#if threadEditorOpen && activeThreadEntry}
 				{#key activeThreadEntry.id}
@@ -1081,9 +1131,11 @@
 						{:else if item.kind === 'replies'}
 							<div class="ap-divider ap-divider-date" role="separator"><span>{item.count}{item.more ? '+' : ''} {item.count === 1 && !item.more ? 'reply' : 'replies'}</span></div>
 						{:else if item.kind === 'thread'}
-							<ThreadCard entry={item.entry} onopen={() => (item.entry.joined ? chooseThread(item.entry.id) : joinRoom(item.entry.id))} />
+							<ThreadCard entry={item.entry} onopen={() => openThreadCard(item.entry.id)} />
 						{:else if item.kind === 'notice'}
 							<NoticeLine notice={item.notice} onopenroom={openMentionedRoom} />
+						{:else if item.kind === 'members'}
+							<MembershipLine joined={item.joined} left={item.left} logId={item.logId} />
 						{:else if item.kind === 'renamed'}
 							<div data-timeline-item class="ap-msg ap-msg-system" data-testid="thread-renamed">
 								<div class="ap-msg-system-body">{#if item.title}Thread renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}Thread name cleared{/if}</div>

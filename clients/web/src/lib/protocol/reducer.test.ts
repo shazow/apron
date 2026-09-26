@@ -184,7 +184,7 @@ describe('history decoding', () => {
 		const store = new ProtocolStore();
 		applyRecords(store, decodeHistoryRecords({
 			rooms: [{ room_id: 'general', log_id: '1', title: 'General' }],
-			entries: [
+			messages: [
 				{ message_id: '2', log_id: '2', room_id: 'general', from: { user_id: 'a' }, body: { text: 'x' } },
 				{ message_id: '2', log_id: '5', room_id: 'thread', from: { user_id: 'a' }, body: { text: 'x' } }
 			],

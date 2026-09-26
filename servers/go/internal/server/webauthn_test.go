@@ -175,10 +175,22 @@ func (a *testAuthenticator) assertion(t *testing.T, options map[string]any, orig
 	}
 }
 
+// guestAuth signs c in as a guest and returns the auth result, which follows
+// the membership of the guest's join to general.
+func guestAuth(t *testing.T, c *testClient) map[string]any {
+	t.Helper()
+	before, result := c.request(t, "auth", "guest", map[string]any{"scheme": "guest"})
+	c.userID = result["you"].(map[string]any)["user_id"].(string)
+	if len(before) != 1 {
+		t.Fatalf("frames before the guest auth result: %#v", before)
+	}
+	checkMembership(t, notificationParams(t, before[0], "membership"), "general", c.userID, true)
+	return result
+}
+
 func registerTestPasskey(t *testing.T, c *testClient, a *testAuthenticator) map[string]any {
 	t.Helper()
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
-	guest := passkeyResult(t, c.read(t))["you"].(map[string]any)["user_id"]
+	guest := guestAuth(t, c)["you"].(map[string]any)["user_id"]
 	options := passkeyResult(t, passkeyCall(t, c, "register-start", "register", "begin", nil))
 	publicKey := passkeyPublicKey(t, options)
 	selection, ok := publicKey["authenticatorSelection"].(map[string]any)
@@ -367,8 +379,7 @@ func TestPasskeyRejectsInvalidProofs(t *testing.T) {
 func TestPasskeyRejectsInvalidRegistration(t *testing.T) {
 	app, httpServer := passkeyTestServer(t)
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
-	passkeyResult(t, c.read(t))
+	guestAuth(t, c)
 	a := newTestAuthenticator(t)
 	options := passkeyResult(t, passkeyCall(t, c, "begin", "register", "begin", nil))
 	proof := a.registration(t, options, "https://evil.example")
@@ -389,11 +400,36 @@ func TestPasskeyRejectsInvalidRegistration(t *testing.T) {
 	}
 }
 
+// A WebAuthn begin step authenticates nothing, so requests pipelined behind
+// it are denied (§3.2); a verified finish lets the ones behind it run.
+func TestPasskeyBeginIsNoBarrierPass(t *testing.T) {
+	_, httpServer := passkeyTestServer(t)
+	owner := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+	a := newTestAuthenticator(t)
+	registerTestPasskey(t, owner, a)
+
+	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
+	c.write(t, map[string]any{"method": "auth", "id": "begin", "params": map[string]any{"scheme": "webauthn", "action": "login", "step": "begin"}})
+	c.write(t, map[string]any{"method": "room_list", "id": "list", "params": map[string]any{"filter": "joined"}})
+	options := passkeyResult(t, c.read(t))
+	if denied := c.read(t); denied["id"] != "list" || denied["error"].(map[string]any)["code"] != float64(codeDenied) {
+		t.Fatalf("room_list behind begin: %#v", denied)
+	}
+	c.write(t, map[string]any{"method": "auth", "id": "finish", "params": map[string]any{
+		"scheme": "webauthn", "action": "login", "step": "finish",
+		"challenge_id": options["challenge_id"], "credential": a.assertion(t, options, testPasskeyOrigin, "localhost", 0x05),
+	}})
+	c.write(t, map[string]any{"method": "room_list", "id": "listed", "params": map[string]any{"filter": "joined"}})
+	passkeyResult(t, c.read(t))
+	if listed := passkeyResult(t, c.read(t)); !reflect.DeepEqual(roomIDs(t, listed["joined"]), []string{"general"}) {
+		t.Fatalf("room_list behind a verified finish: %#v", listed)
+	}
+}
+
 func TestPasskeyNotificationsDoNotRunCeremonies(t *testing.T) {
 	_, httpServer := passkeyTestServer(t)
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
-	passkeyResult(t, c.read(t))
+	guestAuth(t, c)
 	a := newTestAuthenticator(t)
 	options := passkeyResult(t, passkeyCall(t, c, "begin", "register", "begin", nil))
 	proof := a.registration(t, options, testPasskeyOrigin)
@@ -414,8 +450,7 @@ func TestPasskeyNotificationsDoNotRunCeremonies(t *testing.T) {
 func TestPasskeyCanonicalMalformedFields(t *testing.T) {
 	_, httpServer := passkeyTestServer(t)
 	c := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	c.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
-	passkeyResult(t, c.read(t))
+	guestAuth(t, c)
 
 	// Canonical actions require a valid step and reject unknown action names.
 	for id, params := range map[string]map[string]any{
@@ -466,35 +501,37 @@ func TestSignInReplacesGuestAndDeduplicatesPerUser(t *testing.T) {
 	owner := passkeyTestClient(t, httpServer, testPasskeyOrigin)
 	registered := registerTestPasskey(t, owner, newTestAuthenticator(t))
 	observer := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	observer.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
-	observer.drain(t)
+	guestAuth(t, observer)
 	switcher := passkeyTestClient(t, httpServer, testPasskeyOrigin)
-	switcher.write(t, map[string]any{"method": "auth", "id": "guest", "params": map[string]any{"scheme": "guest"}})
-	guest := passkeyResult(t, switcher.read(t))["you"]
-	switcher.drain(t)
-	// Each guest joins general, whose members see the join.
-	for _, joiner := range []*testClient{observer, switcher} {
-		joined := owner.notification(t, "user")
-		if joined["room_id"] != "general" || joined["new"] == nil {
-			t.Fatalf("join notification: %#v", joined)
-		}
-		if joiner == switcher {
-			if seen := observer.notification(t, "user"); !reflect.DeepEqual(seen, map[string]any{"room_id": "general", "new": guest}) {
-				t.Fatalf("observer join notification: %#v", seen)
-			}
+	guest := guestAuth(t, switcher)["you"].(map[string]any)
+	guestID := guest["user_id"].(string)
+	// Each guest's join to general reaches general's members.
+	expectMembership(t, owner, "general", observer.userID, true)
+	expectMembership(t, owner, "general", guestID, true)
+	expectMembership(t, observer, "general", guestID, true)
+
+	// Signing in replaces the guest identity, which is retired: its leave
+	// is logged in general and reaches general's members, the switching
+	// connection included, which now acts as the passkey user, before its
+	// result. Others who shared a room with the guest then learn of the
+	// user_id change.
+	before, result := switcher.request(t, "auth", "resume", map[string]any{"scheme": "token", "token": registered["token"]})
+	if !reflect.DeepEqual(result["you"], registered["you"]) || len(before) != 1 {
+		t.Fatalf("sign-in %#v after %#v", result, before)
+	}
+	leave := notificationParams(t, before[0], "membership")
+	checkMembership(t, leave, "general", guestID, false)
+	for _, member := range []*testClient{owner, observer} {
+		if observed := expectMembership(t, member, "general", guestID, false); !reflect.DeepEqual(observed, leave) {
+			t.Fatalf("member's copy %#v differs from %#v", observed, leave)
 		}
 	}
-
-	// Signing in replaces the guest identity, which is retired; others who
-	// shared a room with it learn the new identity and the old one.
-	switcher.write(t, map[string]any{"method": "auth", "id": "resume", "params": map[string]any{"scheme": "token", "token": registered["token"]}})
-	passkeyResult(t, switcher.read(t))
-	switcher.drain(t)
 	notice := observer.notification(t, "user")
 	if !reflect.DeepEqual(notice, map[string]any{"new": registered["you"], "old": guest}) {
 		t.Fatalf("user notification = %#v", notice)
 	}
 	owner.expectQuiet(t)
+	switcher.expectQuiet(t)
 
 	// Request IDs deduplicate per user, across that user's connections.
 	params := map[string]any{"room_id": "general", "body": map[string]any{"text": "once"}}

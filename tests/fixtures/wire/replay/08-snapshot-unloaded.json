@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "replay",
   "name": "A snapshot installs without its creation",
   "description": "An edit snapshot installs a message that was never loaded; its later-arriving creation snapshot is stale.",
@@ -11,7 +11,7 @@
     {
       "name": "history",
       "steps": [
-        {"receive":{"id":"history","result":{"entries":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"first_id":"110","last_id":"110","more":false,"latest_log_id":"110","history_log_id":"100"}}},
+        {"receive":{"id":"history","result":{"messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}],"first_log_id":"110","last_log_id":"110","more":false,"latest_log_id":"110","history_log_id":"100"}}},
         {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"100","log_id":"110","room_id":"general","from":{"user_id":"alice"},"body":{"text":"edited"}}]}]}},
         {"receive":{"method":"message","params":{"message_id":"100","log_id":"100","room_id":"general","from":{"user_id":"alice"},"body":{"text":"original"}}}}
       ]

@@ -11,7 +11,7 @@ type HistoryCase = (typeof historyFixture.cases)[number];
 
 describe('Base history fixtures', () => {
 	it('uses nullable room-wide boundaries and includes both bounds on history results', () => {
-		expect(historyFixture.format).toBe(3);
+		expect(historyFixture.format).toBe(4);
 		expect(historyFixture.kind).toBe('history');
 		for (const scenario of historyFixture.cases) {
 			if (!scenario.room) continue;
@@ -26,7 +26,8 @@ describe('Base history fixtures', () => {
 			expect(result.latest_log_id).toBe(roomParams.latest_log_id);
 			expect(Object.hasOwn(result, 'history_log_id')).toBe(true);
 			if (result.history_log_id !== null) expect(isLogId(result.history_log_id)).toBe(true);
-			for (const entry of result.entries) expect(entry).toHaveProperty('log_id');
+			// Empty arrays may be omitted (§4.1).
+			for (const entry of ('messages' in result ? result.messages ?? [] : [])) expect(entry).toHaveProperty('log_id');
 		}
 	});
 
@@ -84,12 +85,12 @@ describe('history fixtures through the client', () => {
 	});
 
 	it('keeps an old message ID whose latest snapshot is retained and drops expired ones', async () => {
-		const { room, entries, history, assertions } = scenario('floor-advances-with-old-message-id-retained');
+		const { room, messages, history, assertions } = scenario('floor-advances-with-old-message-id-retained');
 		const socket = FakeSocket.latest();
 		await socket.greet(['history'], { room: { ...room!, history_log_id: '700', latest_log_id: '812' } });
 		// Live snapshots from before retention advanced.
-		for (const entry of entries!) socket.receive({ method: 'message', params: entry });
-		await socket.reply('history', { entries: [], more: false, latest_log_id: '812', history_log_id: '700' });
+		for (const entry of messages!) socket.receive({ method: 'message', params: entry });
+		await socket.reply('history', { more: false, latest_log_id: '812', history_log_id: '700' });
 		expect(snapshot.rooms[0].timeline.order).toEqual(['700', '710']);
 		socket.receive({ method: 'room_update', params: { updated: [room!] } });
 		await socket.reply('history', history!.result);

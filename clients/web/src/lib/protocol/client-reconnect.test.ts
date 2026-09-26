@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatClient, type ClientSnapshot } from './client';
-import { FakeSocket } from './fake-socket';
+import { FakeSocket, settle } from './fake-socket';
 
 function latest(): FakeSocket {
 	return FakeSocket.latest();
@@ -428,56 +428,61 @@ describe('reconnect divider', () => {
 	it('never marks a first load, or a reconnect that history fully recovers', async () => {
 		await latest().greet(['history', 'rooms'], { room });
 		expect(snapshot.showReconnectDivider).toBe(false);
-		await latest().reply('history', { entries: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
+		await latest().reply('history', { messages: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
 		expect(snapshot.rooms[0].recovering).toBe(false);
 		expect(snapshot.showReconnectDivider).toBe(false);
 		// A thread's first load is not a reconnect either.
 		latest().receive({ method: 'room_update', params: { joined: [{ room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '21', history_log_id: '20' }] } });
 		const load = client.loadRoom('20');
-		await latest().reply('history', { entries: [{ ...entry('21'), room_id: '20' }], more: false, latest_log_id: '21', history_log_id: '20' });
+		await latest().reply('history', { messages: [{ ...entry('21'), room_id: '20' }], more: false, latest_log_id: '21', history_log_id: '20' });
 		await load;
 		expect(snapshot.showReconnectDivider).toBe(false);
 
 		latest().drop();
 		vi.advanceTimersByTime(5_000);
 		await latest().greet(['history', 'rooms'], { room });
-		// Nothing new since the checkpoint: the kept history needs no request.
-		expect(latest().sent.filter((frame) => frame.method === 'history')).toHaveLength(0);
+		// The kept room resumed right behind auth, from its checkpoint; one empty page settles it.
+		expect(latest().sent.filter((frame) => frame.method === 'history').map((frame) => frame.params)).toEqual([{ room_id: 'general', after: '13', limit: 200 }]);
+		await latest().reply('history', { more: false, latest_log_id: '12', history_log_id: '10' });
 		expect(snapshot.rooms.find((candidate) => candidate.id === 'general')?.timeline.order).toEqual(['11', '12']);
+		expect(snapshot.rooms.find((candidate) => candidate.id === 'general')?.recovering).toBe(false);
 		expect(snapshot.authenticated).toBe(true);
 		expect(snapshot.showReconnectDivider).toBe(false);
 	});
 
 	it('resumes a room from its checkpoint after a reconnect instead of paging all history', async () => {
 		await latest().greet(['history', 'rooms'], { room });
-		await latest().reply('history', { entries: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
+		await latest().reply('history', { messages: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
 		latest().drop();
 		vi.advanceTimersByTime(5_000);
 		await latest().greet(['history', 'rooms'], { room: { ...room, latest_log_id: '14' } });
-		expect(latest().request('history').params).toMatchObject({ room_id: 'general', after: '13', before: '14' });
-		await latest().reply('history', { entries: [entry('13'), entry('14')], more: false, latest_log_id: '14', history_log_id: '10' });
+		// Sent before the listing named a head: it pages to the end of the log, whose head the page reports.
+		expect(latest().request('history').params).toEqual({ room_id: 'general', after: '13', limit: 200 });
+		await latest().reply('history', { messages: [entry('13')], first_log_id: '13', last_log_id: '13', more: true, latest_log_id: '14', history_log_id: '10' });
+		expect(latest().request('history').params).toEqual({ room_id: 'general', after: '14', before: '14', limit: 200 });
+		await latest().reply('history', { messages: [entry('14')], first_log_id: '14', last_log_id: '14', more: false, latest_log_id: '14', history_log_id: '10' });
 		expect(snapshot.rooms.find((candidate) => candidate.id === 'general')?.timeline.order).toEqual(['11', '12', '13', '14']);
 		expect(snapshot.showReconnectDivider).toBe(false);
 	});
 
 	it('rebuilds a kept room when retention has passed its checkpoint', async () => {
 		await latest().greet(['history', 'rooms'], { room });
-		await latest().reply('history', { entries: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
+		await latest().reply('history', { messages: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
 		latest().drop();
 		vi.advanceTimersByTime(5_000);
 		await latest().greet(['history', 'rooms'], { room: { ...room, latest_log_id: '30', history_log_id: '20' } });
 		expect(latest().request('history').params).toMatchObject({ room_id: 'general', after: '20', before: '30' });
-		await latest().reply('history', { entries: [entry('25')], more: false, latest_log_id: '30', history_log_id: '20' });
+		await latest().reply('history', { messages: [entry('25')], more: false, latest_log_id: '30', history_log_id: '20' });
 		expect(snapshot.rooms.find((candidate) => candidate.id === 'general')?.timeline.order).toEqual(['25']);
 	});
 
 	it('catches a kept thread up from its checkpoint when it is loaded again', async () => {
 		await latest().greet(['history', 'rooms'], { room });
-		await latest().reply('history', { entries: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
+		await latest().reply('history', { messages: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
 		const thread = { room_id: '20', log_id: '20', parent_room_id: 'general', title: 'Side', latest_log_id: '21', history_log_id: '20' };
 		latest().receive({ method: 'room_update', params: { joined: [thread] } });
 		const load = client.loadRoom('20');
-		await latest().reply('history', { entries: [{ ...entry('21'), room_id: '20' }], more: false, latest_log_id: '21', history_log_id: '20' });
+		await latest().reply('history', { messages: [{ ...entry('21'), room_id: '20' }], more: false, latest_log_id: '21', history_log_id: '20' });
 		await load;
 		latest().drop();
 		vi.advanceTimersByTime(5_000);
@@ -487,11 +492,81 @@ describe('reconnect divider', () => {
 		expect(snapshot.rooms.find((candidate) => candidate.id === '20')?.loaded).toBe(false);
 		const again = client.loadRoom('20');
 		expect(latest().request('history').params).toMatchObject({ room_id: '20', after: '22', before: '23' });
-		await latest().reply('history', { entries: [{ ...entry('23'), room_id: '20' }], more: false, latest_log_id: '23', history_log_id: '20' });
+		await latest().reply('history', { messages: [{ ...entry('23'), room_id: '20' }], more: false, latest_log_id: '23', history_log_id: '20' });
 		await again;
 		const side = snapshot.rooms.find((candidate) => candidate.id === '20');
 		expect(side?.loaded).toBe(true);
 		expect(side?.timeline.order).toEqual(['21', '23']);
+	});
+
+	it('lists only what changed since the kept checkpoints when resuming the same identity', async () => {
+		const ops = { room_id: 'ops', log_id: '30', title: 'Ops', latest_log_id: '32', history_log_id: '30' };
+		const joinedRooms = () => snapshot.rooms.map((candidate) => candidate.id);
+		// A registered session: the server hands a token, so the next connection resumes the identity.
+		latest().open();
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['guest', 'token'], caps: ['history', 'rooms'] } });
+		await latest().reply('auth', { you: { user_id: 'ada', name: 'Ada' }, token: 'secret' });
+		await latest().reply('room_list', { joined: [room, ops], users: [] });
+		await latest().reply('history', { more: false, latest_log_id: '32', history_log_id: '30' });
+		const generalPage = latest().sent.find((frame) => frame.method === 'history' && (frame.params as { room_id: string }).room_id === 'general')!;
+		latest().receive({ id: generalPage.id, result: { messages: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' } });
+		await settle();
+		expect(joinedRooms()).toEqual(['general', 'ops']);
+
+		latest().drop();
+		vi.advanceTimersByTime(5_000);
+		const socket = latest();
+		socket.open();
+		socket.receive({ method: 'server', params: { protocol: 6, auth: ['guest', 'token'], caps: ['history', 'rooms'] } });
+		expect(socket.request('auth').params).toMatchObject({ scheme: 'token', token: 'secret' });
+		// The least checkpoint of the kept rooms: everything up to it is here.
+		expect(socket.request('room_list').params).toEqual({ filter: 'joined', members: true, latest_log_id: '12' });
+		expect(socket.sent.filter((frame) => frame.method === 'history').map((frame) => (frame.params as { room_id: string }).room_id)).toEqual(['general', 'ops']);
+		await socket.reply('auth', { you: { user_id: 'ada', name: 'Ada' } });
+		expect(snapshot.rooms).toEqual([]);
+		// Only general changed; ops was left meanwhile; a room joined since arrives in joined.
+		await socket.reply('room_list', {
+			joined: [{ ...room, latest_log_id: '40' }, { room_id: 'new', log_id: '41', title: 'New', latest_log_id: '41', history_log_id: '41' }],
+			left: [{ room_id: 'ops' }], users: []
+		});
+		expect(joinedRooms()).toEqual(['general', 'new']);
+		expect(snapshot.rooms.every((candidate) => candidate.joined)).toBe(true);
+	});
+
+	it('keeps every kept room the changes since leave out, and relists a new identity in full', async () => {
+		latest().open();
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['guest', 'token'], caps: ['history', 'rooms'] } });
+		await latest().reply('auth', { you: { user_id: 'ada', name: 'Ada' }, token: 'secret' });
+		await latest().reply('room_list', { joined: [room], users: [] });
+		await latest().reply('history', { messages: [entry('11'), entry('12')], more: false, latest_log_id: '12', history_log_id: '10' });
+		latest().drop();
+		vi.advanceTimersByTime(5_000);
+		let socket = latest();
+		socket.open();
+		socket.receive({ method: 'server', params: { protocol: 6, auth: ['guest', 'token'], caps: ['history', 'rooms'] } });
+		await socket.reply('auth', { you: { user_id: 'ada', name: 'Ada' } });
+		// Nothing changed: an empty listing with left keeps general as it was.
+		await socket.reply('room_list', { joined: [], left: [], users: [] });
+		expect(snapshot.rooms.map((candidate) => [candidate.id, candidate.joined])).toEqual([['general', true]]);
+		await socket.reply('history', { more: false, latest_log_id: '12', history_log_id: '10' });
+		expect(snapshot.rooms[0].timeline.order).toEqual(['11', '12']);
+
+		// The token now signs in someone else: the changes since belong to another identity, so list again in full.
+		socket.drop();
+		vi.advanceTimersByTime(5_000);
+		socket = latest();
+		socket.open();
+		socket.receive({ method: 'server', params: { protocol: 6, auth: ['guest', 'token'], caps: ['history', 'rooms'] } });
+		expect(socket.request('room_list').params).toMatchObject({ latest_log_id: '12' });
+		await socket.reply('auth', { you: { user_id: 'bob', name: 'Bob' } });
+		const delta = socket.request('room_list');
+		await socket.reply('room_list', { joined: [], left: [], users: [] });
+		const full = socket.request('room_list');
+		expect(full.id).not.toBe(delta.id);
+		expect(full.params).toEqual({ filter: 'joined', members: true });
+		// A result without left is a full listing: general is not Bob's.
+		await socket.reply('room_list', { joined: [{ room_id: 'ops', log_id: '30', title: 'Ops', latest_log_id: '30', history_log_id: '30' }], users: [] });
+		expect(snapshot.rooms.map((candidate) => candidate.id)).toEqual(['ops']);
 	});
 
 	it('marks a reconnect to a server without history, whose earlier messages are gone', async () => {
@@ -528,7 +603,7 @@ describe('liveness pings', () => {
 		const send = first.send.bind(first);
 		first.send = (data: string) => { raw.push(data); send(data); };
 		first.open();
-		first.receive({ method: 'server', params: { protocol: 5, auth: ['token'], caps: [], ping: 30 } });
+		first.receive({ method: 'server', params: { protocol: 6, auth: ['token'], caps: [], ping: 30 } });
 		// No guest scheme and no token: the client never authenticates, and still pings (§1).
 		expect(pings(first)).toBe(0);
 		vi.advanceTimersByTime(30_000);
@@ -593,10 +668,10 @@ describe('liveness pings', () => {
 		const client = new ChatClient('ws://fake.test/');
 		client.start();
 		await latest().greet([], { ping: 30 });
-		latest().receive({ method: 'server', params: { protocol: 5, auth: ['guest'], caps: ['rooms'], ping: 10 } });
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['guest'], caps: ['rooms'], ping: 10 } });
 		vi.advanceTimersByTime(10_000);
 		expect(pings(latest())).toBe(1);
-		latest().receive({ method: 'server', params: { protocol: 5, auth: ['guest'], caps: ['rooms'] } });
+		latest().receive({ method: 'server', params: { protocol: 6, auth: ['guest'], caps: ['rooms'] } });
 		vi.advanceTimersByTime(300_000);
 		expect(pings(latest())).toBe(1);
 		client.stop();

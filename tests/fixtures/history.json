@@ -1,7 +1,7 @@
 {
-  "format": 3,
+  "format": 4,
   "kind": "history",
-  "description": "Protocol v5 room and history availability boundaries, including a room whose history was discarded (null history_log_id). `room` is the room record as `room_list` lists it, delivery fields included. Records are flat snapshots; history results carry rooms, entries, and reactions arrays.",
+  "description": "Protocol v6 room and history availability boundaries, including a room whose history was discarded (null history_log_id). `room` is the room record as `room_list` lists it, delivery fields included. Records are flat snapshots; history results carry rooms, messages, reactions, and membership arrays, each of which may be omitted when empty.",
   "references": [
     "PROTOCOL.md#34-rooms",
     "PROTOCOL.md#41-history",
@@ -20,7 +20,6 @@
       "history": {
         "id": "h0",
         "result": {
-          "entries": [],
           "more": false,
           "latest_log_id": "1790000000500",
           "history_log_id": null
@@ -46,7 +45,7 @@
         "id": "h1",
         "result": {
           "rooms": [],
-          "entries": [],
+          "messages": [],
           "reactions": [],
           "more": false,
           "latest_log_id": "1790000001000",
@@ -68,7 +67,7 @@
         "latest_log_id": "900",
         "history_log_id": "850"
       },
-      "entries": [
+      "messages": [
         {
           "message_id": "700",
           "log_id": "800",
@@ -95,7 +94,7 @@
         "id": "h2",
         "result": {
           "rooms": [],
-          "entries": [
+          "messages": [
             {
               "message_id": "700",
               "log_id": "875",
@@ -112,8 +111,8 @@
               "reactions": [{ "from": { "user_id": "bob" }, "emojis": ["👍"] }]
             }
           ],
-          "first_id": "875",
-          "last_id": "880",
+          "first_log_id": "875",
+          "last_log_id": "880",
           "more": false,
           "latest_log_id": "900",
           "history_log_id": "850"
