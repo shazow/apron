@@ -10,11 +10,13 @@ server keeps rooms and history in memory; restarting it clears messages.
 - `servers/go`: Go module and the reference server, implementing every
   capability in PROTOCOL.md; `cmd/aprond` is the executable and `internal`
   contains implementation packages. See its [README](servers/go/README.md).
-- `servers/cloudflare-worker`: TypeScript Worker and SQLite Durable Object for
-  the bounded public demo; see its [setup and operating guide](servers/cloudflare-worker/README.md).
-- `tests/interop`: Playwright tests against real clients and the Go or Workers backend.
+- `tests/interop`: Playwright tests against real clients and the Go backend.
 - `tests/fixtures/wire`: portable JSON replay and session scenarios with
   expected protocol state; see its README for adapter requirements.
+
+The public demo backend at `wss://server.apron.chat/`, a TypeScript Worker and
+SQLite Durable Object, lives in
+[apron-chat/apron-server-cloudflare](https://github.com/apron-chat/apron-server-cloudflare).
 
 Each implementation owns its manifest, lockfile, and unit tests. Add other
 clients or servers as sibling directories. Extract shared libraries only when
@@ -38,25 +40,25 @@ after manifest or lockfile changes.
 For background processes, use `devenv up --detach` and stop them with
 `devenv down`.
 
-Without Nix, install Node.js 24 LTS, npm, Go 1.27+, Make, and a C compiler.
-Run `make install`, then `make dev-server` and `make dev-web` in separate
-terminals. All Make commands below work inside `devenv shell` or with those
+Without Nix, install Node.js 24 LTS, npm, Go 1.27+, Make, and a C compiler
+(and [Wrangler](https://developers.cloudflare.com/workers/wrangler/) for
+`make deploy-web`). Run `make install`, then `make dev-server` and
+`make dev-web` in separate terminals. All Make commands below work inside `devenv shell` or with those
 tools installed directly.
 
 Open `http://localhost:5173`. The development server proxies `/ws` to
 `127.0.0.1:8080`. Open another browser tab to chat with a second client.
 
-To use the Cloudflare backend locally, follow its secret setup and run
-`make dev-worker` instead of `make dev-server`. The web client, the Go
-server, and the worker speak protocol v6; the worker does so within the
-demo's budgets and policies (only threads under `general` can be created,
-guests only read until they sign in with a passkey, and guests' memberships
-are not logged, so its `room_list` ignores `latest_log_id`). A signed-in user
-can run `/invite-bot` for a bot token. `make test-worker` runs its
-Workers runtime suite; `make test-worker-browser` tests browser passkeys against
-local Wrangler. The public demo has persistent passkeys and rolling history;
-its passkey registration creates a new identity instead of upgrading guest
-ownership as the Go example does.
+To use the Cloudflare demo backend locally, run it from
+[apron-chat/apron-server-cloudflare](https://github.com/apron-chat/apron-server-cloudflare)
+with `npx wrangler dev --port 8080` instead of `make dev-server`. The web
+client, the Go server, and the worker speak protocol v6; the worker does so
+within the demo's budgets and policies (only threads under `general` can be
+created, guests only read until they sign in with a passkey, and guests'
+memberships are not logged, so its `room_list` ignores `latest_log_id`). A
+signed-in user can run `/invite-bot` for a bot token. The public demo has
+persistent passkeys and rolling history; its passkey registration creates a new
+identity instead of upgrading guest ownership as the Go example does.
 
 The example starts with a guest identity. Use **Add passkey** in the profile
 editor's Sign-in row to retain that identity and its message ownership, and

@@ -5,7 +5,7 @@
   "references": [
     "PROTOCOL.md#34-rooms",
     "PROTOCOL.md#41-history",
-    "servers/cloudflare-worker/SPEC.md#9-rolling-history-and-base-protocol-availability"
+    "https://github.com/apron-chat/apron-server-cloudflare/blob/main/SPEC.md#9-rolling-history-and-base-protocol-availability"
   ],
   "cases": [
     {
