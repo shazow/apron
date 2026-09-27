@@ -14,7 +14,7 @@ Here's an example exchange to get a taste:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -242,7 +242,7 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 6,
+    "protocol": 7,
     "name": "impl-name/1.0",
     "caps": ["history", "edit"],
     "auth": ["token"]
@@ -251,7 +251,7 @@ frame, unprompted. There is no client hello.
 ```
 
 - `protocol`: required integer, incremented with each revision of this spec.
-  Current value `6`. Implementations make a best effort to interoperate
+  Current value `7`. Implementations make a best effort to interoperate
   across versions; mismatched optional features degrade to their fallbacks
   ([§4](#4-capabilities)).
 - `name`: optional implementation/version string.
@@ -1643,7 +1643,7 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // <-
-  {"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+  {"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
   // <- before any auth
   {
     "method": "message", "params": {
@@ -1671,7 +1671,7 @@ implementations accept them. Each follows from the sections it cites.
   {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "deploy-hook/1.0"}}
   {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
   // <-
-  {"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["token"]}}
+  {"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["token"]}}
   // <-
   {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
   // <- then the bot closes the connection
