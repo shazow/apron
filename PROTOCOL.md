@@ -290,8 +290,9 @@ content.
   retired IDs are never reissued ([§3.3](#33-identity)).
 - `token`: bearer string. The reference default.
 - `webauthn`: optional passkey scheme ([§4.9](#49-webauthn-authentication)).
+- `email`: optional sign-in by a code sent to an email address ([§4.10](#410-email-authentication)).
 
-Except for `webauthn`, servers MAY accept `auth` regardless of `scheme` and
+Except for `webauthn` and `email`, servers MAY accept `auth` regardless of `scheme` and
 ignore credentials under guest-access policies. Token validation,
 identity assignment, and privilege policy are implementation-defined.
 
@@ -310,7 +311,8 @@ MAY send notifications before auth, such as a `@private` welcome
 processes any later frame on the connection, so clients MAY send requests
 right behind it, such as `room_list` and `history`, without waiting for its
 result. If the `auth` fails, those requests get `denied`. A WebAuthn `begin`
-step ([§4.9](#49-webauthn-authentication)) authenticates nothing, so requests behind it are denied.
+step ([§4.9](#49-webauthn-authentication)) and an email request without `token` ([§4.10](#410-email-authentication))
+authenticate nothing, so requests behind them are denied.
 
 ### 3.3 Identity
 
@@ -624,8 +626,8 @@ lacks a cap falls back as below:
 | `command`      | commands from client to server, such as `/kick`              | no commands                  | [§4.8](#48-command)        |
 
 Features without a cap: other embeds are body content ([§4.6](#46-embeds-and-avatars)); push
-follows `server.push` ([§4.7](#47-push)), passkeys `server.auth` ([§4.9](#49-webauthn-authentication)), and liveness
-`server.ping` ([§1](#1-transport--framing)).
+follows `server.push` ([§4.7](#47-push)), passkeys and email sign-in follow `server.auth`
+([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)), and liveness follows `server.ping` ([§1](#1-transport--framing)).
 
 - Suggested convention: third-party extension caps use an `ext:` prefix,
   such as `ext:irc`.
@@ -1541,6 +1543,45 @@ presented one. Servers MUST bind such tokens to the ceremony's allowed
 origin, MUST expire them, and reject unknown, expired, or mismatched tokens
 with `denied`. Lifetime, renewal, and revocation are server policy. Clients
 that ignore `token` remain conforming.
+
+### 4.10 Email authentication
+
+Servers advertising `email` in `server.auth` sign users in with a temporary
+token sent to their email address. Both steps are `auth` requests with
+`scheme: "email"`:
+
+```jsonc
+// -> send a temporary token to this address
+{"method": "auth", "id": "c1", "params": {"scheme": "email", "email": "ada@example.com"}}
+// <- nothing is authenticated yet
+{"id": "c1", "result": {}}
+
+// email: "Your code is 418092, or open https://chat.example/login#email=ada%40example.com&token=418092"
+
+// -> on any connection, such as one opened by the link
+{"method": "auth", "id": "c2", "params": {"scheme": "email", "email": "ada@example.com", "token": "418092"}}
+// <- signed in, with a permanent token for later connections
+{"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
+```
+
+- Without `token`, the request asks the server to send a temporary token to
+  `email` and returns `{}`. It returns `{}` whether or not the address has an
+  account, so it does not reveal which do, and authenticates nothing.
+- The temporary token is short enough to type, such as six digits, and
+  valid only for that `email`. It expires within minutes, is consumed by a
+  successful sign-in, is invalidated after a few failed attempts, and is
+  replaced by a newer one for the same address.
+- With `token`, a valid request authenticates and its result carries `you`
+  and a permanent `token`, which the client presents on later connections
+  with `scheme: "token"` ([§3.2](#32-authentication)). An invalid, expired, or used token is
+  `denied`.
+- The server builds any link from its own configuration, never from request
+  fields, and puts the token in the URL fragment so it stays out of server
+  logs. The sign-in happens on the connection that presents the token, not
+  the one that requested it, so a request made by someone else signs in only
+  whoever reads the email.
+- Account creation for unknown addresses, send rate limits (`retry_after`),
+  and the permanent token's lifetime are server policy.
 
 ---
 
