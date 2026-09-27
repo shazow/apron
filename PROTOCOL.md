@@ -296,6 +296,14 @@ Except for `webauthn` and `email`, servers MAY accept `auth` regardless of `sche
 ignore credentials under guest-access policies. Token validation,
 identity assignment, and privilege policy are implementation-defined.
 
+A successful `auth` result MAY carry `token`, a bearer token for signing in
+with `scheme: "token"` on later connections: after a WebAuthn or email
+sign-in ([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)), or in reply to `scheme: "token"` when the server
+rotates the presented token. Clients save the latest `token` the server
+offers, replacing any earlier one, and reconnect with it. A server MAY
+reject a token it has replaced; expired and revoked tokens are `denied`.
+Lifetime, rotation, and revocation are server policy.
+
 `name` and `user_id` are optional requests, valid with any scheme; `you`
 is what the server assigned. Servers SHOULD NOT give out a previously used
 `user_id` without authenticating its owner. `client` is an optional
@@ -1536,19 +1544,17 @@ fields are `invalid_params`; invalid challenges, failed verification, or
 policy rejection are `denied`.
 
 **Session resume (optional).** A server that also advertises `token` MAY
-include `token` in a verified `finish` result. The client MAY present it on
-later connections with `scheme: "token"` to resume the identity without a new
-ceremony; the result MAY carry a replacement `token`, superseding the
-presented one. Servers MUST bind such tokens to the ceremony's allowed
-origin, MUST expire them, and reject unknown, expired, or mismatched tokens
-with `denied`. Lifetime, renewal, and revocation are server policy. Clients
-that ignore `token` remain conforming.
+include `token` in a verified `finish` result, so later connections resume
+the identity without a new ceremony ([§3.2](#32-authentication)). Servers MUST bind such
+tokens to the ceremony's allowed origin, MUST expire them, and reject
+unknown, expired, or mismatched tokens with `denied`. Clients that ignore
+`token` remain conforming.
 
 ### 4.10 Email authentication
 
 Servers advertising `email` in `server.auth` sign users in with a temporary
-token sent to their email address. Both steps are `auth` requests with
-`scheme: "email"`:
+token sent to their email address, exchanged for a bearer token. Both steps
+are `auth` requests with `scheme: "email"`:
 
 ```jsonc
 // -> send a temporary token to this address
@@ -1560,7 +1566,7 @@ token sent to their email address. Both steps are `auth` requests with
 
 // -> on any connection, such as one opened by the link
 {"method": "auth", "id": "c2", "params": {"scheme": "email", "email": "ada@example.com", "token": "418092"}}
-// <- signed in, with a permanent token for later connections
+// <- signed in, with a bearer token for later connections
 {"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
 ```
 
@@ -1572,16 +1578,15 @@ token sent to their email address. Both steps are `auth` requests with
   successful sign-in, is invalidated after a few failed attempts, and is
   replaced by a newer one for the same address.
 - With `token`, a valid request authenticates and its result carries `you`
-  and a permanent `token`, which the client presents on later connections
-  with `scheme: "token"` ([§3.2](#32-authentication)). An invalid, expired, or used token is
-  `denied`.
+  and a bearer `token` for later connections ([§3.2](#32-authentication)). An invalid,
+  expired, or used temporary token is `denied`.
 - The server builds any link from its own configuration, never from request
   fields, and puts the token in the URL fragment so it stays out of server
   logs. The sign-in happens on the connection that presents the token, not
   the one that requested it, so a request made by someone else signs in only
   whoever reads the email.
 - Account creation for unknown addresses, send rate limits (`retry_after`),
-  and the permanent token's lifetime are server policy.
+  and the bearer token's lifetime are server policy.
 
 ---
 
