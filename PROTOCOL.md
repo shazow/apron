@@ -416,11 +416,7 @@ carry it ([§4.3](#43-rooms)):
 ```json
 {
   "room_id": "general", "log_id": "1724800000000", "title": "General",
-  "intro_message": {
-    "message_id": "1724800000001", "log_id": "1724800000001", "room_id": "general",
-    "from": {"user_id": "alice", "name": "Alice"},
-    "body": {"text": "Ops chatter: deploys, alerts, *incidents*.", "format": "markdown"}
-  },
+  "description": "Ops chatter: deploys, alerts, *incidents*.",
   "latest_log_id": "1724803200042", "history_log_id": "1724800000000"
 }
 ```
@@ -436,7 +432,7 @@ clients always take the latest values, even if `log_id` did not change.
 | `prev_log_id`             | server   | optional; this room's previous record ([§2](#2-identifiers))                      |
 | `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing)) |
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
-| `intro_message`           | client   | optional message object ([§3.5](#35-messages)): the room's description or summary |
+| `description`             | client   | optional string, Markdown by convention: what the room is about                   |
 | `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
 | `latest_log_id`           | delivery | greatest `log_id` in the room's log, memberships included                         |
 | `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
@@ -445,9 +441,12 @@ clients always take the latest values, even if `log_id` did not change.
 A room record is complete ([§2](#2-identifiers)); omitted fields are cleared, except
 `members`, which only some frames carry.
 
-`intro_message` is a message like any other. Servers SHOULD embed its
-snapshot in room records so clients can render it without history; editing
-it is an ordinary message save ([§4.2](#42-edit)). `log_id`, `latest_log_id`, and
+`description` is the room's summary, such as its purpose or the state of its
+conversation. It is part of the room record, so anyone allowed to edit the
+room can change it with `room_set` ([§4.3.4](#434-creating-and-editing)), such as a bot that keeps a
+thread's summary current, and each change reaches everyone who receives the
+room's record ([§4.3.3](#433-updates)). Clients render it as Markdown under [§3.5](#35-messages)'s rules
+and MAY show it as plain text. `log_id`, `latest_log_id`, and
 `history_log_id` are REQUIRED when cap `history` is advertised and OPTIONAL
 otherwise; [§4.1](#41-history) defines their use.
 
@@ -534,9 +533,9 @@ local policy.
   the client has not loaded. Servers MAY publish a snapshot of any message at
   any time, such as edits, deletions, and moves of older messages. Support is
   mandatory regardless of cap `edit`.
-- **References.** `reply_to` and `intro_message` hold a message object: bare
-  (`message_id` only) from clients, optionally a full snapshot from servers,
-  installed like any other. Embedded snapshots carry a bare `reply_to`.
+- **References.** `reply_to` holds a message object: bare (`message_id`
+  only) from clients, optionally a full snapshot from servers, installed
+  like any other. Embedded snapshots carry a bare `reply_to`.
   Clients render the referring message even when the target is missing or
   deleted.
 - `reply_to.message_id` MUST name an existing message other than the message
@@ -876,7 +875,7 @@ membership are server policy.
       },
       {
         "room_id": "1724803312001", "log_id": "1724803312001",
-        "parent_room_id": "general", "title": "Deploy", "intro_message": {...},
+        "parent_room_id": "general", "title": "Deploy", "description": "Why the 4pm deploy failed",
         "latest_log_id": "1724803400000", "history_log_id": "1724803312001",
         "members": [{"user_id": "alice"}, {"user_id": "bob"}]
       }
@@ -1013,9 +1012,10 @@ the full list:
 - `left`: `[{room_id}]` of rooms the user is no longer in: left, removed,
   no longer visible, or deleted.
 - `updated`: room records that are new or changed while membership is not:
-  an edit to a joined room, or a new or edited thread of one. Messages in a
-  thread do not change its record, so a thread's `latest_log_id` here can
-  lag; clients refresh it with `room_list` and `parent_room_id`.
+  an edit to a joined room, such as its `title` or `description`, or a new
+  or edited thread of one, which reaches the parent's members whether or
+  not they joined the thread. Messages in a thread do not change its
+  record, so a thread's `latest_log_id` here can lag; clients refresh it with `room_list` and `parent_room_id`.
 
 ```jsonc
 // <- after the join above
@@ -1035,24 +1035,21 @@ are cleared. Both return `{"room_id": "..."}` after the change arrives as a
 `room_update`, and a creation also logs the creator's membership ([§4.3.2](#432-membership)).
 
 ```jsonc
-// -> start a thread on an existing message
+// -> start a thread in general
 {
   "method": "room_set", "id": "c26", "params": {
     "parent_room_id": "general", "title": "Deploy",
-    "intro_message": {"message_id": "1724803200042"}
+    "description": "Why the 4pm deploy failed"
   }
 }
-// <- to the creator; the server embedded the intro snapshot
+// <- to the creator
 {
   "method": "room_update", "params": {
     "joined": [
       {
         "room_id": "1724803312001", "log_id": "1724803312001",
         "parent_room_id": "general", "title": "Deploy",
-        "intro_message": {
-          "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
-          "from": {...}, "body": {...}
-        },
+        "description": "Why the 4pm deploy failed",
         "latest_log_id": "1724803312001", "history_log_id": "1724803312001"
       }
     ]
@@ -1060,15 +1057,35 @@ are cleared. Both return `{"room_id": "..."}` after the change arrives as a
 }
 // <- then the result
 {"id": "c26", "result": {"room_id": "1724803312001"}}
+
+// -> later, a summarizer bot rewrites the description, resubmitting the title
+{
+  "method": "room_set", "id": "s9", "params": {
+    "room_id": "1724803312001", "title": "Deploy",
+    "description": "Root cause: **expired cert** on the build runner. Fix is rolling out."
+  }
+}
+// <- to the thread's members and to general's members
+{
+  "method": "room_update", "params": {
+    "updated": [
+      {
+        "room_id": "1724803312001", "log_id": "1724803900000", "prev_log_id": "1724803312001",
+        "parent_room_id": "general", "title": "Deploy",
+        "description": "Root cause: **expired cert** on the build runner. Fix is rolling out.",
+        "latest_log_id": "1724803900000", "history_log_id": "1724803312001"
+      }
+    ]
+  }
+}
+{"id": "s9", "result": {"room_id": "1724803312001"}}
 ```
 
 - `parent_room_id` MUST name an existing visible room. Nesting depth is
   server policy.
-- `intro_message` is a bare reference on input. It MAY live in any room; for
-  a thread it is usually the parent-room message that started it. Its text is
-  updated by saving that message ([§4.2](#42-edit)), not by `room_set`. A
-  described top-level room takes three steps: create it, post the description
-  in it, then `room_set` with `room_id` and `intro_message`.
+- Editing a room is server policy. Suggested convention: members of a room
+  may edit it, so a bot that joins a thread can keep its `description`
+  current.
 - The server MAY adjust or supply metadata by policy. Unknown `room_id`,
   unknown `parent_room_id`, or invalid types are `invalid_params`;
   unauthorized requests are `denied`.
@@ -1409,8 +1426,8 @@ happens to it:
   `@private` notice that lists the commands available to the sender, with
   their arguments and what they do.
 - Clients MAY handle commands that match a request themselves, such as
-  `/nick` as `me`, `/topic` as `room_set`, `/join` as `room_join`, `/leave`
-  as `room_leave`, and send the rest as `command`.
+  `/nick` as `me`, `/topic` as `room_set` with `description`, `/join` as
+  `room_join`, `/leave` as `room_leave`, and send the rest as `command`.
 
 ```jsonc
 // -> remove a user from the room; mentions name the target
@@ -1590,8 +1607,8 @@ Three of them tell the receiver who else got the message:
 
 Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
 `embed_id`, `parent_room_id`, `session_id`). Embedded objects use descriptive
-names (`from`, `body`, `reply_to`, `intro_message`). JSON-RPC's envelope `id`
-keeps its name. Extensions and future methods should follow the same pattern.
+names (`from`, `body`, `reply_to`). JSON-RPC's envelope `id` keeps its
+name. Extensions and future methods should follow the same pattern.
 
 ### A.3 Mention text
 
