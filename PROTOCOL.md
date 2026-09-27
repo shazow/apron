@@ -258,6 +258,8 @@ frame, unprompted. There is no client hello.
 - `caps`: array of capability strings ([§4](#4-capabilities)), default `[]`.
 - `auth`: required nonempty array of supported authentication schemes ([§3.2](#32-authentication)),
   in server preference order.
+- `auth_help`: optional Markdown string about signing in, shown with the
+  sign-in choices ([§3.2](#32-authentication)).
 - `ext`: optional extension metadata ([§3.5](#35-messages)), such as implementation limits.
 - `push`: optional object of supported push kinds; its presence enables push
   ([§4.7](#47-push)).
@@ -303,6 +305,14 @@ rotates the presented token. Clients save the latest `token` the server
 offers, replacing any earlier one, and reconnect with it. A server MAY
 reject a token it has replaced; expired and revoked tokens are `denied`.
 Lifetime, rotation, and revocation are server policy.
+
+`server.auth_help` tells people how this server's schemes fit together, in
+free text for the sign-in screen, such as "Create an account with email,
+then add a passkey to sign in with it. Email codes expire after 5 minutes."
+Clients render it as Markdown under [§3.5](#35-messages)'s rules and MAY show it as plain
+text; they never parse it. Unlike a `@private` notice sent before auth
+([Appendix B](#appendix-b--valid-scenarios-informative)), it belongs to the sign-in screen rather than a room, and each
+`server` frame replaces it.
 
 `name` and `user_id` are optional requests, valid with any scheme; `you`
 is what the server assigned. Servers SHOULD NOT give out a previously used
