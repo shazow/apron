@@ -249,7 +249,7 @@ class Server {
 
   name?: string;
   caps?: string[] = [];
-  welcome?: string;             // Markdown
+  welcome?: string;             // user-readable Markdown details and auth instructions
   ping?: number;                // seconds between client pings
   push?: object;                // push kinds (§4.7)
   ext?: object;                 // opaque extension data (§3.5)
