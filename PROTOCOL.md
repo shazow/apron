@@ -496,6 +496,7 @@ class Room {
 
   // "rooms" capability
   members?: User[];             // only in some frames
+  member_count?: number;        // total members, when `members` is truncated
 }
 ```
 
@@ -539,9 +540,10 @@ clients always take the latest values, even if `log_id` did not change.
 | `latest_log_id`           | delivery | greatest `log_id` in the room's log, memberships included                         |
 | `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
 | `members`                 | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.3](#43-rooms))       |
+| `member_count`            | delivery | optional; how many users have joined, when `members` is truncated ([§4.3.1](#431-listing)) |
 
 A room record is complete ([§2](#2-identifiers)); omitted fields are cleared, except
-`members`, which only some frames carry.
+`members` and `member_count`, which only some frames carry.
 
 `description` is the room's summary, such as its purpose or the state of its
 conversation. It is part of the room record, so anyone allowed to edit the
@@ -1061,8 +1063,11 @@ With `members: true`, each room in `joined` and `not_joined` carries
 `members`, every user who has joined it, as user objects ([§3.3](#33-identity)): complete,
 or partial, such as `user_id` only. The result MAY carry `users`, complete
 current objects for the users in its `members`, each user once however many
-rooms list them, so `members` can stay partial. A later revision may add
-paging for large rooms.
+rooms list them, so `members` can stay partial.
+
+A server MAY truncate `members` in a large room, listing the most recently
+active, and then SHOULD include `member_count`, the total. Clients learn the
+rest from memberships ([§4.3.2](#432-membership)) and from the messages they receive.
 
 #### 4.3.2 Membership
 
@@ -1120,8 +1125,9 @@ with the user as a recorded object ([§3.3](#33-identity)) and `joined`:
 - A membership record is delivered to the room's members before and after
   the change, so both the joining and the leaving user receive it. It
   advances the room's `latest_log_id`.
-- Clients start a room's member list from its `members`, which is complete,
-  in `room_list` with `members: true` or in `room_update` `joined`, and keep
+- Clients start a room's member list from its `members`, which is complete
+  unless truncated ([§4.3.1](#431-listing)), in `room_list` with `members: true` or in
+  `room_update` `joined`, and keep
   it current from the memberships they receive live and in history.
 - A server MAY keep membership outside the log, such as for ephemeral
   guests: it then sends no membership records for them, clients learn those
@@ -1745,20 +1751,20 @@ Three of them tell the receiver who else got the message:
 |----------------|-------------------------------|--------|---------------------------------------------|
 | `~server`      | every user on the server      | yes    | maintenance notices, announcements           |
 | `~room`        | every member of the room      | yes    | removals with a reason, poll results         |
-| `~private`     | only this connection's user   | no     | welcomes, command replies, errors, reminders |
+| `~private`     | only this connection          | no     | welcomes, command replies, errors, reminders |
 
 - `room_id` is where the message is shown, as for any message. A
   server-wide notice names a room too, usually the default room ([§3.5](#35-messages)),
   and reaches every user whether or not they joined it; a `~private` notice
-  reaches its one user wherever it is shown. These are sender identities
+  reaches its one connection wherever it is shown. These are sender identities
   that state a scope, not rooms. Joins and leaves are memberships ([§4.3.2](#432-membership)),
   which clients can show, not `~room` messages.
 - `~private` messages are not logged and carry neither `log_id` nor
   `message_id`. Like push payloads ([§4.7](#47-push)), clients render them but
   never install them as snapshots, and they are not in history. A private
   notice that should last belongs in a room of its own.
-- Before authentication, a `~private` notice reaches only the connection it
-  is sent on. It MAY omit `room_id` like any message ([§3.5](#35-messages)); a client with
+- A `~private` notice reaches only the connection it is sent on. It MAY
+  omit `room_id` like any message ([§3.5](#35-messages)); a client with
   no room to show it in yet, such as one still signing in, shows it there.
 
 ```jsonc
