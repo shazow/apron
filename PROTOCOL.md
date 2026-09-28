@@ -362,7 +362,7 @@ server's schemes fit together, in free text, such as "Create an account
 with email, then add a passkey to sign in with it. Email codes expire after
 5 minutes."
 Clients render it as Markdown under [§3.5](#35-messages)'s rules and MAY show it as plain
-text; they never parse it. Unlike a `@private` notice sent before auth
+text; they never parse it. Unlike a `~private` notice sent before auth
 ([Appendix B](#appendix-b--valid-scenarios-informative)), it belongs to the sign-in screen rather than a room, and each
 `server` frame replaces it.
 
@@ -374,7 +374,7 @@ free-form implementation string for debugging.
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
 other requests get `denied` and other notifications are ignored.
 Authentication gates what a client sends, not what it receives: the server
-MAY send notifications before auth, such as a `@private` welcome
+MAY send notifications before auth, such as a `~private` welcome
 ([Appendix A.1](#a1-system-identities-and-scoped-notices), [Appendix B](#appendix-b--valid-scenarios-informative)).
 
 `auth` is a barrier: the server finishes an `auth` request before it
@@ -1558,14 +1558,14 @@ happens to it:
   `upload` embeds ([§4.6.3](#463-writes)). A failure is an ordinary error whose
   `message` the client shows.
 - The server replies, when it needs to, with system notices ([Appendix A.1](#a1-system-identities-and-scoped-notices)):
-  `@private` to the sender, `@room` to the room, `@server` to everyone.
+  `~private` to the sender, `~room` to the room, `~server` to everyone.
   Effects arrive as the frames they cause, such as `room_update`.
 - Retries follow [§1.2](#12-retries-and-deduplication), so a retried command does not run twice.
 - Commands are for what a server provides beyond this spec, such as
   `/mute` with the server's own notification rules. Which exist, their
   arguments, and who may use them are server policy.
 - Servers that support commands SHOULD provide `/help`, replying with a
-  `@private` notice that lists the commands available to the sender, with
+  `~private` notice that lists the commands available to the sender, with
   their arguments and what they do.
 - Clients MAY handle commands that match a request themselves, such as
   `/nick` as `me`, `/topic` as `room_set` with `description`, `/join` as
@@ -1592,7 +1592,7 @@ happens to it:
 {
   "method": "message", "params": {
     "message_id": "1724803900002", "log_id": "1724803900002", "room_id": "general",
-    "from": {"user_id": "@room", "name": "General"},
+    "from": {"user_id": "~room", "name": "General"},
     "body": {"text": "@guest_1234 was removed by @alice: spamming"}
   }
 }
@@ -1615,7 +1615,7 @@ happens to it:
 {
   "method": "message", "params": {
     "room_id": "general",
-    "from": {"user_id": "@private", "name": "Only you"},
+    "from": {"user_id": "~private", "name": "Only you"},
     "body": {
       "text": "- `/kick @user [reason]`: remove someone from this room\n- `/avatar` with an image: set your avatar",
       "format": "markdown"
@@ -1726,8 +1726,8 @@ are `auth` requests with `scheme: "email"`:
 
 ### A.1 System identities and scoped notices
 
-`user_id`s beginning with `@` are reserved for server-controlled identities,
-such as `@sfu` for a media server ([Appendix C.1](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
+`user_id`s beginning with `~` are reserved for server-controlled identities,
+such as `~sfu` for a media server ([Appendix C.1](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
 them to users. They carry an ordinary `from` and render like any sender, so
 clients unaware of the convention still work; clients MAY style them as
 system messages.
@@ -1736,21 +1736,21 @@ Three of them tell the receiver who else got the message:
 
 | `from.user_id` | received by                   | logged | for example                                  |
 |----------------|-------------------------------|--------|---------------------------------------------|
-| `@server`      | every user on the server      | yes    | maintenance notices, announcements           |
-| `@room`        | every member of the room      | yes    | removals with a reason, poll results         |
-| `@private`     | only this connection's user   | no     | welcomes, command replies, errors, reminders |
+| `~server`      | every user on the server      | yes    | maintenance notices, announcements           |
+| `~room`        | every member of the room      | yes    | removals with a reason, poll results         |
+| `~private`     | only this connection's user   | no     | welcomes, command replies, errors, reminders |
 
 - `room_id` is where the message is shown, as for any message. A
   server-wide notice names a room too, usually the default room ([§3.5](#35-messages)),
-  and reaches every user whether or not they joined it; a `@private` notice
+  and reaches every user whether or not they joined it; a `~private` notice
   reaches its one user wherever it is shown. These are sender identities
   that state a scope, not rooms. Joins and leaves are memberships ([§4.3.2](#432-membership)),
-  which clients can show, not `@room` messages.
-- `@private` messages are not logged and carry neither `log_id` nor
+  which clients can show, not `~room` messages.
+- `~private` messages are not logged and carry neither `log_id` nor
   `message_id`. Like push payloads ([§4.7](#47-push)), clients render them but
   never install them as snapshots, and they are not in history. A private
   notice that should last belongs in a room of its own.
-- Before authentication, a `@private` notice reaches only the connection it
+- Before authentication, a `~private` notice reaches only the connection it
   is sent on. It MAY omit `room_id` like any message ([§3.5](#35-messages)); a client with
   no room to show it in yet, such as one still signing in, shows it there.
 
@@ -1759,7 +1759,7 @@ Three of them tell the receiver who else got the message:
 {
   "method": "message", "params": {
     "message_id": "1724803500001", "log_id": "1724803500001", "room_id": "general",
-    "from": {"user_id": "@server", "name": "Server"},
+    "from": {"user_id": "~server", "name": "Server"},
     "body": {"text": "Maintenance at 17:00 UTC."}
   }
 }
@@ -1767,7 +1767,7 @@ Three of them tell the receiver who else got the message:
 {
   "method": "message", "params": {
     "message_id": "1724803500002", "log_id": "1724803500002", "room_id": "general",
-    "from": {"user_id": "@room", "name": "General"},
+    "from": {"user_id": "~room", "name": "General"},
     "body": {"text": "Poll closed: Tuesday wins, 7 votes to 4."}
   }
 }
@@ -1775,7 +1775,7 @@ Three of them tell the receiver who else got the message:
 {
   "method": "message", "params": {
     "room_id": "general",
-    "from": {"user_id": "@private", "name": "Only you"},
+    "from": {"user_id": "~private", "name": "Only you"},
     "body": {"text": "Welcome to General! Deploy chatter goes in threads."}
   }
 }
@@ -1792,11 +1792,11 @@ name. Extensions and future methods should follow the same pattern.
 
 In `body.text`, a mention ([§3.5](#35-messages)) usually appears as `@` followed by an ID:
 
-- The ID is an optional `@` then a run of `[A-Za-z0-9_.-]`, not preceded by
-  a letter or digit, so `foo@bar.com` is not one. Trailing `.` and `-` are
-  not part of it. Servers that want users and rooms to be mentionable mint
-  IDs from that set, such as `guest_1234`. System identities ([A.1](#a1-system-identities-and-scoped-notices)) take a
-  second `@`, as in `@@server`.
+- The ID is a run of `[A-Za-z0-9_.-]`, not preceded by a letter or digit,
+  so `foo@bar.com` is not one. Trailing `.` and `-` are not part of it.
+  Servers that want users and rooms to be mentionable mint IDs from that
+  set, such as `guest_1234`. System identities ([A.1](#a1-system-identities-and-scoped-notices)) begin with `~`, outside
+  it, and are not mentioned.
 - How `text` renders is up to the client. Clients MAY show an `@id` naming
   a known user with the user's latest display name ([§3.3](#33-identity)), such as a chip,
   and one naming a room as a link to the room, wherever their formatting
@@ -1812,7 +1812,7 @@ implementations accept them. Each follows from the sections it cites.
 
 - **The server sends a welcome before `auth`.** Authentication gates what a
   client sends, not what it receives ([§3.2](#32-authentication)). A server MAY follow its
-  `server` frame with a `@private` notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)), such as how to
+  `server` frame with a `~private` notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)), such as how to
   sign in. It reaches only this connection and omits `room_id`, since the
   client knows no rooms yet. Sent before the server reads any frame, it
   precedes the `auth` result even when the client pipelined `auth`. It is
@@ -1825,7 +1825,7 @@ implementations accept them. Each follows from the sections it cites.
   // <- before any auth
   {
     "method": "message", "params": {
-      "from": {"user_id": "@private", "name": "Only you"},
+      "from": {"user_id": "~private", "name": "Only you"},
       "body": {"text": "Guests can read along. **Sign in with a passkey** to post.", "format": "markdown"}
     }
   }
@@ -1929,7 +1929,7 @@ handles loss and renegotiation.
 
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
 only relays; clients SHOULD soft-cap participants. A future cap `rtc.sfu`
-adds a media server joining as member `@sfu` ([Appendix A.1](#a1-system-identities-and-scoped-notices)), with which
+adds a media server joining as member `~sfu` ([Appendix A.1](#a1-system-identities-and-scoped-notices)), with which
 clients negotiate a single PeerConnection.
 
 **Exclusions.** Mute and camera state are derivable from media streams.
