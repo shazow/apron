@@ -250,8 +250,8 @@ class Server {
   caps?: string[] = [];
   welcome?: string;             // Markdown
   ping?: number;                // seconds between client pings
-  push?: { [kind: string]: object };
-  ext?: { [namespace: string]: unknown };
+  push?: object;                // push kinds (§4.7)
+  ext?: object;                 // opaque extension data (§3.5)
 }
 ```
 
@@ -389,7 +389,7 @@ class User {
   user_id: string;
   name?: string;                // absent: shown as user_id
   avatar?: string;              // image URL
-  ext?: { [namespace: string]: unknown };
+  ext?: object;                 // opaque extension data (§3.5)
 }
 ```
 
@@ -482,7 +482,7 @@ class Room {
   parent_room_id?: string;      // fixed once the room is created
   title?: string;               // absent: shown as room_id
   description?: string;         // Markdown by convention
-  ext?: { [namespace: string]: unknown };
+  ext?: object;                 // opaque extension data (§3.5)
 
   // "history" capability: required when advertised
   log_id?: string;
@@ -565,7 +565,7 @@ class Message {
     embeds?: Embed[] = [];      // §4.6
   };
   reply_to?: { message_id: string } | Message;   // bare from clients
-  ext?: { [namespace: string]: unknown };
+  ext?: object;                 // opaque extension data (§3.5)
 
   // set by the server
   message_id: string;           // sent by clients only to save a message (§4.2)
