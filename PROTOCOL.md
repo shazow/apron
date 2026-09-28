@@ -246,6 +246,7 @@ follow are normative.
 class Server {
   protocol: number;
   auth: string[];               // at least one scheme, in preference order
+
   name?: string;
   caps?: string[] = [];
   welcome?: string;             // Markdown
@@ -293,6 +294,7 @@ content.
 ```ts
 class Auth {
   scheme: string;               // one of server.auth
+
   name?: string;                // requested display name
   user_id?: string;             // requested user_id
   client?: string;              // implementation string, for debugging
@@ -387,6 +389,7 @@ authenticate nothing, so requests behind them are denied.
 ```ts
 class User {
   user_id: string;
+
   name?: string;                // absent: shown as user_id
   avatar?: string;              // image URL
   ext?: object;                 // opaque extension data (§3.5)
@@ -479,6 +482,7 @@ identities ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
 ```ts
 class Room {
   room_id: string;
+
   parent_room_id?: string;      // fixed once the room is created
   title?: string;               // absent: shown as room_id
   description?: string;         // Markdown by convention
@@ -557,13 +561,14 @@ both render.
 
 ```ts
 class Message {
-  room_id?: string;             // absent: the server's default room
   body: {
     text?: string = "";
     format?: "plain" | "markdown" = "plain";
     mentions?: string[] = [];   // user_ids
     embeds?: Embed[] = [];      // §4.6
   };
+
+  room_id?: string;             // absent: the server's default room
   reply_to?: { message_id: string } | Message;   // bare from clients
   ext?: object;                 // opaque extension data (§3.5)
 
@@ -571,6 +576,7 @@ class Message {
   message_id: string;           // sent by clients only to save a message (§4.2)
   log_id: string;
   from: User;
+
   prev_log_id?: string;
   prev_room_id?: string;        // only after a move
 
