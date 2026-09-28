@@ -491,8 +491,6 @@ clients show other roles as written.
 - Clients render roles distinctly from the name, such as badges, so no name
   can pass as a role.
 
-The `@` prefix marks system identities ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
-
 ### 3.4 Rooms
 
 ```ts
