@@ -224,8 +224,6 @@ All IDs are strings.
 - Request `id`s SHOULD be random, to avoid collisions across devices of the
   same user. They identify operations, not log positions.
 - Suggested convention: use a room's creation `log_id` as its `room_id`.
-- Suggested convention: keep `room_id`s distinct from `user_id`s, so
-  `@mentions` are unambiguous ([Appendix A.3](#a3-mention-text)).
 
 ---
 
@@ -689,8 +687,7 @@ local policy.
   install it as a snapshot.
 
 **Mentions.** A message lists the users it mentions in `body.mentions`, and
-usually shows each one in `body.text` as `@` followed by the `user_id`
-([Appendix A.3](#a3-mention-text)):
+usually shows each one in `body.text` ([Appendix A.3](#a3-prefixes-in-text)):
 
 ```json
 "body": {
@@ -705,8 +702,8 @@ usually shows each one in `body.text` as `@` followed by the `user_id`
   Servers never parse `text` to find mentions.
 - An edit ([§4.2](#42-edit)) mentions only the users it adds to `mentions`; users
   already listed are not mentioned again.
-- Composers add a user to `mentions` when the user picks them, and insert
-  `@user_id` in `text`.
+- Composers add a user to `mentions` when the user picks them, and write
+  the mention in `text`.
 - Mentions that notify a whole room are not defined.
 
 ### 3.6 Core conformance checklist
@@ -1726,11 +1723,10 @@ are `auth` requests with `scheme: "email"`:
 
 ### A.1 System identities and scoped notices
 
-`user_id`s beginning with `~` are reserved for server-controlled identities,
-such as `~sfu` for a media server ([Appendix C.1](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). Servers SHOULD NOT assign
-them to users. They carry an ordinary `from` and render like any sender, so
-clients unaware of the convention still work; clients MAY style them as
-system messages.
+System identities are server-controlled `user_id`s with the `~` prefix
+([A.3](#a3-prefixes-in-text)), such as `~sfu` for a media server ([Appendix C.1](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). They carry an
+ordinary `from` and render like any sender, so clients unaware of the
+convention still work; clients MAY style them as system messages.
 
 Three of them tell the receiver who else got the message:
 
@@ -1788,20 +1784,27 @@ Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
 names (`from`, `body`, `reply_to`). JSON-RPC's envelope `id` keeps its
 name. Extensions and future methods should follow the same pattern.
 
-### A.3 Mention text
+### A.3 Prefixes in text
 
-In `body.text`, a mention ([§3.5](#35-messages)) usually appears as `@` followed by an ID:
+A prefix says what kind of ID follows. Users, rooms, and system identities
+use different ones, so an ID never has to be guessed:
 
-- The ID is a run of `[A-Za-z0-9_.-]`, not preceded by a letter or digit,
-  so `foo@bar.com` is not one. Trailing `.` and `-` are not part of it.
-  Servers that want users and rooms to be mentionable mint IDs from that
-  set, such as `guest_1234`. System identities ([A.1](#a1-system-identities-and-scoped-notices)) begin with `~`, outside
-  it, and are not mentioned.
+| prefix | names             | in `body.text`                                              |
+|--------|-------------------|-------------------------------------------------------------|
+| `@`    | a user            | a mention ([§3.5](#35-messages)), listed in `body.mentions` too |
+| `#`    | a room            | a reference to the room; it mentions no one                 |
+| `~`    | a system identity | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices))     |
+
+- After `@` or `#`, the ID is a run of `[A-Za-z0-9_.-]`, and the prefix is
+  not preceded by a letter or digit, so `foo@bar.com` and `tag#ops` are
+  neither. Trailing `.` and `-` are not part of it. Servers that want users
+  and rooms to be mentionable mint IDs from that set, such as `guest_1234`.
+- `user_id`s beginning with `~` are reserved for system identities. Servers
+  SHOULD NOT assign them to users.
 - How `text` renders is up to the client. Clients MAY show an `@id` naming
   a known user with the user's latest display name ([§3.3](#33-identity)), such as a chip,
-  and one naming a room as a link to the room, wherever their formatting
-  allows. When an ID names both a user and a room, clients treat it as a
-  user. Unknown IDs render as written.
+  and a `#id` naming a known room as a link showing its title, wherever
+  their formatting allows. Unknown IDs render as written.
 
 ---
 
