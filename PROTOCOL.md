@@ -243,13 +243,13 @@ follow are normative.
 ```ts
 class Server {
   protocol: number;
-  auth: string[];               // at least one scheme, in preference order
+  auth: string[];               // at least one scheme, in preference order (§3.2)
 
-  name?: string;
-  caps?: string[] = [];
+  name?: string;                // implementation/version string
+  caps?: string[] = [];         // capabilities (§4)
   welcome?: string;             // user-readable Markdown details and auth instructions
-  ping?: number;                // seconds between client pings
-  push?: object;                // push kinds (§4.7)
+  ping?: number;                // seconds between client pings (§1)
+  push?: object;                // push kinds; its presence enables push (§4.7)
   ext?: object;                 // opaque extension data (§3.5)
 }
 ```
@@ -268,20 +268,9 @@ frame, unprompted. There is no client hello.
 }
 ```
 
-- `protocol`: required integer, incremented with each revision of this spec.
-  Current value `7`. Implementations make a best effort to interoperate
-  across versions; mismatched optional features degrade to their fallbacks
-  ([§4](#4-capabilities)).
-- `name`: optional implementation/version string.
-- `caps`: array of capability strings ([§4](#4-capabilities)), default `[]`.
-- `auth`: required nonempty array of supported authentication schemes ([§3.2](#32-authentication)),
-  in server preference order.
-- `welcome`: optional Markdown string shown with the sign-in choices, such
-  as how to sign in ([§3.2](#32-authentication)).
-- `ext`: optional extension metadata ([§3.5](#35-messages)), such as implementation limits.
-- `push`: optional object of supported push kinds; its presence enables push
-  ([§4.7](#47-push)).
-- `ping`: optional positive integer, the seconds between client pings ([§1](#1-transport--framing)).
+`protocol` is incremented with each revision of this spec; the current
+value is `7`. Implementations make a best effort to interoperate across
+versions; mismatched optional features degrade to their fallbacks ([§4](#4-capabilities)).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
@@ -366,8 +355,7 @@ text; they never parse it. Unlike a `~private` notice sent before auth
 
 `name` and `user_id` are optional requests, valid with any scheme; `you`
 is what the server assigned. Servers SHOULD NOT give out a previously used
-`user_id` without authenticating its owner. `client` is an optional
-free-form implementation string for debugging.
+`user_id` without authenticating its owner.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
 other requests get `denied` and other notifications are ignored.
@@ -1153,8 +1141,10 @@ the full list:
 - `updated`: room records that are new or changed while membership is not:
   an edit to a joined room, such as its `title` or `description`, or a new
   or edited thread of one, which reaches the parent's members whether or
-  not they joined the thread. Messages in a thread do not change its
-  record, so a thread's `latest_log_id` here can lag; clients refresh it with `room_list` and `parent_room_id`.
+  not they joined the thread. Parent members see changes to a thread's
+  record, not its activity: messages in a thread do not change its record,
+  so its `latest_log_id` is as of the last record change. Thread members
+  follow its activity from the messages they receive.
 
 ```jsonc
 // <- after the join above
@@ -1319,6 +1309,27 @@ broadcast carries the state.
 - Retries follow [§1.2](#12-retries-and-deduplication). Push wake-ups for reactions are server policy.
 
 ### 4.6 Embeds and avatars
+
+```ts
+class Embed {
+  kind: string;                 // "upload", "stream", "iframe", "html", or another
+
+  embed_id?: string;            // set by servers with any embed:* capability (§4.6.2)
+  title?: string;
+  url?: string;                 // where a click goes; the server's own for upload and stream
+  og?: object;                  // OpenGraph description (§4.6.1)
+
+  // "iframe" kind
+  height?: number;              // suggested height
+
+  // "html" kind
+  html?: string;
+
+  // "stream" kind (§4.6.5)
+  format?: string = "plain";
+  text?: string;                // the kept text, once the stream ends
+}
+```
 
 `body.embeds` holds rich content in display order; `kind` selects
 the renderer. Unknown kinds render from `og`, or else the fallback card
