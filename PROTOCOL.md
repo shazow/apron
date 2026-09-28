@@ -16,26 +16,28 @@ Here's an example exchange to get a taste:
 // <- server greeting with capabilities and auth schemes
 {"method": "server", "params": {"protocol": 6, "caps": ["rooms"], "auth": ["guest", "token"]}}
 
-// -> guest auth, requesting a display name
+// -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
 
-// -> joined rooms and their members, sent without waiting: auth finishes first (§3.2)
-{"method": "room_list", "id": "c2", "params": {"filter": "joined", "members": true}}
-
-// <- assigned identity
+// <- server assigns the identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
+
+// -> client requests the joined rooms and its members (server may ignore the filters)
+{"method": "room_list", "id": "c2", "params": {"filter": "joined", "members": true}}
 
 // <- one room
 {
   "id": "c2", "result": {
-    "joined": [{"room_id": "general", "title": "General", "members": [{"user_id": "guest_1234", "name": "Ada"}]}]
+    "joined": [
+      {"room_id": "general", "title": "General", "members": [{"user_id": "guest_1234", "name": "Ada"}]}
+    ]
   }
 }
 
 // -> post a message
 {"method": "message", "id": "c3", "params": {"room_id": "general", "body": {"text": "Hello"}}}
 
-// <- broadcast to everyone in the room
+// <- server broadcasts to everyone in the room
 {
   "method": "message", "params": {
     "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
@@ -44,7 +46,7 @@ Here's an example exchange to get a taste:
   }
 }
 
-// <- confirmation, after the broadcast it caused
+// <- confirmation, after the broadcast is complete
 {"id": "c3", "result": {"message_id": "1724803200042"}}
 ```
 
