@@ -10,53 +10,7 @@ The protocol is incremental. The mandatory core ([§3](#3-core)) is all a minima
 implementation needs, about a hundred lines. Everything else is an optional
 capability: [§4](#4-capabilities) lists and specifies them.
 
-Contents:
-
-- [1. Transport & framing](#1-transport--framing)
-  - [1.1 Envelope and replies](#11-envelope-and-replies)
-  - [1.2 Retries and deduplication](#12-retries-and-deduplication)
-- [2. Identifiers](#2-identifiers)
-- [3. Core](#3-core)
-  - [3.1 `server` frame](#31-server-frame)
-  - [3.2 Authentication](#32-authentication)
-  - [3.3 Identity](#33-identity)
-  - [3.4 Rooms](#34-rooms)
-  - [3.5 Messages](#35-messages)
-  - [3.6 Core conformance checklist](#36-core-conformance-checklist)
-- [4. Capabilities](#4-capabilities)
-  - [4.1 `history`](#41-history)
-  - [4.2 `edit`](#42-edit)
-  - [4.3 `rooms`](#43-rooms)
-    - [4.3.1 Listing](#431-listing)
-    - [4.3.2 Membership](#432-membership)
-    - [4.3.3 Updates](#433-updates)
-    - [4.3.4 Creating and editing](#434-creating-and-editing)
-    - [4.3.5 Posting](#435-posting)
-  - [4.4 `activity`](#44-activity)
-  - [4.5 `reactions`](#45-reactions)
-  - [4.6 Embeds and avatars](#46-embeds-and-avatars)
-    - [4.6.1 OpenGraph metadata (`og`)](#461-opengraph-metadata-og)
-    - [4.6.2 Embed identity](#462-embed-identity)
-    - [4.6.3 Writes](#463-writes)
-    - [4.6.4 `embed:upload`](#464-embedupload)
-    - [4.6.5 `embed:stream`](#465-embedstream)
-    - [4.6.6 Avatars](#466-avatars)
-  - [4.7 Push](#47-push)
-  - [4.8 `command`](#48-command)
-  - [4.9 WebAuthn authentication](#49-webauthn-authentication)
-- [Appendix A — Conventions (informative)](#appendix-a--conventions-informative)
-  - [A.1 System identities and scoped notices](#a1-system-identities-and-scoped-notices)
-  - [A.2 Field naming](#a2-field-naming)
-  - [A.3 Mention text](#a3-mention-text)
-- [Appendix B — Valid scenarios (informative)](#appendix-b--valid-scenarios-informative)
-- [Appendix C — Under consideration](#appendix-c--under-consideration)
-  - [C.1 WebRTC: signaling for audio, video, and peer-to-peer connections](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)
-  - [C.2 Multiplexing envelope](#c2-multiplexing-envelope)
-
-A first exchange. After the WebSocket opens, the server announces itself and
-accepts authentication, and the client lists the rooms it has joined. The
-client sends messages; the server broadcasts them to every client in the
-room, including the sender.
+Here's an example exchange to get a taste:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
@@ -94,11 +48,9 @@ room, including the sender.
 {"id": "c3", "result": {"message_id": "1724803200042"}}
 ```
 
-- Client request `id` corresponds to server reply `id`.
-- `message_id` is a stable message identifier for its lifetime.
-- `log_id` identifies one change. The protocol is built around an append-only
-  log: every change to a room, message, reaction, or membership is a record
-  in it ([§2](#2-identifiers)).
+This was not a minimal implementation, as it includes rooms. A server or client which does
+not implement the rooms capability will degrade implicitly into a single-room view by
+virtue of ignoring room-related fields.
 
 ---
 
