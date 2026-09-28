@@ -392,6 +392,7 @@ class User {
 
   name?: string;                // absent: shown as user_id
   avatar?: string;              // image URL
+  roles?: string[];             // server-defined labels, such as "admin" or "bot"
   ext?: object;                 // opaque extension data (§3.5)
 }
 ```
@@ -403,8 +404,8 @@ Identity is server-authoritative: every message carries its author in `from`.
 ```
 
 `user_id` is required and stable. `name` is an optional display string; absent
-`name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)) and `ext` ([§3.5](#35-messages)) are
-optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
+`name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)), `roles` (below), and `ext`
+([§3.5](#35-messages)) are optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
 `users`, a membership's `user`, RTC members) uses this shape, and servers MAY
 send only `user_id`.
 
@@ -433,7 +434,8 @@ can pass as someone else.
 A `me` request updates the user's own profile after authentication, by the
 same rule: fields given replace their current values, fields omitted stay
 unchanged, and an empty value removes the field. `name`, `avatar`, and
-`ext` are settable; the server MAY comply, decline, or alter any of them.
+`ext` are settable, and `roles` is not; the server MAY comply, decline, or
+alter any of them.
 Servers announce a removed field as its empty value:
 
 ```jsonc
@@ -473,9 +475,23 @@ memberships, not `user` notifications ([§4.3.2](#432-membership)).
   MAY alias it to the new identity.
 - Servers SHOULD NOT reissue a retired `user_id` to another user.
 
-Bots and agents are ordinary senders. Servers MAY mark kinds of users by
-convention in `user_id`, `name`, or `ext`, such as the `@` prefix for system
-identities ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
+Bots and agents are ordinary senders. Servers MAY mark kinds of users with
+`roles`: labels the server assigns, such as `"admin"`, `"moderator"`, or
+`"trusted"`, for clients to show beside the user's name. Suggested
+convention: `"bot"` marks an automated user and `"admin"` a server operator;
+clients show other roles as written.
+
+- Roles are for display. They grant nothing on the client: the server
+  enforces its own policy and answers a disallowed request with `denied`
+  ([§1.1](#11-envelope-and-replies)). Which roles a server publishes, if any, is server policy.
+- Servers that publish roles SHOULD include them in `you` and in the
+  `users` of `room_list` and `room_update` ([§4.3](#43-rooms)), and MAY in any other
+  current object. A role change is a `user` notification like any profile
+  change.
+- Clients render roles distinctly from the name, such as badges, so no name
+  can pass as a role.
+
+The `@` prefix marks system identities ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
 
 ### 3.4 Rooms
 
