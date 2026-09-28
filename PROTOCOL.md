@@ -234,7 +234,26 @@ All IDs are strings.
 Every server implements this section; a minimal server implements only this
 section. Optional features are advertised through capabilities ([§4](#4-capabilities)).
 
+Sections open with the shape of the objects they introduce, in a
+TypeScript-like notation: `?` marks a field that may be absent, `= value` is
+the value to assume when it is, and comment lines group fields by who sets
+them or by the capability that adds them. The prose and examples that
+follow are normative.
+
 ### 3.1 `server` frame
+
+```ts
+class Server {
+  protocol: number;
+  auth: string[];               // at least one scheme, in preference order
+  name?: string;
+  caps?: string[] = [];
+  welcome?: string;             // Markdown
+  ping?: number;                // seconds between client pings
+  push?: { [kind: string]: object };
+  ext?: { [namespace: string]: unknown };
+}
+```
 
 Upon accepting a connection, the server MUST immediately send a `server`
 frame, unprompted. There is no client hello.
@@ -270,6 +289,36 @@ the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
 content.
 
 ### 3.2 Authentication
+
+```ts
+class Auth {
+  scheme: string;               // one of server.auth
+  name?: string;                // requested display name
+  user_id?: string;             // requested user_id
+  client?: string;              // implementation string, for debugging
+
+  // "token" and "email" schemes
+  token?: string;
+
+  // "email" scheme (§4.10)
+  email?: string;
+
+  // "webauthn" scheme (§4.9)
+  action?: "register" | "login";
+  step?: "begin" | "finish";
+  challenge_id?: string;        // finish
+  credential?: object;          // finish
+}
+
+class AuthResult {
+  you?: User;                   // absent: nothing was authenticated
+  token?: string;               // save the latest; it replaces any earlier one
+
+  // "webauthn" scheme, begin step
+  challenge_id?: string;
+  public_key?: object;          // WebAuthn options
+}
+```
 
 ```jsonc
 // ->
@@ -334,6 +383,15 @@ step ([§4.9](#49-webauthn-authentication)) and an email request without `token`
 authenticate nothing, so requests behind them are denied.
 
 ### 3.3 Identity
+
+```ts
+class User {
+  user_id: string;
+  name?: string;                // absent: shown as user_id
+  avatar?: string;              // image URL
+  ext?: { [namespace: string]: unknown };
+}
+```
 
 Identity is server-authoritative: every message carries its author in `from`.
 
@@ -418,6 +476,25 @@ identities ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
 
 ### 3.4 Rooms
 
+```ts
+class Room {
+  room_id: string;
+  parent_room_id?: string;      // fixed once the room is created
+  title?: string;               // absent: shown as room_id
+  description?: string;         // Markdown by convention
+  ext?: { [namespace: string]: unknown };
+
+  // "history" capability: required when advertised
+  log_id?: string;
+  prev_log_id?: string;
+  latest_log_id?: string;
+  history_log_id?: string | null;
+
+  // "rooms" capability
+  members?: User[];             // only in some frames
+}
+```
+
 A room is a log with a server-chosen `room_id`. Every message names its room
 ([§3.5](#35-messages)). A server without cap `rooms` MAY have a single room: clients learn
 its `room_id` from the messages in it, and title any room they know nothing
@@ -477,6 +554,30 @@ the parent and MAY collapse or hide them. Servers set `title` on threads so
 both render.
 
 ### 3.5 Messages
+
+```ts
+class Message {
+  room_id?: string;             // absent: the server's default room
+  body: {
+    text?: string = "";
+    format?: "plain" | "markdown" = "plain";
+    mentions?: string[] = [];   // user_ids
+    embeds?: Embed[] = [];      // §4.6
+  };
+  reply_to?: { message_id: string } | Message;   // bare from clients
+  ext?: { [namespace: string]: unknown };
+
+  // set by the server
+  message_id: string;           // sent by clients only to save a message (§4.2)
+  log_id: string;
+  from: User;
+  prev_log_id?: string;
+  prev_room_id?: string;        // only after a move
+
+  // "edit" capability
+  deleted?: boolean = false;
+}
+```
 
 A message is one object, at different completeness depending on direction.
 A client sends the fields it controls; the server broadcasts the complete
