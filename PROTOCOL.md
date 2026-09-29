@@ -1888,27 +1888,37 @@ can experiment and converge on them.
 Planned capability `embed:rtc`: a WebRTC session is an embed. The socket
 carries signaling; media and data travel peer to peer. It follows the embed
 identity and write rules ([§4.6.2](#462-embed-identity), [§4.6.3](#463-writes)): the `embed_id` identifies the
-session, and the result that lists a new `rtc` embed carries the sender's
-ICE configuration in place of a `write_url`, since TURN credentials are
-deployment-specific and short-lived.
+session, and the result that lists a new `rtc` embed makes the sender its
+first peer, carrying its `peer_id` and ICE configuration in place of a
+`write_url`, since TURN credentials are deployment-specific and short-lived.
 
 ```ts
 class Embed {   // "rtc" kind, besides the fields of §4.6
   media?: ("audio" | "video" | "data")[];
 
   // set by the server
-  members?: User[];             // who has joined
+  members?: User[];             // who is in the session, once per user, for display
   ended?: boolean;
 }
+
+class Peer {                    // one client's seat in a session
+  peer_id: string;              // assigned by the server when joining
+  user: User;
+}
 ```
+
+The embed is public and per user; everything per device stays between the
+peers. `members` is optional: a server MAY publish it so the room can show
+who is in a call, and clients without it show the session as ongoing until
+`ended`.
 
 **Starting a session.** Where the embed is sent decides who sees it:
 
 - In a `message`, the session is logged and shown in the room: a call. Its
   snapshots are the session's state: the server publishes a new one when
-  `members` changes and a last one with `ended: true`, when it SHOULD
-  replace the embed's `og` with a summary. `mentions` ring people through
-  push ([§4.7](#47-push)). Members of the room may join.
+  `members` changes, if it publishes `members`, and a last one with `ended:
+  true`, when it SHOULD replace the embed's `og` with a summary. `mentions`
+  ring people through push ([§4.7](#47-push)). Members of the room may join.
 - In a `command` ([§4.8](#48-command)), nothing is logged. The server sends each user in
   `mentions` a transient message ([§3.5](#35-messages)) from the sender carrying the
   embed, as the invitation. The sender and those users may join.
@@ -1921,47 +1931,68 @@ class Embed {   // "rtc" kind, besides the fields of §4.6
     "body": {"text": "@bob call?", "mentions": ["bob"], "embeds": [{"kind": "rtc", "media": ["audio"]}]}
   }
 }
-// <- the snapshot to the room, then the result with the sender's ICE configuration
+// <- the snapshot to the room, then the result: the sender is peer p1
 {
   "id": "c40", "result": {
     "message_id": "1724803900000",
     "embeds": [{
-      "embed_id": "embed_77", "kind": "rtc",
+      "embed_id": "embed_77", "kind": "rtc", "peer_id": "p1",
       "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}]
     }]
   }
 }
 ```
 
-**Joining and leaving.** Other participants join by `embed_id`, and the
-result carries their ICE configuration. Leaving, or closing the connection,
-removes the user from `members`; the session ends when the last one leaves.
+**Joining.** A connection joins by `embed_id`. The result carries its own
+`peer_id`, its ICE configuration, and `peers`, the others already in the
+session. The joiner offers to each of them (below); they learn of it from its
+offer.
 
 ```jsonc
-// ->
+// -> Bob's phone joins
 {"method": "rtc_join", "id": "c41", "params": {"embed_id": "embed_77"}}
 // <-
-{"id": "c41", "result": {"ice": [...]}}
-// ->
-{"method": "rtc_leave", "id": "c42", "params": {"embed_id": "embed_77"}}
+{
+  "id": "c41", "result": {
+    "peer_id": "p3", "ice": [...],
+    "peers": [{"peer_id": "p1", "user": {"user_id": "alice", "name": "Alice"}}]
+  }
+}
 ```
 
-**Signaling relay.** The server routes `rtc_signal` by the required
-`to.user_id` among the session's members and attaches the sender's `from`.
-WebRTC handles loss and renegotiation.
+**Seats and reconnects.** A `peer_id` is a seat, not a connection: media
+and data flow peer to peer, so a call outlives a dropped chat connection.
+After reconnecting, a client sends `rtc_join` again with its `peer_id` to
+reclaim the seat, and gets fresh ICE configuration; only the same user can
+reclaim it, and the other peers see no change. A seat ends with
+`rtc_leave`, or when its connection stays closed past a grace period set by
+server policy. The session ends when its last seat does.
 
 ```jsonc
+// -> after reconnecting and authenticating
+{"method": "rtc_join", "id": "c47", "params": {"embed_id": "embed_77", "peer_id": "p3"}}
 // ->
+{"method": "rtc_leave", "id": "c48", "params": {"embed_id": "embed_77"}}
+```
+
+**Signaling relay.** The server routes `rtc_signal`
+by `peer_id` among the session's peers. In a request `peer_id` names the
+peer it is for; as delivered it names the peer it came from, and the server
+attaches the sender's `from`, so a reply goes back to the `peer_id`
+received. WebRTC handles loss and renegotiation.
+
+```jsonc
+// -> Alice (p1) to Bob's phone (p3)
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "to": {"user_id": "bob"},
+    "embed_id": "embed_77", "peer_id": "p3",
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
-// <-
+// <- delivered to p3
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "from": {"user_id": "alice", "name": "Alice"},
+    "embed_id": "embed_77", "peer_id": "p1", "from": {"user_id": "alice", "name": "Alice"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
@@ -1973,7 +2004,7 @@ session has not ended is `invalid_params`.
 
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
 only relays; clients SHOULD soft-cap participants. A future cap `rtc:sfu`
-adds a media server joining as member `~sfu` ([Appendix A.1](#a1-system-identities-and-scoped-notices)), with which
+adds a media server joining as peer `~sfu` ([Appendix A.1](#a1-system-identities-and-scoped-notices)), with which
 clients negotiate a single PeerConnection.
 
 **Apron over a data channel.** A data channel whose WebRTC `protocol` is
