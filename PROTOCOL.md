@@ -223,8 +223,6 @@ All IDs are strings.
   `user_id` are server-assigned.
 - Request `id`s SHOULD be random, to avoid collisions across devices of the
   same user. They identify operations, not log positions.
-- Suggested convention: use a room's creation `log_id` as its `room_id`,
-  except for private rooms ([§4.3.4](#434-creating-and-editing)).
 
 ---
 
