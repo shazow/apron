@@ -216,7 +216,7 @@ All IDs are strings.
   per room, so a message snapshot whose previous record is in another room,
   after a move ([§4.2](#42-edit)), also carries `prev_room_id`, the room to ask.
 
-**Opaque IDs** — `room_id`, `user_id`, `embed_id`, `session_id`, and request
+**Opaque IDs** — `room_id`, `user_id`, `embed_id`, and request
 `id`.
 
 - Arbitrary strings minted by whichever side creates them; `room_id` and
@@ -392,7 +392,7 @@ Identity is server-authoritative: every message carries its author in `from`.
 `user_id` is required and stable. `name` is an optional display string; absent
 `name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)), `roles` (below), and `ext`
 ([§3.5](#35-messages)) are optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
-`users`, a membership's `user`, RTC members) uses this shape, and servers MAY
+`users`, a membership's `user`, an `rtc` embed's `members`) uses this shape, and servers MAY
 send only `user_id`.
 
 User objects come in two kinds:
@@ -767,7 +767,7 @@ Six frame idioms cover everything logged or announced:
 - **Activity** (`activity`): `from` plus changes to the user's transient
   state; present fields update it and absent fields leave it unchanged. Not
   part of the append-only log.
-- **Announcements** (`server`, `rtc`): unlogged, re-sent in full; each
+- **Announcements** (`server`): unlogged, re-sent in full; each
   replaces the last.
 - **Room updates** (`room_update`): unlogged changes to the user's rooms,
   never a full list ([§4.3.3](#433-updates)).
@@ -1797,7 +1797,7 @@ Three of them tell the receiver who else got the message:
 ### A.2 Field naming
 
 Entity ID fields use the `_id` suffix (`user_id`, `room_id`, `message_id`,
-`embed_id`, `parent_room_id`, `session_id`). Embedded objects use descriptive
+`embed_id`, `parent_room_id`). Embedded objects use descriptive
 names (`from`, `body`, `reply_to`). JSON-RPC's envelope `id` keeps its
 name. Extensions and future methods should follow the same pattern.
 
@@ -1885,76 +1885,108 @@ can experiment and converge on them.
 
 ### C.1 WebRTC: signaling for audio, video, and peer-to-peer connections
 
-Planned capability `rtc`: the socket carries signaling; media travels out of
-band. Future channels (screenshare, documents, file transfer) should reuse
-the pattern: a server-announced session with authoritative membership, a join
-request returning connection configuration, and an opaque relay frame.
+Planned capability `embed:rtc`: a WebRTC session is an embed. The socket
+carries signaling; media and data travel peer to peer. It follows the embed
+identity and write rules ([§4.6.2](#462-embed-identity), [§4.6.3](#463-writes)): the `embed_id` identifies the
+session, and the result that lists a new `rtc` embed carries the sender's
+ICE configuration in place of a `write_url`, since TURN credentials are
+deployment-specific and short-lived.
 
-**Sessions** are announcements ([§4](#4-capabilities)):
+```ts
+class Embed {   // "rtc" kind, besides the fields of §4.6
+  media?: ("audio" | "video" | "data")[];
+
+  // set by the server
+  members?: User[];             // who has joined
+  ended?: boolean;
+}
+```
+
+**Starting a session.** Where the embed is sent decides who sees it:
+
+- In a `message`, the session is logged and shown in the room: a call. Its
+  snapshots are the session's state: the server publishes a new one when
+  `members` changes and a last one with `ended: true`, when it SHOULD
+  replace the embed's `og` with a summary. `mentions` ring people through
+  push ([§4.7](#47-push)). Members of the room may join.
+- In a `command` ([§4.8](#48-command)), nothing is logged. The server sends each user in
+  `mentions` a transient message ([§3.5](#35-messages)) from the sender carrying the
+  embed, as the invitation. The sender and those users may join.
 
 ```jsonc
-// <-
+// -> a call in general
 {
-  "method": "rtc", "params": {
-    "room_id": "general", "session_id": "call_7", "kind": "voice",
-    "members": [{"user_id": "alice", "name": "Alice"}],
-    "active": true
+  "method": "message", "id": "c40", "params": {
+    "room_id": "general",
+    "body": {"text": "@bob call?", "mentions": ["bob"], "embeds": [{"kind": "rtc", "media": ["audio"]}]}
+  }
+}
+// <- the snapshot to the room, then the result with the sender's ICE configuration
+{
+  "id": "c40", "result": {
+    "message_id": "1724803900000",
+    "embeds": [{
+      "embed_id": "embed_77", "kind": "rtc",
+      "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}]
+    }]
   }
 }
 ```
 
-Re-sent on membership change; `"active": false` ends the session.
-
-**Join / leave.** ICE configuration is vended at join, since TURN credentials
-are deployment-specific and short-lived. A client MAY propose a session with
-a fresh `session_id`; the server confirms with an `rtc` frame or replies
-`denied`.
+**Joining and leaving.** Other participants join by `embed_id`, and the
+result carries their ICE configuration. Leaving, or closing the connection,
+removes the user from `members`; the session ends when the last one leaves.
 
 ```jsonc
 // ->
-{"method": "rtc_join", "id": "c40", "params": {"room_id": "general", "session_id": "call_7"}}
+{"method": "rtc_join", "id": "c41", "params": {"embed_id": "embed_77"}}
 // <-
-{
-  "id": "c40", "result": {
-    "ice": [
-      {"urls": "stun:stun.example:3478"},
-      {"urls": "turn:turn.example", "username": "u", "credential": "c"}
-    ]
-  }
-}
+{"id": "c41", "result": {"ice": [...]}}
 // ->
-{"method": "rtc_leave", "id": "c41", "params": {"session_id": "call_7"}}
+{"method": "rtc_leave", "id": "c42", "params": {"embed_id": "embed_77"}}
 ```
 
 **Signaling relay.** The server routes `rtc_signal` by the required
-`to.user_id` within the session and attaches the sender's `from`. WebRTC
-handles loss and renegotiation.
+`to.user_id` among the session's members and attaches the sender's `from`.
+WebRTC handles loss and renegotiation.
 
 ```jsonc
 // ->
 {
   "method": "rtc_signal", "params": {
-    "session_id": "call_7", "to": {"user_id": "bob"},
+    "embed_id": "embed_77", "to": {"user_id": "bob"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
 // <-
 {
   "method": "rtc_signal", "params": {
-    "session_id": "call_7", "from": {"user_id": "alice", "name": "Alice"},
+    "embed_id": "embed_77", "from": {"user_id": "alice", "name": "Alice"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
 ```
 
+**The call message.** Saving the message without the embed, or deleting it,
+ends the session, as for a stream ([§4.6.5](#465-embedstream)). Moving a message whose
+session has not ended is `invalid_params`.
+
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
-only relays; clients SHOULD soft-cap participants. A future cap `rtc.sfu`
+only relays; clients SHOULD soft-cap participants. A future cap `rtc:sfu`
 adds a media server joining as member `~sfu` ([Appendix A.1](#a1-system-identities-and-scoped-notices)), with which
 clients negotiate a single PeerConnection.
 
+**Apron over a data channel.** A data channel whose WebRTC `protocol` is
+`apron/<protocol>` carries Apron frames, one per data channel message
+([§1](#1-transport--framing)). The peer that started the session is the server, so two or more
+users can hold a room that the chat server never sees, such as a private
+DM. Clients route other data channels by their `protocol` and close ones
+they do not support. DTLS encrypts the channel end to end, but its
+fingerprints travel through the chat server's signaling, so clients that
+need more MAY pin or compare them.
+
 **Exclusions.** Mute and camera state are derivable from media streams.
-Invite/ring/reject state machines are covered by an `rtc` frame plus a push
-notification. Recording and transcoding are server-side.
+Recording and transcoding are server-side.
 
 ### C.2 Multiplexing envelope
 
