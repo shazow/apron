@@ -391,7 +391,7 @@ Identity is server-authoritative: every message carries its author in `from`.
 `user_id` is required and stable. `name` is an optional display string; absent
 `name` falls back to `user_id`. `avatar` ([§4.6.6](#466-avatars)), `roles` (below), and `ext`
 ([§3.5](#35-messages)) are optional. Every identity on the wire (`you`, `new`, `old`, `from`, `members`,
-`users`, a membership's `user`, an `rtc` embed's `members`) uses this shape, and servers MAY
+`users`, a membership's `user`, a room's `rtc` members and peers) uses this shape, and servers MAY
 send only `user_id`.
 
 User objects come in two kinds:
@@ -1762,7 +1762,7 @@ are `auth` requests with `scheme: "email"`:
 ### A.1 System identities and scoped notices
 
 System identities are server-controlled `user_id`s with the `~` prefix
-([A.3](#a3-prefixes-in-text)), such as `~sfu` for a media server ([Appendix C.1](#c1-webrtc-signaling-for-audio-video-and-peer-to-peer-connections)). They carry an
+([A.3](#a3-prefixes-in-text)), such as `~server`. They carry an
 ordinary `from` and render like any sender, so clients unaware of the
 convention still work; clients MAY style them as system messages.
 
@@ -1906,20 +1906,16 @@ can experiment and converge on them.
 
 ### C.1 WebRTC: signaling for audio, video, and peer-to-peer connections
 
-Planned capability `embed:rtc`: a WebRTC session is an embed. The socket
-carries signaling; media and data travel peer to peer. It follows the embed
-identity and write rules ([§4.6.2](#462-embed-identity), [§4.6.3](#463-writes)): the `embed_id` identifies the
-session, and the result that lists a new `rtc` embed makes the sender its
-first peer, carrying its `peer_id` and ICE configuration in place of a
-`write_url`, since TURN credentials are deployment-specific and short-lived.
+Planned capability `rtc`, which requires cap `rooms`: any room can hold one
+WebRTC session at a time, and its members may join it ([§4.3.2](#432-membership)). The
+socket carries signaling; media and data travel peer to peer. A DM call is
+a private room ([§4.3.4](#434-creating-and-editing)), a call in a channel is the channel or one
+of its threads, and a standing voice channel is any room that stays.
 
 ```ts
-class Embed {   // "rtc" kind, besides the fields of §4.6
-  media?: ("audio" | "video" | "data")[];
-
-  // set by the server
-  members?: User[];             // who is in the session, once per user, for display
-  ended?: boolean;
+class Room {    // besides the fields of §3.4
+  // "rtc" capability
+  rtc?: { members: User[] };    // delivery; present while a session is in progress
 }
 
 class User {    // in rtc_* frames, besides the fields of §3.3
@@ -1927,118 +1923,120 @@ class User {    // in rtc_* frames, besides the fields of §3.3
 }
 ```
 
-The embed is public and per user; everything per device stays between the
-peers. User objects in `rtc_*` frames are recorded objects ([§3.3](#33-identity)), never
-merged, and each carries the `peer_id` of one seat; clients key a session's
-peers on `(user_id, peer_id)`, so one user's devices stay apart. `members` is optional: a server MAY publish it so the room can show
-who is in a call, and clients without it show the session as ongoing until
-`ended`.
+**Who is in a session.** A room's `rtc` is a delivery field ([§3.4](#34-rooms)):
+present while the room has a session, listing each user in it once, and
+absent otherwise. It reaches the room's members, and a public thread's
+parent members, through `room_list` and `room_update` `updated`, so joins
+and leaves are not logged. It is per user, for display; seats stay between
+the peers. Its appearing on a room is the ring. To reach a member who is
+offline, a caller's client also posts an ordinary message that mentions
+them ([§4.7](#47-push)).
 
-**Starting a session.** Where the embed is sent decides who sees it:
+**Seats.** Room membership is per user; a session is per device. Each
+connection in a session holds a seat, named by a `peer_id` that the server
+assigns, unguessable and unique within the session. User objects in
+`rtc_*` frames are recorded objects ([§3.3](#33-identity)), never merged, and each carries
+the `peer_id` of one seat; clients key peers on `(user_id, peer_id)`, so one
+user's devices stay apart.
 
-- In a `message`, the session is logged and shown in the room: a call. Its
-  snapshots are the session's state: the server publishes a new one when
-  `members` changes, if it publishes `members`, and a last one with `ended:
-  true`, when it SHOULD replace the embed's `og` with a summary. `mentions`
-  ring people through push ([§4.7](#47-push)). Members of the room may join.
-- In a `command` ([§4.8](#48-command)), nothing is logged. The server sends each user in
-  `mentions` a transient message ([§3.5](#35-messages)) from the sender carrying the
-  embed, as the invitation. The sender and those users may join.
-
-```jsonc
-// -> a call in general
-{
-  "method": "message", "id": "c40", "params": {
-    "room_id": "general",
-    "body": {"text": "@bob call?", "mentions": ["bob"], "embeds": [{"kind": "rtc", "media": ["audio"]}]}
-  }
-}
-// <- the snapshot to the room, then the result: the sender is peer p1
-{
-  "id": "c40", "result": {
-    "message_id": "1724803900000",
-    "embeds": [{
-      "embed_id": "embed_77", "kind": "rtc", "peer_id": "p1",
-      "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}]
-    }]
-  }
-}
-```
-
-**Joining.** A connection joins by `embed_id`. The result carries its own
-`peer_id`, its ICE configuration, and `peers`, the others already in the
-session. The joiner offers to each of them (below); they learn of it from its
-offer.
+**Joining.** `rtc_join` takes a seat, starting the session if there is
+none. The result carries the joiner's `peer_id`, its ICE configuration with
+the time it expires, and `peers`, the seats already in the session. The
+server handles one join per session at a time, so of two joins the later
+one's `peers` includes the earlier. The joiner offers to each peer; they
+learn of it from its offer. Clients SHOULD NOT answer offers until their
+user has joined the session, and MAY use relay-only ICE, so servers SHOULD
+include TURN in `ice`.
 
 ```jsonc
 // -> Bob's phone joins
-{"method": "rtc_join", "id": "c41", "params": {"embed_id": "embed_77"}}
+{"method": "rtc_join", "id": "c41", "params": {"room_id": "1724803950000"}}
 // <-
 {
   "id": "c41", "result": {
-    "peer_id": "p3", "ice": [...],
+    "peer_id": "p3",
+    "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}],
+    "ice_expires": 1724807500,
     "peers": [{"user_id": "alice", "name": "Alice", "peer_id": "p1"}]
   }
 }
 ```
 
-**Seats and reconnects.** A `peer_id` is a seat, not a connection: media
-and data flow peer to peer, so a call outlives a dropped chat connection.
-After reconnecting, a client sends `rtc_join` again with its `peer_id` to
-reclaim the seat, and gets fresh ICE configuration; only the same user can
-reclaim it, and the other peers see no change. A seat ends with
-`rtc_leave`, or when its connection stays closed past a grace period set by
-server policy. The session ends when its last seat does.
+**Reclaiming and leaving.** A seat is not a connection: media flows peer to
+peer, so a session outlives a dropped chat connection. `rtc_join` with a
+`peer_id` reclaims that seat for the same user after a reconnect, or
+refreshes `ice` before it expires (with a new request `id`, [§1.2](#12-retries-and-deduplication)); the
+other peers see no change. After reclaiming, a client restarts ICE with
+every peer not connected, using the fresh `ice`. Only a client that still
+holds its peer connections reclaims; otherwise it leaves and joins anew. A
+seat ends with `rtc_leave`, or when its connection stays closed past a
+grace period set by server policy; the session ends with its last seat.
 
 ```jsonc
 // -> after reconnecting and authenticating
-{"method": "rtc_join", "id": "c47", "params": {"embed_id": "embed_77", "peer_id": "p3"}}
+{"method": "rtc_join", "id": "c47", "params": {"room_id": "1724803950000", "peer_id": "p3"}}
 // ->
-{"method": "rtc_leave", "id": "c48", "params": {"embed_id": "embed_77"}}
+{"method": "rtc_leave", "id": "c48", "params": {"room_id": "1724803950000"}}
 ```
 
-**Signaling relay.** The server routes `rtc_signal` by `to` among the
-session's peers and delivers it with the sender's `from`, both naming a
-seat, so a reply goes `to` the `from` received. A signal whose `to` does not
-match a seat is dropped, as `rtc_signal` is a notification. WebRTC handles loss and renegotiation.
+**Signaling.** `rtc_signal` is a notification relayed between seats: the
+sender names a seat in `to`, and the server delivers it with the sender's
+`from`, so a reply goes `to` the `from` received. Only a connection holding
+a seat may send one. Signals from one seat to another arrive in order;
+those to a seat whose connection is closed, that match no seat, or that
+exceed the server's rate or size limits are dropped. When a seat ends, the
+server sends each remaining peer a signal from it with `payload: null`.
 
 ```jsonc
 // -> Alice (p1) to Bob's phone (p3)
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "to": {"user_id": "bob", "peer_id": "p3"},
+    "room_id": "1724803950000", "to": {"user_id": "bob", "peer_id": "p3"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
 // <- delivered to p3
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "from": {"user_id": "alice", "name": "Alice", "peer_id": "p1"},
+    "room_id": "1724803950000", "from": {"user_id": "alice", "name": "Alice", "peer_id": "p1"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
 ```
 
-**The call message.** Saving the message without the embed, or deleting it,
-ends the session, as for a stream ([§4.6.5](#465-embedstream)). Moving a message whose
-session has not ended is `invalid_params`.
+A `payload` is one of:
+
+- `{"sdp_type": "offer" | "answer", "sdp": "..."}`, a session description;
+- `{"candidate": {"candidate": "candidate:...", "sdp_mid": "0",
+  "sdp_m_line_index": 0, "username_fragment": "..."}}`, an ICE candidate,
+  applied once the remote description is set;
+- `{"candidate": null}`, the end of candidates;
+- `null`, from the server only: the sending seat ended.
+
+Peers use perfect negotiation ([WebRTC §10.7](https://www.w3.org/TR/webrtc/#perfect-negotiation-example)); in each pair, the seat with
+the greater `peer_id` is polite. Receivers ignore unknown `payload` keys.
 
 **Topology.** Mesh is the baseline: peers negotiate pairwise and the server
-only relays; clients SHOULD soft-cap participants. A future cap `rtc:sfu`
-adds a media server joining as peer `~sfu` ([Appendix A.1](#a1-system-identities-and-scoped-notices)), with which
-clients negotiate a single PeerConnection.
+only relays; clients SHOULD soft-cap participants. A server MAY instead put
+a session on a media server: `rtc_join` then returns a `transport`, such as
+`{"type": "livekit", "url": "wss://sfu.example", "token": "..."}`, in place
+of `ice` and `peers`, and the client follows that transport's own
+signaling. The server drives the room's `rtc` from it.
 
 **Apron over a data channel.** A data channel whose WebRTC `protocol` is
-`apron/<protocol>` carries Apron frames, one per data channel message
-([§1](#1-transport--framing)). The peer that started the session is the server, so two or more
-users can hold a room that the chat server never sees, such as a private
-DM. Clients route other data channels by their `protocol` and close ones
-they do not support. DTLS encrypts the channel end to end, but its
-fingerprints travel through the chat server's signaling, so clients that
-need more MAY pin or compare them.
+`apron/<protocol>`, with the version of [§3.1](#31-server-frame), carries Apron frames,
+one per ordered, reliable data channel message no larger than the remote
+peer's SCTP maximum. The seat that started the session is the server, and
+each other seat opens a channel to it, so users can hold a room the chat
+server never sees, such as a private DM. The client authenticates with `guest`, and the
+host assigns it the identity of its seat. Clients route other data
+channels by their `protocol` and close ones they do not support. In a mesh,
+DTLS encrypts the channel end to end, but its fingerprints travel through
+the chat server's signaling, so clients that need more MAY pin or compare
+them.
 
-**Exclusions.** Mute and camera state are derivable from media streams.
-Recording and transcoding are server-side.
+**Exclusions.** Mute and camera state, recording, and transcoding are left
+to clients and servers.
 
 ### C.2 Multiplexing envelope
 
