@@ -1941,7 +1941,8 @@ user's devices stay apart.
 
 **Joining.** `rtc_join` takes a seat, starting the session if there is
 none. The result carries the joiner's `peer_id`, its ICE configuration with
-the time it expires, and `peers`, the seats already in the session. The
+the time it expires, and `peers`, the seats already in the session, oldest
+first. The
 server handles one join per session at a time, so of two joins the later
 one's `peers` includes the earlier. The joiner offers to each peer; they
 learn of it from its offer. Clients SHOULD NOT answer offers until their
@@ -2026,10 +2027,14 @@ signaling. The server drives the room's `rtc` from it.
 **Apron over a data channel.** A data channel whose WebRTC `protocol` is
 `apron/<protocol>`, with the version of [§3.1](#31-server-frame), carries Apron frames,
 one per ordered, reliable data channel message no larger than the remote
-peer's SCTP maximum. The seat that started the session is the server, and
-each other seat opens a channel to it, so users can hold a room the chat
-server never sees, such as a private DM. The client authenticates with `guest`, and the
-host assigns it the identity of its seat. Clients route other data
+peer's SCTP maximum. One peer hosts the room, running the server side of
+Apron on its own device: the oldest seat in the session, `peers[0]` or,
+with no peers, the joiner itself. Each other seat opens a channel to it,
+so users can hold a room the chat server never sees, such as a private DM.
+A guest authenticates with `guest`, and the host assigns it the identity of
+its seat. When the host's seat ends, the next oldest seat hosts a new Apron
+session on new channels; earlier history stays with the clients that
+received it. A reclaimed seat keeps its age. Clients route other data
 channels by their `protocol` and close ones they do not support. In a mesh,
 DTLS encrypts the channel end to end, but its fingerprints travel through
 the chat server's signaling, so clients that need more MAY pin or compare
