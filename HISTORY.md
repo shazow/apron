@@ -2,7 +2,7 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest first.
 
-## v7
+## v7 (2026-09-29)
 
 - Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
 - Private rooms (`private: true`) are visible only to their members; `room_join` and `room_leave` may take a `user_id` to add or remove others.
@@ -14,7 +14,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest f
 - Sections open with TypeScript-like type blocks; `Embed` is defined.
 - Under consideration: WebRTC sessions on rooms with per-device seats, and an `actions` embed.
 
-## v6
+## v6 (2026-09-26)
 
 - Joins and leaves are logged `membership` records instead of `user` notifications.
 - `user` notifications carry only identity changes.
@@ -27,7 +27,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest f
 - Notifications a request causes precede its result.
 - Server notices may be sent before auth; added a valid scenarios appendix.
 
-## v5
+## v5 (2026-09-25)
 
 - Rooms are no longer announced: `room_list` by request, `room_update` for joined/left/updated, `room_set` to create and edit.
 - Core no longer requires rooms: message `room_id` is optional and defaults to the server's default room.
@@ -41,7 +41,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest f
 - Capabilities restructured as numbered sections (§4.x); appendices are informative.
 - Multiplexing moved to Under consideration.
 
-## v4
+## v4 (2026-09-23)
 
 - `protocol` increments with each spec revision; best-effort interoperability with fallbacks.
 - Unknown caps ignored; third-party caps use an `ext:` prefix.
@@ -54,7 +54,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest f
 - Push kinds via `server.push`; payload is a message object.
 - Errors not tied to a request omit `id`; rate limits use `retry_after` in seconds.
 
-## v3
+## v3 (2026-09-22)
 
 - Rooms are the only scope: threads are rooms with `parent_room_id` (thread method and `thread_id` removed).
 - Server-wide log sequence; `log_id` is the commit timestamp; `message_id` globally unique.
@@ -67,7 +67,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest f
 - Auth scheme `anonymous` renamed `guest`.
 - Spec restructured into mandatory core plus capabilities; "Level 0" replaced by core / minimal server.
 
-## v2
+## v2 (2026-09-19)
 
 - Initial published spec.
 - Single envelope form (JSON-RPC 2.0 shapes without `jsonrpc`).
