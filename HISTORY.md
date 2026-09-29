@@ -2,6 +2,18 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest first.
 
+## v7
+
+- Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
+- Private rooms (`private: true`) are visible only to their members; `room_join` and `room_leave` may take a `user_id` to add or remove others.
+- Optional `member_count` when a server truncates `members`.
+- Email sign-in scheme (`email`); any `auth` result may carry a rotated bearer `token`.
+- `server.welcome` for sign-in instructions.
+- User objects may carry server-defined `roles`.
+- System identities use `~` (`~server`, `~room`, `~private`); text prefixes are `@user`, `#room`, `~system`.
+- Sections open with TypeScript-like type blocks; `Embed` is defined.
+- Under consideration: WebRTC sessions on rooms with per-device seats, and an `actions` embed.
+
 ## v6
 
 - Joins and leaves are logged `membership` records instead of `user` notifications.
