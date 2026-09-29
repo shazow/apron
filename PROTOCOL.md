@@ -1152,8 +1152,9 @@ the full list:
   an edit to a joined room, such as its `title` or `description`, or a new
   or edited thread of one, which reaches the parent's members whether or
   not they joined the thread, unless the thread is private. Parent members
-  see changes to a thread's record, not its activity: messages in a thread do not change its record,
-  so its `latest_log_id` is as of the last record change. Thread members
+  see changes to a thread's record, not its activity: messages in a thread
+  do not change its record, so its `latest_log_id` is as of the last record
+  change. Thread members
   follow its activity from the messages they receive.
 
 ```jsonc
