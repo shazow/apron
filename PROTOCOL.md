@@ -1086,7 +1086,7 @@ leave.
 
 ```jsonc
 // -> Alice adds Bob to her private room
-{"method": "room_join", "id": "c3", "params": {"room_id": "_q7Zk2vRm", "user_id": "bob"}}
+{"method": "room_join", "id": "c3", "params": {"room_id": "1724803950000", "user_id": "bob"}}
 ```
 
 Joining subscribes: every connection of the user receives the joined
@@ -1237,8 +1237,7 @@ are cleared. Both return `{"room_id": "..."}` after the change arrives as a
   else it is invisible, its `room_id` is `invalid_params` like an unknown
   one, and so are its threads. A private thread's record goes only to its
   own members, not to its parent's. Members bring others in by joining
-  them ([§4.3.2](#432-membership)), where the server supports it. Suggested convention:
-  private `room_id`s start with `_` ([Appendix A.3](#a3-prefixes-in-text)).
+  them ([§4.3.2](#432-membership)), where the server supports it.
 - Editing a room is server policy. Suggested convention: members of a room
   may edit it, so a bot that joins a thread can keep its `description`
   current.
@@ -1840,8 +1839,6 @@ use different ones, so an ID never has to be guessed:
   and rooms to be mentionable mint IDs from that set, such as `guest_1234`.
 - `user_id`s beginning with `~` are reserved for system identities. Servers
   SHOULD NOT assign them to users.
-- Private rooms' `room_id`s start with `_` ([§4.3.4](#434-creating-and-editing)), such as `#_q7Zk2vRm`, so
-  people can tell a reference to one apart.
 - How `text` renders is up to the client. Clients MAY show an `@id` naming
   a known user with the user's latest display name ([§3.3](#33-identity)), such as a chip,
   and a `#id` naming a known room as a link showing its title, wherever
