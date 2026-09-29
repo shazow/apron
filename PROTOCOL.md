@@ -1975,24 +1975,23 @@ server policy. The session ends when its last seat does.
 {"method": "rtc_leave", "id": "c48", "params": {"embed_id": "embed_77"}}
 ```
 
-**Signaling relay.** The server routes `rtc_signal`
-by `peer_id` among the session's peers. In a request `peer_id` names the
-peer it is for; as delivered it names the peer it came from, and the server
-attaches the sender's `from`, so a reply goes back to the `peer_id`
+**Signaling relay.** The server routes `rtc_signal` by `to_peer_id` among
+the session's peers, and delivers it with `from_peer_id`, the sender's
+seat, and `from`, the sender's user, so a reply goes to the `from_peer_id`
 received. WebRTC handles loss and renegotiation.
 
 ```jsonc
 // -> Alice (p1) to Bob's phone (p3)
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "peer_id": "p3",
+    "embed_id": "embed_77", "to_peer_id": "p3",
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
 // <- delivered to p3
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "peer_id": "p1", "from": {"user_id": "alice", "name": "Alice"},
+    "embed_id": "embed_77", "from_peer_id": "p1", "from": {"user_id": "alice", "name": "Alice"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
