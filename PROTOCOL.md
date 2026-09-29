@@ -1978,8 +1978,8 @@ server policy. The session ends when its last seat does.
 
 **Signaling relay.** The server routes `rtc_signal` by `to` among the
 session's peers and delivers it with the sender's `from`, both naming a
-seat, so a reply goes `to` the `from` received. A `to` whose `user_id` and
-`peer_id` do not match a seat is `invalid_params`. WebRTC handles loss and renegotiation.
+seat, so a reply goes `to` the `from` received. A signal whose `to` does not
+match a seat is dropped, as `rtc_signal` is a notification. WebRTC handles loss and renegotiation.
 
 ```jsonc
 // -> Alice (p1) to Bob's phone (p3)
