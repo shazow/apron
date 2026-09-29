@@ -483,7 +483,7 @@ class Room {
   room_id: string;
 
   parent_room_id?: string;      // fixed once the room is created
-  private?: boolean = false;    // fixed once the room is created; unlisted (§4.3.4)
+  private?: boolean = false;    // fixed once the room is created; members only (§4.3.4)
   title?: string;               // absent: shown as room_id
   description?: string;         // Markdown by convention
   ext?: object;                 // opaque extension data (§3.5)
@@ -534,7 +534,7 @@ clients always take the latest values, even if `log_id` did not change.
 | `log_id`                  | server   | position of this room record ([§2](#2-identifiers))                               |
 | `prev_log_id`             | server   | optional; this room's previous record ([§2](#2-identifiers))                      |
 | `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing)) |
-| `private`                 | client   | optional; fixed at creation; unlisted ([§4.3.4](#434-creating-and-editing))      |
+| `private`                 | client   | optional; fixed at creation; visible only to members ([§4.3.4](#434-creating-and-editing)) |
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
 | `description`             | client   | optional string, Markdown by convention: what the room is about                   |
 | `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
@@ -1058,8 +1058,8 @@ Every filter is optional:
 A result lists rooms matching its filters, most recently active first.
 `joined` lists every match and is never truncated; servers MAY list only
 the most recently active of `not_joined`, and a room left out is still
-visible and can be joined. `not_joined` never lists private rooms
-([§4.3.4](#434-creating-and-editing)); `room_id` finds one.
+visible and can be joined. Private rooms are listed only to their members
+([§4.3.4](#434-creating-and-editing)).
 
 With `members: true`, each room in `joined` and `not_joined` carries
 `members`, every user who has joined it, as user objects ([§3.3](#33-identity)): complete,
@@ -1073,9 +1073,21 @@ rest from memberships ([§4.3.2](#432-membership)) and from the messages they re
 
 #### 4.3.2 Membership
 
-`room_join` and `room_leave` take only a `room_id` and return `{}`, after the
+`room_join` and `room_leave` take a `room_id` and return `{}`, after the
 notifications they cause ([§1](#1-transport--framing)). An unknown or invisible `room_id` is
 `invalid_params`; the server MAY deny either by policy.
+
+A server MAY also accept a `user_id`, to join or remove another user: how
+members add people to a private room ([§4.3.4](#434-creating-and-editing)), and a way to remove
+someone. Who may do either is server policy, and a server that does not
+support it replies `unsupported`. The change is an ordinary membership
+record, and the target's connections get `room_update` as for any join or
+leave.
+
+```jsonc
+// -> Alice adds Bob to her private room
+{"method": "room_join", "id": "c3", "params": {"room_id": "_q7Zk2vRm", "user_id": "bob"}}
+```
 
 Joining subscribes: every connection of the user receives the joined
 room's deliveries ([§3.4](#34-rooms)), and under the suggested wake rule joined rooms
@@ -1221,12 +1233,12 @@ are cleared. Both return `{"room_id": "..."}` after the change arrives as a
 
 - `parent_room_id` MUST name an existing visible room. Nesting depth is
   server policy.
-- `private: true` makes the room unlisted: it appears in `room_list` only
-  to its members and to a request naming its `room_id` ([§4.3.1](#431-listing)), and a
-  private thread's record goes only to its own members. Knowing the
-  `room_id` is what lets a user find and join it, subject to server policy,
-  so servers mint unguessable `room_id`s for private rooms, by convention
-  starting with `_` ([Appendix A.3](#a3-prefixes-in-text)).
+- `private: true` makes the room visible only to its members: to anyone
+  else it is invisible, its `room_id` is `invalid_params` like an unknown
+  one, and so are its threads. A private thread's record goes only to its
+  own members, not to its parent's. Members bring others in by joining
+  them ([§4.3.2](#432-membership)), where the server supports it. Suggested convention:
+  private `room_id`s start with `_` ([Appendix A.3](#a3-prefixes-in-text)).
 - Editing a room is server policy. Suggested convention: members of a room
   may edit it, so a bot that joins a thread can keep its `description`
   current.
@@ -1592,7 +1604,8 @@ happens to it:
   their arguments and what they do.
 - Clients MAY handle commands that match a request themselves, such as
   `/nick` as `me`, `/topic` as `room_set` with `description`, `/join` as
-  `room_join`, `/leave` as `room_leave`, and send the rest as `command`.
+  `room_join`, `/leave` as `room_leave`, `/kick` as `room_leave` with a
+  `user_id`, and send the rest as `command`.
 
 ```jsonc
 // -> remove a user from the room; mentions name the target
