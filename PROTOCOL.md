@@ -1240,8 +1240,7 @@ are cleared. Both return `{"room_id": "..."}` after the change arrives as a
   them ([§4.3.2](#432-membership)), where the server supports it. A server includes
   `private: true` only on a room it keeps private, and one that does not
   keep private rooms MUST reject a creation with `private: true` as
-  `unsupported`. A server that predates the field ignores it instead
-  ([§1](#1-transport--framing)), so as a backup, a client that asks for a private room checks
+  `unsupported`. As a backup, a client that asks for a private room checks
   the record in the `room_update` `joined` it receives before posting in
   the room: without `private: true`, the room is not private, and the
   client tells the user rather than using it.
