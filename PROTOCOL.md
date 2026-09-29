@@ -2081,3 +2081,47 @@ backend's `server` frame arrives wrapped, first on that `conn_id`.
 forwards inner frames unparsed and holds only the `conn_id`↔upstream mapping;
 backends remain authoritative, and frames may be encrypted end to end.
 Aggregator authentication is deployment-defined.
+
+### C.3 Actions embed
+
+Embed kind `actions` offers the reader choices, grouped by what choosing
+does, such as an invitation to accept or decline, a permission prompt, or a
+poll. It requires cap `command` ([§4.8](#48-command)).
+
+```ts
+class Embed {   // "actions" kind, besides the fields of §4.6
+  // set by the server
+  commands?: { label: string; command: string }[];
+}
+```
+
+```jsonc
+// <- to Bob only
+{
+  "method": "message", "params": {
+    "room_id": "general",
+    "from": {"user_id": "~private", "name": "Only you"},
+    "body": {
+      "text": "Ada invited you to a room titled \"Hi\".",
+      "embeds": [{
+        "kind": "actions",
+        "commands": [
+          {"label": "Accept", "command": "/join #1724803950000"},
+          {"label": "Decline", "command": "/leave #1724803950000"}
+        ],
+        "og": {"description": "Type /join #1724803950000 to accept."}
+      }]
+    }
+  }
+}
+```
+
+- Only servers set actions: a server drops or rebuilds an `actions` embed a
+  client sends.
+- Choosing one of `commands` sends its `command` as a `command` request, or
+  as the request it names, such as `/join` ([§4.8](#48-command)). When the message has
+  a `message_id`, the request's `reply_to` names it.
+- Clients ignore groups they do not know ([§1](#1-transport--framing)), so later groups, such as
+  links or inputs, can be added beside `commands`. Clients without `actions`
+  support render the fallback card ([§3.5](#35-messages)), whose `og` can spell out the
+  commands to type.
