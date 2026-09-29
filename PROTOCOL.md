@@ -1237,7 +1237,13 @@ are cleared. Both return `{"room_id": "..."}` after the change arrives as a
   else it is invisible, its `room_id` is `invalid_params` like an unknown
   one, and so are its threads. A private thread's record goes only to its
   own members, not to its parent's. Members bring others in by joining
-  them ([§4.3.2](#432-membership)), where the server supports it.
+  them ([§4.3.2](#432-membership)), where the server supports it. A server includes
+  `private: true` only on a room it keeps private; one that does not
+  support private rooms ignores the field ([§1](#1-transport--framing)), so its record lacks it.
+  A client that asks for a private room checks the record in the
+  `room_update` `joined` it receives before posting in the room: without
+  `private: true`, the room is not private, and the client tells the user
+  rather than using it.
 - Editing a room is server policy. Suggested convention: members of a room
   may edit it, so a bot that joins a thread can keep its `description`
   current.
