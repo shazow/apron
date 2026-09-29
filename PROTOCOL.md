@@ -1901,14 +1901,15 @@ class Embed {   // "rtc" kind, besides the fields of §4.6
   ended?: boolean;
 }
 
-class Peer {                    // one client's seat in a session
-  peer_id: string;              // assigned by the server when joining
-  user: User;
+class User {    // in rtc_* frames, besides the fields of §3.3
+  peer_id: string;              // one client's seat in the session, assigned by the server
 }
 ```
 
 The embed is public and per user; everything per device stays between the
-peers. `members` is optional: a server MAY publish it so the room can show
+peers. User objects in `rtc_*` frames are recorded objects ([§3.3](#33-identity)), never
+merged, and each carries the `peer_id` of one seat; clients key a session's
+peers on `(user_id, peer_id)`, so one user's devices stay apart. `members` is optional: a server MAY publish it so the room can show
 who is in a call, and clients without it show the session as ongoing until
 `ended`.
 
@@ -1955,7 +1956,7 @@ offer.
 {
   "id": "c41", "result": {
     "peer_id": "p3", "ice": [...],
-    "peers": [{"peer_id": "p1", "user": {"user_id": "alice", "name": "Alice"}}]
+    "peers": [{"user_id": "alice", "name": "Alice", "peer_id": "p1"}]
   }
 }
 ```
@@ -1975,23 +1976,23 @@ server policy. The session ends when its last seat does.
 {"method": "rtc_leave", "id": "c48", "params": {"embed_id": "embed_77"}}
 ```
 
-**Signaling relay.** The server routes `rtc_signal` by `to_peer_id` among
-the session's peers, and delivers it with `from_peer_id`, the sender's
-seat, and `from`, the sender's user, so a reply goes to the `from_peer_id`
-received. WebRTC handles loss and renegotiation.
+**Signaling relay.** The server routes `rtc_signal` by `to` among the
+session's peers and delivers it with the sender's `from`, both naming a
+seat, so a reply goes `to` the `from` received. A `to` whose `user_id` and
+`peer_id` do not match a seat is `invalid_params`. WebRTC handles loss and renegotiation.
 
 ```jsonc
 // -> Alice (p1) to Bob's phone (p3)
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "to_peer_id": "p3",
+    "embed_id": "embed_77", "to": {"user_id": "bob", "peer_id": "p3"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
 // <- delivered to p3
 {
   "method": "rtc_signal", "params": {
-    "embed_id": "embed_77", "from_peer_id": "p1", "from": {"user_id": "alice", "name": "Alice"},
+    "embed_id": "embed_77", "from": {"user_id": "alice", "name": "Alice", "peer_id": "p1"},
     "payload": {"sdp_type": "offer", "sdp": "v=0..."}
   }
 }
