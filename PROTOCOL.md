@@ -231,12 +231,6 @@ All IDs are strings.
 Every server implements this section; a minimal server implements only this
 section. Optional features are advertised through capabilities ([§4](#4-capabilities)).
 
-Sections open with the shape of the objects they introduce, in a
-TypeScript-like notation: `?` marks a field that may be absent, `= value` is
-the value to assume when it is, and comment lines group fields by who sets
-them or by the capability that adds them. The prose and examples that
-follow are normative.
-
 ### 3.1 `server` frame
 
 ```ts
@@ -266,10 +260,6 @@ frame, unprompted. There is no client hello.
   }
 }
 ```
-
-`protocol` is incremented with each revision of this spec; the current
-value is `7`. Implementations make a best effort to interoperate across
-versions; mismatched optional features degrade to their fallbacks ([§4](#4-capabilities)).
 
 The server MAY send a new `server` frame at any time; each **fully replaces**
 the previous. Clients re-evaluate feature UI but MUST NOT un-render existing
