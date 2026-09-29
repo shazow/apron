@@ -223,7 +223,8 @@ All IDs are strings.
   `user_id` are server-assigned.
 - Request `id`s SHOULD be random, to avoid collisions across devices of the
   same user. They identify operations, not log positions.
-- Suggested convention: use a room's creation `log_id` as its `room_id`.
+- Suggested convention: use a room's creation `log_id` as its `room_id`,
+  except for private rooms ([§4.3.4](#434-creating-and-editing)).
 
 ---
 
@@ -484,6 +485,7 @@ class Room {
   room_id: string;
 
   parent_room_id?: string;      // fixed once the room is created
+  private?: boolean = false;    // fixed once the room is created; unlisted (§4.3.4)
   title?: string;               // absent: shown as room_id
   description?: string;         // Markdown by convention
   ext?: object;                 // opaque extension data (§3.5)
@@ -534,6 +536,7 @@ clients always take the latest values, even if `log_id` did not change.
 | `log_id`                  | server   | position of this room record ([§2](#2-identifiers))                               |
 | `prev_log_id`             | server   | optional; this room's previous record ([§2](#2-identifiers))                      |
 | `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing)) |
+| `private`                 | client   | optional; fixed at creation; unlisted ([§4.3.4](#434-creating-and-editing))      |
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
 | `description`             | client   | optional string, Markdown by convention: what the room is about                   |
 | `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
@@ -1057,7 +1060,8 @@ Every filter is optional:
 A result lists rooms matching its filters, most recently active first.
 `joined` lists every match and is never truncated; servers MAY list only
 the most recently active of `not_joined`, and a room left out is still
-visible and can be joined.
+visible and can be joined. `not_joined` never lists private rooms
+([§4.3.4](#434-creating-and-editing)); `room_id` finds one.
 
 With `members: true`, each room in `joined` and `not_joined` carries
 `members`, every user who has joined it, as user objects ([§3.3](#33-identity)): complete,
@@ -1147,8 +1151,8 @@ the full list:
 - `updated`: room records that are new or changed while membership is not:
   an edit to a joined room, such as its `title` or `description`, or a new
   or edited thread of one, which reaches the parent's members whether or
-  not they joined the thread. Parent members see changes to a thread's
-  record, not its activity: messages in a thread do not change its record,
+  not they joined the thread, unless the thread is private. Parent members
+  see changes to a thread's record, not its activity: messages in a thread do not change its record,
   so its `latest_log_id` is as of the last record change. Thread members
   follow its activity from the messages they receive.
 
@@ -1218,6 +1222,12 @@ are cleared. Both return `{"room_id": "..."}` after the change arrives as a
 
 - `parent_room_id` MUST name an existing visible room. Nesting depth is
   server policy.
+- `private: true` makes the room unlisted: it appears in `room_list` only
+  to its members and to a request naming its `room_id` ([§4.3.1](#431-listing)), and a
+  private thread's record goes only to its own members. Knowing the
+  `room_id` is what lets a user find and join it, subject to server policy,
+  so servers mint unguessable `room_id`s for private rooms, by convention
+  starting with `_` ([Appendix A.3](#a3-prefixes-in-text)).
 - Editing a room is server policy. Suggested convention: members of a room
   may edit it, so a bot that joins a thread can keep its `description`
   current.
@@ -1818,6 +1828,8 @@ use different ones, so an ID never has to be guessed:
   and rooms to be mentionable mint IDs from that set, such as `guest_1234`.
 - `user_id`s beginning with `~` are reserved for system identities. Servers
   SHOULD NOT assign them to users.
+- Private rooms' `room_id`s start with `_` ([§4.3.4](#434-creating-and-editing)), such as `#_q7Zk2vRm`, so
+  people can tell a reference to one apart.
 - How `text` renders is up to the client. Clients MAY show an `@id` naming
   a known user with the user's latest display name ([§3.3](#33-identity)), such as a chip,
   and a `#id` naming a known room as a link showing its title, wherever
