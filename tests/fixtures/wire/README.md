@@ -47,7 +47,7 @@ Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#
 | room record | `room_id` | `room_list` results (`joined` and `not_joined`), `room_update` notifications (`joined` and `updated`), history `rooms` |
 | message snapshot | `message_id` | `message` notifications with a `message_id`, history `messages`, embedded snapshots |
 | reaction set | `(message_id, user_id)` | `reactions` notifications, history `reactions` (one set per element of `reactions[]`) |
-| membership | `(room_id, user.user_id)` | `room_update` `membership`, history `membership` (one per element of `members[]`) |
+| membership | `(room_id, user.user_id)` | `room_update` `memberships`, history `memberships` (one per element of `members[]`) |
 
 **Replay rule.** A record replaces the stored record for its key only when its
 `log_id` is numerically greater; an equal or lower `log_id` is ignored. This
@@ -91,8 +91,8 @@ winning membership gave.
   list (above). A `left` array, in a `room_update` or a `room_list` result,
   holds no records: it only removes rooms from the visible set (sessions
   only).
-- A membership is `{log_id, room_id, members: [{user, joined}]}`, delivered in `room_update` `membership`;
-  history `membership` elements have the same shape. `user` is a recorded
+- A membership is `{log_id, room_id, members: [{user, joined}]}`, delivered in `room_update` `memberships`;
+  history `memberships` elements have the same shape. `user` is a recorded
   user object, stored and projected as given.
 - Unknown top-level keys (in frames, records, results, and reaction elements)
   must be ignored and may be dropped. They never break replay. Keys such as
@@ -242,7 +242,7 @@ stay queued. Then:
 
 - `match` is a recursive subset of the frame: objects match by listed keys;
   arrays and scalars match exactly. Extra fields such as `auth.params.name`,
-  `auth.params.client`, and `history.params.limit` are unconstrained.
+  `auth.params.agent`, and `history.params.limit` are unconstrained.
 - For mutations (`message`, `command`, `room_set`, `room_join`,
   `room_leave`, `reactions`) `params` must equal `match.params` exactly, to
   catch lost or unwanted fields.
@@ -354,7 +354,7 @@ joined, or a `room_update` that lists it in `joined` or `updated`.
 - **Completion.** Apply the buffer; C becomes `max(C, H)`.
 - **Failure.** An `error` reply; a result lacking a boolean `more`, a valid
   `latest_log_id`, or a `history_log_id` that is null or a valid ID, or with a
-  record key (`rooms`, `messages`, `reactions`, `membership`) that is present
+  record key (`rooms`, `messages`, `reactions`, `memberships`) that is present
   but not an array; or a `more: true` page whose `last_log_id` is below
   `after` or not below H. The client applies the pages it has and the buffer, leaves C
   unchanged, and marks the room failed; the next room record frame for it rebuilds.
