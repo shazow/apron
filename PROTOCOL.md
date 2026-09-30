@@ -1244,8 +1244,8 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
   server policy.
 - `private: true` makes the room visible only to its members: to anyone
   else it is invisible, its `room_id` is `invalid_params` like an unknown
-  one, and so are its threads. A private thread's record goes only to its
-  own members, not to its parent's. Members bring others in by joining
+  one. A thread created without `private` takes its parent's. Members
+  bring others in by joining
   them ([§4.3.2](#432-membership)), where the server supports it. A server includes
   `private: true` only on a room it keeps private, and one that does not
   keep private rooms MUST reject a creation with `private: true` as
