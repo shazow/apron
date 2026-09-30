@@ -1,4 +1,4 @@
-// Apron Chat v6 for trusted, compliant clients. Requires Bun; no dependencies.
+// Apron Chat v7 for trusted, compliant clients. Requires Bun; no dependencies.
 // Run: bun apron-server.js
 // LAN: HOST=0.0.0.0 PORT=8765 bun apron-server.js
 // One room, guest identities, names, replies, ext pass-through, and the latest
@@ -7,7 +7,7 @@
 // credentials, or rate limits. Clients must send valid protocol frames;
 // malformed input may close the connection.
 
-const greeting = { protocol: 6, name: "apron-bun/6", auth: ["guest"], caps: ["history"] };
+const greeting = { protocol: 7, name: "apron-bun/7", auth: ["guest"], caps: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
 
