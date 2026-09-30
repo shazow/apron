@@ -7,7 +7,7 @@
 // credentials, or rate limits. Clients must send valid protocol frames;
 // malformed input may close the connection.
 
-const greeting = { protocol: 7, name: "apron-bun/7", auth: ["guest"], caps: ["history"] };
+const greeting = { apron: 7, agent: "apron-bun/7", auth: ["guest"], caps: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
 

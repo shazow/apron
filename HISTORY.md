@@ -12,6 +12,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest f
 - `server.welcome` for sign-in instructions.
 - User objects may carry server-defined `roles`.
 - System identities use `~` (`~server`, `~room`, `~private`); text prefixes are `@user`, `#room`, `~system`.
+- `server.protocol` is renamed `apron`; `server.name` and `auth.client` are renamed `agent`.
 - Sections open with TypeScript-like type blocks; `Embed` is defined.
 - Under consideration: WebRTC sessions on rooms with per-device seats, and an `actions` embed.
 

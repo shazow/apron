@@ -26,7 +26,7 @@ from websockets.asyncio.server import broadcast, serve
 from websockets.exceptions import ConnectionClosed
 
 
-GREETING = {"protocol": 7, "name": "apron-python/7", "auth": ["guest"],
+GREETING = {"apron": 7, "agent": "apron-python/7", "auth": ["guest"],
             "caps": ["history"]}
 
 

@@ -14,7 +14,7 @@ Here's an example exchange to get a taste:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"apron": 7, "caps": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -229,10 +229,10 @@ section. Optional features are advertised through capabilities ([§4](#4-capabil
 
 ```ts
 class Server {
-  protocol: number;
+  apron: number;                // protocol version
   auth: string[];               // at least one scheme, in preference order (§3.2)
 
-  name?: string;                // implementation/version string
+  agent?: string;               // implementation/version string, for debugging
   caps?: string[] = [];         // capabilities (§4)
   welcome?: string;             // user-readable Markdown details and auth instructions
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
@@ -248,8 +248,8 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 7,
-    "name": "impl-name/1.0",
+    "apron": 7,
+    "agent": "impl-name/1.0",
     "caps": ["history", "edit"],
     "auth": ["token"]
   }
@@ -268,7 +268,7 @@ class Auth {
 
   name?: string;                // requested display name
   user_id?: string;             // requested user_id
-  client?: string;              // implementation string, for debugging
+  agent?: string;               // implementation/version string, for debugging
 
   // "token" and "email" schemes
   token?: string;
@@ -300,7 +300,7 @@ class AuthResult {
     "scheme": "token",
     "token": "...",
     "name": "Alice",
-    "client": "bottomless-web/0.3"
+    "agent": "bottomless-web/0.3"
   }
 }
 // <-
@@ -1830,7 +1830,7 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // <-
-  {"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+  {"method": "server", "params": {"apron": 7, "caps": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
   // <- before any auth
   {
     "method": "message", "params": {
@@ -1855,10 +1855,10 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // -> both at once, before server arrives
-  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "deploy-hook/1.0"}}
+  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
   {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
   // <-
-  {"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["token"]}}
+  {"method": "server", "params": {"apron": 7, "caps": ["rooms"], "auth": ["token"]}}
   // <-
   {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
   // <- then the bot closes the connection
