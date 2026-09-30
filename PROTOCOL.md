@@ -1491,7 +1491,7 @@ HTTP while readers watch it grow. Stream embeds follow the embed identity
 {"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
 ```
 
-- `format` names how to render the text; default `"plain"`, shown as is with
+- `format` defines how to render the text; default `"plain"`, shown as is with
   line breaks kept. Clients MAY support other formats natively, such as
   `"markdown"` (rendered under [§3.5](#35-messages)'s rules) or `"terminal"`, and render
   unknown formats as plain.
