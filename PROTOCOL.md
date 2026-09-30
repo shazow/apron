@@ -62,12 +62,11 @@ virtue of ignoring room-related fields.
   frames.
 - A **frame** is one JSON object: one WebSocket text message, or one line on
   a byte-stream transport such as TCP or stdio (newline-delimited JSON).
-- Frames look like [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
+- Frames are modeled on [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
   requests, responses, and notifications (`method`, `params`, `id`, `result`,
-  `error`), minus the `"jsonrpc": "2.0"` key.
-- Unknown keys MUST be ignored and MAY be dropped, so a JSON-RPC 2.0 client
-  can talk to an Apron server unchanged, but it should not expect the
-  `jsonrpc` key in replies. Extension data goes in `ext` ([§3.5](#35-messages)).
+  `error`), without the `"jsonrpc": "2.0"` key and with string `id`s only.
+- Unknown keys MUST be ignored and MAY be dropped. Extension data goes in
+  `ext` ([§3.5](#35-messages)).
 - Servers MAY process requests concurrently and reply in any order. A client
   that needs one request applied before another waits for the first reply.
 - On one connection, a result reflects every notification sent before it, so
