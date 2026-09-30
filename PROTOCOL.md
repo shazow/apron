@@ -1788,8 +1788,9 @@ Three of them tell the receiver who else got the message:
 - Joins and leaves are memberships ([§4.3.2](#432-membership)), not `~room` messages.
 - `~private` messages are transient notices ([§3.5](#35-messages)). A private notice
   that should last belongs in a room of its own.
-- A `~private` notice MAY omit `room_id` like any message ([§3.5](#35-messages)), such
-  as for a client that has no room yet because it is still signing in.
+- A `~private` notice MAY omit `room_id` like any message ([§3.5](#35-messages)). A
+  client with no room to show it in yet, such as one still signing in,
+  still shows it.
 
 ```jsonc
 // <- to everyone on the server, shown in the default room
