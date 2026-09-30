@@ -762,7 +762,7 @@ Six frame idioms cover everything logged or announced:
 
 Stateless window query over a room's **log**. A result splits the log by
 kind. `rooms` holds room records ([§3.4](#34-rooms)), `messages` message snapshots
-([§3.5](#35-messages)), `reactions` reaction sets ([§4.5](#45-reactions)), and `membership` memberships
+([§3.5](#35-messages)), `reactions` reaction sets ([§4.5](#45-reactions)), and `memberships` memberships
 ([§4.3.2](#432-membership)). Without `room_id`, it pages the default room ([§3.5](#35-messages)).
 
 ```jsonc
@@ -789,7 +789,7 @@ kind. `rooms` holds room records ([§3.4](#34-rooms)), `messages` message snapsh
         "reactions": [{"from": {"user_id": "carol", "name": "Carol"}, "emojis": ["👍"]}]
       }
     ],
-    "membership": [
+    "memberships": [
       {
         "log_id": "1724803300000", "room_id": "general",
         "members": [{"user": {"user_id": "dave", "name": "Dave"}, "joined": true}]
@@ -817,7 +817,7 @@ message stays in the source room; `prev_room_id` points there ([§2](#2-identifi
   before compaction. Return both or neither. `more` indicates further
   matching changes in the selected direction. An empty slice returns
   `more: false` and neither bound.
-- `rooms`, `messages`, `reactions`, and `membership` MAY each be omitted when
+- `rooms`, `messages`, `reactions`, and `memberships` MAY each be omitted when
   empty; clients treat a missing array as empty. Each is ascending by
   `log_id`.
 - Continue forward with `after = last_log_id + 1`, backward with
@@ -1065,7 +1065,7 @@ receive only its room record changes ([§4.3.3](#433-updates)).
 Every membership change is a logged record in the room, including a
 creation with `room_set` and changes the server makes. A membership record carries `members`, one entry per user, each
 with the user as a recorded object ([§3.3](#33-identity)) and `joined`. `room_update`
-delivers it in `membership` ([§4.3.3](#433-updates)):
+delivers it in `memberships` ([§4.3.3](#433-updates)):
 
 ```jsonc
 // ->
@@ -1073,7 +1073,7 @@ delivers it in `membership` ([§4.3.3](#433-updates)):
 // <- to the room's other members
 {
   "method": "room_update", "params": {
-    "membership": [
+    "memberships": [
       {"log_id": "1724803450100", "room_id": "1724803399000", "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]}
     ]
   }
@@ -1082,7 +1082,7 @@ delivers it in `membership` ([§4.3.3](#433-updates)):
 {
   "method": "room_update", "params": {
     "joined": [{"room_id": "1724803399000", ..., "members": [{"user_id": "ada"}, {"user_id": "bob"}]}],
-    "membership": [
+    "memberships": [
       {"log_id": "1724803450100", "room_id": "1724803399000", "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]}
     ],
     "users": [{"user_id": "ada", "name": "Ada"}, {"user_id": "bob", "name": "Bob"}]
@@ -1097,7 +1097,7 @@ delivers it in `membership` ([§4.3.3](#433-updates)):
 {
   "method": "room_update", "params": {
     "left": [{"room_id": "1724803312001"}],
-    "membership": [
+    "memberships": [
       {"log_id": "1724803450200", "room_id": "1724803312001", "members": [{"user": {"user_id": "ada"}, "joined": false}]}
     ]
   }
@@ -1126,7 +1126,7 @@ list:
 - `joined`: room records of rooms the user joined by any means, each with
   its `members` as in `room_list` ([§4.3.1](#431-listing)). `users` MAY accompany them.
 - `left`: `[{room_id}]` of rooms the user is no longer in, for any reason.
-- `membership`: membership records ([§4.3.2](#432-membership)), to the room's members.
+- `memberships`: membership records ([§4.3.2](#432-membership)), to the room's members.
 - `updated`: room records that are new or changed while membership is not.
   These are edits to a joined room and new or edited threads of one. A
   thread's record changes reach the parent's members, joined to the thread
@@ -1170,7 +1170,7 @@ return `{"room_id": "..."}` after the resulting `room_update`.
         "members": [{"user_id": "ada"}]
       }
     ],
-    "membership": [
+    "memberships": [
       {"log_id": "1724803312002", "room_id": "1724803312001", "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]}
     ]
   }
@@ -1586,7 +1586,7 @@ happens to it:
 {
   "method": "room_update", "params": {
     "left": [{"room_id": "general"}],
-    "membership": [
+    "memberships": [
       {"log_id": "1724803900001", "room_id": "general", "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]}
     ]
   }

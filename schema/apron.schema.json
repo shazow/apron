@@ -820,12 +820,6 @@
             "$ref": "#/$defs/ReactionSet"
           }
         },
-        "membership": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Membership"
-          }
-        },
         "first_log_id": {
           "$ref": "#/$defs/LogId"
         },
@@ -847,6 +841,12 @@
               "type": "null"
             }
           ]
+        },
+        "memberships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Membership"
+          }
         }
       },
       "required": [
@@ -939,16 +939,16 @@
             "$ref": "#/$defs/Room"
           }
         },
-        "membership": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Membership"
-          }
-        },
         "users": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/User"
+          }
+        },
+        "memberships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Membership"
           }
         }
       }
