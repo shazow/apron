@@ -480,7 +480,7 @@ class Room {
   room_id: string;
 
   parent_room_id?: string;      // fixed once the room is created
-  private?: boolean = false;    // fixed once the room is created; members only (§4.3.4)
+  private?: boolean = false;    // members only (§4.3.4)
   title?: string;               // absent: shown as room_id
   description?: string;         // Markdown by convention
   ext?: object;                 // opaque extension data (§3.5)
@@ -531,7 +531,7 @@ clients always take the latest values, even if `log_id` did not change.
 | `log_id`                  | server   | position of this room record ([§2](#2-identifiers))                               |
 | `prev_log_id`             | server   | optional; this room's previous record ([§2](#2-identifiers))                      |
 | `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.3.4](#434-creating-and-editing)) |
-| `private`                 | client   | optional; fixed at creation; visible only to members ([§4.3.4](#434-creating-and-editing)) |
+| `private`                 | client   | optional; visible only to members ([§4.3.4](#434-creating-and-editing))           |
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
 | `description`             | client   | optional string, Markdown by convention: what the room is about                   |
 | `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
@@ -1176,9 +1176,10 @@ the full list:
 #### 4.3.4 Creating and editing
 
 `room_set` without `room_id` creates a room and
-joins the creator; with `room_id` it replaces the client fields ([§3.4](#34-rooms))
-other than `parent_room_id`, which is fixed at creation, and omitted fields
-are cleared. Both return `{"room_id": "..."}` after the change arrives as a
+joins the creator; with `room_id` it replaces the client fields ([§3.4](#34-rooms)).
+Fields ending in `_id` are fixed at creation, and so is `private` where the
+server fixes it; an omitted `private` is kept, and other omitted fields are
+cleared. Both return `{"room_id": "..."}` after the change arrives as a
 `room_update`, and a creation also logs the creator's membership ([§4.3.2](#432-membership)).
 
 ```jsonc
