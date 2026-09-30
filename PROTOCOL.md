@@ -269,7 +269,7 @@ content.
 
 ```ts
 class Auth {
-  scheme: string;               // one of server.auth
+  scheme: string;               // one of server.auth or server.signup
 
   name?: string;                // requested display name
   user_id?: string;             // requested user_id
