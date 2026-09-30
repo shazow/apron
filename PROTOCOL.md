@@ -562,7 +562,7 @@ both render.
 
 ```ts
 class Message {
-  body: {
+  body?: {                      // required on creation; absent on tombstones (§4.2)
     text?: string = "";
     format?: "plain" | "markdown" = "plain";
     mentions?: string[] = [];   // user_ids
@@ -574,8 +574,8 @@ class Message {
   ext?: object;                 // opaque extension data (§3.5)
 
   // set by the server
-  message_id: string;           // sent by clients only to save a message (§4.2)
-  log_id: string;
+  message_id?: string;          // absent on transient notices; sent by clients only to save (§4.2)
+  log_id?: string;              // absent on transient notices
   from: User;
 
   prev_log_id?: string;
