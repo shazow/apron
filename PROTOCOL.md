@@ -760,7 +760,7 @@ follows `server.push` ([§4.7](#47-push)), passkeys and email sign-in follow `se
 Six frame idioms cover everything logged or announced:
 
 - **Records** (room records, `message`): complete state at a `log_id` ([§2](#2-identifiers)).
-- **Per-user state** (`reactions`, `membership`): the user plus their complete
+- **Per-user state** (`reactions`, `room_members`): the user plus their complete
   state for a scope; newest wins per user. Logged ([§2](#2-identifiers)).
 - **Activity** (`activity`): `from` plus changes to the user's transient
   state; present fields update it and absent fields leave it unchanged. Not
@@ -976,10 +976,10 @@ clients holding the old content drop it on the new tombstone.
 
 ### 4.3 `rooms`
 
-Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
+Cap `rooms` adds rooms to find, join, and create, and threads. Six methods
 share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
-`room_set` are requests; `room_update` is a notification. The `membership`
-notification carries logged memberships ([§4.3.2](#432-membership)). Visibility and
+`room_set` are requests; `room_update` and `room_members` are notifications.
+`room_members` carries logged memberships ([§4.3.2](#432-membership)). Visibility and
 membership are server policy.
 
 #### 4.3.1 Listing
@@ -1101,7 +1101,7 @@ with the user as a recorded object ([§3.3](#33-identity)) and `joined`:
 {"method": "room_join", "id": "c24", "params": {"room_id": "1724803399000"}}
 // <- to the room's members, the joining user's connections included
 {
-  "method": "membership", "params": {
+  "method": "room_members", "params": {
     "log_id": "1724803450100", "room_id": "1724803399000",
     "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]
   }
@@ -1120,7 +1120,7 @@ with the user as a recorded object ([§3.3](#33-identity)) and `joined`:
 {"method": "room_leave", "id": "c25", "params": {"room_id": "1724803312001"}}
 // <- to the room's members, the leaving user's connections included
 {
-  "method": "membership", "params": {
+  "method": "room_members", "params": {
     "log_id": "1724803450200", "room_id": "1724803312001",
     "members": [{"user": {"user_id": "ada"}, "joined": false}]
   }
@@ -1190,7 +1190,13 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
     "description": "Why the 4pm deploy failed"
   }
 }
-// <- to the creator
+// <- to the creator: its membership, then the room with its members
+{
+  "method": "room_members", "params": {
+    "log_id": "1724803312002", "room_id": "1724803312001",
+    "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]
+  }
+}
 {
   "method": "room_update", "params": {
     "joined": [
@@ -1198,7 +1204,8 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
         "room_id": "1724803312001", "log_id": "1724803312001",
         "parent_room_id": "general", "title": "Deploy",
         "description": "Why the 4pm deploy failed",
-        "latest_log_id": "1724803312001", "history_log_id": "1724803312001"
+        "latest_log_id": "1724803312002", "history_log_id": "1724803312001",
+        "members": [{"user_id": "ada"}]
       }
     ]
   }
@@ -1620,7 +1627,7 @@ happens to it:
 }
 // <- to the room, guest_1234 included: the membership
 {
-  "method": "membership", "params": {
+  "method": "room_members", "params": {
     "log_id": "1724803900001", "room_id": "general",
     "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]
   }

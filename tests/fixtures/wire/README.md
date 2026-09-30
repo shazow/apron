@@ -47,7 +47,7 @@ Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#
 | room record | `room_id` | `room_list` results (`joined` and `not_joined`), `room_update` notifications (`joined` and `updated`), history `rooms` |
 | message snapshot | `message_id` | `message` notifications with a `message_id`, history `messages`, embedded snapshots |
 | reaction set | `(message_id, user_id)` | `reactions` notifications, history `reactions` (one set per element of `reactions[]`) |
-| membership | `(room_id, user.user_id)` | `membership` notifications, history `membership` (one per element of `members[]`) |
+| membership | `(room_id, user.user_id)` | `room_members` notifications, history `membership` (one per element of `members[]`) |
 
 **Replay rule.** A record replaces the stored record for its key only when its
 `log_id` is numerically greater; an equal or lower `log_id` is ignored. This
@@ -91,7 +91,7 @@ winning membership gave.
   list (above). A `left` array, in a `room_update` or a `room_list` result,
   holds no records: it only removes rooms from the visible set (sessions
   only).
-- A membership is `{"method":"membership","params":{log_id, room_id, members: [{user, joined}]}}`;
+- A membership is `{"method":"room_members","params":{log_id, room_id, members: [{user, joined}]}}`;
   history `membership` elements have the same shape. `user` is a recorded
   user object, stored and projected as given.
 - Unknown top-level keys (in frames, records, results, and reaction elements)
@@ -156,7 +156,7 @@ message homed in it, or member state.
 }
 ```
 
-`receive` holds a `message`, `room_update`, `reactions`, or `membership`
+`receive` holds a `message`, `room_update`, `reactions`, or `room_members`
 notification, or a response `{id, result}` to `history` (it has `more`) or to
 `room_list` (it has `joined` or `not_joined`). Fixed response IDs label
 already-issued requests; this suite tests reduction, not request scheduling.
