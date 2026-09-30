@@ -483,17 +483,17 @@ class Room {
 ```
 
 A room is a log with a server-chosen `room_id`. Every message refers to its room
-([§3.5](#35-messages)). A server without cap `rooms` MAY have a single room: clients learn
-its `room_id` from the messages in it, and title any room they know nothing
+([§3.5](#35-messages)). A server without cap `rooms` MAY have a single room. Clients learn
+its `room_id` from the messages in it. They title any room they know nothing
 more about by its `room_id`. Listing, joining, creating, and threads are cap
 `rooms` ([§4.3](#43-rooms)).
 
 A connection receives the messages and other records of the rooms its user
-has joined: every room, on servers without cap `rooms`. Of a joined room's
-threads (below) it receives only changes to their room records, as
-`room_update` ([§4.3.3](#433-updates)), not their messages; a thread's messages go to the
-thread's members. System notices are delivered by their scope instead
-([Appendix A.1](#a1-system-identities-and-scoped-notices)). Posting does not require joining ([§3.5](#35-messages)).
+has joined. On servers without cap `rooms`, that is every room. For the
+threads (below) of a joined room, it receives only changes to their room
+records, as `room_update` ([§4.3.3](#433-updates)). A thread's messages go to the thread's
+members. System notices are delivered by their scope instead
+([Appendix A.1](#a1-system-identities-and-scoped-notices)).
 
 A **room record** describes one room, as `room_list` and `room_update`
 carry it ([§4.3](#43-rooms)):
@@ -507,8 +507,8 @@ carry it ([§4.3](#43-rooms)):
 ```
 
 `server`: assigned by the server, read-only ([§2](#2-identifiers)). `client`: supplied by the
-client, replaced whole by a save. `delivery`: this client's view, not logged;
-clients always take the latest values, even if `log_id` did not change.
+client, replaced whole by a save. `delivery`: this client's view, not logged.
+Clients always take the latest values, even if `log_id` did not change.
 
 | field                     | set by   | meaning                                                                           |
 |---------------------------|----------|-----------------------------------------------------------------------------------|
@@ -525,22 +525,19 @@ clients always take the latest values, even if `log_id` did not change.
 | `members`                 | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.3](#43-rooms))       |
 | `member_count`            | delivery | optional; how many users have joined, when `members` is truncated ([§4.3.1](#431-listing)) |
 
-A room record is complete ([§2](#2-identifiers)); omitted fields are cleared, except
+A room record is complete ([§2](#2-identifiers)). Omitted fields are cleared, except
 `members` and `member_count`, which only some frames carry.
 
 `description` is the room's summary, such as its purpose or the state of its
-conversation. It is part of the room record, so anyone allowed to edit the
-room can change it with `room_set` ([§4.3.4](#434-creating-and-editing)), such as a bot that keeps a
-thread's summary current, and each change reaches everyone who receives the
-room's record ([§4.3.3](#433-updates)). Clients render it as Markdown under [§3.5](#35-messages)'s rules
+conversation. Anyone allowed to edit the room can change it with `room_set`
+([§4.3.4](#434-creating-and-editing)). Clients render it as Markdown under [§3.5](#35-messages)'s rules
 and MAY show it as plain text. `log_id`, `latest_log_id`, and
 `history_log_id` are REQUIRED when cap `history` is advertised and OPTIONAL
 otherwise; [§4.1](#41-history) defines their use.
 
 Threads are rooms with a `parent_room_id`. Clients that ignore the field
-render them as ordinary rooms; clients that understand it group them under
-the parent and MAY collapse or hide them. Servers set `title` on threads so
-both render.
+render them as ordinary rooms. Clients that understand it group them under
+the parent and MAY collapse or hide them. Servers set `title` on threads.
 
 ### 3.5 Messages
 
@@ -614,49 +611,51 @@ namespace:
 "ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
 ```
 
-Clients need not parse `ext`, and MUST send it back unchanged when saving a
+Clients need not parse `ext`. They MUST send it back unchanged when saving a
 message ([§4.2](#42-edit)) or room ([§4.3.4](#434-creating-and-editing)) unless they mean to change it.
 Data that must survive other clients' saves belongs in `ext`, not in unknown
 top-level keys. Servers MAY limit `ext` or normalize or reject any field by
 local policy.
 
-- `body` is required on creation. `text` defaults to `""`; `format` ∈
-  `"plain" | "markdown"`, default `"plain"`; `embeds` and `mentions`
-  default to `[]`.
-  Both formats are mandatory to render. Markdown is CommonMark with fenced
-  code blocks as the baseline rich-content path. Clients MUST disable raw
-  HTML in Markdown or sanitize it under the same allowlist as HTML embeds
-  ([§4.6](#46-embeds-and-avatars)). Clients MUST render embeds of unknown `kind` from `og` if
-  present, otherwise as a labeled fallback card (kind name, plus `url` or
-  plain `text` if present).
-- `mentions` lists the `user_id`s the message mentions; see **Mentions**
-  below.
-- A request without `room_id` posts to the server's default room, and the
-  snapshot refers to it. Posting does not require joining the room; servers MAY
-  deny it by policy (`denied`). An unknown or invisible `room_id` is
-  `invalid_params`.
+- `body` is required on creation. `text` defaults to `""`, and `embeds`
+  and `mentions` default to `[]`. `format` is `"plain"` or `"markdown"`,
+  default `"plain"`.
+- Both formats are mandatory to render. Markdown is CommonMark with fenced
+  code blocks.
+- Clients MUST disable raw HTML in Markdown or sanitize it under the same
+  allowlist as HTML embeds ([§4.6](#46-embeds-and-avatars)).
+- Clients MUST render embeds of unknown `kind` from `og` if present,
+  otherwise as a labeled fallback card (kind name, plus `url` or plain
+  `text` if present).
+- A request without `room_id` posts to the server's default room. The
+  snapshot refers to that room.
+- Posting does not require joining the room. Servers MAY deny it by policy
+  (`denied`).
+- An unknown or invisible `room_id` is `invalid_params`.
 - A new message with no `text` and no `embeds` SHOULD be neither logged nor
   broadcast; its result is then `{}`.
 - **Result:** `{"message_id": "..."}`, the permanent ID. It is the
-  confirmation. The broadcast goes to the connections that receive the
-  room's deliveries ([§3.4](#34-rooms)); when the sender's connection is one of them, the
-  broadcast comes first ([§1](#1-transport--framing)). A deduplicated retry ([§1.2](#12-retries-and-deduplication)) produces no
-  broadcast.
+  confirmation.
+- The broadcast goes to the connections that receive the room's deliveries
+  ([§3.4](#34-rooms)). When the sender's connection is one of them, the broadcast comes
+  before the result ([§1](#1-transport--framing)).
+- A deduplicated retry ([§1.2](#12-retries-and-deduplication)) produces no broadcast.
 - **Snapshots replace** under the replay rule ([§2](#2-identifiers)), including for messages
-  the client has not loaded. Servers MAY publish a snapshot of any message at
-  any time, such as edits, deletions, and moves of older messages. Support is
+  the client has not loaded.
+- Servers MAY publish a snapshot of any message at any time. Support is
   mandatory regardless of cap `edit`.
-- **References.** `reply_to` holds a message object: bare (`message_id`
-  only) from clients, optionally a full snapshot from servers, installed
-  like any other. Embedded snapshots carry a bare `reply_to`.
-  Clients render the referring message even when the target is missing or
+- **References.** `reply_to` holds a message object. Clients send it bare,
+  with only `message_id`. Servers optionally send a full snapshot, which
+  clients install like any other. Embedded snapshots carry a bare
+  `reply_to`.
+- Clients render the referring message even when the target is missing or
   deleted.
 - `reply_to.message_id` MUST refer to an existing message other than the message
   itself; it MAY be in another room. Invalid references are `invalid_params`.
 - On a live connection, servers deliver each room's snapshots in ascending
   `log_id`, and each snapshot once per connection.
 - A `message` notification without `message_id` is a transient notice, such
-  as a private system notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)): clients render it but never
+  as a private system notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)). Clients render it but never
   install it as a snapshot.
 
 **Mentions.** A message lists the users it mentions in `body.mentions`, and
@@ -670,9 +669,9 @@ usually shows each one in `body.text` ([Appendix A.3](#a3-prefixes-in-text)):
 }
 ```
 
-- `mentions` alone decides who is mentioned: servers ([§4.7](#47-push)) and clients
-  treat as mentioned only the users it lists, whatever `text` contains.
-  Servers never parse `text` to find mentions.
+- Servers ([§4.7](#47-push)) and clients treat as mentioned only the users in
+  `mentions`, whatever `text` contains.
+- Servers never parse `text` to find mentions.
 - An edit ([§4.2](#42-edit)) mentions only the users it adds to `mentions`; users
   already listed are not mentioned again.
 - Composers add a user to `mentions` when the user picks them, and write
@@ -718,11 +717,9 @@ A minimal client (informative):
 ## 4. Capabilities
 
 `server.caps` advertises optional requests. Capabilities advertise support,
-not authorization; servers still apply local policy per request. Each is
-designed to degrade gracefully when missing, with nothing to negotiate:
-clients ignore caps they do not recognize, unknown methods get
-`unsupported` and unknown keys are ignored ([§1](#1-transport--framing)), and a client whose server
-lacks a cap falls back as below:
+not authorization. Servers still apply local policy per request. Nothing is
+negotiated. Clients ignore caps they do not recognize ([§1](#1-transport--framing)). A client
+whose server lacks a cap falls back as below:
 
 | cap            | adds                                                         | fallback                     | spec                       |
 |----------------|--------------------------------------------------------------|------------------------------|----------------------------|
@@ -735,12 +732,13 @@ lacks a cap falls back as below:
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.5](#465-embedstream) |
 | `command`      | commands from client to server, such as `/kick`              | no commands                  | [§4.8](#48-command)        |
 
-Features without a cap: other embeds are body content ([§4.6](#46-embeds-and-avatars)); push
-follows `server.push` ([§4.7](#47-push)), passkeys and email sign-in follow `server.auth`
-([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)), and liveness follows `server.ping` ([§1](#1-transport--framing)).
+Some features have no cap. Other embeds are body content ([§4.6](#46-embeds-and-avatars)).
+Push follows `server.push` ([§4.7](#47-push)). Passkeys and email sign-in follow
+`server.auth` ([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)). Liveness follows `server.ping`
+([§1](#1-transport--framing)).
 
-- Suggested convention: third-party extension caps use an `ext:` prefix,
-  such as `ext:irc`.
+By convention, third-party extension caps use an `ext:` prefix, such as
+`ext:irc`.
 
 Six frame idioms cover everything logged or announced:
 
@@ -748,8 +746,7 @@ Six frame idioms cover everything logged or announced:
 - **Per-user state** (`reactions`, memberships): the user plus their complete
   state for a scope; newest wins per user. Logged ([§2](#2-identifiers)).
 - **Activity** (`activity`): `from` plus changes to the user's transient
-  state; present fields update it and absent fields leave it unchanged. Not
-  part of the append-only log.
+  state. Absent fields leave it unchanged. Unlogged.
 - **Announcements** (`server`): unlogged, re-sent in full; each
   replaces the last.
 - **Room updates** (`room_update`): changes to the user's rooms, carrying
@@ -759,10 +756,10 @@ Six frame idioms cover everything logged or announced:
 
 ### 4.1 `history`
 
-Stateless window query over a room's **log**. `rooms` holds room records
-([§3.4](#34-rooms)), `messages` message snapshots ([§3.5](#35-messages)), `reactions` reaction sets
-([§4.5](#45-reactions)), and `membership` memberships ([§4.3.2](#432-membership)): one log, partitioned by
-kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
+Stateless window query over a room's **log**. A result splits the log by
+kind. `rooms` holds room records ([§3.4](#34-rooms)), `messages` message snapshots
+([§3.5](#35-messages)), `reactions` reaction sets ([§4.5](#45-reactions)), and `membership` memberships
+([§4.3.2](#432-membership)). Without `room_id`, it pages the default room ([§3.5](#35-messages)).
 
 ```jsonc
 // ->
@@ -801,7 +798,7 @@ kind. Without `room_id`, it pages the default room ([§3.5](#35-messages)).
 ```
 
 **Which rooms a record is in.** A record belongs to every room its message is
-in just before or after it, so a move ([§4.2](#42-edit)) appears in both rooms. Room
+in just before or after it. Room
 records and memberships belong to their own room. Earlier history of a moved
 message stays in the source room; `prev_room_id` points there ([§2](#2-identifiers)).
 
@@ -810,10 +807,10 @@ message stays in the source room; `prev_room_id` points there ([§2](#2-identifi
 - `after`/`before` are inclusive `log_id` bounds; either MAY be omitted.
 - Intersect the bounds with available history, then select a contiguous
   slice of the room's changes of any kind. `limit` is a positive count of
-  changes, applied before compaction; servers MAY clamp it and supply a
+  changes, applied before compaction. Servers MAY clamp it and supply a
   default. With `after`, select the oldest matches; otherwise the newest.
 - `first_log_id`/`last_log_id` are the slice's first and last `log_id`s
-  before compaction; return both or neither. `more` indicates further
+  before compaction. Return both or neither. `more` indicates further
   matching changes in the selected direction. An empty slice returns
   `more: false` and neither bound.
 - `rooms`, `messages`, `reactions`, and `membership` MAY each be omitted when
@@ -825,26 +822,24 @@ message stays in the source room; `prev_room_id` points there ([§2](#2-identifi
 
 **Availability.** Every result includes `latest_log_id` and `history_log_id`
 ([§3.4](#34-rooms)), captured consistently with the page. They describe the room, not the
-page. Retention may advance between requests; inspect each response before
-applying it. A resource rejection is an error, not an empty result.
+page. Retention may advance between requests. Clients check each response
+before applying it. A resource rejection is an error, not an empty result.
 
 **Retention.** Servers SHOULD compact old history at rest rather than discard
-it: keep the latest record per key under compaction's rules below. Compacted
-history still counts as available, keeps checkpoints valid, and leaves
-`history_log_id` in place. A server that truly discards a prefix advances
-`history_log_id`; the effective lower bound is `history_log_id`, or
-`latest_log_id + 1` when null, and MUST NOT decrease. Before discarding a
-prefix that holds memberships, a server appends one membership record
-listing every current member (`joined: true` only), so the room's members
-survive; clients that restart from the new bound clear the room's state
-first, so leaves in the prefix are not needed.
+it. Compaction keeps the latest record per key under the rules below.
+Compacted history still counts as available and leaves `history_log_id` in
+place. A server that discards a prefix advances `history_log_id`. The
+effective lower bound is `history_log_id`, or `latest_log_id + 1` when
+null. It MUST NOT decrease. Before discarding a prefix that holds
+memberships, a server appends one membership record listing every current
+member (`joined: true` only).
 
 **Compaction (optional).** After selecting the slice, a server MAY keep only
-the last room record and each message's last snapshot in the slice, and MAY
+the last room record and each message's last snapshot in the slice. It MAY
 fold each message's reaction sets into one record carrying each user's last
-set in the slice, under the greatest folded `log_id`, and likewise fold the
-room's memberships into one record carrying each user's last membership.
-Empty sets and leaves are kept so removals replay. Retained records keep
+set in the slice, under the greatest folded `log_id`. It MAY likewise fold
+the room's memberships into one record carrying each user's last
+membership. Empty sets and leaves are kept. Retained records keep
 their original `log_id`s and contents and never incorporate changes after
 the slice. Compacted and uncompacted pages yield the same terminal state.
 
@@ -861,18 +856,16 @@ order across the arrays is irrelevant.
    otherwise from `after: history_log_id`, until `more: false`.
 3. Apply the buffered records. The checkpoint is now H.
 
-If a response's effective lower bound passes the next position you need,
-history was discarded: clear the room's state and restart from that bound.
-Clients recover each room they display independently; threads are separate
-rooms and load when opened.
+If a response's effective lower bound passes the next position needed,
+clear the room's state and restart from that bound. Clients recover each
+room they display independently. Threads load when opened.
 
 ### 4.2 `edit`
 
-A `message` request carrying an existing `message_id` **saves** that message:
-it replaces every client field ([§3.5](#35-messages)) with the submitted state. Omitted
-fields are removed; objects and arrays are replaced whole; `null` has no
-deletion meaning. Clients MUST resubmit every client field they want kept,
-including `room_id`, `body`, `reply_to`, and `ext`. The server preserves
+A `message` request carrying an existing `message_id` **saves** that message.
+A save replaces every client field ([§3.5](#35-messages)) with the submitted state. Omitted
+fields are removed. Objects and arrays are replaced whole. `null` has no
+deletion meaning. Clients MUST resubmit every client field they want kept. The server preserves
 `message_id`, `from`, and other server fields. Saves apply in server
 order with no merge.
 
@@ -897,17 +890,16 @@ order with no merge.
 {"id": "c12", "result": {"message_id": "1724803200042"}}
 ```
 
-An unknown `message_id` is `invalid_params`; a save never creates a message.
+An unknown `message_id` is `invalid_params`.
 Unauthorized saves are `denied` by server policy. The authoritative snapshot
 MAY differ from the submitted state.
 
 **Move.** A save with a different `room_id` moves the message. The
 destination MUST exist and be visible to the caller. The snapshot is
-delivered to both rooms ([§4.1](#41-history)), and clients re-home the message rather
-than treating it as deleted. The snapshot carries `prev_room_id`, the source
-room, whose log holds the message's earlier records ([§2](#2-identifiers)). If the message
-has reactions, the server then logs one reactions record ([§4.5](#45-reactions)) in the
-destination carrying every non-empty set, so reactions follow the message.
+delivered to both rooms ([§4.1](#41-history)). Clients move the message rather than
+treating it as deleted. The snapshot carries `prev_room_id`, the source
+room ([§2](#2-identifiers)). If the message has reactions, the server then logs one
+reactions record ([§4.5](#45-reactions)) in the destination carrying every non-empty set.
 
 ```jsonc
 // -> move Bob's reply into thread room 1724803312001
@@ -930,9 +922,9 @@ destination carrying every non-empty set, so reactions follow the message.
 }
 ```
 
-**Delete** is a save with `deleted: true`; `body` is then optional and the
+**Delete** is a save with `deleted: true`. `body` is then optional, and the
 server MUST omit it from the tombstone. `deleted: true` on creation is
-`invalid_params`. Other client fields keep replacement semantics.
+`invalid_params`.
 
 ```jsonc
 // ->
@@ -956,8 +948,8 @@ Clients render tombstones and hide their reactions.
 **Redaction.** Earlier snapshots of a deleted message still hold its content.
 A server MAY rewrite them, and embedded copies of them ([§3.5](#35-messages)), into
 tombstones at their original `log_id`s. This is the only permitted rewrite
-of a logged record. Replay reaches the same terminal state either way;
-clients holding the old content drop it on the new tombstone.
+of a logged record. Clients holding the old content drop it on the new
+tombstone.
 
 ### 4.3 `rooms`
 
