@@ -26,7 +26,8 @@ top-level keys. Frames are protocol 7. Each variant has `name` and ordered
 `expected` state. An `expect` step additionally checks an intermediate state.
 
 Each step is an object with exactly one key, the operation. Objects are
-unordered; arrays are ordered. All IDs are JSON strings. Small IDs such as
+unordered; arrays are ordered. String order is Unicode code point order
+(equivalently UTF-8 byte order). All IDs are JSON strings. Small IDs such as
 `"100"` are readable epoch-millisecond values near the Unix epoch; they are
 positive and below `2^53`, and every comparison of `log_id`s or
 `message_id`s is numeric (`"9" < "10"`).
@@ -389,7 +390,7 @@ The normalized session state has these keys:
   joined on the current connection: the joined listing sent behind `auth`
   (above), plus `room_update` `joined`, minus `left`. Without it they are the
   rooms a `message` arrived in on the current connection. A `room_id` starting
-  with `@` is an ordinary room. A client's placeholder for the default room
+  with `~` is an ordinary room. A client's placeholder for the default room
   before its `room_id` is known is not a room. Only server records appear;
   optimistic local echoes do not.
 - `users`: the kept user objects, one per `user_id`, keyed by `user_id` in

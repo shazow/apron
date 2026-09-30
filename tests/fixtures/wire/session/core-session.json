@@ -50,9 +50,9 @@
     "you": {"user_id":"guest_1","name":"Ada"},
     "capabilities": [],
     "rooms": [
-      {"room_id":"~ops","messages":[{"message_id":"1724803200004","log_id":"1724803200004","room_id":"~ops","from":{"user_id":"bob","name":"Bob"},"body":{"text":"an ordinary room"}}]},
       {"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}},{"message_id":"1724803200005","log_id":"1724803200005","room_id":"general","from":{"user_id":"~server","name":"Server"},"body":{"text":"Maintenance at 17:00 UTC."}}]},
-      {"room_id":"other","messages":[{"message_id":"1724803200003","log_id":"1724803200003","room_id":"other","from":{"user_id":"bob","name":"Bob"},"body":{"text":"elsewhere"}}]}
+      {"room_id":"other","messages":[{"message_id":"1724803200003","log_id":"1724803200003","room_id":"other","from":{"user_id":"bob","name":"Bob"},"body":{"text":"elsewhere"}}]},
+      {"room_id":"~ops","messages":[{"message_id":"1724803200004","log_id":"1724803200004","room_id":"~ops","from":{"user_id":"bob","name":"Bob"},"body":{"text":"an ordinary room"}}]}
     ],
     "notices": [{"room_id":"general","from":{"user_id":"~private","name":"Only you"},"body":{"text":"Welcome to General!"}}],
     "operations": {"message":"fulfilled","reply":"fulfilled"},
