@@ -1734,40 +1734,44 @@ unknown, expired, or mismatched tokens with `denied`. Clients that ignore
 
 ### 4.10 Email authentication
 
-Servers advertising `email` in `server.auth` sign users in with a temporary
-token sent to their email address, exchanged for a bearer token. Both steps
-are `auth` requests with `scheme: "email"`:
+Servers advertising `email` in `server.auth` verify an address with a
+temporary token sent to it. An `auth` request with `email` proposes a
+sign-in or an addition, and one with `token` approves it:
 
 ```jsonc
-// -> send a temporary token to this address
+// -> propose signing in with this address
 {"method": "auth", "id": "c1", "params": {"scheme": "email", "email": "ada@example.com"}}
 // <- nothing is authenticated yet
 {"id": "c1", "result": {}}
 
-// email: "Your code is 418092, or open https://chat.example/login#email=ada%40example.com&token=418092"
+// email: "Your code is 418092, or open https://chat.example/login#token=Hk41x9…"
 
-// -> on any connection, such as one opened by the link
-{"method": "auth", "id": "c2", "params": {"scheme": "email", "email": "ada@example.com", "token": "418092"}}
+// -> on any connection not signed in, such as one opened by the link
+{"method": "auth", "id": "c2", "params": {"scheme": "email", "token": "Hk41x9…"}}
 // <- signed in, with a bearer token for later connections
 {"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
 ```
 
-- Without `token`, the request asks the server to send a temporary token to
-  `email` and returns `{}`. It returns `{}` whether or not the address has an
-  account, so it does not reveal which do, and authenticates nothing.
-- The temporary token is short enough to type, such as six digits, and
-  valid only for that `email`. It expires within minutes, is consumed by a
-  successful sign-in, is invalidated after a few failed attempts, and is
-  replaced by a newer one for the same address.
-- With `token`, a valid request authenticates and its result carries `you`
-  and a bearer `token` for later connections ([§3.2](#32-authentication)). An invalid,
-  expired, or used temporary token is `denied`. On a connection that is
-  already signed in, it adds the address to that account.
-- The server builds any link from its own configuration, never from request
-  fields, and puts the token in the URL fragment so it stays out of server
-  logs. The sign-in happens on the connection that presents the token, not
-  the one that requested it, so a request made by someone else signs in only
-  whoever reads the email.
+- A proposal returns `{}` whether or not the address has an account. On a
+  connection signed in to an account, guests included, it proposes adding
+  the address to that account. Otherwise it proposes signing in.
+- The server emails a temporary token for the proposal, as a link, a code
+  to type, or both. A token short enough to type, such as six digits,
+  works only on the connection that made the proposal. A token that works
+  on other connections must be unguessable.
+- A connection has one pending proposal, and a new one replaces it. A
+  proposal expires within minutes, is consumed when approved, and is
+  invalidated after a few failed attempts.
+- Approving a sign-in authenticates the connection that presents the
+  token, which must not be signed in already. The result carries `you`
+  and a bearer `token` for later connections ([§3.2](#32-authentication)).
+- Approving an addition adds the address to the proposing account and
+  returns `{}`.
+- An invalid, expired, or used token is `denied`, and so is a sign-in
+  token on a signed-in connection or an address that belongs to another
+  account.
+- The server builds any link from its own configuration and puts the token
+  in the URL fragment, so it stays out of server logs.
 - Account creation for unknown addresses, send rate limits (`retry_after`),
   and the bearer token's lifetime are server policy.
 
