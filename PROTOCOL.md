@@ -10,6 +10,10 @@ The protocol is incremental. The mandatory core ([§3](#3-core)) is all a minima
 implementation needs, about a hundred lines. Everything else is an optional
 capability ([§4](#4-capabilities)).
 
+[`schema/apron.schema.json`](schema/apron.schema.json) is an informative
+JSON Schema of the frames, for validation and editor completion. Where it
+disagrees with this document, this document wins.
+
 Here's an example exchange to get a taste:
 
 ```jsonc

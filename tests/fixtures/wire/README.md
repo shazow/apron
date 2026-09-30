@@ -242,7 +242,7 @@ stay queued. Then:
 
 - `match` is a recursive subset of the frame: objects match by listed keys;
   arrays and scalars match exactly. Extra fields such as `auth.params.name`,
-  `auth.params.client`, and `history.params.limit` are unconstrained.
+  `auth.params.agent`, and `history.params.limit` are unconstrained.
 - For mutations (`message`, `command`, `room_set`, `room_join`,
   `room_leave`, `reactions`) `params` must equal `match.params` exactly, to
   catch lost or unwanted fields.
