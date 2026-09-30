@@ -382,7 +382,7 @@ The normalized session state has these keys:
 
 - `you`: the identity from the latest successful `auth` result on the current
   connection, or `null`.
-- `caps`: the latest `server` frame's `caps` sorted by string order; `[]` when
+- `capabilities`: the latest `server` frame's `capabilities` sorted by string order; `[]` when
   omitted or before any `server` frame on the connection.
 - `rooms`: the visible rooms sorted by `room_id` in string order, each in the
   room projection above without `members`. With cap `rooms` they are the rooms
@@ -418,7 +418,7 @@ The normalized session state has these keys:
   `rejected`.
 
 On `disconnect` the client's protocol view is rebuilt from the next
-connection: `you` is `null`, `caps` and `typing` are `[]`, and `rooms` is `[]`
+connection: `you` is `null`, `capabilities` and `typing` are `[]`, and `rooms` is `[]`
 until rooms are listed again. The record stores (member lists included),
 floors, checkpoints, users, and notices are kept, so each room listed again
 resumes from its checkpoint rather than recovering in full ([PROTOCOL.md §4.1](../../../PROTOCOL.md#41-history), recovery from `C + 1`). (The UI may keep showing the old view meanwhile; that is not part

@@ -15,7 +15,7 @@
     {
       "name": "join-and-leave",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"caps":["rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"receive":{"method":"room_update","params":{"membership":[{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":true}]}]}}},
@@ -50,7 +50,7 @@
   ],
   "expected": {
     "you": {"user_id":"guest_1","name":"Guest"},
-    "caps": ["rooms"],
+    "capabilities": ["rooms"],
     "rooms": [
       {"room_id":"ops","log_id":"95","title":"Ops","messages":[]}
     ],

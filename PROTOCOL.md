@@ -14,7 +14,7 @@ Here's an example exchange to get a taste:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"apron": 7, "caps": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -233,7 +233,7 @@ class Server {
   auth: string[];               // at least one scheme, in preference order (§3.2)
 
   agent?: string;               // implementation/version string, for debugging
-  caps?: string[] = [];         // capabilities (§4)
+  capabilities?: string[] = []; // §4
   welcome?: string;             // user-readable Markdown details and auth instructions
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
   ping?: number;                // seconds between client pings (§1)
@@ -250,7 +250,7 @@ frame, unprompted. There is no client hello.
   "method": "server", "params": {
     "apron": 7,
     "agent": "impl-name/1.0",
-    "caps": ["history", "edit"],
+    "capabilities": ["history", "edit"],
     "auth": ["token"]
   }
 }
@@ -716,9 +716,9 @@ A minimal client (informative):
 
 ## 4. Capabilities
 
-`server.caps` advertises optional requests. Capabilities advertise support,
+`server.capabilities` advertises optional requests. Capabilities advertise support,
 not authorization. Servers still apply local policy per request. Nothing is
-negotiated. Clients ignore caps they do not recognize ([§1](#1-transport--framing)). A client
+negotiated. Clients ignore capabilities they do not recognize ([§1](#1-transport--framing)). A client
 whose server lacks a cap falls back as below:
 
 | cap            | adds                                                         | fallback                     | spec                       |
@@ -737,7 +737,7 @@ Push follows `server.push` ([§4.7](#47-push)). Passkeys and email sign-in follo
 `server.auth` ([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)). Liveness follows `server.ping`
 ([§1](#1-transport--framing)).
 
-By convention, third-party extension caps use an `ext:` prefix, such as
+By convention, third-party extension capabilities use an `ext:` prefix, such as
 `ext:irc`.
 
 Six frame idioms cover everything logged or announced:
@@ -1478,7 +1478,7 @@ the user's name.
   and room `members` and `users`, not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs. A larger image goes through
-  an upload (caps `command` and `embed:upload`). A `/avatar` command
+  an upload (capabilities `command` and `embed:upload`). A `/avatar` command
   ([§4.8](#48-command)) with one `upload` embed asks the server to use that file as the
   sender's avatar. When the upload completes, the server sets `avatar` and
   sends `user` ([§3.3](#33-identity)).
@@ -1830,7 +1830,7 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // <-
-  {"method": "server", "params": {"apron": 7, "caps": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+  {"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
   // <- before any auth
   {
     "method": "message", "params": {
@@ -1858,7 +1858,7 @@ implementations accept them. Each follows from the sections it cites.
   {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
   {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
   // <-
-  {"method": "server", "params": {"apron": 7, "caps": ["rooms"], "auth": ["token"]}}
+  {"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["token"]}}
   // <-
   {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
   // <- then the bot closes the connection

@@ -27,7 +27,7 @@ from websockets.exceptions import ConnectionClosed
 
 
 GREETING = {"apron": 7, "agent": "apron-python/7", "auth": ["guest"],
-            "caps": ["history"]}
+            "capabilities": ["history"]}
 
 
 class Error(Exception):
