@@ -364,7 +364,8 @@ processes any later frame on the connection, so clients MAY send requests
 right behind it, such as `room_list` and `history`, without waiting for its
 result. If the `auth` fails, those requests get `denied`. A WebAuthn `begin`
 step ([§4.9](#49-webauthn-authentication)) and an email request without `token` ([§4.10](#410-email-authentication))
-authenticate nothing, so requests behind them are denied.
+authenticate nothing, so on a connection not yet signed in, requests behind
+them are denied.
 
 ### 3.3 Identity
 
@@ -1750,18 +1751,22 @@ are `auth` requests with `scheme: "email"`:
   replaced by a newer one for the same address.
 - With `token`, a valid request authenticates and its result carries `you`
   and a bearer `token` for later connections ([§3.2](#32-authentication)). An invalid,
-  expired, or used temporary token is `denied`. On a connection that is
-  already signed in, it adds the address to that account.
-- Adding an address takes the account's own request: the server adds it
-  only when the temporary token was requested while signed in as that
-  account, on any of its connections, and no other account has the
-  address. Otherwise the token is `denied`. Someone who requests a token
-  for their own address and gets another person's client to present it
-  would otherwise attach their address to that account, and then sign in
-  as it.
-- Clients present a token from a link on a connection that is not signed
-  in, after the user confirms the address and server, since anyone can
-  send a link. Adding an address is its own action in the client.
+  expired, or used temporary token is `denied`. A request without `token`,
+  or a denied one, does not change existing authentication.
+- On a connection that is already signed in, a valid token adds the
+  address to that account, and the result carries `you`. Servers MUST add
+  an address only when the temporary token was requested while signed in
+  as that account, on any of its connections, and no other account has the
+  address; otherwise the token is `denied`. This stops someone from
+  requesting a token for their own address, getting another person's
+  client to present it, and then signing in to that person's account with
+  the address. A token requested while signed in only adds: its email
+  carries no link, and presenting it anywhere else is `denied`.
+- Clients SHOULD present a token from a link only on a connection that is
+  not signed in, after the user confirms the address and server, since
+  anyone can send a link; when signed in to another account, they say that
+  continuing switches accounts. Adding an address is a separate action in
+  the client, where the user types the code.
 - The server builds any link from its own configuration, never from request
   fields, and puts the token in the URL fragment so it stays out of server
   logs. The sign-in happens on the connection that presents the token, not
