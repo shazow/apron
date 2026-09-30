@@ -1,17 +1,21 @@
 # Protocol History
 
-Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest first.
+Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first.
 
 ## v7 (2026-09-29)
 
 - Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
-- Private rooms (`private: true`) are visible only to their members; `room_join` and `room_leave` may take a `user_id` to add or remove others.
+- Private rooms (`private: true`) are visible only to their members, and new threads inherit it; `room_join` and `room_leave` may take a `user_id` to add or remove others.
 - Optional `member_count` when a server truncates `members`.
 - Membership records arrive in `room_update` `membership`, replacing the `membership` notification.
-- Email sign-in scheme (`email`); any `auth` result may carry a rotated bearer `token`.
+- Email sign-in scheme (`email`): a request with `email` proposes a sign-in or an addition, and one with `token` approves it. Any `auth` result may carry a rotated bearer `token`.
+- `server.signup` lists the schemes that create accounts.
 - `server.welcome` for sign-in instructions.
-- User objects may carry server-defined `roles`.
+- User objects may carry server-defined `roles`. An empty value (`""`, `[]`, `{}`) clears a field and is kept, so it never falls back to a recorded `from`.
 - System identities use `~` (`~server`, `~room`, `~private`); text prefixes are `@user`, `#room`, `~system`.
+- `server.protocol` is renamed `apron`, `server.caps` is renamed `capabilities`, and `server.name` and `auth.client` are renamed `agent`.
+- Upload and stream writes use HTTP `PUT`.
+- Server fields are read-only; a deduplicated retry's result reflects the current state.
 - Sections open with TypeScript-like type blocks; `Embed` is defined.
 - Under consideration: WebRTC sessions on rooms with per-device seats, and an `actions` embed.
 

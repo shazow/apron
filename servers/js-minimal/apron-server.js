@@ -7,7 +7,7 @@
 // credentials, or rate limits. Clients must send valid protocol frames;
 // malformed input may close the connection.
 
-const greeting = { protocol: 7, name: "apron-bun/7", auth: ["guest"], caps: ["history"] };
+const greeting = { apron: 7, agent: "apron-bun/7", auth: ["guest"], capabilities: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
 
@@ -88,10 +88,10 @@ function dispatch(ws, method, params) {
   if (method === "auth") ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() }; // Any scheme.
   check(ws.data.you, "Authenticate first", -32001);
   if (method === "auth" || method === "me") {
-    // "" removes the name; profile avatar and ext are declined.
+    // "" clears the name and is kept, so clients see it cleared; profile
+    // avatar and ext are declined.
     if (typeof params.name === "string") {
-      const { name, ...rest } = ws.data.you;
-      ws.data.you = params.name ? { ...rest, name: params.name } : rest;
+      ws.data.you = { ...ws.data.you, name: params.name };
     }
     return { you: ws.data.you };
   }

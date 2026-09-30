@@ -2,7 +2,7 @@
   "format": 4,
   "kind": "replay",
   "name": "Transient notices are never snapshots",
-  "description": "A message notification without message_id (a ~private notice, with or without room_id) is transient: it installs nothing, replaces nothing, and leaves the snapshots around it and their order alone. A logged ~server notice is an ordinary snapshot in the room it names: there is no ~server room.",
+  "description": "A message notification without message_id (a ~private notice, with or without room_id) is transient: it installs nothing, replaces nothing, and leaves the snapshots around it and their order alone. A logged ~server notice is an ordinary snapshot in the room it refers to: there is no ~server room.",
   "references": [
     "PROTOCOL.md#35-messages",
     "PROTOCOL.md#a1-system-identities-and-scoped-notices"

@@ -13,7 +13,7 @@
     {
       "name": "room-then-thread",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":7,"auth":["guest"],"caps":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -36,7 +36,7 @@
     {
       "name": "interleaved",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":7,"auth":["guest"],"caps":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -58,7 +58,7 @@
   ],
   "expected": {
     "you": {"user_id":"guest_1"},
-    "caps": ["edit","history","rooms"],
+    "capabilities": ["edit","history","rooms"],
     "operations": {"load":"fulfilled","older":"fulfilled"},
     "rooms": [
       {"room_id":"103","log_id":"107","parent_room_id":"general","title":"Deploy ✅","description":"Deploy?","messages":[{"message_id":"102","log_id":"104","room_id":"103","from":{"user_id":"bob"},"body":{"text":"rollback?"},"reply_to":{"message_id":"101"}},{"message_id":"105","log_id":"105","room_id":"103","from":{"user_id":"carol"},"body":{"text":"done"},"reactions":[{"emoji":"🎉","user_ids":["alice"]}]},{"message_id":"109","log_id":"109","room_id":"103","from":{"user_id":"bob"},"body":{"text":"late"}}]},

@@ -12,9 +12,9 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 
 ## Features
 
-- Apron protocol v7, advertising cap `history`.
-- One shared default room, `general`: requests without `room_id` use it, and its creation record, titled "General", is in history while retained. Without cap `rooms`, clients learn the room from the messages and history in it.
-- Guest authentication (any scheme is accepted) with `guest_` user IDs and changeable display names (`auth` or `me`; `""` removes the name).
+- Apron protocol v7, advertising capability `history`.
+- One shared default room, `general`: requests without `room_id` use it, and its creation record, titled "General", is in history while retained. Without capability `rooms`, clients learn the room from the messages and history in it.
+- Guest authentication (any scheme is accepted) with `guest_` user IDs and changeable display names (`auth` or `me`; `""` clears the name).
 - Ordered, flat message snapshot broadcasts, including to the sender, before the sender's result. `message_id` equals the message's creation `log_id`. A message with no text and no embeds is neither logged nor broadcast.
 - Replies via `reply_to` (a bare `{"message_id": ...}` reference); `body` (with `format` defaulting to `plain`), embeds, and `ext` pass through.
 - One server-wide `log_id` sequence covering the room record and every message.

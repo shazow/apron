@@ -12,7 +12,7 @@
     {
       "name": "session",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":7,"auth":["guest"],"caps":["edit","rooms","reactions"]}}},
+        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["edit","rooms","reactions"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -45,7 +45,7 @@
   ],
   "expected": {
     "you": {"user_id":"guest_1"},
-    "caps": ["edit","reactions","rooms"],
+    "capabilities": ["edit","reactions","rooms"],
     "operations": {"like":"fulfilled","change":"fulfilled","clear":"fulfilled","unknown":"rejected"},
     "rooms": [
       {"room_id":"95","log_id":"95","parent_room_id":"general","title":"Side","messages":[{"message_id":"101","log_id":"108","room_id":"95","from":{"user_id":"bob"},"deleted":true}]},
