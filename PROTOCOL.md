@@ -206,7 +206,7 @@ All IDs are strings.
 
 - Clients keep the record with the greatest `log_id` per key, regardless of
   source (live, history, embedded) or arrival order.
-- `log_id` and other server fields are ignored on input.
+- Server fields are read-only: a request never changes them.
 - Room records and message snapshots MAY carry `prev_log_id`, the `log_id`
   of the previous record for the same key; other records do not. A client
   can fetch that record with `history` bounded to it (`after` and `before`
@@ -521,7 +521,7 @@ carry it ([§4.3](#43-rooms)):
 }
 ```
 
-`server`: assigned by the server, ignored on input. `client`: supplied by the
+`server`: assigned by the server, read-only ([§2](#2-identifiers)). `client`: supplied by the
 client, replaced whole by a save. `delivery`: this client's view, not logged;
 clients always take the latest values, even if `log_id` did not change.
 
