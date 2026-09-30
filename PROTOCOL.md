@@ -241,7 +241,7 @@ class Server {
   name?: string;                // implementation/version string
   caps?: string[] = [];         // capabilities (§4)
   welcome?: string;             // user-readable Markdown details and auth instructions
-  signup?: string[];            // the schemes in auth that can create an account (§3.2)
+  signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
   ping?: number;                // seconds between client pings (§1)
   push?: object;                // push kinds; its presence enables push (§4.7)
   ext?: object;                 // opaque extension data (§3.5)
@@ -343,14 +343,11 @@ text; they never parse it. Unlike a `~private` notice sent before auth
 ([Appendix B](#appendix-b--valid-scenarios-informative)), it belongs to the sign-in screen rather than a room, and each
 `server` frame replaces it.
 
-`server.signup`, when present, lists the schemes in `auth` that can create
-an account; the others only sign in to an existing one. For example,
-`"signup": ["token"]` with `"auth": ["webauthn", "email", "token"]` means
-accounts start from an invite token, and passkeys and email sign in to
-them. Without `signup`, clients offer every scheme and the server answers
-`denied` where it does not apply. A client whose only way back into an
-account is a token SHOULD encourage its user to add another scheme, such
-as a passkey or email ([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)), before the token is lost or expires.
+With `signup`, `auth` lists the schemes that sign in and `signup` those
+that create an account, such as `"auth": ["webauthn"], "signup": ["email"]`
+for email to join and a passkey after. A client whose only way back into
+an account is a token SHOULD encourage its user to add another scheme
+([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)).
 
 `name` and `user_id` are optional requests, valid with any scheme; `you`
 is what the server assigned. Servers SHOULD NOT give out a previously used
