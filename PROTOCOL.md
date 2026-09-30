@@ -1752,6 +1752,16 @@ are `auth` requests with `scheme: "email"`:
   and a bearer `token` for later connections ([§3.2](#32-authentication)). An invalid,
   expired, or used temporary token is `denied`. On a connection that is
   already signed in, it adds the address to that account.
+- Adding an address takes the account's own request: the server adds it
+  only when the temporary token was requested while signed in as that
+  account, on any of its connections, and no other account has the
+  address. Otherwise the token is `denied`. Someone who requests a token
+  for their own address and gets another person's client to present it
+  would otherwise attach their address to that account, and then sign in
+  as it.
+- Clients present a token from a link on a connection that is not signed
+  in, after the user confirms the address and server, since anyone can
+  send a link. Adding an address is its own action in the client.
 - The server builds any link from its own configuration, never from request
   fields, and puts the token in the URL fragment so it stays out of server
   logs. The sign-in happens on the connection that presents the token, not
