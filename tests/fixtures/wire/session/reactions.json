@@ -12,7 +12,7 @@
     {
       "name": "session",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["edit","rooms","reactions"]}}},
+        {"receive":{"method":"server","params":{"protocol":7,"auth":["guest"],"caps":["edit","rooms","reactions"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},

@@ -15,7 +15,7 @@
     {
       "name": "join-and-leave",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":6,"auth":["guest"],"caps":["rooms"]}}},
+        {"receive":{"method":"server","params":{"protocol":7,"auth":["guest"],"caps":["rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"receive":{"method":"membership","params":{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":true}]}}},
