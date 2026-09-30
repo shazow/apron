@@ -2,7 +2,7 @@
   "format": 4,
   "kind": "session",
   "name": "Core session",
-  "description": "A server without cap rooms: guest authentication, a first post without room_id into the default room, whose room_id the broadcast reveals before the result confirms it, typing activity, a bare reply_to answered by an embedded snapshot, a transient ~private notice without message_id that is shown but never stored, server frame replacement, unknown notifications, rooms learned from the messages that arrive in them (a room_id starting with ~ is an ordinary room), and a logged ~server notice, an ordinary message in the room it names.",
+  "description": "A server without capability rooms: guest authentication, a first post without room_id into the default room, whose room_id the broadcast reveals before the result confirms it, typing activity, a bare reply_to answered by an embedded snapshot, a transient ~private notice without message_id that is shown but never stored, server frame replacement, unknown notifications, rooms learned from the messages that arrive in them (a room_id starting with ~ is an ordinary room), and a logged ~server notice, an ordinary message in the room it refers to.",
   "references": [
     "PROTOCOL.md#11-envelope-and-replies",
     "PROTOCOL.md#31-server-frame",
