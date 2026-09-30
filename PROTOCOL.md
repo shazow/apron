@@ -1459,8 +1459,8 @@ The `message` or `command` ([§4.8](#48-command)) result lists them, in request 
 }
 ```
 
-- The sender sends the content as an HTTP request body to `write_url`.
-  `write_url` is a credential and expires if unused.
+- The sender sends the content as the body of an HTTP `PUT` to
+  `write_url`. `write_url` is a credential and expires if unused.
 - The server finishes each write exactly once: on success it publishes a
   snapshot with the embed completed; if the write never starts in time or
   fails, it publishes a snapshot without the embed. For a command, the server
@@ -1496,8 +1496,8 @@ HTTP while readers watch it grow. Stream embeds follow the embed identity
   line breaks kept. Clients MAY support other formats natively, such as
   `"markdown"` (rendered under [§3.5](#35-messages)'s rules) or `"terminal"`, and render
   unknown formats as plain.
-- Write: the sender sends UTF-8 text as a streaming HTTP request body to
-  `write_url`. The end of the body ends the stream.
+- Write: the sender sends UTF-8 text as a streaming `PUT` body to
+  `write_url` ([§4.6.3](#463-writes)). The end of the body ends the stream.
 - Read: `GET url` returns the text the server has kept, continues as more
   arrives, and ends when the stream does. A reader that reconnects replaces
   what it has shown with the new response.
