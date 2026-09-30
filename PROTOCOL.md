@@ -1772,6 +1772,9 @@ sign-in or an addition, and one with `token` approves it:
   account.
 - The server builds any link from its own configuration and puts the token
   in the URL fragment, so it stays out of server logs.
+  Suggested convention: the fragment is `#token=…`, plus `&server=…` with
+  the server's WebSocket URL when the link opens a client that is not
+  tied to one server.
 - Account creation for unknown addresses, send rate limits (`retry_after`),
   and the bearer token's lifetime are server policy.
 
