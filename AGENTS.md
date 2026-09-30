@@ -12,3 +12,5 @@
 - Generalize rather than enumerate: one rule that covers the cases beats a
   list of them.
 - Use plain terms. If a phrase needs explaining, rewrite it.
+- Say "refers to", not "names", when a field points at something, such as
+  a `room_id` that refers to a room.

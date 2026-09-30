@@ -497,7 +497,7 @@ class Room {
 }
 ```
 
-A room is a log with a server-chosen `room_id`. Every message names its room
+A room is a log with a server-chosen `room_id`. Every message refers to its room
 ([§3.5](#35-messages)). A server without cap `rooms` MAY have a single room: clients learn
 its `room_id` from the messages in it, and title any room they know nothing
 more about by its `room_id`. Listing, joining, creating, and threads are cap
@@ -618,7 +618,7 @@ object as an authoritative **snapshot** at one log position.
 | `from`         | server | author identity ([§3.3](#33-identity)), preserved across changes        |
 | `room_id`      | client | the room the message is in; omitted, the default room                   |
 | `body`         | client | `text`, `format`, `embeds`, `mentions`                                  |
-| `reply_to`     | client | optional message object naming the message replied to                   |
+| `reply_to`     | client | optional message object referring to the message replied to             |
 | `deleted`      | client | tombstone marker, default false ([§4.2](#42-edit))                      |
 | `ext`          | client | optional object of namespaced, opaque extension data                    |
 
@@ -647,7 +647,7 @@ local policy.
 - `mentions` lists the `user_id`s the message mentions; see **Mentions**
   below.
 - A request without `room_id` posts to the server's default room, and the
-  snapshot names it. Posting does not require joining the room; servers MAY
+  snapshot refers to it. Posting does not require joining the room; servers MAY
   deny it by policy (`denied`). An unknown or invisible `room_id` is
   `invalid_params`.
 - A new message with no `text` and no `embeds` SHOULD be neither logged nor
@@ -666,7 +666,7 @@ local policy.
   like any other. Embedded snapshots carry a bare `reply_to`.
   Clients render the referring message even when the target is missing or
   deleted.
-- `reply_to.message_id` MUST name an existing message other than the message
+- `reply_to.message_id` MUST refer to an existing message other than the message
   itself; it MAY be in another room. Invalid references are `invalid_params`.
 - On a live connection, servers deliver each room's snapshots in ascending
   `log_id`, and each snapshot once per connection.
@@ -1229,7 +1229,7 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
 {"id": "s9", "result": {"room_id": "1724803312001"}}
 ```
 
-- `parent_room_id` MUST name an existing visible room. Nesting depth is
+- `parent_room_id` MUST refer to an existing visible room. Nesting depth is
   server policy.
 - `private: true` makes the room visible only to its members: to anyone
   else it is invisible, its `room_id` is `invalid_params` like an unknown
@@ -1321,7 +1321,7 @@ broadcast carries the state.
 {"id": "c17", "result": {}}
 ```
 
-- The request names only the message. The logged record carries the room the
+- The request refers only to the message. The logged record carries the room the
   message was in at that moment, which may differ from its current room
   after a move ([§4.1](#41-history)).
 - The notification's `reactions` array holds one element per user. Live
@@ -1546,7 +1546,7 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 {"method": "push_unregister", "id": "c31", "params": {"url": "https://relay.example/p/xyz"}}
 ```
 
-- `kind` names a key of `server.push`; the other fields are specific to that
+- `kind` is a key of `server.push`; the other fields are specific to that
   kind. Unknown kinds are `invalid_params`. Third-party kinds use the `ext:`
   prefix ([§4](#4-capabilities)).
 - `url` is required and identifies the registration. Registering the same
@@ -1611,7 +1611,7 @@ happens to it:
   `user_id`, and send the rest as `command`.
 
 ```jsonc
-// -> remove a user from the room; mentions name the target
+// -> remove a user from the room; mentions refer to the target
 {
   "method": "command", "id": "c30", "params": {
     "room_id": "general",
@@ -1781,7 +1781,7 @@ Three of them tell the receiver who else got the message:
 | `~private`     | only this connection          | no     | welcomes, command replies, errors, reminders |
 
 - `room_id` is where the message is shown, as for any message. A
-  server-wide notice names a room too, usually the default room ([§3.5](#35-messages)),
+  server-wide notice refers to a room too, usually the default room ([§3.5](#35-messages)),
   and reaches every user whether or not they joined it; a `~private` notice
   reaches its one connection wherever it is shown. These are sender identities
   that state a scope, not rooms. Joins and leaves are memberships ([§4.3.2](#432-membership)),
@@ -1833,7 +1833,7 @@ name. Extensions and future methods should follow the same pattern.
 A prefix says what kind of ID follows. Users, rooms, and system identities
 use different ones, so an ID never has to be guessed:
 
-| prefix | names             | in `body.text`                                              |
+| prefix | refers to         | in `body.text`                                              |
 |--------|-------------------|-------------------------------------------------------------|
 | `@`    | a user            | a mention ([§3.5](#35-messages)), listed in `body.mentions` too |
 | `#`    | a room            | a reference to the room; it mentions no one                 |
@@ -1845,9 +1845,9 @@ use different ones, so an ID never has to be guessed:
   and rooms to be mentionable mint IDs from that set, such as `guest_1234`.
 - `user_id`s beginning with `~` are reserved for system identities. Servers
   SHOULD NOT assign them to users.
-- How `text` renders is up to the client. Clients MAY show an `@id` naming
-  a known user with the user's latest display name ([§3.3](#33-identity)), such as a chip,
-  and a `#id` naming a known room as a link showing its title, wherever
+- How `text` renders is up to the client. Clients MAY show an `@id` that
+  refers to a known user with the user's latest display name ([§3.3](#33-identity)), such as
+  a chip, and a `#id` that refers to a known room as a link showing its title, wherever
   their formatting allows. Unknown IDs render as written.
 
 ---
@@ -1954,7 +1954,7 @@ offline, a caller's client also posts an ordinary message that mentions
 them ([§4.7](#47-push)).
 
 **Seats.** Room membership is per user; a session is per device. Each
-connection in a session holds a seat, named by a `peer_id` that the server
+connection in a session holds a seat, identified by a `peer_id` that the server
 assigns, unguessable and unique within the session. User objects in
 `rtc_*` frames are recorded objects ([§3.3](#33-identity)), never merged, and each carries
 the `peer_id` of one seat; clients key peers on `(user_id, peer_id)`, so one
@@ -2002,7 +2002,7 @@ grace period set by server policy; the session ends with its last seat.
 ```
 
 **Signaling.** `rtc_signal` is a notification relayed between seats: the
-sender names a seat in `to`, and the server delivers it with the sender's
+sender refers to a seat in `to`, and the server delivers it with the sender's
 `from`, so a reply goes `to` the `from` received. Only a connection holding
 a seat may send one. Signals from one seat to another arrive in order;
 those to a seat whose connection is closed, that match no seat, or that
@@ -2134,8 +2134,8 @@ class Embed {   // "actions" kind, besides the fields of §4.6
 - Only servers set actions: a server drops or rebuilds an `actions` embed a
   client sends.
 - Choosing one of `commands` sends its `command` as a `command` request, or
-  as the request it names, such as `/join` ([§4.8](#48-command)). When the message has
-  a `message_id`, the request's `reply_to` names it.
+  as the request it refers to, such as `/join` ([§4.8](#48-command)). When the message has
+  a `message_id`, the request's `reply_to` refers to it.
 - Clients ignore groups they do not know ([§1](#1-transport--framing)), so later groups, such as
   links or inputs, can be added beside `commands`. Clients without `actions`
   support render the fallback card ([§3.5](#35-messages)), whose `og` can spell out the
