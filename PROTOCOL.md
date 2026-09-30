@@ -14,7 +14,7 @@ Here's an example exchange to get a taste:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -229,11 +229,11 @@ section. Optional features are advertised through capabilities ([§4](#4-capabil
 
 ```ts
 class Server {
-  protocol: number;
+  apron: number;                // protocol version
   auth: string[];               // at least one scheme, in preference order (§3.2)
 
-  name?: string;                // implementation/version string
-  caps?: string[] = [];         // capabilities (§4)
+  agent?: string;               // implementation/version string, for debugging
+  capabilities?: string[] = []; // §4
   welcome?: string;             // user-readable Markdown details and auth instructions
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
   ping?: number;                // seconds between client pings (§1)
@@ -248,9 +248,9 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "protocol": 7,
-    "name": "impl-name/1.0",
-    "caps": ["history", "edit"],
+    "apron": 7,
+    "agent": "impl-name/1.0",
+    "capabilities": ["history", "edit"],
     "auth": ["token"]
   }
 }
@@ -268,7 +268,7 @@ class Auth {
 
   name?: string;                // requested display name
   user_id?: string;             // requested user_id
-  client?: string;              // implementation string, for debugging
+  agent?: string;               // implementation/version string, for debugging
 
   // "token" and "email" schemes
   token?: string;
@@ -300,7 +300,7 @@ class AuthResult {
     "scheme": "token",
     "token": "...",
     "name": "Alice",
-    "client": "bottomless-web/0.3"
+    "agent": "bottomless-web/0.3"
   }
 }
 // <-
@@ -483,13 +483,13 @@ class Room {
 ```
 
 A room is a log with a server-chosen `room_id`. Every message refers to its room
-([§3.5](#35-messages)). A server without cap `rooms` MAY have a single room. Clients learn
+([§3.5](#35-messages)). A server without capability `rooms` MAY have a single room. Clients learn
 its `room_id` from the messages in it. They title any room they know nothing
-more about by its `room_id`. Listing, joining, creating, and threads are cap
+more about by its `room_id`. Listing, joining, creating, and threads are capability
 `rooms` ([§4.3](#43-rooms)).
 
 A connection receives the messages and other records of the rooms its user
-has joined. On servers without cap `rooms`, that is every room. For the
+has joined. On servers without capability `rooms`, that is every room. For the
 threads (below) of a joined room, it receives only changes to their room
 records, as `room_update` ([§4.3.3](#433-updates)). A thread's messages go to the thread's
 members. System notices are delivered by their scope instead
@@ -532,7 +532,7 @@ A room record is complete ([§2](#2-identifiers)). Omitted fields are cleared, e
 conversation. Anyone allowed to edit the room can change it with `room_set`
 ([§4.3.4](#434-creating-and-editing)). Clients render it as Markdown under [§3.5](#35-messages)'s rules
 and MAY show it as plain text. `log_id`, `latest_log_id`, and
-`history_log_id` are REQUIRED when cap `history` is advertised and OPTIONAL
+`history_log_id` are REQUIRED when capability `history` is advertised and OPTIONAL
 otherwise; [§4.1](#41-history) defines their use.
 
 Threads are rooms with a `parent_room_id`. Clients that ignore the field
@@ -643,7 +643,7 @@ local policy.
 - **Snapshots replace** under the replay rule ([§2](#2-identifiers)), including for messages
   the client has not loaded.
 - Servers MAY publish a snapshot of any message at any time. Support is
-  mandatory regardless of cap `edit`.
+  mandatory regardless of capability `edit`.
 - **References.** `reply_to` holds a message object. Clients send it bare,
   with only `message_id`. Servers optionally send a full snapshot, which
   clients install like any other. Embedded snapshots carry a bare
@@ -689,10 +689,10 @@ Every server:
 4. Accepts `message` creation: replies with `message_id` and broadcasts the
    snapshot to the room ([§3.5](#35-messages)).
 5. Replies `error/unsupported` to unknown requests, including `message` with
-   a `message_id` when cap `edit` is absent; ignores unknown notifications.
+   a `message_id` when capability `edit` is absent; ignores unknown notifications.
 6. Follows [§1](#1-transport--framing) for framing and retries and [§2](#2-identifiers) for identifiers.
 
-The opening example is a complete session with a server that has cap
+The opening example is a complete session with a server that has capability
 `rooms`. A minimal server skips `room_list`: its client posts without
 `room_id` and learns the room from the broadcast.
 
@@ -716,12 +716,12 @@ A minimal client (informative):
 
 ## 4. Capabilities
 
-`server.caps` advertises optional requests. Capabilities advertise support,
+`server.capabilities` advertises optional requests. Capabilities advertise support,
 not authorization. Servers still apply local policy per request. Nothing is
-negotiated. Clients ignore caps they do not recognize ([§1](#1-transport--framing)). A client
-whose server lacks a cap falls back as below:
+negotiated. Clients ignore capabilities they do not recognize ([§1](#1-transport--framing)). A client
+whose server lacks a capability falls back as below:
 
-| cap            | adds                                                         | fallback                     | spec                       |
+| capability     | adds                                                         | fallback                     | spec                       |
 |----------------|--------------------------------------------------------------|------------------------------|----------------------------|
 | `history`      | page and recover a room's log                                | session-only scrollback      | [§4.1](#41-history)        |
 | `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | [§4.2](#42-edit)           |
@@ -732,12 +732,12 @@ whose server lacks a cap falls back as below:
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.5](#465-embedstream) |
 | `command`      | commands from client to server, such as `/kick`              | no commands                  | [§4.8](#48-command)        |
 
-Some features have no cap. Other embeds are body content ([§4.6](#46-embeds-and-avatars)).
+Some features have no capability. Other embeds are body content ([§4.6](#46-embeds-and-avatars)).
 Push follows `server.push` ([§4.7](#47-push)). Passkeys and email sign-in follow
 `server.auth` ([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)). Liveness follows `server.ping`
 ([§1](#1-transport--framing)).
 
-By convention, third-party extension caps use an `ext:` prefix, such as
+By convention, third-party extension capabilities use an `ext:` prefix, such as
 `ext:irc`.
 
 Six frame idioms cover everything logged or announced:
@@ -953,7 +953,7 @@ tombstone.
 
 ### 4.3 `rooms`
 
-Cap `rooms` adds rooms and threads, which users find, join, and create. It
+Capability `rooms` adds rooms and threads, which users find, join, and create. It
 adds the requests `room_list`, `room_join`, `room_leave`, and `room_set`,
 and the notification `room_update`. Visibility and membership are server
 policy.
@@ -1223,7 +1223,7 @@ receive the broadcast.
 
 ### 4.4 `activity`
 
-Cap `activity`. A client reports changes to its activity as a
+Capability `activity`. A client reports changes to its activity as a
 notification: typing, how far it has read in a room, and optionally
 whether anyone is attending the connection. Each present field updates
 that state, and absent fields leave it unchanged. Activity is not logged.
@@ -1268,7 +1268,7 @@ Servers MAY drop `typing` and `read_message_id`. A server that supports
 
 ### 4.5 `reactions`
 
-Cap `reactions`. A client sets its own complete set of emoji on one
+Capability `reactions`. A client sets its own complete set of emoji on one
 message. The server logs the change with a `log_id` and broadcasts it to
 the message's room. The result is `{}`.
 
@@ -1369,7 +1369,7 @@ prefix, with structured properties nested (`og:image:width` becomes
 
 #### 4.6.2 Embed identity
 
-Servers that advertise any `embed:*` cap assign each
+Servers that advertise any `embed:*` capability assign each
 embed an opaque `embed_id`; other servers MAY store embeds as given.
 
 - A save keeps an embed by sending it back with its `embed_id`. An embed
@@ -1426,7 +1426,7 @@ The `message` or `command` ([§4.8](#48-command)) result lists them, in request 
 
 #### 4.6.4 `embed:upload`
 
-Cap `embed:upload`. The sender gives an optional `title`, such
+Capability `embed:upload`. The sender gives an optional `title`, such
 as the file name. While `url` is absent the upload is pending, and clients
 show a placeholder. On success the server sets `url` to the file it hosts.
 
@@ -1437,7 +1437,7 @@ show a placeholder. On success the server sets `url` to the file it hosts.
 
 #### 4.6.5 `embed:stream`
 
-Cap `embed:stream`. A message can carry live text that the sender writes over
+Capability `embed:stream`. A message can carry live text that the sender writes over
 HTTP while readers watch it grow. Stream embeds follow the embed identity
 ([§4.6.2](#462-embed-identity)) and write ([§4.6.3](#463-writes)) rules.
 
@@ -1461,7 +1461,7 @@ HTTP while readers watch it grow. Stream embeds follow the embed identity
   what it has shown with the new response.
 - Finish: when the stream ends, the server publishes a snapshot whose embed
   carries the kept text as `text` in place of `url`, and both URLs stop
-  working. A sender with cap `edit` MAY save the message without the embed
+  working. A sender with capability `edit` MAY save the message without the embed
   first, which ends the stream.
 - How much text the server keeps, size and time limits, and the grace period
   after a writer disconnects are server policy. At a limit, the server ends
@@ -1478,7 +1478,7 @@ the user's name.
   and room `members` and `users`, not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs. A larger image goes through
-  an upload (caps `command` and `embed:upload`). A `/avatar` command
+  an upload (capabilities `command` and `embed:upload`). A `/avatar` command
   ([§4.8](#48-command)) with one `upload` embed asks the server to use that file as the
   sender's avatar. When the upload completes, the server sets `avatar` and
   sends `user` ([§3.3](#33-identity)).
@@ -1539,7 +1539,7 @@ non-internal addresses.
 
 ### 4.8 `command`
 
-Cap `command`. A `command` request sends an instruction to the server. It
+Capability `command`. A `command` request sends an instruction to the server. It
 takes the same params as creating a message ([§3.5](#35-messages)) and differs only in what
 happens to it:
 
@@ -1830,7 +1830,7 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // <-
-  {"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+  {"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
   // <- before any auth
   {
     "method": "message", "params": {
@@ -1855,10 +1855,10 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // -> both at once, before server arrives
-  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "client": "deploy-hook/1.0"}}
+  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
   {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
   // <-
-  {"method": "server", "params": {"protocol": 7, "caps": ["rooms"], "auth": ["token"]}}
+  {"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["token"]}}
   // <-
   {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
   // <- then the bot closes the connection
@@ -1888,7 +1888,7 @@ can experiment and converge on them.
 
 ### C.1 WebRTC: signaling for audio, video, and peer-to-peer connections
 
-Planned capability `rtc` requires cap `rooms`. Any room can hold one
+Planned capability `rtc` requires capability `rooms`. Any room can hold one
 WebRTC session at a time, and its members may join it ([§4.3.2](#432-membership)). The
 socket carries signaling. Media and data travel peer to peer.
 
@@ -2055,7 +2055,7 @@ Aggregator authentication is deployment-defined.
 
 Embed kind `actions` offers the reader choices, grouped by what choosing
 does, such as an invitation to accept or decline, a permission prompt, or a
-poll. It requires cap `command` ([§4.8](#48-command)).
+poll. It requires capability `command` ([§4.8](#48-command)).
 
 ```ts
 class Embed {   // "actions" kind, besides the fields of §4.6

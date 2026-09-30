@@ -12,7 +12,7 @@
     {
       "name": "resume-from-checkpoint",
       "steps": [
-        {"receive":{"method":"server","params":{"protocol":7,"auth":["guest"],"caps":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -24,8 +24,8 @@
         {"receive":{"method":"message","params":{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while connected","format":"plain"}}}},
         {"expect":{"rooms":[{"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"guest_1"},"body":{"text":"retained","format":"plain"}},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while connected","format":"plain"}}]}]}},
         {"disconnect":true},
-        {"expect":{"you":null,"caps":[],"rooms":[]}},
-        {"receive":{"method":"server","params":{"protocol":7,"auth":["guest"],"caps":["history","rooms"]}}},
+        {"expect":{"you":null,"capabilities":[],"rooms":[]}},
+        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms-2","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"request":{"as":"history-after","match":{"method":"history","params":{"room_id":"general","after":"102"}}}},
@@ -43,7 +43,7 @@
   ],
   "expected": {
     "you": {"user_id":"guest_2"},
-    "caps": ["history","rooms"],
+    "capabilities": ["history","rooms"],
     "operations": {"after-reconnect":"fulfilled"},
     "rooms": [
       {"room_id":"general","log_id":"100","title":"General","messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"guest_1"},"body":{"text":"retained","format":"plain"},"reactions":[{"emoji":"👍","user_ids":["carol"]}]},{"message_id":"102","log_id":"102","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while connected","format":"plain"}},{"message_id":"103","log_id":"103","room_id":"general","from":{"user_id":"bob"},"body":{"text":"while away","format":"plain"}},{"message_id":"105","log_id":"105","room_id":"general","from":{"user_id":"guest_2"},"body":{"text":"new connection","format":"plain"}}]}
