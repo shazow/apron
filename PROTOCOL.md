@@ -1799,14 +1799,11 @@ Three of them tell the receiver who else got the message:
 
 - `room_id` is where the message is shown, as for any message. A
   server-wide notice refers to a room too, usually the default room ([§3.5](#35-messages)),
-  and reaches every user whether or not they joined it; a `~private` notice
-  reaches its one connection wherever it is shown. These are sender identities
-  that state a scope, not rooms. Joins and leaves are memberships ([§4.3.2](#432-membership)),
+  and reaches every user whether or not they joined it. These are sender
+  identities that state a scope, not rooms. Joins and leaves are memberships ([§4.3.2](#432-membership)),
   which clients can show, not `~room` messages.
-- `~private` messages are not logged and carry neither `log_id` nor
-  `message_id`. Like push payloads ([§4.7](#47-push)), clients render them but
-  never install them as snapshots, and they are not in history. A private
-  notice that should last belongs in a room of its own.
+- `~private` messages are transient notices ([§3.5](#35-messages)), not logged and not in
+  history. A private notice that should last belongs in a room of its own.
 - A `~private` notice reaches only the connection it is sent on. It MAY
   omit `room_id` like any message ([§3.5](#35-messages)); a client with
   no room to show it in yet, such as one still signing in, shows it there.
@@ -1828,7 +1825,7 @@ Three of them tell the receiver who else got the message:
     "body": {"text": "Poll closed: Tuesday wins, 7 votes to 4."}
   }
 }
-// <- to the new member only, shown in general
+// <- to the new member's connection only, shown in general
 {
   "method": "message", "params": {
     "room_id": "general",
