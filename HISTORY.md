@@ -7,6 +7,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by `protocol` version, latest f
 - Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
 - Private rooms (`private: true`) are visible only to their members; `room_join` and `room_leave` may take a `user_id` to add or remove others.
 - Optional `member_count` when a server truncates `members`.
+- Membership records arrive in `room_update` `membership`, replacing the `membership` notification.
 - Email sign-in scheme (`email`); any `auth` result may carry a rotated bearer `token`.
 - `server.welcome` for sign-in instructions.
 - User objects may carry server-defined `roles`.

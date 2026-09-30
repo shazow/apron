@@ -15,16 +15,16 @@
       "steps": [
         {"receive":{"id":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","latest_log_id":"100","history_log_id":"90","members":[{"user_id":"alice","name":"Alice"},{"user_id":"bob"}]}],"users":[{"user_id":"alice","name":"Alice"},{"user_id":"bob","name":"Bob"}]}}},
         {"expect":{"rooms":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"alice","name":"Alice"},{"user_id":"bob"}],"messages":[]}]}},
-        {"receive":{"method":"membership","params":{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}}},
-        {"receive":{"method":"membership","params":{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}}},
-        {"receive":{"method":"membership","params":{"log_id":"99","room_id":"general","members":[{"user":{"user_id":"alice","name":"Alice"},"joined":false}]}}}
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"99","room_id":"general","members":[{"user":{"user_id":"alice","name":"Alice"},"joined":false}]}]}}}
       ]
     },
     {
       "name": "live-then-listing",
       "steps": [
-        {"receive":{"method":"membership","params":{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}}},
-        {"receive":{"method":"membership","params":{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}]}}},
         {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"90","title":"General","latest_log_id":"100","history_log_id":"90","members":[{"user_id":"alice","name":"Alice"},{"user_id":"bob"}]}],"users":[{"user_id":"alice","name":"Alice"},{"user_id":"bob","name":"Bob"}]}}}
       ]
     },
@@ -43,8 +43,8 @@
     {
       "name": "live-before-older-history",
       "steps": [
-        {"receive":{"method":"membership","params":{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}}},
-        {"receive":{"method":"membership","params":{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"102","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":false}]}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"101","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":true}]}]}}},
         {"receive":{"id":"history-general","result":{"rooms":[{"room_id":"general","log_id":"90","title":"General"}],"membership":[{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"alice","name":"Alice"},"joined":true}]},{"log_id":"92","room_id":"general","members":[{"user":{"user_id":"bob","name":"Bob"},"joined":true}]}],"first_log_id":"90","last_log_id":"92","more":true,"latest_log_id":"102","history_log_id":"90"}}}
       ]
     }
