@@ -953,10 +953,10 @@ tombstone.
 
 ### 4.3 `rooms`
 
-Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
-share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
-`room_set` are requests; `room_update` is a notification. Visibility and
-membership are server policy.
+Cap `rooms` adds rooms and threads, which users find, join, and create. It
+adds the requests `room_list`, `room_join`, `room_leave`, and `room_set`,
+and the notification `room_update`. Visibility and membership are server
+policy.
 
 #### 4.3.1 Listing
 
@@ -1008,68 +1008,58 @@ membership are server policy.
 Every filter is optional:
 
 - `filter`: `"joined"` lists only `joined`, `"not_joined"` only
-  `not_joined`, and `"all"`, the default, both; an array left out by the
-  filter is omitted, and one it asks for is present even when empty.
+  `not_joined`, and `"all"`, the default, both. An array the filter asks
+  for is present even when empty, and the other is omitted.
 - `parent_room_id` lists only that room's threads. Without it, `joined`
   holds joined rooms at every depth, threads included, and `not_joined`
   only top-level rooms.
-- `room_id` lists only that visible room, in the array its membership
-  selects, such as for its members. It overrides `parent_room_id`; an
-  unknown or invisible `room_id` is `invalid_params`. Servers SHOULD accept
-  it.
+- `room_id` lists only that room, in the array its membership selects. It
+  overrides `parent_room_id`. An unknown or invisible `room_id` is
+  `invalid_params`. Servers SHOULD accept it.
 - `members: true` adds each room's `members` and the result's `users`
   (below); without it, a result carries neither.
-- `latest_log_id` lists only rooms whose `latest_log_id` is greater. Joins
-  and leaves are in the room's log ([§4.3.2](#432-membership)), so a room the user joined
-  since then is in `joined`, and a room the user left since then is in
-  `left`, as `[{room_id}]` like `room_update` ([§4.3.3](#433-updates)), whenever the result
-  has `joined`. Rooms deleted or no longer visible since then SHOULD be in
-  `left` too. A server applying this filter includes `left`, even when
-  empty; a server MAY ignore the filter, such as one that keeps memberships
-  out of the log, and its result without `left` is a full listing.
+- `latest_log_id` lists only rooms whose `latest_log_id` is greater. When
+  the result has `joined`, rooms the user left since then are in `left`, as
+  `[{room_id}]` like `room_update` ([§4.3.3](#433-updates)). Rooms deleted or no longer
+  visible since then SHOULD be in `left` too. A server applying this filter
+  includes `left`, even when empty. A server MAY ignore the filter. Its
+  result then has no `left` and is a full listing.
 
-A result lists rooms matching its filters, most recently active first.
-`joined` lists every match and is never truncated; servers MAY list only
-the most recently active of `not_joined`, and a room left out is still
-visible and can be joined. Private rooms are listed only to their members
+A result lists matching rooms, most recently active first. `joined` lists
+every match. Servers MAY list only the most recently active of
+`not_joined`. Private rooms are listed only to their members
 ([§4.3.4](#434-creating-and-editing)).
 
 With `members: true`, each room in `joined` and `not_joined` carries
-`members`, every user who has joined it, as user objects ([§3.3](#33-identity)): complete,
-or partial, such as `user_id` only. The result MAY carry `users`, complete
-current objects for the users in its `members`, each user once however many
-rooms list them, so `members` can stay partial.
+`members`, every user who has joined it, as complete or partial user
+objects ([§3.3](#33-identity)). The result MAY carry `users`, the complete current objects
+for the users in its `members`, each listed once.
 
 A server MAY truncate `members` in a large room, such as to the most
-recently active, and then SHOULD include `member_count`, the number of
-users who have joined. Clients learn the rest from memberships ([§4.3.2](#432-membership)) and from the messages they receive.
+recently active. It then SHOULD include `member_count`, the number of users
+who have joined.
 
 #### 4.3.2 Membership
 
 `room_join` and `room_leave` take a `room_id` and return `{}`, after the
 notifications they cause ([§1](#1-transport--framing)). An unknown or invisible `room_id` is
-`invalid_params`; the server MAY deny either by policy.
+`invalid_params`. The server MAY deny either by policy.
 
-A server MAY also accept a `user_id`, to join or remove another user: how
-members add people to a private room ([§4.3.4](#434-creating-and-editing)), and a way to remove
-someone. Who may do either is server policy, and a server that does not
-support it replies `unsupported`. The change is an ordinary membership
-record, and the target's connections get `room_update` as for any join or
-leave.
+A server MAY also accept a `user_id`, to join or remove another user. Who
+may do either is server policy. A server that does not support it replies
+`unsupported`. The change is an ordinary join or leave by that user.
 
 ```jsonc
 // -> Alice adds Bob to her private room
 {"method": "room_join", "id": "c3", "params": {"room_id": "1724803950000", "user_id": "bob"}}
 ```
 
-Joining subscribes: every connection of the user receives the joined
-room's deliveries ([§3.4](#34-rooms)), and under the suggested wake rule joined rooms
-notify ([§4.7](#47-push)). A thread is joined like any room; members of its parent
-room receive only its room record changes ([§4.3.3](#433-updates)).
+Joining subscribes every connection of the user to the room's deliveries
+([§3.4](#34-rooms)). A thread is joined like any room. Members of its parent room
+receive only its room record changes ([§4.3.3](#433-updates)).
 
-Every membership change is a logged record in the room: joining, leaving,
-creating a room with `room_set`, and changes the server makes, such as a
-removal. A membership record carries `members`, one entry per user, each
+Every membership change is a logged record in the room, including a
+creation with `room_set` and changes the server makes. A membership record carries `members`, one entry per user, each
 with the user as a recorded object ([§3.3](#33-identity)) and `joined`. `room_update`
 delivers it in `membership` ([§4.3.3](#433-updates)):
 
@@ -1115,37 +1105,29 @@ delivers it in `membership` ([§4.3.3](#433-updates)):
   greatest `log_id` wins ([§2](#2-identifiers)). Live records carry one entry; compacted
   history records MAY carry several ([§4.1](#41-history)), each replacing that user's
   membership.
-- A membership record is delivered to the room's members before and after
-  the change, so both the joining and the leaving user receive it. It
-  advances the room's `latest_log_id`.
-- Clients start a room's member list from its `members`, which is complete
-  unless truncated ([§4.3.1](#431-listing)), in `room_list` with `members: true` or in
-  `room_update` `joined`, and keep
-  it current from the memberships they receive live and in history.
+- A membership record is delivered to the room's members both before and
+  after the change. It advances the room's `latest_log_id`.
+- Clients start a room's member list from its `members` in `room_list` or
+  `room_update` `joined`. They keep it current from the memberships they
+  receive, live and in history.
 - A server MAY keep membership outside the log, such as for ephemeral
-  guests: it then sends no membership records for them, clients learn those
-  members only from `room_list` and `room_update`, and it ignores
+  guests. It then sends no membership records for them and ignores
   `latest_log_id` in `room_list` ([§4.3.1](#431-listing)).
 
 #### 4.3.3 Updates
 
-`room_update` tells the user's connections what changed, never
-the full list:
+`room_update` tells the user's connections what changed, never the full
+list:
 
-- `joined`: room records of rooms the user joined, on any connection, by
-  creating them, or by the server's doing, each with its `members` as in
-  `room_list` ([§4.3.1](#431-listing)); `users` MAY accompany them.
-- `left`: `[{room_id}]` of rooms the user is no longer in: left, removed,
-  no longer visible, or deleted.
+- `joined`: room records of rooms the user joined by any means, each with
+  its `members` as in `room_list` ([§4.3.1](#431-listing)). `users` MAY accompany them.
+- `left`: `[{room_id}]` of rooms the user is no longer in, for any reason.
 - `membership`: membership records ([§4.3.2](#432-membership)), to the room's members.
-- `updated`: room records that are new or changed while membership is not:
-  an edit to a joined room, such as its `title` or `description`, or a new
-  or edited thread of one, which reaches the parent's members whether or
-  not they joined the thread, unless the thread is private. Parent members
-  see changes to a thread's record, not its activity: messages in a thread
-  do not change its record, so its `latest_log_id` is as of the last record
-  change. Thread members
-  follow its activity from the messages they receive.
+- `updated`: room records that are new or changed while membership is not.
+  These are edits to a joined room and new or edited threads of one. A
+  thread's record changes reach the parent's members, joined to the thread
+  or not, unless the thread is private. Messages in a thread do not produce
+  `updated`, so its `latest_log_id` there is as of the last record change.
 
 ```jsonc
 // <- after the join above
@@ -1158,12 +1140,11 @@ the full list:
 
 #### 4.3.4 Creating and editing
 
-`room_set` without `room_id` creates a room and
-joins the creator; with `room_id` it replaces the client fields ([§3.4](#34-rooms)).
-Fields ending in `_id` are fixed at creation, and so is `private` where the
-server fixes it; an omitted `private` is kept, and other omitted fields are
-cleared. Both return `{"room_id": "..."}` after the change arrives as a
-`room_update`, and a creation also logs the creator's membership ([§4.3.2](#432-membership)).
+`room_set` without `room_id` creates a room and joins the creator. With
+`room_id` it replaces the client fields ([§3.4](#34-rooms)). Fields ending in `_id`
+are fixed at creation, and so is `private` where the server fixes it. An
+omitted `private` is kept, and other omitted fields are cleared. Both
+return `{"room_id": "..."}` after the resulting `room_update`.
 
 ```jsonc
 // -> start a thread in general
@@ -1218,20 +1199,18 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
 
 - `parent_room_id` MUST refer to an existing visible room. Nesting depth is
   server policy.
-- `private: true` makes the room visible only to its members: to anyone
-  else it is invisible, its `room_id` is `invalid_params` like an unknown
-  one. A thread created without `private` takes its parent's. Members
-  bring others in by joining
-  them ([§4.3.2](#432-membership)), where the server supports it. A server includes
-  `private: true` only on a room it keeps private, and one that does not
-  keep private rooms MUST reject a creation with `private: true` as
-  `unsupported`. As a backup, a client that asks for a private room checks
-  the record in the `room_update` `joined` it receives before posting in
-  the room: without `private: true`, the room is not private, and the
-  client tells the user rather than using it.
+- `private: true` makes the room visible only to its members. To anyone
+  else, its `room_id` is `invalid_params` like an unknown one. A thread
+  created without `private` takes its parent's. Members bring others in by
+  joining them ([§4.3.2](#432-membership)), where the server supports it.
+- A server includes `private: true` only on a room it keeps private. A
+  server that does not keep private rooms MUST reject a creation with
+  `private: true` as `unsupported`.
+- A client that asks for a private room checks its `room_update` `joined`
+  record for `private: true` before posting in the room. Without it, the
+  client tells the user rather than using the room.
 - Editing a room is server policy. Suggested convention: members of a room
-  may edit it, so a bot that joins a thread can keep its `description`
-  current.
+  may edit it.
 - The server MAY adjust or supply metadata by policy. Unknown `room_id`,
   unknown `parent_room_id`, or invalid types are `invalid_params`;
   unauthorized requests are `denied`.
@@ -1239,17 +1218,17 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
 #### 4.3.5 Posting
 
 Posting in a room does not require joining it ([§3.5](#35-messages)). The server MAY
-deny the post, or MAY join the poster. A poster who has not joined does not
-receive the broadcast; the result is the confirmation.
+deny the post or join the poster. A poster who has not joined does not
+receive the broadcast.
 
 ### 4.4 `activity`
 
 Cap `activity`. A client reports changes to its activity as a
-notification: typing and how far it has read in a room, and optionally
-whether anyone is attending the connection.
-Each present field updates that state; absent fields leave it unchanged.
-Activity is not part of the append-only log. Servers MAY drop `typing` and
-`read_message_id`, but apply the latest `away` if they support it.
+notification: typing, how far it has read in a room, and optionally
+whether anyone is attending the connection. Each present field updates
+that state, and absent fields leave it unchanged. Activity is not logged.
+Servers MAY drop `typing` and `read_message_id`. A server that supports
+`away` applies the latest one.
 
 ```jsonc
 // -> start typing
@@ -1274,25 +1253,24 @@ Activity is not part of the append-only log. Servers MAY drop `typing` and
 - `read_message_id`: the user has read the room up to and including that
   message. Clients only advance it, and servers MAY ignore a cursor that
   moves back.
-- Delivery is server policy: to the room, which shows read receipts, or only
-  to the user's own connections, which syncs read cursors across devices.
+- Delivery is server policy, such as to the room or only to the user's own
+  connections.
 - Servers MAY keep each user's latest `read_message_id` per room and send
   it to the user's connections after they list the room ([§4.3.1](#431-listing)).
 - `away` (optional): `true` when nobody is attending this connection, such as
   an unfocused tab, a backgrounded app, or a connection opened to fetch after
-  a push. It applies to the sending connection only and ends with `away:
-  false`, `typing`, `read_message_id`, or a `message` from that connection, or
-  the connection closing; fetching history does not end it. Servers MAY hold
-  back unlogged frames, such as typing, from away connections, and use it to
-  decide pushes ([§4.7](#47-push)). `away` is never delivered.
+  a push. It applies to the sending connection only. It ends with `away:
+  false`, `typing`, `read_message_id`, or a `message` from that connection,
+  or when the connection closes. Fetching history does not end it. Servers
+  MAY hold back unlogged frames, such as typing, from away connections, and
+  use `away` to decide pushes ([§4.7](#47-push)). `away` is never delivered.
 - There is no presence system.
 
 ### 4.5 `reactions`
 
-Cap `reactions`. A client sets its own complete set of emoji on one message;
-omitted emoji are removed and `[]` clears. The server logs the change with a
-`log_id` and broadcasts it to the message's room. The result is `{}`; the
-broadcast carries the state.
+Cap `reactions`. A client sets its own complete set of emoji on one
+message. The server logs the change with a `log_id` and broadcasts it to
+the message's room. The result is `{}`.
 
 ```jsonc
 // ->
@@ -1308,16 +1286,15 @@ broadcast carries the state.
 {"id": "c17", "result": {}}
 ```
 
-- The request refers only to the message. The logged record carries the room the
-  message was in at that moment, which may differ from its current room
-  after a move ([§4.1](#41-history)).
+- The request refers only to the message. The logged record carries the
+  message's room at that moment ([§4.1](#41-history)).
 - The notification's `reactions` array holds one element per user. Live
   broadcasts carry one; compacted history records ([§4.1](#41-history)) MAY carry
   several. Each element replaces that user's set on that message.
-- Clients keep state per `(message_id, user_id)` and derive the aggregate:
-  counts per emoji, who reacted, and whether `you.user_id` did. They tolerate
+- Clients keep state per `(message_id, user_id)` and derive the aggregate.
+  They tolerate
   reactions for messages they have not loaded.
-- `emojis` entries are strings; duplicates collapse and order is
+- `emojis` entries are strings. Duplicates collapse, and order is
   insignificant. One emoji sequence per entry is the interoperable baseline.
   Servers MAY normalize, reject other strings, or cap distinct emoji per
   message or per user, all `invalid_params`. An unknown `message_id` is
@@ -1361,11 +1338,9 @@ the renderer. Unknown kinds render from `og`, or else the fallback card
 - `iframe`: render with `sandbox="allow-scripts"` and **never**
   `allow-same-origin` alongside it; no top navigation or popups; restrictive
   Permissions-Policy; clamped dimensions (`height` is a suggestion); lazy
-  loading; a cap on concurrently live iframes. Intended for backend-served
-  live views such as terminals and dashboards.
+  loading; a cap on concurrently live iframes.
 - `html`: sanitize with an allowlist sanitizer (e.g. DOMPurify) before
-  insertion, regardless of source. Servers make no safety promises about
-  content flowing through them.
+  insertion, regardless of source.
 - `upload` is [§4.6.4](#464-embedupload), and `stream` is [§4.6.5](#465-embedstream).
 
 #### 4.6.1 OpenGraph metadata (`og`)
@@ -1382,14 +1357,13 @@ prefix, with structured properties nested (`og:image:width` becomes
 }
 ```
 
-- Clients render kinds they support natively and draw the rest from `og`
-  ([§3.5](#35-messages)): `title`, `description`, `site_name`, and `image`, `video`, and
-  `audio` (each with `url`, `type`, `width`, `height`, `alt`). They ignore
-  other properties.
+- Clients use the `og` properties `title`, `description`, `site_name`,
+  and `image`, `video`, and `audio` (each with `url`, `type`, `width`,
+  `height`, `alt`). They ignore other properties.
 - `og.image` is a preview to show, `og.video` and `og.audio` are what a
   player loads, and the embed's own `url` is where a click goes.
-- Servers SHOULD be the source of truth for `og`: they set it in the
-  broadcast and MAY keep, replace, or drop one a client sent. They SHOULD
+- Servers SHOULD set `og` in the broadcast. They MAY keep, replace, or
+  drop one a client sent. They SHOULD
   host or proxy the media it references and set its dimensions. Clients
   SHOULD NOT load `og` media from other origins.
 
@@ -1399,17 +1373,15 @@ Servers that advertise any `embed:*` cap assign each
 embed an opaque `embed_id`; other servers MAY store embeds as given.
 
 - A save keeps an embed by sending it back with its `embed_id`. An embed
-  without one is new, an `embed_id` left out removes that embed, and an
-  unknown `embed_id` is `invalid_params`.
+  without one is new. A save that leaves out an `embed_id` removes that
+  embed. An unknown `embed_id` is `invalid_params`.
 - The server owns `embed_id`, an upload's `url`, and a stream's `url` and
   `text`. It ignores them on input and restores them on a save from
   its records.
-- Content the server hosts for an embed belongs to that message. When the
-  embed is removed or the message is deleted or redacted, servers SHOULD
-  delete the content.
-- Anyone with a URL the server hosts can fetch it, so servers SHOULD make
-  these URLs unguessable, such as with a random path segment, not just the
-  `embed_id`.
+- Servers SHOULD delete content they host for an embed when the embed is
+  removed or its message is deleted or redacted.
+- Servers SHOULD make the URLs they host unguessable, such as with a random
+  path segment rather than just the `embed_id`.
 
 #### 4.6.3 Writes
 
@@ -1447,9 +1419,9 @@ The `message` or `command` ([§4.8](#48-command)) result lists them, in request 
 
 - The sender sends the content as the body of an HTTP `PUT` to
   `write_url`. `write_url` is a credential and expires if unused.
-- The server finishes each write exactly once: on success it publishes a
-  snapshot with the embed completed; if the write never starts in time or
-  fails, it publishes a snapshot without the embed. For a command, the server
+- The server finishes each write exactly once. On success it publishes a
+  snapshot with the embed completed. If the write fails or does not start
+  in time, it publishes a snapshot without the embed. For a command, the server
   acts on the finished write instead, such as setting an avatar ([§4.6.6](#466-avatars)).
 
 #### 4.6.4 `embed:upload`
@@ -1478,8 +1450,8 @@ HTTP while readers watch it grow. Stream embeds follow the embed identity
 {"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
 ```
 
-- `format` defines how to render the text; default `"plain"`, shown as is with
-  line breaks kept. Clients MAY support other formats natively, such as
+- `format` defines how to render the text. The default, `"plain"`, is
+  shown as is with line breaks kept. Clients MAY support other formats natively, such as
   `"markdown"` (rendered under [§3.5](#35-messages)'s rules) or `"terminal"`, and render
   unknown formats as plain.
 - Write: the sender sends UTF-8 text as a streaming `PUT` body to
@@ -1506,13 +1478,13 @@ the user's name.
   and room `members` and `users`, not in every `from`.
 - Servers SHOULD return only `https:` URLs or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs. A larger image goes through
-  an upload (caps `command` and `embed:upload`): a `/avatar` command ([§4.8](#48-command))
-  with one `upload` embed asks the server to use that file as the sender's
-  avatar. The result carries the write URL, and the server sets `avatar` and
-  sends `user` ([§3.3](#33-identity)) when the upload completes.
-- Clients own their security boundary and choose which sources to load; they
-  MAY ignore any avatar. Load values only as images, never as documents, and
-  bind or escape them rather than interpolating them into HTML.
+  an upload (caps `command` and `embed:upload`). A `/avatar` command
+  ([§4.8](#48-command)) with one `upload` embed asks the server to use that file as the
+  sender's avatar. When the upload completes, the server sets `avatar` and
+  sends `user` ([§3.3](#33-identity)).
+- Clients choose which avatar sources to load and MAY ignore any avatar.
+  They load values only as images, never as documents, and bind or escape
+  them rather than interpolating them into HTML.
 - Without a usable avatar, clients draw a placeholder such as initials.
 
 ### 4.7 Push
@@ -1540,18 +1512,18 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   `url` again replaces it; `push_unregister` removes it. Clients SHOULD
   register on each connection.
 - `relay`: the server POSTs the payload as JSON to `url` with `token` as
-  bearer. Delivery beyond that POST (APNs/FCM, coalescing) is the relay's
-  concern; native apps use a relay run by their vendor. Other kinds define
+  bearer. Delivery beyond that POST is up to the relay. Native apps use a
+  relay run by their vendor. Other kinds define
   their own delivery outside this spec.
 - Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
-  `log_id`, so clients render it but never install it as a snapshot. `body`
-  MAY be truncated or omitted; servers SHOULD omit `format` and `embeds`.
+  `log_id`. Clients never install it as a snapshot. `body` MAY be
+  truncated or omitted, and servers SHOULD omit `format` and `embeds`.
 - Wake policy is server-defined.
-- Suggested convention: wake a user only for rooms they have joined
+- Suggested convention: wake a user only when every connection of theirs
+  is away or gone ([§4.4](#44-activity)). Wake them for rooms they have joined
   ([§4.3.2](#432-membership)) and for messages whose `mentions` list them in rooms they can
-  see, when every connection of theirs is away or gone ([§4.4](#44-activity)) and they
-  have not muted the room by server policy, such as a `/mute` command
-  ([§4.8](#48-command)). Servers MAY wait briefly first and skip the push if the user's
+  see. Skip rooms they have muted by server policy, such as with a `/mute`
+  command ([§4.8](#48-command)). Servers MAY wait briefly first and skip the push if the user's
   `read_message_id` has passed the message.
 
 ```json
@@ -1562,9 +1534,8 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 }
 ```
 
-Registered endpoints are client-supplied URLs the server will POST to, an
-SSRF vector into the server's network. Servers SHOULD accept only `https`
-endpoints resolving to non-internal addresses.
+Servers SHOULD accept only `https` push endpoints that resolve to
+non-internal addresses.
 
 ### 4.8 `command`
 
