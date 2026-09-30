@@ -241,6 +241,7 @@ class Server {
   name?: string;                // implementation/version string
   caps?: string[] = [];         // capabilities (§4)
   welcome?: string;             // user-readable Markdown details and auth instructions
+  signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
   ping?: number;                // seconds between client pings (§1)
   push?: object;                // push kinds; its presence enables push (§4.7)
   ext?: object;                 // opaque extension data (§3.5)
@@ -341,6 +342,12 @@ Clients render it as Markdown under [§3.5](#35-messages)'s rules and MAY show i
 text; they never parse it. Unlike a `~private` notice sent before auth
 ([Appendix B](#appendix-b--valid-scenarios-informative)), it belongs to the sign-in screen rather than a room, and each
 `server` frame replaces it.
+
+With `signup`, `auth` lists the schemes that sign in and `signup` those
+that create an account, such as `"auth": ["webauthn"], "signup": ["email"]`
+for email to join and a passkey after. A client whose only way back into
+an account is a token SHOULD encourage its user to add another scheme
+([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)).
 
 `name` and `user_id` are optional requests, valid with any scheme; `you`
 is what the server assigned. Servers SHOULD NOT give out a previously used
@@ -1701,8 +1708,9 @@ MUST perform
 before recording credentials or authenticating.
 
 Only a verified finish returns `you`. Begin
-or failure does not change existing authentication. Registration
-eligibility and reauthentication permission are server policy. Malformed
+or failure does not change existing authentication. A registration on a
+connection that is already signed in adds the passkey to that account.
+Registration eligibility and reauthentication permission are server policy. Malformed
 fields are `invalid_params`; invalid challenges, failed verification, or
 policy rejection are `denied`.
 
@@ -1742,7 +1750,8 @@ are `auth` requests with `scheme: "email"`:
   replaced by a newer one for the same address.
 - With `token`, a valid request authenticates and its result carries `you`
   and a bearer `token` for later connections ([§3.2](#32-authentication)). An invalid,
-  expired, or used temporary token is `denied`.
+  expired, or used temporary token is `denied`. On a connection that is
+  already signed in, it adds the address to that account.
 - The server builds any link from its own configuration, never from request
   fields, and puts the token in the URL fragment so it stays out of server
   logs. The sign-in happens on the connection that presents the token, not
@@ -1891,6 +1900,21 @@ implementations accept them. Each follows from the sections it cites.
   {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
   // <- then the bot closes the connection
   {"id": "deploy-7f3a", "result": {"message_id": "1724803200042"}}
+  ```
+
+- **An invite token signs up several people.** A server MAY treat a
+  `token` as an invitation that creates a new identity on each use, up to a
+  limit it sets, such as ten sign-ups from one link. Each result carries the
+  new identity's own `token`, which the client saves and reconnects with
+  ([§3.2](#32-authentication)), so the shared invite is never reused. Issuing and revoking
+  invites are server commands ([§4.8](#48-command)); a used-up or expired invite is
+  `denied`.
+
+  ```jsonc
+  // -> each invitee signs in with the shared invite
+  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "inv_Qm7x...", "name": "Bob"}}
+  // <- a new identity, with its own token for later connections
+  {"id": "c1", "result": {"you": {"user_id": "bob", "name": "Bob"}, "token": "st_Hk41..."}}
   ```
 
 ---
