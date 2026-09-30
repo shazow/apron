@@ -1064,9 +1064,9 @@ or partial, such as `user_id` only. The result MAY carry `users`, complete
 current objects for the users in its `members`, each user once however many
 rooms list them, so `members` can stay partial.
 
-A server MAY truncate `members` in a large room, listing the most recently
-active, and then SHOULD include `member_count`, the total. Clients learn the
-rest from memberships ([§4.3.2](#432-membership)) and from the messages they receive.
+A server MAY truncate `members` in a large room, such as to the most
+recently active, and then SHOULD include `member_count`, the number of
+users who have joined. Clients learn the rest from memberships ([§4.3.2](#432-membership)) and from the messages they receive.
 
 #### 4.3.2 Membership
 
