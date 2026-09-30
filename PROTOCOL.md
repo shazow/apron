@@ -361,10 +361,10 @@ MAY send notifications before auth, such as a `~private` welcome
 
 `auth` is a barrier: the server finishes an `auth` request before it
 processes any later frame on the connection, so clients MAY send requests
-right behind it, such as `room_list` and `history`, without waiting for its
-result. If the `auth` fails, those requests get `denied`. A WebAuthn `begin`
-step ([§4.9](#49-webauthn-authentication)) and an email request without `token` ([§4.10](#410-email-authentication))
-authenticate nothing, so requests behind them are denied.
+right behind it without waiting for its result. Later requests use the
+connection's authentication as the `auth` left it. An `auth` that
+authenticates nothing, such as a failure or a WebAuthn `begin` step,
+leaves it unchanged.
 
 ### 3.3 Identity
 
