@@ -241,6 +241,7 @@ class Server {
   name?: string;                // implementation/version string
   caps?: string[] = [];         // capabilities (§4)
   welcome?: string;             // user-readable Markdown details and auth instructions
+  signup?: string[];            // the schemes in auth that can create an account (§3.2)
   ping?: number;                // seconds between client pings (§1)
   push?: object;                // push kinds; its presence enables push (§4.7)
   ext?: object;                 // opaque extension data (§3.5)
@@ -341,6 +342,15 @@ Clients render it as Markdown under [§3.5](#35-messages)'s rules and MAY show i
 text; they never parse it. Unlike a `~private` notice sent before auth
 ([Appendix B](#appendix-b--valid-scenarios-informative)), it belongs to the sign-in screen rather than a room, and each
 `server` frame replaces it.
+
+`server.signup`, when present, lists the schemes in `auth` that can create
+an account; the others only sign in to an existing one. For example,
+`"signup": ["token"]` with `"auth": ["webauthn", "email", "token"]` means
+accounts start from an invite token, and passkeys and email sign in to
+them. Without `signup`, clients offer every scheme and the server answers
+`denied` where it does not apply. A client whose only way back into an
+account is a token SHOULD encourage its user to add another scheme, such
+as a passkey or email ([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)), before the token is lost or expires.
 
 `name` and `user_id` are optional requests, valid with any scheme; `you`
 is what the server assigned. Servers SHOULD NOT give out a previously used
@@ -1701,8 +1711,9 @@ MUST perform
 before recording credentials or authenticating.
 
 Only a verified finish returns `you`. Begin
-or failure does not change existing authentication. Registration
-eligibility and reauthentication permission are server policy. Malformed
+or failure does not change existing authentication. A registration on a
+connection that is already signed in adds the passkey to that account.
+Registration eligibility and reauthentication permission are server policy. Malformed
 fields are `invalid_params`; invalid challenges, failed verification, or
 policy rejection are `denied`.
 
@@ -1742,7 +1753,8 @@ are `auth` requests with `scheme: "email"`:
   replaced by a newer one for the same address.
 - With `token`, a valid request authenticates and its result carries `you`
   and a bearer `token` for later connections ([§3.2](#32-authentication)). An invalid,
-  expired, or used temporary token is `denied`.
+  expired, or used temporary token is `denied`. On a connection that is
+  already signed in, it adds the address to that account.
 - The server builds any link from its own configuration, never from request
   fields, and puts the token in the URL fragment so it stays out of server
   logs. The sign-in happens on the connection that presents the token, not
