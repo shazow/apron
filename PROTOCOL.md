@@ -396,18 +396,19 @@ User objects come in two kinds:
 - **Current** objects describe the user now: `you` and `new` in a `user`
   notification, and room `members` and `users` in `room_list` and
   `room_update` ([§4.3](#43-rooms)). Clients keep one user object per `user_id` and merge every
-  current object into it: a present field replaces the kept value, an empty
-  value (`""`, `{}`) removes it, and a missing field leaves it unchanged, so
-  an object with only `user_id` changes nothing.
+  current object into it. Each field it carries replaces the kept value, and
+  an empty value (`""`, `[]`, `{}`) means the field was cleared. Fields it
+  leaves out stay as they were, so an object with only `user_id` changes
+  nothing.
 - **Recorded** objects describe the user as of a record: a message's `from`,
   a reaction's `from`, a membership's `user` ([§4.3.2](#432-membership)). Later snapshots MAY keep
   them unchanged, so they can be stale. Clients never merge them.
 
 Clients render a user field by field from the kept object, falling back to
-the recorded object the frame carries, then to `user_id`: the display name
-is the kept `name`, else the recorded `name`, else `user_id`. Servers SHOULD
-include `name` in `from`, so clients with no kept object can render any
-message without looking its author up.
+the recorded object the frame carries only for fields the kept object lacks,
+so a cleared field stays cleared. An empty or unknown `name` shows as
+`user_id`. Servers SHOULD include `name` in `from`, so clients with no kept
+object can render any message without looking its author up.
 
 Clients SHOULD show a user as `Name (@user_id)` where space allows, and
 MUST when they know another `user_id` with the same display name, so no one
@@ -415,13 +416,13 @@ can pass as someone else.
 
 A `me` request updates the user's own profile after authentication, by the
 same rule: fields given replace their current values, fields omitted stay
-unchanged, and an empty value removes the field. `name`, `avatar`, and
+unchanged, and an empty value clears the field. `name`, `avatar`, and
 `ext` are settable, and `roles` is not; the server MAY comply, decline, or
 alter any of them.
-Servers announce a removed field as its empty value:
+Servers announce a cleared field as its empty value:
 
 ```jsonc
-// -> rename and remove the avatar; ext is untouched
+// -> rename and clear the avatar; ext is untouched
 {"method": "me", "id": "c2", "params": {"name": "Alice ⚙", "avatar": ""}}
 // <-
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙", "avatar": ""}}}
