@@ -22,14 +22,14 @@
         {"reply":{"to":"history","result":{"messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Robert"},"body":{"text":"posted as Robert"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"carol","name":"Carol"},"body":{"text":"hi"}}],"first_log_id":"11","last_log_id":"12","more":false,"latest_log_id":"12","history_log_id":"10"}}},
         {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}},"senders":{"11":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"12":{"user_id":"carol","name":"Carol"}}}},
         {"receive":{"method":"message","params":{"message_id":"13","log_id":"13","room_id":"general","from":{"user_id":"bob","name":"Bobby"},"body":{"text":"renamed since?"}}}},
-        {"receive":{"method":"room_members","params":{"log_id":"14","room_id":"general","members":[{"user":{"user_id":"dana","name":"Dana"},"joined":true}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"14","room_id":"general","members":[{"user":{"user_id":"dana","name":"Dana"},"joined":true}]}]}}},
         {"receive":{"method":"message","params":{"message_id":"15","log_id":"15","room_id":"general","from":{"user_id":"dana","name":"Dana"},"body":{"text":"hello all"}}}},
         {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}},"members":{"general":["bob","carol","dana","guest_1"]},"senders":{"11":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"15":{"user_id":"dana","name":"Dana"}}}},
         {"receive":{"method":"user","params":{"new":{"user_id":"bob"}}}},
         {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}}}},
         {"receive":{"method":"user","params":{"new":{"user_id":"bob","avatar":""}}}},
         {"receive":{"method":"user","params":{"new":{"user_id":"dana","name":"Dana D"}}}},
-        {"receive":{"method":"room_members","params":{"log_id":"16","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":false}]}}},
+        {"receive":{"method":"room_update","params":{"membership":[{"log_id":"16","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":false}]}]}}},
         {"receive":{"method":"user","params":{"you":{"user_id":"guest_1","name":"Ada L"}}}}
       ]
     }

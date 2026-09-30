@@ -760,15 +760,15 @@ follows `server.push` ([§4.7](#47-push)), passkeys and email sign-in follow `se
 Six frame idioms cover everything logged or announced:
 
 - **Records** (room records, `message`): complete state at a `log_id` ([§2](#2-identifiers)).
-- **Per-user state** (`reactions`, `room_members`): the user plus their complete
+- **Per-user state** (`reactions`, memberships): the user plus their complete
   state for a scope; newest wins per user. Logged ([§2](#2-identifiers)).
 - **Activity** (`activity`): `from` plus changes to the user's transient
   state; present fields update it and absent fields leave it unchanged. Not
   part of the append-only log.
 - **Announcements** (`server`): unlogged, re-sent in full; each
   replaces the last.
-- **Room updates** (`room_update`): unlogged changes to the user's rooms,
-  never a full list ([§4.3.3](#433-updates)).
+- **Room updates** (`room_update`): changes to the user's rooms, carrying
+  room records and memberships, never a full list ([§4.3.3](#433-updates)).
 - **Users** (`user`, and every current user object): unlogged; each merges
   into the kept object ([§3.3](#33-identity)).
 
@@ -976,10 +976,9 @@ clients holding the old content drop it on the new tombstone.
 
 ### 4.3 `rooms`
 
-Cap `rooms` adds rooms to find, join, and create, and threads. Six methods
+Cap `rooms` adds rooms to find, join, and create, and threads. Five methods
 share the `room_` prefix: `room_list`, `room_join`, `room_leave`, and
-`room_set` are requests; `room_update` and `room_members` are notifications.
-`room_members` carries logged memberships ([§4.3.2](#432-membership)). Visibility and
+`room_set` are requests; `room_update` is a notification. Visibility and
 membership are server policy.
 
 #### 4.3.1 Listing
@@ -1094,22 +1093,27 @@ room receive only its room record changes ([§4.3.3](#433-updates)).
 Every membership change is a logged record in the room: joining, leaving,
 creating a room with `room_set`, and changes the server makes, such as a
 removal. A membership record carries `members`, one entry per user, each
-with the user as a recorded object ([§3.3](#33-identity)) and `joined`:
+with the user as a recorded object ([§3.3](#33-identity)) and `joined`. `room_update`
+delivers it in `membership` ([§4.3.3](#433-updates)):
 
 ```jsonc
 // ->
 {"method": "room_join", "id": "c24", "params": {"room_id": "1724803399000"}}
-// <- to the room's members, the joining user's connections included
+// <- to the room's other members
 {
-  "method": "room_members", "params": {
-    "log_id": "1724803450100", "room_id": "1724803399000",
-    "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]
+  "method": "room_update", "params": {
+    "membership": [
+      {"log_id": "1724803450100", "room_id": "1724803399000", "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]}
+    ]
   }
 }
-// <- to the joining user's connections, with the members (§4.3.3)
+// <- to the joining user's connections: the room with its members, and the membership
 {
   "method": "room_update", "params": {
     "joined": [{"room_id": "1724803399000", ..., "members": [{"user_id": "ada"}, {"user_id": "bob"}]}],
+    "membership": [
+      {"log_id": "1724803450100", "room_id": "1724803399000", "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]}
+    ],
     "users": [{"user_id": "ada", "name": "Ada"}, {"user_id": "bob", "name": "Bob"}]
   }
 }
@@ -1118,14 +1122,15 @@ with the user as a recorded object ([§3.3](#33-identity)) and `joined`:
 
 // ->
 {"method": "room_leave", "id": "c25", "params": {"room_id": "1724803312001"}}
-// <- to the room's members, the leaving user's connections included
+// <- to the leaving user's connections; the room's other members get the membership alone
 {
-  "method": "room_members", "params": {
-    "log_id": "1724803450200", "room_id": "1724803312001",
-    "members": [{"user": {"user_id": "ada"}, "joined": false}]
+  "method": "room_update", "params": {
+    "left": [{"room_id": "1724803312001"}],
+    "membership": [
+      {"log_id": "1724803450200", "room_id": "1724803312001", "members": [{"user": {"user_id": "ada"}, "joined": false}]}
+    ]
   }
 }
-{"method": "room_update", "params": {"left": [{"room_id": "1724803312001"}]}}
 {"id": "c25", "result": {}}
 ```
 
@@ -1155,6 +1160,7 @@ the full list:
   `room_list` ([§4.3.1](#431-listing)); `users` MAY accompany them.
 - `left`: `[{room_id}]` of rooms the user is no longer in: left, removed,
   no longer visible, or deleted.
+- `membership`: membership records ([§4.3.2](#432-membership)), to the room's members.
 - `updated`: room records that are new or changed while membership is not:
   an edit to a joined room, such as its `title` or `description`, or a new
   or edited thread of one, which reaches the parent's members whether or
@@ -1190,13 +1196,7 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
     "description": "Why the 4pm deploy failed"
   }
 }
-// <- to the creator: its membership, then the room with its members
-{
-  "method": "room_members", "params": {
-    "log_id": "1724803312002", "room_id": "1724803312001",
-    "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]
-  }
-}
+// <- to the creator: the room with its members, and the creator's membership
 {
   "method": "room_update", "params": {
     "joined": [
@@ -1207,6 +1207,9 @@ cleared. Both return `{"room_id": "..."}` after the change arrives as a
         "latest_log_id": "1724803312002", "history_log_id": "1724803312001",
         "members": [{"user_id": "ada"}]
       }
+    ],
+    "membership": [
+      {"log_id": "1724803312002", "room_id": "1724803312001", "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": true}]}
     ]
   }
 }
@@ -1625,15 +1628,15 @@ happens to it:
     "body": {"text": "/kick @guest_1234 spamming", "mentions": ["guest_1234"]}
   }
 }
-// <- to the room, guest_1234 included: the membership
+// <- to guest_1234's connections; the room's other members get the membership alone
 {
-  "method": "room_members", "params": {
-    "log_id": "1724803900001", "room_id": "general",
-    "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]
+  "method": "room_update", "params": {
+    "left": [{"room_id": "general"}],
+    "membership": [
+      {"log_id": "1724803900001", "room_id": "general", "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]}
+    ]
   }
 }
-// <- to guest_1234's connections
-{"method": "room_update", "params": {"left": [{"room_id": "general"}]}}
 // <- to the room's remaining members: the notice
 {
   "method": "message", "params": {
