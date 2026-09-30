@@ -2,7 +2,7 @@
   "format": 4,
   "kind": "session",
   "name": "User objects",
-  "description": "One kept user object per user_id, merged field by field from current objects only (you, user notifications, room members and users): a present field replaces, an empty value removes, a missing one changes nothing. Recorded objects (a message's from, a membership's user) never merge, and history carries no users. Each message renders its sender field by field: the kept object, else the from it carries, else the user_id; a sender with no kept object renders as its from. A membership changes the room's members, not the kept users.",
+  "description": "One kept user object per user_id, merged field by field from current objects only (you, user notifications, room members and users): a present field replaces, an empty value clears the field and is kept, a missing one changes nothing. Recorded objects (a message's from, a membership's user) never merge, and history carries no users. Each message renders its sender field by field: the kept object, else the from it carries, else the user_id, and a field the kept object cleared never falls back to the from; a sender with no kept object renders as its from. A membership changes the room's members, not the kept users.",
   "references": [
     "PROTOCOL.md#33-identity",
     "PROTOCOL.md#41-history",
@@ -21,7 +21,7 @@
         {"request":{"as":"history","match":{"method":"history","params":{"room_id":"general","after":"10","before":"12"}}}},
         {"reply":{"to":"history","result":{"messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Robert"},"body":{"text":"posted as Robert"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"carol","name":"Carol"},"body":{"text":"hi"}}],"first_log_id":"11","last_log_id":"12","more":false,"latest_log_id":"12","history_log_id":"10"}}},
         {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}},"senders":{"11":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"12":{"user_id":"carol","name":"Carol"}}}},
-        {"receive":{"method":"message","params":{"message_id":"13","log_id":"13","room_id":"general","from":{"user_id":"bob","name":"Bobby"},"body":{"text":"renamed since?"}}}},
+        {"receive":{"method":"message","params":{"message_id":"13","log_id":"13","room_id":"general","from":{"user_id":"bob","name":"Bobby","avatar":"https://chat.example/f/Old9/bob.png"},"body":{"text":"renamed since?"}}}},
         {"receive":{"method":"room_update","params":{"membership":[{"log_id":"14","room_id":"general","members":[{"user":{"user_id":"dana","name":"Dana"},"joined":true}]}]}}},
         {"receive":{"method":"message","params":{"message_id":"15","log_id":"15","room_id":"general","from":{"user_id":"dana","name":"Dana"},"body":{"text":"hello all"}}}},
         {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}},"members":{"general":["bob","carol","dana","guest_1"]},"senders":{"11":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"15":{"user_id":"dana","name":"Dana"}}}},
@@ -36,11 +36,11 @@
   ],
   "expected": {
     "you": {"user_id":"guest_1","name":"Ada L"},
-    "users": {"bob":{"user_id":"bob","name":"Bob"},"carol":{"user_id":"carol"},"dana":{"user_id":"dana","name":"Dana D"},"guest_1":{"user_id":"guest_1","name":"Ada L"}},
+    "users": {"bob":{"user_id":"bob","name":"Bob","avatar":""},"carol":{"user_id":"carol"},"dana":{"user_id":"dana","name":"Dana D"},"guest_1":{"user_id":"guest_1","name":"Ada L"}},
     "members": {"general":["bob","dana","guest_1"]},
     "senders": {"11":{"user_id":"bob","name":"Bob"},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob"},"15":{"user_id":"dana","name":"Dana D"}},
     "rooms": [
-      {"room_id":"general","log_id":"10","title":"General","messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Robert"},"body":{"text":"posted as Robert"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"carol","name":"Carol"},"body":{"text":"hi"}},{"message_id":"13","log_id":"13","room_id":"general","from":{"user_id":"bob","name":"Bobby"},"body":{"text":"renamed since?"}},{"message_id":"15","log_id":"15","room_id":"general","from":{"user_id":"dana","name":"Dana"},"body":{"text":"hello all"}}]}
+      {"room_id":"general","log_id":"10","title":"General","messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Robert"},"body":{"text":"posted as Robert"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"carol","name":"Carol"},"body":{"text":"hi"}},{"message_id":"13","log_id":"13","room_id":"general","from":{"user_id":"bob","name":"Bobby","avatar":"https://chat.example/f/Old9/bob.png"},"body":{"text":"renamed since?"}},{"message_id":"15","log_id":"15","room_id":"general","from":{"user_id":"dana","name":"Dana"},"body":{"text":"hello all"}}]}
     ]
   }
 }

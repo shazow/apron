@@ -295,10 +295,10 @@ requests behind it are denied and change nothing.
   recovers automatically; a room whose last recovery failed has none) or its
   known head (a thread). If any kept room has neither, or none is kept, the
   listing is a full one. A result for another identity than the kept rooms'
-  (the `auth` result names someone else) is not applied: the client lists
+  (the `auth` result refers to someone else) is not applied: the client lists
   again in full.
 - **Resumes.** Each joined top-level room kept from the lost connection with a
-  checkpoint C resumes its recovery at once, before any room record names its
+  checkpoint C resumes its recovery at once, before any room record gives its
   head: it requests `{room_id, after: max(C + 1, F)}` without `before`, takes H
   from the first page's `latest_log_id`, and continues as below. Its live
   records are buffered from then on. The listing then decides whether the room
@@ -395,7 +395,8 @@ The normalized session state has these keys:
 - `users`: the kept user objects, one per `user_id`, keyed by `user_id` in
   string order, merged field by field ([PROTOCOL.md §3.3](../../../PROTOCOL.md#33-identity)) from current objects only:
   `you`, `new` in `user` notifications, and room `members` and `users` in
-  `room_list` results and `room_update` notifications. Recorded objects (a
+  `room_list` results and `room_update` notifications. An empty value (`""`,
+  `[]`, `{}`) is kept: it records a cleared field. Recorded objects (a
   message's or reaction's `from`, a membership's `user`) and `activity`
   senders never merge. `old` with `new` makes the old `user_id` stand for the
   new one; it merges nothing.
@@ -404,7 +405,9 @@ The normalized session state has these keys:
   order.
 - `senders`: for each message in a visible room, keyed by `message_id`, its
   sender as rendered: field by field, the kept object for the `from`'s
-  `user_id` (or the identity that replaced it), else the `from` itself.
+  `user_id` (or the identity that replaced it), else the `from` itself. A
+  field the kept object holds as an empty value is omitted, not taken from
+  the `from`.
 - `notices`: the transient notices received this session, in arrival order,
   each `{room_id, from, body?}` (`room_id` as sent).
 - `directory`: the `room_id`s of the latest `listRooms` result without
@@ -432,13 +435,13 @@ no sleeps, timers, or DOM selectors.
 | file | covers |
 |---|---|
 | `auth-barrier.json` | `auth` and the joined listing sent back to back; after a failed `auth` the denied listing changes nothing |
-| `core-session.json` | a server without capability `rooms`: guest auth, a first post without `room_id` whose broadcast names the default room before the result, `activity` typing, bare `reply_to` answered by an embedded snapshot, a `~private` notice, `server` replacement, unknown notifications, rooms learned from their messages including one whose ID starts with `~`, and a logged `~server` notice in the room it names |
+| `core-session.json` | a server without capability `rooms`: guest auth, a first post without `room_id` whose broadcast refers to the default room before the result, `activity` typing, bare `reply_to` answered by an embedded snapshot, a `~private` notice, `server` replacement, unknown notifications, rooms learned from their messages including one whose ID starts with `~`, and a logged `~server` notice in the room it names |
 | `commands.json` | `command` with and without mentions, its result and error, a `~private` reply that is never stored, and `body.mentions` on a message |
 | `membership.json` | the joined set with members from the listing behind `auth`, the guest's own join before the `auth` result, `listRooms` with members, `joinRoom` and `leaveRoom` settling on `{}` after their memberships and `room_update` `joined` and `left`, others' memberships keeping member lists current, an `updated` thread not joined staying hidden, removal by the server |
 | `room-list-delta.json` | a token resume lists only the joined rooms changed since the kept checkpoints and resumes the kept rooms behind `auth`; `left` removes rooms and keeps the others, a result without `left` is a full listing |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, bare `reply_to`, and `ext` from the latest snapshot |
 | `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title`, `description`, and `ext`, full record replacement, `left` |
-| `users.json` | field-by-field merges of current objects from `you`, `members`, `users`, and `user`; `from` and membership users never merge; senders render from the kept object, else their `from`; memberships change member lists, not users |
+| `users.json` | field-by-field merges of current objects from `you`, `members`, `users`, and `user`; `from` and membership users never merge; senders render from the kept object, else their `from`, and a cleared field never falls back; memberships change member lists, not users |
 | `reactions.json` | react, change, clear, move re-log in the destination, `invalid_params`, tombstone hiding |
 | `request-errors.json` | denied send, save, and room creation keep the session usable |
 | `history-live-boundary.json` | fixed H with live records above it (edit, room update, reaction), mixed-kind pages (limit counts every kind), raw and compacted |
@@ -459,7 +462,7 @@ preserves these exchanges and projections.
 Every session variant describes one plausible server, and these hold (they
 were checked with an independent reference reducer and client):
 
-- Each `log_id` names one record (one key, one content) across the whole
+- Each `log_id` identifies one record (one key, one content) across the whole
   variant, across connections, and in embedded copies. `log_id`s are one
   server-wide sequence: new live records on a connection arrive in strictly
   increasing order, and above every `latest_log_id` already reported for their
@@ -492,7 +495,7 @@ were checked with an independent reference reducer and client):
   listing with `latest_log_id` either has `left` (possibly empty) or is a full
   listing.
 - A `room_update` `updated` for a room not joined describes a new or edited
-  thread in a joined room; `left` names only rooms that were visible.
+  thread in a joined room; `left` lists only rooms that were visible.
 
 Replay variants obey the same one-record-per-`log_id` rule and the history
 metadata constraints that do not depend on request bounds.

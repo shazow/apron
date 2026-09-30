@@ -104,10 +104,10 @@ class ApronServer:
 
         require(ws in self.clients, "Authenticate first", -32001)
         if method in ("auth", "me"):
-            # "" removes the name; profile avatar and ext are declined.
+            # "" clears the name and is kept, so clients see it cleared; profile
+            # avatar and ext are declined.
             if isinstance(p.get("name"), str):
-                you = {k: v for k, v in self.clients[ws].items() if k != "name"}
-                self.clients[ws] = {**you, "name": p["name"]} if p["name"] else you
+                self.clients[ws] = {**self.clients[ws], "name": p["name"]}
             return {"you": self.clients[ws]}
 
         require(method in ("message", "history"), "Unsupported method", -32601)
