@@ -346,7 +346,8 @@ With `signup`, `auth` lists the schemes that sign in and `signup` those
 that create an account, such as `"auth": ["webauthn"], "signup": ["email"]`
 for email to join and a passkey after. A client whose only way back into
 an account is a token SHOULD encourage its user to add another scheme
-([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)).
+([§4.9](#49-webauthn-authentication), [§4.10](#410-email-authentication)). Suggested convention: listing and removing an
+account's sign-in methods are server commands ([§4.8](#48-command)).
 
 `name` and `user_id` are optional requests, valid with any scheme; `you`
 is what the server assigned. Servers SHOULD NOT give out a previously used
@@ -1718,9 +1719,8 @@ MUST perform
 [WebAuthn verification](https://www.w3.org/TR/webauthn-3/#sctn-rp-operations)
 before recording credentials or authenticating.
 
-Only a verified finish returns `you`. Begin
-or failure does not change existing authentication. A registration on a
-connection that is already signed in adds the passkey to that account.
+Only a verified finish returns `you`. A registration on a connection that
+is already signed in adds the passkey to that account.
 Registration eligibility and reauthentication permission are server policy. Malformed
 fields are `invalid_params`; invalid challenges, failed verification, or
 policy rejection are `denied`.
