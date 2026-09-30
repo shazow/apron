@@ -53,7 +53,7 @@ Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#
 `log_id` is numerically greater; an equal or lower `log_id` is ignored. This
 holds regardless of source (live, history, embedded) and arrival order. A
 reaction or membership element takes its record's `log_id`. The only
-exception: a room record without `log_id` (a server without cap `history`,
+exception: a room record without `log_id` (a server without capability `history`,
 which may omit it) always replaces. Replacement is whole: omitted fields
 disappear, objects and arrays are never merged, and `null` is a stored value.
 
@@ -208,7 +208,7 @@ client's public API.
 | `request: {as, match}` | Take the next matching outgoing client request (see below), assert it, and capture its runtime `id` under `as`. |
 | `reply: {to, result}` / `reply: {to, error}` | Send `{id, result}` or `{id, error}` for the request captured as `to`. |
 | `send: {as, room?, text, format, reply_to?, mentions?}` | Post a message to `room`, or without `room` to the server's default room; `reply_to` is a message ID, `mentions` a list of `user_id`s. |
-| `command: {as, room?, text, mentions?}` | Send `text` as a `command` (cap `command`) in `room`, or without `room` in the default room. |
+| `command: {as, room?, text, mentions?}` | Send `text` as a `command` (capability `command`) in `room`, or without `room` in the default room. |
 | `editMessage: {as, message_id, text}` | Save the message with only `body.text` changed. |
 | `moveMessage: {as, message_id, room}` | Save the message with `room_id` changed to `room`. |
 | `deleteMessage: {as, message_id}` | Save the message as a tombstone. |
@@ -269,7 +269,7 @@ operation is invoked.
 | `listRooms` | `room_list` | `{filter: "not_joined", members: true}`, or `{parent_room_id, filter: "not_joined"}` |
 | (recovery) | `history` | `{room_id, after, before}`, or `{room_id, after}` for a resume sent behind `auth` (see below), plus an optional positive `limit` |
 | (connect) | `auth` | `{scheme: "guest"}`, or `{scheme: "token", token}` when an earlier `auth` result on the session carried a `token` and the server offers `token`, plus optional `name`/`client` |
-| (right behind `auth`, cap `rooms`) | `room_list` | `{filter: "joined", members: true}`, plus `latest_log_id` on a token resume (see below); sent before the `auth` result |
+| (right behind `auth`, capability `rooms`) | `room_list` | `{filter: "joined", members: true}`, plus `latest_log_id` on a token resume (see below); sent before the `auth` result |
 
 In saves, `reply_to` is always resubmitted bare even when the stored snapshot
 embedded it, `ext` is resubmitted unchanged (including `"__proto__"` keys),
@@ -325,7 +325,7 @@ joined, or a `room_update` that lists it in `joined` or `updated`.
   snapshot `log_id` is below F, drops buffered and newly received message and
   reaction records below F, and ignores page records below F. Room records are
   not evicted.
-- **Automatic recovery** (cap `history`, rooms without `parent_room_id`, no
+- **Automatic recovery** (capability `history`, rooms without `parent_room_id`, no
   recovery already running), with H = the known head:
   - A room record frame starts one when the room becomes visible with no kept state,
     when its last recovery failed, when there is no checkpoint C yet, or when
@@ -334,7 +334,7 @@ joined, or a `room_update` that lists it in `joined` or `updated`.
     state, after a failure, or with no C; otherwise it **resumes** at
     `after = max(C + 1, F)` and keeps the room's state. A room kept from a
     lost connection whose head has not moved past C needs no request. A room
-    shown without a record (no cap `rooms`) takes its head from the first
+    shown without a record (no capability `rooms`) takes its head from the first
     message delivered for it on each connection.
   - When F grows outside a recovery and there is no C or `C + 1 < F`, a rebuild
     starts.
@@ -385,7 +385,7 @@ The normalized session state has these keys:
 - `capabilities`: the latest `server` frame's `capabilities` sorted by string order; `[]` when
   omitted or before any `server` frame on the connection.
 - `rooms`: the visible rooms sorted by `room_id` in string order, each in the
-  room projection above without `members`. With cap `rooms` they are the rooms
+  room projection above without `members`. With capability `rooms` they are the rooms
   joined on the current connection: the joined listing sent behind `auth`
   (above), plus `room_update` `joined`, minus `left`. Without it they are the
   rooms a `message` arrived in on the current connection. A `room_id` starting
@@ -413,7 +413,7 @@ The normalized session state has these keys:
   sorted by `room_id` then `from.user_id`. An `activity` frame with
   `typing > 0` adds or refreshes one; `typing: 0` removes it; an `activity`
   frame without `typing` leaves it unchanged. Fixture servers that send
-  `activity` advertise cap `activity`.
+  `activity` advertise capability `activity`.
 - `operations`: operation labels mapped to `pending`, `fulfilled`, or
   `rejected`.
 
@@ -432,7 +432,7 @@ no sleeps, timers, or DOM selectors.
 | file | covers |
 |---|---|
 | `auth-barrier.json` | `auth` and the joined listing sent back to back; after a failed `auth` the denied listing changes nothing |
-| `core-session.json` | a server without cap `rooms`: guest auth, a first post without `room_id` whose broadcast names the default room before the result, `activity` typing, bare `reply_to` answered by an embedded snapshot, a `~private` notice, `server` replacement, unknown notifications, rooms learned from their messages including one whose ID starts with `~`, and a logged `~server` notice in the room it names |
+| `core-session.json` | a server without capability `rooms`: guest auth, a first post without `room_id` whose broadcast names the default room before the result, `activity` typing, bare `reply_to` answered by an embedded snapshot, a `~private` notice, `server` replacement, unknown notifications, rooms learned from their messages including one whose ID starts with `~`, and a logged `~server` notice in the room it names |
 | `commands.json` | `command` with and without mentions, its result and error, a `~private` reply that is never stored, and `body.mentions` on a message |
 | `membership.json` | the joined set with members from the listing behind `auth`, the guest's own join before the `auth` result, `listRooms` with members, `joinRoom` and `leaveRoom` settling on `{}` after their memberships and `room_update` `joined` and `left`, others' memberships keeping member lists current, an `updated` thread not joined staying hidden, removal by the server |
 | `room-list-delta.json` | a token resume lists only the joined rooms changed since the kept checkpoints and resumes the kept rooms behind `auth`; `left` removes rooms and keeps the others, a result without `left` is a full listing |
