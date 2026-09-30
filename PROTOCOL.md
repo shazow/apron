@@ -158,12 +158,12 @@ ignores object key order.
 
 Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated `user_id`:
 
-- return the original result for a duplicate, without re-executing or
-  rebroadcasting;
-- reject reuse with a different method or params as `invalid_params`;
-- coalesce concurrent duplicates.
+- A duplicate is not executed or broadcast again, and its result reflects
+  the current state ([§1](#1-transport--framing)).
+- Reuse with a different method or params is `invalid_params`.
+- Concurrent duplicates are handled as one.
 
-Retention across reconnects and restarts is implementation-defined.
+How long a server remembers an `id` is implementation-defined.
 Request `id`s sent before authentication are connection-scoped;
 authentication MUST execute on each connection.
 
