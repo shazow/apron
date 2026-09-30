@@ -1893,6 +1893,21 @@ implementations accept them. Each follows from the sections it cites.
   {"id": "deploy-7f3a", "result": {"message_id": "1724803200042"}}
   ```
 
+- **An invite token signs up several people.** A server MAY treat a
+  `token` as an invitation that creates a new identity on each use, up to a
+  limit it sets, such as ten sign-ups from one link. Each result carries the
+  new identity's own `token`, which the client saves and reconnects with
+  ([§3.2](#32-authentication)), so the shared invite is never reused. Issuing and revoking
+  invites are server commands ([§4.8](#48-command)); a used-up or expired invite is
+  `denied`.
+
+  ```jsonc
+  // -> each invitee signs in with the shared invite
+  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "inv_Qm7x...", "name": "Bob"}}
+  // <- a new identity, with its own token for later connections
+  {"id": "c1", "result": {"you": {"user_id": "bob", "name": "Bob"}, "token": "st_Hk41..."}}
+  ```
+
 ---
 
 ## Appendix C — Under consideration
