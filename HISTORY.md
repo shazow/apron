@@ -10,6 +10,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - Membership records arrive in `room_update` `memberships`, replacing the `membership` notification. The `history` key is renamed `memberships`.
 - Email sign-in scheme (`email`): a request with `email` proposes a sign-in or an addition, and one with `token` approves it. Any `auth` result may carry a rotated bearer `token`.
 - `server.signup` lists the schemes that create accounts.
+- A passkey registration's `name` labels the passkey (`user.name` and `user.displayName`).
 - `server.welcome` for sign-in instructions.
 - User objects may carry server-defined `roles`. An empty value (`""`, `[]`, `{}`) clears a field and is kept, so it never falls back to a recorded `from`.
 - System identities use `~` (`~server`, `~room`, `~private`); text prefixes are `@user`, `#room`, `~system`.
