@@ -14,7 +14,8 @@
         "params": {
           "scheme": "webauthn",
           "action": "register",
-          "step": "begin"
+          "step": "begin",
+          "name": "Ada"
         }
       },
       "begin_result": {
@@ -22,7 +23,7 @@
         "public_key": {
           "challenge": "AQIDBA",
           "rp": { "name": "Apron", "id": "demo.example" },
-          "user": { "id": "dXNlci0x", "name": "guest", "displayName": "Guest" },
+          "user": { "id": "dXNlci0x", "name": "Ada", "displayName": "Ada" },
           "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
           "timeout": 120000,
           "authenticatorSelection": { "residentKey": "required", "userVerification": "required" },
@@ -50,6 +51,7 @@
       },
       "assertions": {
         "begin_does_not_authenticate": true,
+        "user_labeled_from_requested_name": true,
         "finish_requires_challenge_id": true,
         "credential_is_browser_json": true
       }

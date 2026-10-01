@@ -1663,6 +1663,8 @@ with binary fields as unpadded base64url. Clients pass them to
 `navigator.credentials.create` or `.get` and return the credential in
 `finish`. Registration MUST require discoverable credentials. Login omits
 `allowCredentials` or sends an empty array. Both require user verification.
+Servers SHOULD use a `register` begin's `name` ([§3.2](#32-authentication)) for
+`user.name` and `user.displayName` in `public_key`.
 
 Challenges MUST be unpredictable, expiring, and bound to the connection,
 action, RP ID, allowed origin, and any proposed registration identity. A
