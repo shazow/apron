@@ -413,7 +413,20 @@
           "exclusiveMinimum": 0
         },
         "push": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "webpush": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key"
+              ]
+            }
+          }
         },
         "ext": {
           "$ref": "#/$defs/Ext"
@@ -674,9 +687,9 @@
         "token": {
           "type": "string"
         },
-        "tag": {
+        "push_id": {
           "type": "string",
-          "maxLength": 64
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
         },
         "keys": {
           "type": "object",

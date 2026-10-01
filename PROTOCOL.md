@@ -1502,13 +1502,13 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 // ->
 {
   "method": "push_register", "id": "c30", "params": {
-    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "...", "tag": "a1"
+    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "...", "push_id": "t65S5XBst9bSDpjJ"
   }
 }
 // ->
 {
   "method": "push_register", "id": "c31", "params": {
-    "kind": "webpush", "url": "https://push.example/s/abc", "tag": "a1",
+    "kind": "webpush", "url": "https://push.example/s/abc", "push_id": "t65S5XBst9bSDpjJ",
     "keys": {"p256dh": "BOr...", "auth": "Hn3..."}
   }
 }
@@ -1519,28 +1519,38 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 - `kind` is a key of `server.push`; the other fields are specific to that
   kind. Unknown kinds are `invalid_params`. Third-party kinds use the `ext:`
   prefix ([§4](#4-capabilities)) and define their own delivery.
-- `url` is required and identifies the registration. Registering the same
-  `url` again replaces it; `push_unregister` removes it. Clients SHOULD
-  register on each connection.
-- `tag` (optional) is a string of at most 64 bytes that the client chooses,
-  such as one per server and account. Servers copy it into every payload
-  for that registration.
+- `url` is required. A registration belongs to the authenticated user and
+  its `url`. Registering the same `url` again replaces the user's
+  registration; `push_unregister` removes it.
+- Clients SHOULD register on each connection. Servers MAY drop a
+  registration the client has not renewed within a server-defined period.
+- Clients SHOULD unregister before signing out.
+- `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`.
+  Clients choose one per server and account, as an opaque value that
+  reveals neither, such as a truncated hash. An invalid `push_id` is
+  `invalid_params`.
 - `relay`: the server POSTs the payload as JSON to `url` with `token` as
   bearer. Delivery beyond that POST is up to the relay. Native apps use a
   relay run by their vendor.
 - `webpush`: Web Push ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)).
-  `key` is the server's VAPID public key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)),
-  an uncompressed P-256 point in base64url. Clients subscribe with it as the
-  application server key. `url` is the subscription endpoint, and `keys`
-  holds its `p256dh` and `auth`, as in the browser's `PushSubscription`.
-  Servers encrypt the payload with `aes128gcm` ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291))
-  and sign with `key`.
+  - `key` is the server's VAPID public key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)):
+    an uncompressed P-256 point in unpadded base64url. Clients subscribe
+    with it as the application server key, and subscribe again when it
+    changes.
+  - `url` is the subscription endpoint. `keys` holds its `p256dh` and
+    `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
+  - Servers encrypt the payload as one `aes128gcm` record of at most 4096
+    bytes ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign
+    with the private key for `key`.
+  - Servers remove a registration when the push service answers 404 or 410.
 - Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
-  `log_id`, with the registration's `tag`. Clients never install it as a
-  snapshot. `body` MAY be truncated or omitted, and servers SHOULD omit
-  `format` and `embeds`.
-- Clients SHOULD show at most one notification per `tag` and `message_id`,
-  including any they raise themselves.
+  `log_id`, plus the registration's `push_id`. `push_id` appears only in
+  push payloads. Clients never install the payload as a snapshot. `body` MAY
+  be truncated or omitted to fit, and servers SHOULD omit `format` and
+  `embeds`.
+- Clients SHOULD show at most one notification per `push_id` and
+  `message_id`. A later one for the same pair replaces the earlier one,
+  whether it came from a push or from the client's own connection.
 - Wake policy is server-defined.
 - Suggested convention: wake a user only when every connection of theirs
   is away or gone ([§4.4](#44-activity)). Wake them for rooms they have joined
@@ -1551,7 +1561,7 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 
 ```json
 {
-  "message_id": "1724803200042", "room_id": "general", "tag": "a1",
+  "message_id": "1724803200042", "room_id": "general", "push_id": "t65S5XBst9bSDpjJ",
   "from": {"user_id": "alice", "name": "Alice"},
   "body": {"text": "Deploy is done, can someone check the dashboards?"}
 }

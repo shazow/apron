@@ -11,7 +11,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - Email sign-in scheme (`email`): a request with `email` proposes a sign-in or an addition, and one with `token` approves it. Any `auth` result may carry a rotated bearer `token`.
 - `server.signup` lists the schemes that create accounts.
 - A passkey registration's `name` labels the passkey (`user.name` and `user.displayName`).
-- Push kind `webpush` (Web Push with a VAPID `key`) is defined. A registration's optional `tag` is copied into each payload, and clients show one notification per `tag` and `message_id`.
+- Push kind `webpush` (Web Push with a VAPID `key`) is defined. A registration belongs to its user and `url`, and carries an optional client-chosen `push_id` that every payload repeats; clients keep one notification per `push_id` and `message_id`. Servers may expire registrations that clients don't renew.
 - `server.welcome` for sign-in instructions.
 - User objects may carry server-defined `roles`. An empty value (`""`, `[]`, `{}`) clears a field and is kept, so it never falls back to a recorded `from`.
 - System identities use `~` (`~server`, `~room`, `~private`); text prefixes are `@user`, `#room`, `~system`.
