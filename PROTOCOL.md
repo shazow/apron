@@ -1232,7 +1232,8 @@ notification: typing, how far it has read in a room, and optionally
 whether anyone is attending the connection. Each present field updates
 that state, and absent fields leave it unchanged. Activity is not logged.
 Servers MAY drop `typing` and `read_message_id`. A server that supports
-`away` applies the latest one.
+`away` applies the latest one. A push server accepts `away` without this
+capability ([§4.7](#47-push)).
 
 ```jsonc
 // -> start typing
@@ -1520,11 +1521,17 @@ configuration. Its presence enables `push_register` and `push_unregister`.
   kind. Unknown kinds are `invalid_params`. Third-party kinds use the `ext:`
   prefix ([§4](#4-capabilities)) and define their own delivery.
 - `url` is required. A registration belongs to the authenticated user and
-  its `url`. Registering the same `url` again replaces the user's
-  registration; `push_unregister` removes it.
+  its `url`, and outlasts the connection that made it. Registering the
+  same `url` again replaces the user's registration; `push_unregister`
+  removes it. Unregistering an unknown `url` succeeds.
+- Servers MAY refuse a registration with `denied`, such as from a guest
+  ([§3.2](#32-authentication)). An endpoint the server will not send to is `invalid_params`.
 - Clients SHOULD register on each connection. Servers MAY drop a
   registration the client has not renewed within a server-defined period.
 - Clients SHOULD unregister before signing out.
+- A server that advertises `push` accepts `activity` with `away`
+  ([§4.4](#44-activity)), with or without capability `activity`. Clients
+  send `away` to it.
 - `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`.
   Clients choose one per server and account, as an opaque value that
   reveals neither, such as a truncated hash. An invalid `push_id` is
@@ -1544,8 +1551,9 @@ configuration. Its presence enables `push_register` and `push_unregister`.
     with the private key for `key`.
   - Servers remove a registration when the push service answers 404 or 410.
 - Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
-  `log_id`, plus the registration's `push_id`. `push_id` appears only in
-  push payloads. Clients never install the payload as a snapshot. `body` MAY
+  `log_id`, plus the registration's `push_id` if it has one. `push_id`
+  appears only in push payloads. Clients ignore payload fields they don't
+  know, and never install the payload as a snapshot. `body` MAY
   be truncated or omitted to fit, and servers SHOULD omit `format` and
   `embeds`.
 - Clients SHOULD show at most one notification per `push_id` and
