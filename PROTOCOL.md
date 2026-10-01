@@ -1497,31 +1497,50 @@ the user's name.
 configuration. Its presence enables `push_register` and `push_unregister`.
 
 ```jsonc
-// <- in the server frame; the second kind is illustrative
+// <- in the server frame
 "push": {"relay": {}, "webpush": {"key": "BNcR..."}}
 // ->
 {
   "method": "push_register", "id": "c30", "params": {
-    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "..."
+    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "...", "tag": "a1"
   }
 }
 // ->
-{"method": "push_unregister", "id": "c31", "params": {"url": "https://relay.example/p/xyz"}}
+{
+  "method": "push_register", "id": "c31", "params": {
+    "kind": "webpush", "url": "https://push.example/s/abc", "tag": "a1",
+    "keys": {"p256dh": "BOr...", "auth": "Hn3..."}
+  }
+}
+// ->
+{"method": "push_unregister", "id": "c32", "params": {"url": "https://relay.example/p/xyz"}}
 ```
 
 - `kind` is a key of `server.push`; the other fields are specific to that
   kind. Unknown kinds are `invalid_params`. Third-party kinds use the `ext:`
-  prefix ([§4](#4-capabilities)).
+  prefix ([§4](#4-capabilities)) and define their own delivery.
 - `url` is required and identifies the registration. Registering the same
   `url` again replaces it; `push_unregister` removes it. Clients SHOULD
   register on each connection.
+- `tag` (optional) is a string of at most 64 bytes that the client chooses,
+  such as one per server and account. Servers copy it into every payload
+  for that registration.
 - `relay`: the server POSTs the payload as JSON to `url` with `token` as
   bearer. Delivery beyond that POST is up to the relay. Native apps use a
-  relay run by their vendor. Other kinds define
-  their own delivery outside this spec.
+  relay run by their vendor.
+- `webpush`: Web Push ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)).
+  `key` is the server's VAPID public key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)),
+  an uncompressed P-256 point in base64url. Clients subscribe with it as the
+  application server key. `url` is the subscription endpoint, and `keys`
+  holds its `p256dh` and `auth`, as in the browser's `PushSubscription`.
+  Servers encrypt the payload with `aes128gcm` ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291))
+  and sign with `key`.
 - Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
-  `log_id`. Clients never install it as a snapshot. `body` MAY be
-  truncated or omitted, and servers SHOULD omit `format` and `embeds`.
+  `log_id`, with the registration's `tag`. Clients never install it as a
+  snapshot. `body` MAY be truncated or omitted, and servers SHOULD omit
+  `format` and `embeds`.
+- Clients SHOULD show at most one notification per `tag` and `message_id`,
+  including any they raise themselves.
 - Wake policy is server-defined.
 - Suggested convention: wake a user only when every connection of theirs
   is away or gone ([§4.4](#44-activity)). Wake them for rooms they have joined
@@ -1532,7 +1551,7 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 
 ```json
 {
-  "message_id": "1724803200042", "room_id": "general",
+  "message_id": "1724803200042", "room_id": "general", "tag": "a1",
   "from": {"user_id": "alice", "name": "Alice"},
   "body": {"text": "Deploy is done, can someone check the dashboards?"}
 }

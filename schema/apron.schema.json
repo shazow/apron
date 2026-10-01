@@ -673,12 +673,43 @@
         },
         "token": {
           "type": "string"
+        },
+        "tag": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "keys": {
+          "type": "object",
+          "properties": {
+            "p256dh": {
+              "type": "string"
+            },
+            "auth": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "p256dh",
+            "auth"
+          ]
         }
       },
       "required": [
         "kind",
         "url"
-      ]
+      ],
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webpush"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "keys"
+        ]
+      }
     },
     "PushUnregisterParams": {
       "description": "§4.7",
