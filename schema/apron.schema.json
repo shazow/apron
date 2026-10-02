@@ -48,6 +48,9 @@
         },
         "ext": {
           "$ref": "#/$defs/Ext"
+        },
+        "status": {
+          "type": "string"
         }
       },
       "required": [
@@ -1346,7 +1349,7 @@
       ]
     },
     "ClientNotification": {
-      "description": "A client notification (§1, §4.4, §4.7).",
+      "description": "A client notification (§1, §4.4, §4.11).",
       "type": "object",
       "required": [
         "method"
@@ -1363,7 +1366,7 @@
               "enum": [
                 "activity",
                 "ping",
-                "push_away"
+                "status"
               ]
             },
             {
@@ -1402,7 +1405,7 @@
           "if": {
             "properties": {
               "method": {
-                "const": "push_away"
+                "const": "status"
               }
             },
             "required": [
@@ -1415,7 +1418,7 @@
             ],
             "properties": {
               "params": {
-                "$ref": "#/$defs/PushAwayParams"
+                "$ref": "#/$defs/StatusParams"
               }
             }
           }
@@ -1708,17 +1711,23 @@
         }
       }
     },
-    "PushAwayParams": {
-      "description": "§4.7",
+    "StatusParams": {
+      "description": "§4.11",
       "type": "object",
       "properties": {
-        "away": {
+        "idle": {
+          "type": "boolean"
+        },
+        "room_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "invisible": {
           "type": "boolean"
         }
-      },
-      "required": [
-        "away"
-      ]
+      }
     }
   }
 }

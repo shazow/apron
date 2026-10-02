@@ -370,6 +370,7 @@ class User {
   name?: string;                // absent: shown as user_id
   avatar?: string;              // image URL
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
+  status?: string;              // online, idle, or offline; current objects only (§4.11)
   ext?: object;                 // opaque extension data (§3.5)
 }
 ```
@@ -735,6 +736,7 @@ whose server lacks a capability falls back as below:
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | [§4.6.4](#464-embedupload) |
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.5](#465-embedstream) |
 | `command`      | commands from client to server, such as `/kick`              | no commands                  | [§4.8](#48-command)        |
+| `status`       | connection state from client; user `status` from server      | no online indicators         | [§4.11](#411-status)       |
 
 Some features have no capability. Other embeds are body content ([§4.6](#46-embeds-and-avatars)).
 Push follows `server.push` ([§4.7](#47-push)). Passkeys and email sign-in follow
@@ -1257,7 +1259,6 @@ is not logged. Servers MAY drop `typing` and `read_message_id`.
   connections.
 - Servers MAY keep each user's latest `read_message_id` per room and send
   it to the user's connections after they list the room ([§4.3.1](#431-listing)).
-- There is no presence system.
 
 ### 4.5 `reactions`
 
@@ -1510,8 +1511,6 @@ enables `push_register` and `push_unregister`.
 }
 // ->
 {"method": "push_unregister", "id": "c32", "params": {"url": "https://relay.example/p/xyz"}}
-// -> nobody is attending this connection, such as an unfocused tab
-{"method": "push_away", "params": {"away": true}}
 ```
 
 - `kind` is a key of `server.push`; the other fields are specific to that
@@ -1526,12 +1525,8 @@ enables `push_register` and `push_unregister`.
 - Clients SHOULD register on each connection. Servers MAY drop a
   registration the client has not renewed within a server-defined period.
 - Clients SHOULD unregister before signing out.
-- `push_away` is a notification: `{"away": true}` when nobody is attending
-  the sending connection, such as an unfocused tab, a backgrounded app, or a
-  connection opened to fetch after a push. Clients send it to a server that
-  advertises `push`, after authenticating and on each change. It ends with
-  `{"away": false}`, a `message` from that connection, or when the
-  connection closes. It is never delivered.
+- A server that advertises `push` SHOULD advertise `status` ([§4.11](#411-status)), which
+  tells it when a connection is idle.
 - `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`.
   Clients choose one per server and account, as an opaque value that
   reveals neither, such as a truncated hash. An invalid `push_id` is
@@ -1586,7 +1581,7 @@ enables `push_register` and `push_unregister`.
 - Within those scopes, wake policy is server-defined, such as rate limits
   and skipping the sender's own messages.
 - Suggested convention: wake a user only when every connection of theirs
-  is away (`push_away`) or gone. Skip rooms they have muted by server policy,
+  is idle ([§4.11](#411-status)) or gone. Skip rooms they have muted by server policy,
   such as with a `/mute` command ([§4.8](#48-command)). Servers MAY wait briefly first and
   skip the push if the user's `read_message_id` has passed the message.
 
@@ -1796,6 +1791,47 @@ sign-in or an addition, and one with `token` approves it:
   server.
 - Account creation for unknown addresses, send rate limits (`retry_after`),
   and the bearer token's lifetime are server policy.
+
+### 4.11 `status`
+
+Capability `status`. A client tells the server the state of each
+connection, and the server MAY show each user's resulting `status` to
+others.
+
+```jsonc
+// -> nobody has attended this connection for a while
+{"method": "status", "params": {"idle": true}}
+// -> attended again, viewing a room
+{"method": "status", "params": {"idle": false, "room_id": "general"}}
+// <- (to others who share a room)
+{"method": "user", "params": {"new": {"user_id": "alice", "status": "idle"}}}
+```
+
+- `status` is a notification about the sending connection. Each present
+  field updates that state, and absent fields leave it unchanged. Clients
+  MAY send it before authenticating; it applies once authenticated.
+- `idle` (boolean): nobody is attending the connection, such as an
+  unfocused tab, a backgrounded app, or a connection opened to fetch after a
+  push. It ends with `idle: false`, a `message` from that connection, or
+  when the connection closes.
+- `room_id` (string or null): the room the connection is viewing, or none.
+  Without it, the server treats the connection as viewing every room.
+- `invisible` (boolean): the connection does not count toward the user's
+  `status`.
+- Clients report their initial state at once and becoming attended at once.
+  They SHOULD report becoming idle only after it has lasted about 30
+  seconds.
+- These fields are never delivered. Servers MAY treat a connection that has
+  sent no frame for a server-defined time as idle, and MAY hold back
+  unlogged frames, such as typing, from idle connections or connections
+  viewing other rooms.
+- A user's `status` is `online` if a counted connection is attended, `idle`
+  if every counted connection is idle, and `offline` otherwise. Others see
+  an invisible user as `offline`. Other values are reserved, such as `away`
+  and `dnd` for a status the user sets.
+- `status` appears only in current user objects ([§3.3](#33-identity)). A change is a `user`
+  notification to those who share a room. Servers MAY leave `status` out,
+  and MAY delay or limit its changes.
 
 ---
 
