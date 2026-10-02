@@ -1487,8 +1487,13 @@ configuration, and `wake` to the wake scopes it supports. Its presence
 enables `push_register` and `push_unregister`.
 
 ```jsonc
-// <- in the server frame
-"push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
+// <- the server frame offers relay and webpush
+{
+  "method": "server", "params": {
+    "apron": 7, "auth": ["webauthn", "token"],
+    "push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
+  }
+}
 // ->
 {
   "method": "push_register", "id": "c30", "params": {
@@ -1549,16 +1554,17 @@ enables `push_register` and `push_unregister`.
   - Servers encrypt the payload as one `aes128gcm` record
     ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign with the
     private key for `key`.
-- Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
-  `log_id`, plus the registration's `push_id` if it has one. `push_id`
-  and `unread` appear only in push payloads. Clients ignore payload fields they don't
-  know, and never install the payload as a snapshot. A payload is at most
-  3072 bytes of JSON: `body` MAY be truncated or omitted to fit, and
-  servers SHOULD omit `format` and `embeds`.
-- `unread` (optional) is the user's unread count once the message is
-  delivered, as the server counts it, such as new messages within the
-  registration's scopes after the user's read cursors ([§4.4](#44-activity)). Clients MAY
-  show it as an app badge.
+- Every kind delivers the same payload: a JSON object of at most 3072
+  bytes. Clients ignore fields they don't know.
+  - `push_id`: the registration's, if it has one.
+  - `unread` (optional): the user's unread count once the message is
+    delivered, as the server counts it, such as new messages within the
+    registration's scopes after the user's read cursors ([§4.4](#44-activity)). Clients
+    MAY show it as an app badge.
+  - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients never
+    install it as a snapshot. Its `body` MAY be truncated or omitted to
+    fit, and servers SHOULD omit `format` and `embeds`. A payload without
+    `message` shows no notification.
 - Clients SHOULD show at most one notification per `push_id` and
   `message_id`. A later one for the same pair replaces the earlier one,
   whether it came from a push or from the client's own connection.
@@ -1569,8 +1575,7 @@ enables `push_register` and `push_unregister`.
   - `replies`: replies to the user's messages.
   - `joined`: messages in rooms the user has joined ([§4.3.2](#432-membership)).
   - `badge`: changes to `unread` without a new message, such as after the
-    user reads on another device. Their payload has only `push_id` and
-    `unread`, and shows no notification. Clients request `badge` only where
+    user reads on another device. Their payload has no `message`. Clients request `badge` only where
     a push may arrive without showing a notification, which excludes
     `webpush`.
 - Servers advertise only scopes they implement, and ignore others in
@@ -1585,12 +1590,18 @@ enables `push_register` and `push_unregister`.
   such as with a `/mute` command ([§4.8](#48-command)). Servers MAY wait briefly first and
   skip the push if the user's `read_message_id` has passed the message.
 
-```json
+```jsonc
+// a message push
 {
-  "message_id": "1724803200042", "room_id": "general", "push_id": "t65S5XBst9bSDpjJ", "unread": 2,
-  "from": {"user_id": "alice", "name": "Alice"},
-  "body": {"text": "Deploy is done, can someone check the dashboards?"}
+  "push_id": "t65S5XBst9bSDpjJ", "unread": 2,
+  "message": {
+    "message_id": "1724803200042", "room_id": "general",
+    "from": {"user_id": "alice", "name": "Alice"},
+    "body": {"text": "Deploy is done, can someone check the dashboards?"}
+  }
 }
+// a badge push, after the user read on another device
+{"push_id": "t65S5XBst9bSDpjJ", "unread": 0}
 ```
 
 Servers SHOULD accept only `https` push endpoints that resolve to

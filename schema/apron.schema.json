@@ -1682,9 +1682,18 @@
       }
     },
     "PushPayload": {
-      "description": "§4.7: the payload every push kind delivers: a message, or for `badge` only an unread count",
-      "oneOf": [
-        {
+      "description": "§4.7: the payload every push kind delivers",
+      "type": "object",
+      "properties": {
+        "push_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "unread": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
           "allOf": [
             {
               "$ref": "#/$defs/Message"
@@ -1692,37 +1701,12 @@
             {
               "type": "object",
               "properties": {
-                "push_id": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
-                },
-                "log_id": false,
-                "unread": {
-                  "type": "integer",
-                  "minimum": 0
-                }
+                "log_id": false
               }
             }
           ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "push_id": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9_-]{1,64}$"
-            },
-            "unread": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "unread"
-          ],
-          "additionalProperties": false
         }
-      ]
+      }
     },
     "PushAwayParams": {
       "description": "§4.7",
