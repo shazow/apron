@@ -730,7 +730,7 @@ whose server lacks a capability falls back as below:
 | `history`      | page and recover a room's log                                | session-only scrollback      | [§4.1](#41-history)        |
 | `edit`         | `message` saves: edit, move, delete                          | no edit/move/delete UI       | [§4.2](#42-edit)           |
 | `rooms`        | `room_list`, `room_join`, `room_leave`, `room_set`, updates  | one default room, no threads | [§4.3](#43-rooms)          |
-| `activity`     | typing, read markers, and away                               | no typing or read indicators | [§4.4](#44-activity)       |
+| `activity`     | typing and read markers                                      | no typing or read indicators | [§4.4](#44-activity)       |
 | `reactions`    | emoji reactions on messages                                  | reaction controls hidden     | [§4.5](#45-reactions)      |
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP           | no attachments               | [§4.6.4](#464-embedupload) |
 | `embed:stream` | live-streamed text in a message                              | post the finished text       | [§4.6.5](#465-embedstream) |
@@ -1228,12 +1228,9 @@ receive the broadcast.
 ### 4.4 `activity`
 
 Capability `activity`. A client reports changes to its activity as a
-notification: typing, how far it has read in a room, and optionally
-whether anyone is attending the connection. Each present field updates
-that state, and absent fields leave it unchanged. Activity is not logged.
-Servers MAY drop `typing` and `read_message_id`. A server that supports
-`away` applies the latest one. A push server accepts `away` without this
-capability ([§4.7](#47-push)).
+notification: typing, and how far it has read in a room. Each present
+field updates that state, and absent fields leave it unchanged. Activity
+is not logged. Servers MAY drop `typing` and `read_message_id`.
 
 ```jsonc
 // -> start typing
@@ -1242,8 +1239,6 @@ capability ([§4.7](#47-push)).
 {"method": "activity", "params": {"room_id": "general", "typing": 0}}
 // -> advance the read cursor
 {"method": "activity", "params": {"room_id": "general", "read_message_id": "1724803312050"}}
-// -> nobody is attending this connection, such as an unfocused tab
-{"method": "activity", "params": {"away": true}}
 // <- (broadcast)
 {
   "method": "activity", "params": {
@@ -1262,13 +1257,6 @@ capability ([§4.7](#47-push)).
   connections.
 - Servers MAY keep each user's latest `read_message_id` per room and send
   it to the user's connections after they list the room ([§4.3.1](#431-listing)).
-- `away` (optional): `true` when nobody is attending this connection, such as
-  an unfocused tab, a backgrounded app, or a connection opened to fetch after
-  a push. It applies to the sending connection only. It ends with `away:
-  false`, `typing`, `read_message_id`, or a `message` from that connection,
-  or when the connection closes. Fetching history does not end it. Servers
-  MAY hold back unlogged frames, such as typing, from away connections, and
-  use `away` to decide pushes ([§4.7](#47-push)). `away` is never delivered.
 - There is no presence system.
 
 ### 4.5 `reactions`
@@ -1517,6 +1505,8 @@ enables `push_register` and `push_unregister`.
 }
 // ->
 {"method": "push_unregister", "id": "c32", "params": {"url": "https://relay.example/p/xyz"}}
+// -> nobody is attending this connection, such as an unfocused tab
+{"method": "push_away", "params": {"away": true}}
 ```
 
 - `kind` is a key of `server.push`; the other fields are specific to that
@@ -1531,9 +1521,12 @@ enables `push_register` and `push_unregister`.
 - Clients SHOULD register on each connection. Servers MAY drop a
   registration the client has not renewed within a server-defined period.
 - Clients SHOULD unregister before signing out.
-- A server that advertises `push` accepts `activity` with `away`
-  ([§4.4](#44-activity)), with or without capability `activity`. Clients
-  send `away` to it.
+- `push_away` is a notification: `{"away": true}` when nobody is attending
+  the sending connection, such as an unfocused tab, a backgrounded app, or a
+  connection opened to fetch after a push. Clients send it to a server that
+  advertises `push`, after authenticating and on each change. It ends with
+  `{"away": false}`, a `message` from that connection, or when the
+  connection closes. It is never delivered.
 - `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`.
   Clients choose one per server and account, as an opaque value that
   reveals neither, such as a truncated hash. An invalid `push_id` is
@@ -1588,7 +1581,7 @@ enables `push_register` and `push_unregister`.
 - Within those scopes, wake policy is server-defined, such as rate limits
   and skipping the sender's own messages.
 - Suggested convention: wake a user only when every connection of theirs
-  is away or gone ([§4.4](#44-activity)). Skip rooms they have muted by server policy,
+  is away (`push_away`) or gone. Skip rooms they have muted by server policy,
   such as with a `/mute` command ([§4.8](#48-command)). Servers MAY wait briefly first and
   skip the push if the user's `read_message_id` has passed the message.
 

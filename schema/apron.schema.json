@@ -761,9 +761,6 @@
         },
         "read_message_id": {
           "type": "string"
-        },
-        "away": {
-          "type": "boolean"
         }
       }
     },
@@ -1349,7 +1346,7 @@
       ]
     },
     "ClientNotification": {
-      "description": "A client notification (§1, §4.4).",
+      "description": "A client notification (§1, §4.4, §4.7).",
       "type": "object",
       "required": [
         "method"
@@ -1365,7 +1362,8 @@
             {
               "enum": [
                 "activity",
-                "ping"
+                "ping",
+                "push_away"
               ]
             },
             {
@@ -1396,6 +1394,28 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/ActivityParams"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "push_away"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "params"
+            ],
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/PushAwayParams"
               }
             }
           }
@@ -1702,6 +1722,18 @@
           ],
           "additionalProperties": false
         }
+      ]
+    },
+    "PushAwayParams": {
+      "description": "§4.7",
+      "type": "object",
+      "properties": {
+        "away": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "away"
       ]
     }
   }
