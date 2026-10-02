@@ -1504,7 +1504,8 @@ enables `push_register` and `push_unregister`.
 // ->
 {
   "method": "push_register", "id": "c30", "params": {
-    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "...", "push_id": "t65S5XBst9bSDpjJ"
+    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "...", "push_id": "t65S5XBst9bSDpjJ",
+    "keys": {"p256dh": "BKx...", "auth": "Q2w..."}
   }
 }
 // ->
@@ -1537,9 +1538,14 @@ enables `push_register` and `push_unregister`.
   Clients choose one per server and account, as an opaque value that
   reveals neither, such as a truncated hash. An invalid `push_id` is
   `invalid_params`.
-- `relay`: the server POSTs the payload as JSON to `url` with `token` as
-  bearer. Delivery beyond that POST is up to the relay. Native apps use a
-  relay run by their vendor.
+- Servers remove a registration when its `url` answers 404 or 410.
+- `relay`: the server POSTs the payload to `url` with `token` as bearer.
+  Delivery beyond that POST is up to the relay. Native apps use a relay
+  run by their vendor.
+  - `keys` (optional) holds a `p256dh` and `auth` the client generated, as
+    for `webpush`. With `keys`, the body is the payload encrypted as for
+    `webpush`, with `Content-Encoding: aes128gcm`, so only the client can
+    read it. Without `keys`, the body is the payload as JSON.
 - `webpush`: Web Push ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)).
   - `key` is the server's VAPID public key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)):
     an uncompressed P-256 point in unpadded base64url. Clients subscribe
@@ -1547,16 +1553,15 @@ enables `push_register` and `push_unregister`.
     changes.
   - `url` is the subscription endpoint. `keys` holds its `p256dh` and
     `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
-  - Servers encrypt the payload as one `aes128gcm` record of at most 4096
-    bytes ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign
-    with the private key for `key`.
-  - Servers remove a registration when the push service answers 404 or 410.
+  - Servers encrypt the payload as one `aes128gcm` record
+    ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign with the
+    private key for `key`.
 - Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
   `log_id`, plus the registration's `push_id` if it has one. `push_id`
   appears only in push payloads. Clients ignore payload fields they don't
-  know, and never install the payload as a snapshot. `body` MAY
-  be truncated or omitted to fit, and servers SHOULD omit `format` and
-  `embeds`.
+  know, and never install the payload as a snapshot. A payload is at most
+  3072 bytes of JSON: `body` MAY be truncated or omitted to fit, and
+  servers SHOULD omit `format` and `embeds`.
 - Clients SHOULD show at most one notification per `push_id` and
   `message_id`. A later one for the same pair replaces the earlier one,
   whether it came from a push or from the client's own connection.
