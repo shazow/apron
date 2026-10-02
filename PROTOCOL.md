@@ -370,7 +370,7 @@ class User {
   name?: string;                // absent: shown as user_id
   avatar?: string;              // image URL
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
-  status?: string;              // online, idle, or offline; current objects only (§4.11)
+  status?: "online" | "idle" | "offline"; // current objects only (§4.11)
   ext?: object;                 // opaque extension data (§3.5)
 }
 ```
@@ -1809,17 +1809,19 @@ others.
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "online"}}}
 ```
 
-- `status` is a notification about the sending connection. Each present
-  field updates that state, and absent fields leave it unchanged. Clients
-  MAY send it before authenticating; it applies once authenticated.
+- `status` is a notification about the sending connection, except
+  `invisible`. Each present field updates that state, and absent fields
+  leave it unchanged. Clients MAY send it before authenticating; it
+  applies once authenticated.
 - `idle` (boolean): nobody is attending the connection, such as an
   unfocused tab, a backgrounded app, or a connection opened to fetch after a
   push. It ends with `idle: false`, a `message` from that connection, or
   when the connection closes.
 - `room_id` (string or null): the room the connection is viewing, or none.
   Without it, the server treats the connection as viewing every room.
-- `invisible` (boolean): the connection does not count toward the user's
-  `status`.
+- `invisible` (boolean): others see the user as `offline`. It applies to
+  the user, not the connection, and lasts until changed. It changes nothing
+  else: the user still receives messages and pushes.
 - Clients report their initial state at once and becoming attended at once.
   They SHOULD report becoming idle only after it has lasted about 30
   seconds.
@@ -1827,10 +1829,14 @@ others.
   sent no frame for a server-defined time as idle, and MAY hold back
   unlogged frames, such as typing, from idle connections or connections
   viewing other rooms.
-- A user's `status` is `online` if a counted connection is attended, `idle`
-  if every counted connection is idle, and `offline` otherwise. Others see
-  an invisible user as `offline`. Other values are reserved, such as `away`
-  and `dnd` for a status the user sets.
+- A user's `status` tells others whether the user is here, and if not,
+  whether they will be notified:
+  - `online`: a connection is attended.
+  - `idle`: none is, but the user can be notified, by an idle connection or
+    by a push registration ([§4.7](#47-push)).
+  - `offline`: neither.
+- Clients treat an unknown `status` as `offline`. Other values are
+  reserved, such as `dnd` for a status the user sets.
 - `status` appears only in current user objects ([§3.3](#33-identity)). A change is a `user`
   notification to those who share a room. Servers MAY leave `status` out,
   and MAY delay or limit its changes.

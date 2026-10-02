@@ -50,7 +50,8 @@
           "$ref": "#/$defs/Ext"
         },
         "status": {
-          "type": "string"
+          "type": "string",
+          "description": "online, idle, or offline; others reserved (§4.11)"
         }
       },
       "required": [
