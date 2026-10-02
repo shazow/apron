@@ -1558,19 +1558,28 @@ enables `push_register` and `push_unregister`.
     private key for `key`.
 - Every kind delivers the same payload: a message object ([§3.5](#35-messages)) without
   `log_id`, plus the registration's `push_id` if it has one. `push_id`
-  appears only in push payloads. Clients ignore payload fields they don't
+  and `unread` appear only in push payloads. Clients ignore payload fields they don't
   know, and never install the payload as a snapshot. A payload is at most
   3072 bytes of JSON: `body` MAY be truncated or omitted to fit, and
   servers SHOULD omit `format` and `embeds`.
+- `unread` (optional) is the user's unread count once the message is
+  delivered, as the server counts it, such as new messages within the
+  registration's scopes after the user's read cursors ([§4.4](#44-activity)). Clients MAY
+  show it as an app badge.
 - Clients SHOULD show at most one notification per `push_id` and
   `message_id`. A later one for the same pair replaces the earlier one,
   whether it came from a push or from the client's own connection.
 - `wake` (optional) lists the scopes a registration wakes for. Each scope
-  selects new messages in rooms the user can see:
+  selects new messages in rooms the user can see, except `badge`:
   - `mentions`: messages whose `mentions` list the user ([§3.5](#35-messages)).
   - `private`: messages in private rooms the user has joined ([§4.3.4](#434-creating-and-editing)).
   - `replies`: replies to the user's messages.
   - `joined`: messages in rooms the user has joined ([§4.3.2](#432-membership)).
+  - `badge`: changes to `unread` without a new message, such as after the
+    user reads on another device. Their payload has only `push_id` and
+    `unread`, and shows no notification. Clients request `badge` only where
+    a push may arrive without showing a notification, which excludes
+    `webpush`.
 - Servers advertise only scopes they implement, and ignore others in
   `wake`. An empty `wake` wakes for nothing. Without `wake`, the server
   uses its default scopes, which SHOULD be `mentions` and `replies` where
@@ -1585,7 +1594,7 @@ enables `push_register` and `push_unregister`.
 
 ```json
 {
-  "message_id": "1724803200042", "room_id": "general", "push_id": "t65S5XBst9bSDpjJ",
+  "message_id": "1724803200042", "room_id": "general", "push_id": "t65S5XBst9bSDpjJ", "unread": 2,
   "from": {"user_id": "alice", "name": "Alice"},
   "body": {"text": "Deploy is done, can someone check the dashboards?"}
 }
