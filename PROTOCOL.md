@@ -1500,7 +1500,7 @@ enables `push_register` and `push_unregister`.
 
 ```jsonc
 // <- in the server frame
-"push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "private"]}
+"push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
 // ->
 {
   "method": "push_register", "id": "c30", "params": {
@@ -1568,7 +1568,8 @@ enables `push_register` and `push_unregister`.
   - `joined`: messages in rooms the user has joined ([§4.3.2](#432-membership)).
 - Servers advertise only scopes they implement, and ignore others in
   `wake`. An empty `wake` wakes for nothing. Without `wake`, the server
-  uses its default scopes, which SHOULD be `mentions` when advertised.
+  uses its default scopes, which SHOULD be `mentions` and `replies` where
+  advertised.
   Third-party scopes use the `ext:` prefix.
 - Within those scopes, wake policy is server-defined, such as rate limits
   and skipping the sender's own messages.
