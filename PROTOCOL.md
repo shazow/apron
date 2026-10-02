@@ -1801,10 +1801,12 @@ others.
 ```jsonc
 // -> nobody has attended this connection for a while
 {"method": "status", "params": {"idle": true}}
+// <- (to others who share a room, if this was Alice's last attended connection)
+{"method": "user", "params": {"new": {"user_id": "alice", "status": "idle"}}}
 // -> attended again, viewing a room
 {"method": "status", "params": {"idle": false, "room_id": "general"}}
 // <- (to others who share a room)
-{"method": "user", "params": {"new": {"user_id": "alice", "status": "idle"}}}
+{"method": "user", "params": {"new": {"user_id": "alice", "status": "online"}}}
 ```
 
 - `status` is a notification about the sending connection. Each present
