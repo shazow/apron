@@ -425,6 +425,12 @@
               "required": [
                 "key"
               ]
+            },
+            "wake": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         },
@@ -705,6 +711,12 @@
             "p256dh",
             "auth"
           ]
+        },
+        "wake": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [

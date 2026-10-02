@@ -241,7 +241,7 @@ class Server {
   welcome?: string;             // user-readable Markdown details and auth instructions
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
   ping?: number;                // seconds between client pings (§1)
-  push?: object;                // push kinds; its presence enables push (§4.7)
+  push?: object;                // push kinds and wake scopes; enables push (§4.7)
   ext?: object;                 // opaque extension data (§3.5)
 }
 ```
@@ -1495,11 +1495,12 @@ the user's name.
 ### 4.7 Push
 
 `server.push` ([§3.1](#31-server-frame)) maps each supported push kind to its public
-configuration. Its presence enables `push_register` and `push_unregister`.
+configuration, and `wake` to the wake scopes it supports. Its presence
+enables `push_register` and `push_unregister`.
 
 ```jsonc
 // <- in the server frame
-"push": {"relay": {}, "webpush": {"key": "BNcR..."}}
+"push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "private"]}
 // ->
 {
   "method": "push_register", "id": "c30", "params": {
@@ -1510,7 +1511,7 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 {
   "method": "push_register", "id": "c31", "params": {
     "kind": "webpush", "url": "https://push.example/s/abc", "push_id": "t65S5XBst9bSDpjJ",
-    "keys": {"p256dh": "BOr...", "auth": "Hn3..."}
+    "keys": {"p256dh": "BOr...", "auth": "Hn3..."}, "wake": ["mentions", "private"]
   }
 }
 // ->
@@ -1559,13 +1560,22 @@ configuration. Its presence enables `push_register` and `push_unregister`.
 - Clients SHOULD show at most one notification per `push_id` and
   `message_id`. A later one for the same pair replaces the earlier one,
   whether it came from a push or from the client's own connection.
-- Wake policy is server-defined.
+- `wake` (optional) lists the scopes a registration wakes for. Each scope
+  selects new messages in rooms the user can see:
+  - `mentions`: messages whose `mentions` list the user ([§3.5](#35-messages)).
+  - `private`: messages in private rooms the user has joined ([§4.3.4](#434-creating-and-editing)).
+  - `replies`: replies to the user's messages.
+  - `joined`: messages in rooms the user has joined ([§4.3.2](#432-membership)).
+- Servers advertise only scopes they implement, and ignore others in
+  `wake`. An empty `wake` wakes for nothing. Without `wake`, the server
+  uses its default scopes, which SHOULD be `mentions` when advertised.
+  Third-party scopes use the `ext:` prefix.
+- Within those scopes, wake policy is server-defined, such as rate limits
+  and skipping the sender's own messages.
 - Suggested convention: wake a user only when every connection of theirs
-  is away or gone ([§4.4](#44-activity)). Wake them for rooms they have joined
-  ([§4.3.2](#432-membership)) and for messages whose `mentions` list them in rooms they can
-  see. Skip rooms they have muted by server policy, such as with a `/mute`
-  command ([§4.8](#48-command)). Servers MAY wait briefly first and skip the push if the user's
-  `read_message_id` has passed the message.
+  is away or gone ([§4.4](#44-activity)). Skip rooms they have muted by server policy,
+  such as with a `/mute` command ([§4.8](#48-command)). Servers MAY wait briefly first and
+  skip the push if the user's `read_message_id` has passed the message.
 
 ```json
 {
