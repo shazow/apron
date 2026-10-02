@@ -51,7 +51,18 @@
         },
         "status": {
           "type": "string",
-          "description": "online, idle, or offline; others reserved (§4.11)"
+          "description": "online, idle, dnd, or offline; others reserved (§4.11)"
+        },
+        "mute": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "const": true
+            }
+          ]
         }
       },
       "required": [
@@ -282,6 +293,17 @@
         "member_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "mute": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "const": true
+            }
+          ]
         }
       },
       "required": [
@@ -1716,17 +1738,25 @@
       "description": "§4.11",
       "type": "object",
       "properties": {
+        "room_id": {
+          "type": "string"
+        },
         "idle": {
           "type": "boolean"
         },
-        "room_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "invisible": {
           "type": "boolean"
+        },
+        "mute": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "const": true
+            }
+          ]
         }
       }
     }

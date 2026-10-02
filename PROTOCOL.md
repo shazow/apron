@@ -370,7 +370,8 @@ class User {
   name?: string;                // absent: shown as user_id
   avatar?: string;              // image URL
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
-  status?: "online" | "idle" | "offline"; // current objects only (§4.11)
+  status?: "online" | "idle" | "offline" | "dnd"; // current objects only (§4.11)
+  mute?: number | true;         // in `you` only: seconds left, or until changed (§4.11)
   ext?: object;                 // opaque extension data (§3.5)
 }
 ```
@@ -484,6 +485,9 @@ class Room {
   // "rooms" capability
   members?: User[];             // only in some frames
   member_count?: number;        // total members, when `members` is truncated
+
+  // "status" capability
+  mute?: number | true;         // the caller's own room mute (§4.11)
 }
 ```
 
@@ -1526,7 +1530,8 @@ enables `push_register` and `push_unregister`.
   registration the client has not renewed within a server-defined period.
 - Clients SHOULD unregister before signing out.
 - A server that advertises `push` SHOULD advertise `status` ([§4.11](#411-status)), which
-  tells it when a connection is idle.
+  tells it when a connection is idle and when the user is muted. Servers
+  don't push to a muted user, nor for a muted room except `mentions`.
 - `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`.
   Clients choose one per server and account, as an opaque value that
   reveals neither, such as a truncated hash. An invalid `push_id` is
@@ -1794,49 +1799,56 @@ sign-in or an addition, and one with `token` approves it:
 
 ### 4.11 `status`
 
-Capability `status`. A client tells the server the state of each
-connection, and the server MAY show each user's resulting `status` to
-others.
+Capability `status`. A client tells the server whether its connections are
+attended and when to stay quiet, and the server MAY show each user's
+resulting `status` to others.
 
 ```jsonc
 // -> nobody has attended this connection for a while
 {"method": "status", "params": {"idle": true}}
 // <- (to others who share a room, if this was Alice's last attended connection)
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "idle"}}}
-// -> attended again, viewing a room
-{"method": "status", "params": {"idle": false, "room_id": "general"}}
+// -> attending a room again
+{"method": "status", "params": {"room_id": "general", "idle": false}}
 // <- (to others who share a room)
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "online"}}}
+// -> mute #random until unmuted, then everything for an hour
+{"method": "status", "params": {"room_id": "random", "mute": true}}
+{"method": "status", "params": {"mute": 3600}}
 ```
 
-- `status` is a notification about the sending connection, except
-  `invisible`. Each present field updates that state, and absent fields
-  leave it unchanged. Clients MAY send it before authenticating; it
-  applies once authenticated.
-- `idle` (boolean): nobody is attending the connection, such as an
-  unfocused tab, a backgrounded app, or a connection opened to fetch after a
-  push. It ends with `idle: false`, a `message` from that connection, or
-  when the connection closes.
-- `room_id` (string or null): the room the connection is viewing, or none.
-  Without it, the server treats the connection as viewing every room.
-- `invisible` (boolean): others see the user as `offline`. It applies to
-  the user, not the connection, and lasts until changed. It changes nothing
-  else: the user still receives messages and pushes.
+- `status` is a notification. Each present field updates that state, and
+  absent fields leave it unchanged. Clients MAY send it before
+  authenticating; it applies once authenticated.
+- `room_id` (optional) scopes the fields to one room; without it, they
+  apply everywhere. A room's value overrides the unscoped one there.
+  Servers ignore scoped fields they don't implement.
+- `idle` (boolean) is about the sending connection: nobody is attending it,
+  such as an unfocused tab, a backgrounded app, or a connection opened to
+  fetch after a push. Scoped `idle: false` means the connection is attending
+  that room. `idle` ends with `idle: false`, a `message` from that
+  connection, or when the connection closes.
+- `invisible` (boolean) is about the user and lasts until changed: others
+  see the user as `offline`. The user still receives messages and pushes.
+- `mute` is about the user: seconds to stay quiet, `true` until changed, or
+  `0` to end it. A muted user gets no pushes or client notifications. In a
+  muted room, mentions still notify. The server echoes the remaining `mute`
+  in `you` and in the caller's joined rooms in listings ([§4.3.1](#431-listing)).
 - Clients report their initial state at once and becoming attended at once.
   They SHOULD report becoming idle only after it has lasted about 30
   seconds.
-- These fields are never delivered. Servers MAY treat a connection that has
-  sent no frame for a server-defined time as idle, and MAY hold back
-  unlogged frames, such as typing, from idle connections or connections
-  viewing other rooms.
+- These fields are never shown to others. Servers MAY treat a connection
+  that has sent no frame for a server-defined time as idle, and MAY hold
+  back unlogged frames, such as typing, from connections not attending the
+  room.
 - A user's `status` tells others whether the user is here, and if not,
   whether they will be notified:
   - `online`: a connection is attended.
   - `idle`: none is, but the user can be notified, by an idle connection or
     by a push registration ([§4.7](#47-push)).
-  - `offline`: neither.
-- Clients treat an unknown `status` as `offline`. Other values are
-  reserved, such as `dnd` for a status the user sets.
+  - `dnd`: the user is muted everywhere.
+  - `offline`: none of these.
+- Clients treat an unknown `status` as `offline`.
 - `status` appears only in current user objects ([§3.3](#33-identity)). A change is a `user`
   notification to those who share a room. Servers MAY leave `status` out,
   and MAY delay or limit its changes.
