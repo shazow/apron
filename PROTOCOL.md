@@ -1553,8 +1553,9 @@ enables `push_register` and `push_unregister`.
   a relay run by their vendor.
   - `keys` (optional) holds a `p256dh` and `auth` the client generated, as
     for `webpush`. With `keys`, the body is the payload encrypted as for
-    `webpush`, sent with `Content-Encoding: aes128gcm`. Without `keys`, the
-    body is the payload sent as `Content-Type: application/json`.
+    `webpush`, sent with `Content-Type: application/octet-stream` and
+    `Content-Encoding: aes128gcm`. Without `keys`, the body is the payload
+    sent as `Content-Type: application/json`.
 - `webpush`: Web Push ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)).
   - `key` is the server's VAPID public key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)):
     an uncompressed P-256 point in unpadded base64url. Clients subscribe
@@ -1572,7 +1573,9 @@ enables `push_register` and `push_unregister`.
   - `unread` (optional): the user's unread count as the server counts it,
     such as messages after the user's read cursors ([§4.4](#44-activity)). It is the
     same for all of the user's registrations. Servers that advertise
-    `badge` send `unread`. Clients MAY show it as an app badge.
+    `badge` send `unread`. Servers MAY leave what a room's `mute` silences
+    out of `unread`; the unscoped `mute` doesn't change it. Clients MAY show
+    it as an app badge.
   - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients never
     install it as a snapshot. Its `body` MAY be truncated or omitted to
     fit, and servers SHOULD omit `format` and `embeds`. A payload without
@@ -1583,11 +1586,14 @@ enables `push_register` and `push_unregister`.
 - `wake` (optional) lists the scopes a registration wakes for. Each scope
   selects new messages in rooms the user can see, except `badge`:
   - `mentions`: messages whose `mentions` list the user ([§3.5](#35-messages)).
+    Servers MAY also wake for an edit that newly mentions the user.
   - `private`: messages in private rooms the user has joined ([§4.3.4](#434-creating-and-editing)).
   - `replies`: messages whose `reply_to` refers to the user's message ([§3.5](#35-messages)).
   - `joined`: messages in rooms the user has joined ([§4.3.2](#432-membership)).
   - `badge`: every change to `unread`. A push for a change that no other
     scope selects has no `message`. Servers ignore `badge` for `webpush`.
+    Servers MAY skip intermediate values of `unread`, sending only the
+    latest.
 - Servers advertise only scopes they implement, and ignore others in
   `wake`. An empty `wake` wakes for nothing. Without `wake`, the server
   uses its default scopes, which SHOULD be `mentions` and `replies` where
@@ -1829,13 +1835,14 @@ attended and when to stay quiet.
 ```
 
 - `status` is a notification. Clients MAY send it before authenticating; it
-  applies once authenticated.
+  applies, and its `room_id` is checked, once authenticated.
 - Absent fields leave the state unchanged. Clients send only fields that
   changed.
 - Servers ignore an invalid field.
 - `room_id` (optional) scopes `mute` to one room. Servers ignore a scoped
   `idle` or `invisible`.
-- Servers ignore a `status` whose `room_id` the user cannot see.
+- Servers ignore a `status` whose `room_id` is invalid or one the user
+  cannot see.
 - `idle` (boolean) is about the sending connection: nobody is attending it,
   such as an unfocused tab, a backgrounded app, or a connection opened to
   fetch after a push. It ends with `idle: false`.
