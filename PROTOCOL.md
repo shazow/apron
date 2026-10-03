@@ -1850,9 +1850,8 @@ resulting `status` to others.
 - `mute` is about the user: seconds to stay quiet, `true` until changed, or
   `0` for not muted. Clients don't notify for what it silences.
 - The unscoped `mute` silences everything. A room's `mute` silences that
-  room except mentions.
-- A room's `mute` replaces the unscoped one in that room. Scoped `mute: 0`
-  removes the room's own mute, and the unscoped one applies there again.
+  room and its threads, except mentions. Both apply at once.
+- Scoped `mute: 0` removes the room's own mute.
 - `invisible` and `mute` outlast the connection that set them.
 - While set, `invisible` and the unscoped `mute` are in the `you` of the
   `auth` result ([§3.2](#32-authentication)). A room's `mute` is in that room's records in
