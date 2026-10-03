@@ -300,6 +300,7 @@
           "minimum": 0
         },
         "mute": {
+          "description": "The receiving user's mute of this room: seconds left, true until changed, or 0 for not muted; absent in room_list and room_update joined means 0 (§4.11)",
           "anyOf": [
             {
               "type": "integer",

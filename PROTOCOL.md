@@ -352,7 +352,8 @@ is what the server assigned. Servers SHOULD NOT give out a previously used
 `user_id` without authenticating its owner.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
-other requests get `denied` and other notifications are ignored.
+other requests get `denied` and other notifications are ignored, except
+`status` ([§4.11](#411-status)).
 The server MAY send notifications before auth, such as a `~private` welcome
 ([Appendix A.1](#a1-system-identities-and-scoped-notices), [Appendix B](#appendix-b--valid-scenarios-informative)).
 
@@ -372,7 +373,7 @@ class User {
   name?: string;                // absent: shown as user_id
   avatar?: string;              // image URL
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
-  status?: "online" | "idle" | "offline" | "dnd"; // current objects only; unknown means "offline" (§4.11)
+  status?: "online" | "idle" | "offline" | "dnd"; // current objects only (§4.11)
   mute?: number | true;         // in `you` only: seconds left, true until changed, 0 not muted (§4.11)
   invisible?: boolean;          // in `you` only (§4.11)
   ext?: object;                 // opaque extension data (§3.5)
@@ -1138,7 +1139,8 @@ list:
 - `left`: `[{room_id}]` of rooms the user is no longer in, for any reason.
 - `memberships`: membership records ([§4.3.2](#432-membership)), to the room's members.
 - `updated`: room records that are new or changed while membership is not.
-  These are edits to a joined room and new or edited threads of one. A
+  These are edits to a joined room, new or edited threads of one, and
+  changes to the user's own `mute` of a joined room ([§4.11](#411-status)). A
   thread's record changes reach the parent's members, joined to the thread
   or not, unless the thread is private. Messages in a thread do not produce
   `updated`, so its `latest_log_id` there is as of the last record change.
@@ -1499,7 +1501,7 @@ enables `push_register` and `push_unregister`.
 // <- the server frame offers relay and webpush
 {
   "method": "server", "params": {
-    "apron": 7, "auth": ["webauthn", "token"],
+    "apron": 7, "capabilities": ["status"], "auth": ["webauthn", "token"],
     "push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
   }
 }
@@ -1535,17 +1537,17 @@ enables `push_register` and `push_unregister`.
 - Clients SHOULD unregister before signing out. Servers MAY remove a user's
   registrations when they revoke the user's sessions.
 - A server that advertises `push` SHOULD advertise `status` ([§4.11](#411-status)).
-- Servers send what `mute` silences ([§4.11](#411-status)) only as a `badge` push,
-  without `message`.
+- A push that `mute` ([§4.11](#411-status)) silences has no `message` and goes only to
+  registrations that wake for `badge`.
 - `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`.
   Clients choose one per server and account, as an opaque value that
-  reveals neither, such as a truncated hash. An invalid `push_id` is
+  reveals neither the server nor the account. An invalid `push_id` is
   `invalid_params`.
 - Servers remove a registration when its `url` answers 404 or 410.
 - Servers send `TTL` and `Urgency` headers ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030))
-  with every push, to relays too. `Urgency` is `high` for `mentions`,
-  `replies`, and `private`, `normal` for `joined`, and `low` for `badge`.
-  A push that several scopes select takes the most urgent.
+  with every push, to relays too. `Urgency` is `low` for a push without
+  `message`, `normal` for one that only `joined` selects, and `high`
+  otherwise.
 - `relay`: the server POSTs the payload to `url`, with `token` (optional)
   as bearer. Delivery beyond that POST is up to the relay. Native apps use
   a relay run by their vendor.
@@ -1558,19 +1560,19 @@ enables `push_register` and `push_unregister`.
     an uncompressed P-256 point in unpadded base64url. Clients subscribe
     with it as the application server key, and subscribe again when it
     changes.
-  - `url` is the subscription endpoint. `keys` holds its `p256dh` and
-    `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
+  - `url` is the subscription endpoint. `keys` (required) holds its
+    `p256dh` and `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
   - Servers encrypt the payload as one `aes128gcm` record
     ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign with the
     private key for `key`.
-- Every kind delivers the same payload: a JSON object of at most 2048
-  bytes. Clients ignore fields they don't know.
+- Every kind delivers the same payload: an object of at most 2048 bytes as
+  UTF-8 JSON.
   - `push_id`: the registration's, if it has one. Clients drop a payload
     whose `push_id` they don't recognize.
   - `unread` (optional): the user's unread count as the server counts it,
     such as messages after the user's read cursors ([§4.4](#44-activity)). It is the
-    same for all of the user's registrations. Clients MAY show it as an app
-    badge.
+    same for all of the user's registrations. Servers that advertise
+    `badge` send `unread`. Clients MAY show it as an app badge.
   - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients never
     install it as a snapshot. Its `body` MAY be truncated or omitted to
     fit, and servers SHOULD omit `format` and `embeds`. A payload without
@@ -1582,7 +1584,7 @@ enables `push_register` and `push_unregister`.
   selects new messages in rooms the user can see, except `badge`:
   - `mentions`: messages whose `mentions` list the user ([§3.5](#35-messages)).
   - `private`: messages in private rooms the user has joined ([§4.3.4](#434-creating-and-editing)).
-  - `replies`: replies to the user's messages.
+  - `replies`: messages whose `reply_to` refers to the user's message ([§3.5](#35-messages)).
   - `joined`: messages in rooms the user has joined ([§4.3.2](#432-membership)).
   - `badge`: every change to `unread`. A push for a change that no other
     scope selects has no `message`. Servers ignore `badge` for `webpush`.
@@ -1590,7 +1592,7 @@ enables `push_register` and `push_unregister`.
   `wake`. An empty `wake` wakes for nothing. Without `wake`, the server
   uses its default scopes, which SHOULD be `mentions` and `replies` where
   advertised.
-  Third-party scopes use the `ext:` prefix.
+- Third-party scopes use the `ext:` prefix.
 - Servers don't wake a user for their own messages. Other wake policy,
   such as rate limits, is server-defined.
 - Suggested convention: wake a user only when every connection of theirs
@@ -1807,8 +1809,7 @@ sign-in or an addition, and one with `token` approves it:
 ### 4.11 `status`
 
 Capability `status`. A client tells the server whether its connections are
-attended and when to stay quiet, and the server MAY show each user's
-resulting `status` to others.
+attended and when to stay quiet.
 
 ```jsonc
 // -> nobody has attended this connection for a while
@@ -1831,49 +1832,57 @@ resulting `status` to others.
   applies once authenticated.
 - Absent fields leave the state unchanged. Clients send only fields that
   changed.
+- Servers ignore an invalid field.
 - `room_id` (optional) scopes `mute` to one room. Servers ignore a scoped
-  `idle` or `invisible`, and a `room_id` the user cannot see.
+  `idle` or `invisible`.
+- Servers ignore a `status` whose `room_id` the user cannot see.
 - `idle` (boolean) is about the sending connection: nobody is attending it,
   such as an unfocused tab, a backgrounded app, or a connection opened to
-  fetch after a push. It ends with `idle: false` or a `message` from that
-  connection.
+  fetch after a push. It ends with `idle: false`.
+- A connection is attended until it sends `idle: true`.
 - Clients send a connection's initial `idle` at once, and `idle: false` at
-  once. They SHOULD send `idle: true` only after the connection has been
-  unattended for about 30 seconds.
+  once. They SHOULD send a later `idle: true` only after the connection has
+  been unattended for about 30 seconds.
 - Servers MAY treat a connection that has never sent `status` as idle after
   it sends no frame other than `ping` for a server-defined time, until its
   next frame.
 - Servers MAY hold back unlogged frames, such as typing, from idle
   connections.
 - `invisible` (boolean) is about the user: others see the user's `status`
-  as `offline`. Nothing else changes for the user.
+  as `offline`.
 - `mute` is about the user: seconds to stay quiet, `true` until changed, or
   `0` for not muted. Clients don't notify for what it silences.
 - The unscoped `mute` silences everything. A room's `mute` silences that
   room and its threads, except mentions. Both apply at once.
 - Scoped `mute: 0` removes the room's own mute.
+- A room's `mute` applies whether or not the user has joined the room.
 - `invisible` and `mute` outlast the connection that set them.
 - While set, `invisible` and the unscoped `mute` are in the `you` of the
-  `auth` result ([§3.2](#32-authentication)). A room's `mute` is in that room's records in
-  `room_list` and `room_update` `joined` ([§3.4](#34-rooms)).
-- The server echoes each change to the user's connections. A changed room
-  `mute` arrives as `room_update` `updated`.
+  `auth` result ([§3.2](#32-authentication)). In that `you`, an absent `invisible` or `mute`
+  means not set.
+- A room's `mute` is in that room's records in `room_list` and
+  `room_update` `joined` ([§3.4](#34-rooms)). There, an absent room `mute` means `0`.
+- A room record carries only the receiving user's `mute`. History `rooms`
+  records ([§4.1](#41-history)) omit it.
+- The server echoes each change to `invisible` or `mute` to the user's
+  connections. A changed room `mute` arrives as `room_update` `updated`
+  while the user has joined the room ([§4.3.3](#433-updates)).
 - A mute ended by request is echoed as `mute: 0`. Clients count down the
-  seconds themselves, and the server sends nothing when they run out.
-- A user's `status` tells others whether the user is here, and if not,
-  whether they will be notified. It is the first of these that applies:
+  seconds themselves. The server sends no `mute: 0` when they run out.
+- A user's `status` is the first of these that applies:
   - `offline`: the user is invisible.
   - `dnd`: the unscoped `mute` is set.
   - `online`: a connection is attended.
-  - `idle`: a connection is idle, or the user has a push registration
-    ([§4.7](#47-push)).
+  - `idle`: a connection is idle, or the user has a push registration that
+    wakes for messages ([§4.7](#47-push)).
   - `offline`: otherwise.
 - `status` in `you` ignores `invisible`. Others see only the user's
   `status`.
-- Clients treat an unknown `status` as `offline`.
+- Clients treat an unknown `status` value as `offline`.
 - `status` appears only in current user objects ([§3.3](#33-identity)). A change is a `user`
   notification to the user's connections and to those who share a room.
-  Servers MAY leave `status` out, and MAY delay or limit its changes.
+- Servers MAY leave `status` out, and MAY delay or limit its changes. An
+  absent `status` leaves the kept value unchanged ([§3.3](#33-identity)).
 - Servers MAY send `status` changes only to connections that have sent
   `status`.
 
