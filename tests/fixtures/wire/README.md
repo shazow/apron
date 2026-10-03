@@ -509,9 +509,9 @@ they must produce the same final state (or use `expected: {}` with a final
 Keep the invariants above when adding frames. Use generated data for volume
 benchmarks rather than large checked-in logs.
 
-Not covered: `me` response semantics, liveness `ping` and `away` (they depend
-on timers and focus; the client's unit tests cover them), opening a thread
-without joining it, typing expiry, read markers, deduplication lifetime,
-embeds and uploads (including `/avatar`), push, RTC, WebAuthn (see
-`tests/fixtures/webauthn.json`), renderer behavior beyond `senders`, and
-performance.
+Not covered: `me` response semantics, liveness `ping` and `status` `idle`
+(they depend on timers and focus; the client's unit tests cover them),
+opening a thread without joining it, typing expiry, read markers,
+deduplication lifetime, embeds and uploads (including `/avatar`), push, RTC,
+WebAuthn (see `tests/fixtures/webauthn.json`), renderer behavior beyond
+`senders`, and performance.

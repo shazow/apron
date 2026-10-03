@@ -48,6 +48,26 @@
         },
         "ext": {
           "$ref": "#/$defs/Ext"
+        },
+        "status": {
+          "type": "string",
+          "description": "online, idle, dnd, or offline; clients treat others as offline (§4.11)"
+        },
+        "mute": {
+          "description": "In you only: seconds left, true until changed, or 0 for not muted (§4.11)",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "invisible": {
+          "description": "In you only (§4.11)",
+          "type": "boolean"
         }
       },
       "required": [
@@ -278,6 +298,18 @@
         "member_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "mute": {
+          "description": "The receiving user's mute of this room: seconds left, true until changed, or 0 for not muted; absent in room_list and room_update joined means 0 (§4.11)",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "const": true
+            }
+          ]
         }
       },
       "required": [
@@ -413,7 +445,26 @@
           "exclusiveMinimum": 0
         },
         "push": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "webpush": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key"
+              ]
+            },
+            "wake": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         },
         "ext": {
           "$ref": "#/$defs/Ext"
@@ -673,12 +724,49 @@
         },
         "token": {
           "type": "string"
+        },
+        "push_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "keys": {
+          "type": "object",
+          "properties": {
+            "p256dh": {
+              "type": "string"
+            },
+            "auth": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "p256dh",
+            "auth"
+          ]
+        },
+        "wake": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "kind",
         "url"
-      ]
+      ],
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webpush"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "keys"
+        ]
+      }
     },
     "PushUnregisterParams": {
       "description": "§4.7",
@@ -705,9 +793,6 @@
         },
         "read_message_id": {
           "type": "string"
-        },
-        "away": {
-          "type": "boolean"
         }
       }
     },
@@ -1293,7 +1378,7 @@
       ]
     },
     "ClientNotification": {
-      "description": "A client notification (§1, §4.4).",
+      "description": "A client notification (§1, §4.4, §4.11).",
       "type": "object",
       "required": [
         "method"
@@ -1309,7 +1394,8 @@
             {
               "enum": [
                 "activity",
-                "ping"
+                "ping",
+                "status"
               ]
             },
             {
@@ -1340,6 +1426,28 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/ActivityParams"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "status"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "params"
+            ],
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/StatusParams"
               }
             }
           }
@@ -1603,6 +1711,59 @@
           "server",
           "user"
         ]
+      }
+    },
+    "PushPayload": {
+      "description": "§4.7: the payload every push kind delivers",
+      "type": "object",
+      "properties": {
+        "push_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "unread": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Message"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "log_id": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    "StatusParams": {
+      "description": "§4.11",
+      "type": "object",
+      "properties": {
+        "room_id": {
+          "type": "string"
+        },
+        "idle": {
+          "type": "boolean"
+        },
+        "invisible": {
+          "type": "boolean"
+        },
+        "mute": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "const": true
+            }
+          ]
+        }
       }
     }
   }
