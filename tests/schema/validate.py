@@ -126,6 +126,8 @@ def check_protocol():
                 check(frame, "ClientRequest", where)
             elif "method" in frame:
                 check(frame, "ClientNotification" if frame["method"] in ("activity", "ping", "status") and "from" not in frame.get("params", {}) else "ServerNotification", where)
+            elif "push_id" in frame or "unread" in frame:
+                check(frame, "PushPayload", where)
             elif "result" in frame or "error" in frame:
                 check(frame, "ServerFrame", where)
                 if frame.get("id") in requests:

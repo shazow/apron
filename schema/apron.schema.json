@@ -51,9 +51,10 @@
         },
         "status": {
           "type": "string",
-          "description": "online, idle, dnd, or offline; others reserved (§4.11)"
+          "description": "online, idle, dnd, or offline; clients treat others as offline (§4.11)"
         },
         "mute": {
+          "description": "In you only: seconds left, true until changed, or 0 for not muted (§4.11)",
           "anyOf": [
             {
               "type": "integer",
@@ -63,6 +64,10 @@
               "const": true
             }
           ]
+        },
+        "invisible": {
+          "description": "In you only (§4.11)",
+          "type": "boolean"
         }
       },
       "required": [
