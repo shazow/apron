@@ -51,7 +51,7 @@
         },
         "status": {
           "type": "string",
-          "description": "online, idle, dnd, or offline; clients treat others as offline (§4.11)"
+          "description": "online, idle, dnd, or offline; clients treat any other value as offline (§4.11)"
         },
         "mute": {
           "description": "In you only: seconds left, true until changed, or 0 for not muted (§4.11)",
@@ -300,7 +300,7 @@
           "minimum": 0
         },
         "mute": {
-          "description": "The receiving user's mute of this room: seconds left, true until changed, or 0 for not muted; absent in room_list and room_update joined means 0 (§4.11)",
+          "description": "The receiving user's mute of this room: seconds left, true until changed, or 0 for not muted; in room_list, both joined and not_joined, and room_update joined, where absent means 0 (§4.11)",
           "anyOf": [
             {
               "type": "integer",
@@ -1709,6 +1709,7 @@
           "room_set",
           "room_update",
           "server",
+          "status",
           "user"
         ]
       }
