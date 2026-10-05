@@ -1878,10 +1878,10 @@ attended and when to stay quiet.
   seconds themselves. The server sends no `mute: 0` when they run out.
 - A user's `status` is the first of these that applies:
   - `offline`: the user is invisible.
-  - `dnd`: the unscoped `mute` is set.
+  - `dnd`: the unscoped `mute` is set and the user has a connection.
   - `online`: a connection is attended.
-  - `idle`: a connection is idle, or the user has a push registration that
-    wakes for messages ([§4.7](#47-push)).
+  - `idle`: a connection is idle, or the unscoped `mute` is not set and the
+    user has a push registration that wakes for messages ([§4.7](#47-push)).
   - `offline`: otherwise.
 - `status` in `you` ignores `invisible`. Others see only the user's
   `status`.
