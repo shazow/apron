@@ -1904,6 +1904,11 @@ attended and when to stay quiet.
 - Servers MAY show `offline` for a user with no connections.
 - Servers MAY send `status` changes only to connections that have sent
   `idle`.
+- When a connection first sends `idle`, servers that send `status` send it
+  the `status` of each user with a connection who shares a room with it.
+- A user without a kept `status` has no known status, not `offline`.
+- Clients drop kept `status` values when they reconnect after more than 60
+  seconds.
 
 ---
 
