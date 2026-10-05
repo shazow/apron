@@ -1843,10 +1843,10 @@ attended and when to stay quiet.
 - Absent fields leave the state unchanged. Clients send only fields that
   changed.
 - Servers ignore an invalid field.
-- `room_id` (optional) scopes `mute` to one room. Servers ignore a scoped
-  `idle` or `invisible`.
-- Servers ignore a `status` whose `room_id` is invalid or one the user
-  cannot see.
+- `room_id` (optional) scopes `mute` to one room. `idle` and `invisible`
+  ignore it.
+- Servers ignore the `mute` of a `status` whose `room_id` is invalid or one
+  the user cannot see.
 - `idle` (boolean) is about the sending connection: nobody is attending it,
   such as an unfocused tab, a backgrounded app, or a connection opened to
   fetch after a push. It ends with `idle: false`.
