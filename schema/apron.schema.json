@@ -416,6 +416,13 @@
           "type": "number",
           "exclusiveMinimum": 0
         },
+        "status": {
+          "description": "Optional status values accepted, with capability status (§4.11).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "push": {
           "type": "object",
           "properties": {

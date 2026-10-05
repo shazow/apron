@@ -244,6 +244,7 @@ class Server {
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
   ping?: number;                // seconds between client pings (§1)
   push?: object;                // push kinds and wake scopes; enables push (§4.7)
+  status?: string[];            // optional status values accepted (§4.11)
   ext?: object;                 // opaque extension data (§3.5)
 }
 ```
@@ -1816,6 +1817,13 @@ Clients report idle connections and the user's mutes with the `status`
 notification.
 
 ```jsonc
+// <- the server frame accepts dnd and invisible
+{
+  "method": "server", "params": {
+    "apron": 7, "capabilities": ["status"], "auth": ["token"],
+    "status": ["dnd", "invisible"]
+  }
+}
 // -> do not disturb
 {"method": "me", "id": "c40", "params": {"status": "dnd"}}
 // <-
@@ -1827,20 +1835,28 @@ notification.
 - Users set one of these values:
   - `online`: the default. Others see the derived status below.
   - `""`: no status, to opt out. Servers set it for a value they don't
-    support.
-  - `dnd` (optional): others see `dnd`. It silences the user's
-    notifications as `mute` does.
-  - `invisible` (optional): others see `offline`. `you` shows `invisible`.
+    accept.
+  - `dnd` (optional): others see `dnd` while the user has a connection,
+    and `offline` otherwise. It silences the user's notifications as `mute`
+    does.
+  - `invisible` (optional): others see `offline`.
 - Others see a user whose `status` is `online` as one of:
   - `online`: a connection is attended.
   - `idle`: connected, but no connection is attended.
   - `offline`: no connections.
-- Servers implement `online` and `""`. The other values are optional. A
-  server without `idle` shows `online` for a connected user.
+- `server.status` ([§3.1](#31-server-frame)) lists the optional values the server accepts.
+  Only servers with capability `status` send it. Servers always accept `online` and `""` and don't list them.
+- Clients offer only the listed optional values.
+- A server without `idle` shows `online` for a connected user.
 - `status` is only in current user objects ([§3.3](#33-identity)). A change is a `user`
   notification. Servers MAY delay it.
-- After `auth`, servers send the `status` of each connected user who shares
-  a room with the user.
+- Clients take the user's own `status` from `you`. Other objects about the
+  user carry what others see.
+- A sign-in is an `auth` that signs the connection in. An `auth` that adds
+  a passkey or address to a signed-in connection is not one.
+- After a sign-in, servers send, for each user who shares a room with the
+  user, the `status` others see, other than `offline` and `""`. They send
+  it after the `auth` result.
 - Clients drop kept `status` values when they reconnect after more than 60
   seconds.
 - A user without a `status` has no known status.
@@ -1857,7 +1873,7 @@ notification.
 // <- to each of Alice's connections
 {"method": "status", "params": {"room_id": "random", "mute": true}}
 {"method": "status", "params": {"mute": 3600}}
-// <- after a later auth, the mutes in effect
+// <- after a later sign-in, the mutes in effect
 {"method": "status", "params": {"room_id": "random", "mute": true}}
 {"method": "status", "params": {"mute": 1800}}
 ```
@@ -1866,21 +1882,22 @@ notification.
   It applies once authenticated.
 - Absent fields are unchanged.
 - `idle` (boolean) is about the sending connection: nobody is attending
-  it. `idle: false` ends it.
+  it. `idle: false` ends it. `idle` ignores `room_id`.
 - Clients send a connection's initial `idle` at once, and `idle: false` at
   once. They SHOULD send `idle: true` only after about 30 seconds
   unattended.
 - Servers never send `idle`.
 - `mute` is `true`, `false`, or seconds. It silences the user's
   notifications everywhere or, with `room_id`, in that room and its
-  threads.
+  threads. `room_id` scopes only `mute`.
 - `mute` is private. Others never see it.
 - Servers without timed mutes treat seconds as `true`, and `0` as `false`.
 - Servers send each change to the user's mutes to all the user's
   connections as `status`. A mute that ends or is cleared is sent as
   `mute: false`.
-- After `auth`, servers send one `status` for each mute in effect, with the
-  seconds left or `true`. Any scope not sent is unmuted.
+- After a sign-in, servers send one `status` for each mute in effect, with
+  the seconds left or `true`. They send them after the `auth` result.
+- After a sign-in, clients treat any scope not sent as unmuted.
 - Clients apply a received `status` as their own setting.
 
 ---
