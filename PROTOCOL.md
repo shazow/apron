@@ -1890,6 +1890,7 @@ attended and when to stay quiet.
   notification to the user's connections and to those who share a room.
 - Servers MAY leave `status` out, and MAY delay or limit its changes. An
   absent `status` leaves the kept value unchanged ([§3.3](#33-identity)).
+- Servers MAY show `offline` for a user with no connections.
 - Servers MAY send `status` changes only to connections that have sent
   `status`.
 
