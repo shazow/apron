@@ -1845,7 +1845,8 @@ notification.
   - `idle`: connected, but no connection is attended.
   - `offline`: no connections.
 - `server.status` ([§3.1](#31-server-frame)) lists the optional values the server accepts.
-  Only servers with capability `status` send it. Servers always accept `online` and `""` and don't list them.
+  Only servers with capability `status` send it. Servers always accept
+  `online` and `""` and don't list them.
 - Clients offer only the listed optional values.
 - A server without `idle` shows `online` for a connected user.
 - `status` is only in current user objects ([§3.3](#33-identity)). A change is a `user`
