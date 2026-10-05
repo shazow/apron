@@ -51,23 +51,7 @@
         },
         "status": {
           "type": "string",
-          "description": "online, idle, dnd, or offline; clients treat any other value as offline (§4.11)"
-        },
-        "mute": {
-          "description": "In you only: seconds left, true until changed, or 0 for not muted (§4.11)",
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 0
-            },
-            {
-              "const": true
-            }
-          ]
-        },
-        "invisible": {
-          "description": "In you only (§4.11)",
-          "type": "boolean"
+          "description": "Current objects only. Set with me: online (default), \"\" (none), dnd, or invisible. Seen by others: online, idle, offline, dnd, or \"\". Clients show other values as unknown (§4.11)"
         }
       },
       "required": [
@@ -298,18 +282,6 @@
         "member_count": {
           "type": "integer",
           "minimum": 0
-        },
-        "mute": {
-          "description": "The receiving user's mute of this room: seconds left, true until changed, or 0 for not muted; in room_list, both joined and not_joined, and room_update joined, where absent means 0 (§4.11)",
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 0
-            },
-            {
-              "const": true
-            }
-          ]
         }
       },
       "required": [
@@ -549,6 +521,10 @@
         },
         "ext": {
           "$ref": "#/$defs/Ext"
+        },
+        "status": {
+          "type": "string",
+          "description": "With capability status (§4.11)"
         }
       }
     },
@@ -1455,7 +1431,7 @@
       ]
     },
     "ServerNotification": {
-      "description": "A server notification (§1).",
+      "description": "A server notification (§1, §4.11).",
       "type": "object",
       "required": [
         "method"
@@ -1476,7 +1452,8 @@
                 "room_update",
                 "server",
                 "user",
-                "pong"
+                "pong",
+                "status"
               ]
             },
             {
@@ -1620,6 +1597,28 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "status"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "params"
+            ],
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/StatusEvent"
+              }
+            }
+          }
         }
       ]
     },
@@ -1751,20 +1750,40 @@
         "idle": {
           "type": "boolean"
         },
-        "invisible": {
-          "type": "boolean"
-        },
         "mute": {
+          "description": "true, false, or seconds (§4.11)",
           "anyOf": [
+            {
+              "type": "boolean"
+            },
             {
               "type": "integer",
               "minimum": 0
-            },
-            {
-              "const": true
             }
           ]
         }
+      }
+    },
+    "StatusEvent": {
+      "description": "§4.11: a mute of the user's, from the server",
+      "type": "object",
+      "properties": {
+        "room_id": {
+          "type": "string"
+        },
+        "mute": {
+          "description": "true, false, or seconds (§4.11)",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "idle": false
       }
     }
   }
