@@ -124,6 +124,9 @@ Clients send requests with an `id`, and notifications without one:
 | client  | `auth`, `me`, `message`, `command`, `history`, `room_list`, `room_join`, `room_leave`, `room_set`, `reactions`, `status`, `push_register`, `push_unregister` | `activity`, `ping` |
 | server  | none | `server`, `user`, `message`, `room_update`, `reactions`, `activity`, `status`, `pong` |
 
+A server MAY ignore a request method sent without an `id`, and a notification
+method sent with one.
+
 ```jsonc
 // ->
 {
@@ -176,7 +179,8 @@ These rules apply to every request:
   MAY fill in values that it leaves out. Clients use what the server sends
   back, not what they sent.
 - A rejected value is `invalid_params`, or `too_large` for its size. `denied`
-  is for a well-formed request that the user or server does not allow.
+  is for a well-formed request that the user or server does not allow, such as
+  one past a count limit that the server sets.
 
 Other application errors MAY use JSON-RPC codes that are not reserved. A valid
 notification never gets an error reply.
@@ -376,7 +380,11 @@ class AuthResult {
   ([§3.3](#33-identity)).
 - `token`: a bearer string. This is the reference default.
 - `webauthn`: optional passkey scheme ([§4.10](#410-webauthn-authentication)).
-- `email`: optional sign-in by a code sent to an email address ([§4.11](#411-email-authentication)).
+- `email`: optional sign-in by a code sent to an email address
+  ([§4.11](#411-email-authentication)).
+
+A scheme that this document defines but the server does not offer is
+`unsupported`.
 
 Under a guest-access policy, a server MAY accept `auth` with any `scheme` and
 ignore the credentials. This does not apply to `webauthn` and `email`.
@@ -725,9 +733,9 @@ keys are extension names without the `ext:` prefix
   ([§3.3](#33-identity)). Each key that it carries replaces the kept value, an
   empty value clears that key, and keys that it leaves out stay. The value
   under a key is replaced whole. `"ext": {}` changes nothing. A write that
-  creates a record merges into an empty `ext`. Writes are `me`
-  ([§3.3](#33-identity)), message saves ([§4.4](#44-edit)), and `room_set`
-  ([§4.3.4](#434-creating-and-editing)).
+  creates a record, or saves a tombstone, merges into an empty `ext`. Writes
+  are `me` ([§3.3](#33-identity)), message saves ([§4.4](#44-edit)), and
+  `room_set` ([§4.3.4](#434-creating-and-editing)).
 - Clients merge `ext` in a `user` notification the same way. Complete user
   objects and records carry their complete `ext` ([§2](#2-identifiers)).
 - Put data that must survive saves by other clients in `ext`, not in unknown
