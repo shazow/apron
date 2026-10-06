@@ -500,8 +500,8 @@ Clients keep one user object for each `user_id`:
 
 **Profile.** A `me` request changes the user's own profile after
 authentication. It merges by the same rules as a current object. The settable
-fields are `name`, `avatar`, and, with capabilities `status`
-([§4.5](#45-status)) and `ext` ([§4.12](#412-ext)), `status` and `ext`.
+fields are `name` and `avatar`, `status` with capability `status`
+([§4.5](#45-status)), and `ext` with capability `ext` ([§4.12](#412-ext)).
 `roles` is not settable. Servers announce a cleared field as its empty value:
 
 ```jsonc
@@ -885,8 +885,8 @@ effect is different:
   starts with `//`, clients send it as a message that starts with `/`.
 - A command is never logged, broadcast, or saved. It has no `message_id`. A
   command with `message_id` or `deleted` is `invalid_params`.
-- `mentions`, `reply_to`, and `embeds` are arguments. Mentioned users are
-  not notified.
+- `mentions`, `reply_to`, `embeds`, and `ext` are arguments. Mentioned users
+  are not notified, and `ext` is not kept.
 - The result is `{}`, or `{"embeds": [...]}` with write URLs for new `upload`
   embeds ([§4.8.3](#483-writes)). A failure is an ordinary error, and the
   client shows its `message`.
@@ -1960,7 +1960,7 @@ most 2048 bytes.
     `mute` without `room_id` does not change `unread`.
 - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients
   never install it as a snapshot. Servers do not push transient notices.
-  - Servers SHOULD omit `format` and `embeds`.
+    - Servers SHOULD omit `format`, `embeds`, and `ext`.
   - To fit the limit, servers MAY truncate `body.text`, and leave out any
     field except `message_id`, `room_id`, and `from.user_id`.
   - A payload without `message` shows no notification.
@@ -2134,8 +2134,8 @@ as `irc`:
   ([§4.3.4](#434-creating-and-editing)). A write that creates a record, or
   saves a tombstone, merges into an empty `ext`. A tombstone carries no `ext`.
 - Complete user objects and records carry their complete `ext`. A `user`
-  notification carries each key that changed, with a cleared key as its empty
-  value, and clients merge it the same way.
+  notification carries at least each key that changed, with a cleared key as
+  its empty value, and clients merge it the same way.
 - Clients do not have to parse `ext`, or send it back.
 - Without capability `ext`, servers MAY drop the `ext` that clients send.
 - An extension keeps its own data under its name in `ext`, on whatever object
