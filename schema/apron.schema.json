@@ -22,7 +22,7 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Extension data, keyed by extension name without the ext: prefix; with capability ext, writes merge it one level deep (§4.12).",
+      "description": "Extension data, keyed by extension name without the ext: prefix (§1). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.12).",
       "type": "object",
       "propertyNames": {
         "not": {
@@ -51,12 +51,13 @@
             "type": "string"
           }
         },
-        "ext": {
-          "$ref": "#/$defs/Ext"
-        },
         "status": {
           "type": "string",
           "description": "Current objects only. Set with me: online (default), \"\" (none), dnd, or invisible. Seen by others: online, idle, offline, dnd, or \"\". Clients show other values as unknown (§4.5)"
+        },
+        "ext": {
+          "description": "Extension data (§4.12). Complete objects carry all of it; a user notification carries the keys that changed.",
+          "$ref": "#/$defs/Ext"
         }
       },
       "required": [
@@ -219,9 +220,6 @@
             }
           ]
         },
-        "ext": {
-          "$ref": "#/$defs/Ext"
-        },
         "message_id": {
           "description": "Absent on transient notices.",
           "type": "string"
@@ -241,11 +239,32 @@
         "deleted": {
           "type": "boolean",
           "default": false
+        },
+        "ext": {
+          "description": "Extension data (§4.12). Absent on tombstones.",
+          "$ref": "#/$defs/Ext"
         }
       },
       "required": [
         "from"
-      ]
+      ],
+      "if": {
+        "properties": {
+          "deleted": {
+            "const": true
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "then": {
+        "description": "A tombstone carries no body and no ext (§4.4).",
+        "properties": {
+          "body": false,
+          "ext": false
+        }
+      }
     },
     "Room": {
       "description": "A room record (§3.4).",
@@ -266,9 +285,6 @@
         },
         "description": {
           "type": "string"
-        },
-        "ext": {
-          "$ref": "#/$defs/Ext"
         },
         "log_id": {
           "$ref": "#/$defs/LogId"
@@ -298,6 +314,10 @@
         "member_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "ext": {
+          "description": "Extension data (§4.12).",
+          "$ref": "#/$defs/Ext"
         }
       },
       "required": [
@@ -468,6 +488,7 @@
           }
         },
         "ext": {
+          "description": "Data of extensions that define it on the server frame, each under its name (§4.12).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -548,12 +569,13 @@
         "avatar": {
           "type": "string"
         },
-        "ext": {
-          "$ref": "#/$defs/Ext"
-        },
         "status": {
           "type": "string",
           "description": "With capability status (§4.5)"
+        },
+        "ext": {
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "$ref": "#/$defs/Ext"
         }
       }
     },
@@ -569,14 +591,15 @@
         "reply_to": {
           "$ref": "#/$defs/MessageRef"
         },
-        "ext": {
-          "$ref": "#/$defs/Ext"
-        },
         "message_id": {
           "type": "string"
         },
         "deleted": {
           "type": "boolean"
+        },
+        "ext": {
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "$ref": "#/$defs/Ext"
         }
       },
       "description": "Creates a message, or saves one given message_id (§3.5, §4.4)."
@@ -594,6 +617,7 @@
           "$ref": "#/$defs/MessageRef"
         },
         "ext": {
+          "description": "Extension data, an argument like the other params (§4.1, §4.12).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -694,6 +718,7 @@
           "type": "string"
         },
         "ext": {
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
           "$ref": "#/$defs/Ext"
         }
       }
