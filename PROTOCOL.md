@@ -1,18 +1,33 @@
 # Apron Chat Protocol
 
-Apron Chat Protocol is a chat protocol that is easy to implement in
-semi-trusted environments. It runs over a WebSocket or most other transports.
-The goal is many Apron Chat apps and servers that work with each other, such
-as local bridges to other protocols, coding harnesses, and internal message
-rooms.
+Apron Chat Protocol is a chat protocol for groups whose members mostly trust
+each other: a team, a household, or a set of bots and the people who run them.
+That trust keeps the protocol small. There is no public federation, spam
+defense, or sybil resistance to coordinate. The server is the authority on
+identity, membership, and history, and a client can be little more than a
+renderer of what the server sends.
 
-The protocol is incremental. A minimal implementation needs only the mandatory
-core ([§3](#3-core)), about a hundred lines of code. Everything else is an
-optional capability ([§4](#4-capabilities)).
+The goal is many Apron Chat apps and servers that work with each other. A
+client can connect to any Apron server, and a server can be a full chat
+service, a local bridge to another protocol, a coding harness, or a script
+that posts deploy notices. To make that practical, the protocol is
+incremental. The mandatory core ([§3](#3-core)) is enough for a working chat,
+in about a hundred lines of code. Everything else is an optional capability
+([§4](#4-capabilities)) that a server advertises, with a fallback for clients
+and servers that lack it.
 
-[`schema/apron.schema.json`](schema/apron.schema.json) is an informative
-JSON Schema of the frames, for validation and editor completion. Where it
-disagrees with this document, this document wins.
+§1 and §2 describe the wire: how frames travel, and how they identify things.
+§3 is the core that every server implements. §4 describes the capabilities,
+roughly in order of how commonly they are implemented. The appendices hold
+conventions, scenarios that are valid but easy to get wrong, and designs under
+consideration.
+
+The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, MAY, and OPTIONAL
+are to be interpreted as described in BCP 14
+([RFC 2119](https://www.rfc-editor.org/rfc/rfc2119),
+[RFC 8174](https://www.rfc-editor.org/rfc/rfc8174)) when, and only when, they
+appear in all capitals. In examples, `->` marks a frame from the client, and
+`<-` a frame from the server.
 
 This example shows a short session:
 
@@ -60,6 +75,10 @@ ignores room fields and shows a single room.
 ---
 
 ## 1. Transport & framing
+
+Apron runs over any transport that carries whole JSON messages in both
+directions. The framing borrows from JSON-RPC, so that a client can match each
+reply to its request, and every other frame is a one-way notification.
 
 - WebSocket is the reference transport. Other transports work if they deliver
   whole frames.
@@ -189,6 +208,11 @@ repeats an `id`.
 
 ## 2. Identifiers
 
+Apron keeps state simple by giving every change a place in one log. Each
+logged record is the complete state of one thing at one moment. A client can
+apply records in any order and from any source, and still end in the same
+state. This section defines the IDs that make this work.
+
 All IDs are strings.
 
 **`log_id`** — position of one change in the server's append-only log.
@@ -246,8 +270,10 @@ All IDs are strings.
 
 ## 3. Core
 
-Every server implements this section. A minimal server implements only this
-section. Capabilities advertise optional features ([§4](#4-capabilities)).
+The core is what every client can count on: a greeting, a way to sign in,
+identities, rooms as logs, and messages. Every server implements this section,
+and a minimal server implements only this section. That is enough for a plain
+but complete chat. Capabilities add the rest ([§4](#4-capabilities)).
 
 ### 3.1 `server` frame
 
@@ -286,6 +312,11 @@ replaces** the previous one. Clients update their feature UI, but MUST NOT
 remove content that they already show.
 
 ### 3.2 Authentication
+
+A connection starts without an identity. The client picks one of the schemes
+that the server offers and sends `auth`, and the server answers with who the
+connection now is. Schemes range from guest access with no credentials to
+passkeys.
 
 ```ts
 class Auth {
@@ -399,6 +430,10 @@ it processes any later frame on the connection.
 
 ### 3.3 Identity
 
+The server decides who everyone is. A client never asserts its own identity.
+It learns it from `you`, and learns about other users from the user objects
+that the server sends.
+
 ```ts
 class User {
   user_id: string;
@@ -411,7 +446,7 @@ class User {
 }
 ```
 
-The server assigns identities. Every message carries its author in `from`:
+Every message carries its author in `from`:
 
 ```json
 "from": {"user_id": "alice", "name": "Alice"}
@@ -505,6 +540,11 @@ operator.
 
 ### 3.4 Rooms
 
+Rooms are where messages live. In the core, a room is only a log with an ID. A
+server can have just one, and a client can learn about rooms from the messages
+it receives. Capability `rooms` ([§4.3](#43-rooms)) adds the ways to find,
+join, and create them, and adds threads.
+
 ```ts
 class Room {
   room_id: string;
@@ -530,8 +570,7 @@ class Room {
 A room is a log with a `room_id` that the server chooses. Every message refers
 to its room ([§3.5](#35-messages)). A server without capability `rooms` MAY
 have only one room. Clients learn its `room_id` from its messages. If a client
-has no other data about a room, it uses the `room_id` as the title. Capability
-`rooms` adds listing, joining, creating, and threads ([§4.3](#43-rooms)).
+has no other data about a room, it uses the `room_id` as the title.
 
 **Delivery.** A connection receives the messages and other records of each
 room that its user joined. Without capability `rooms`, that is every room. For
@@ -595,6 +634,10 @@ threads.
 
 ### 3.5 Messages
 
+Messages are the center of the protocol. A client sends only what it controls.
+The server fills in the rest, and broadcasts the result as a snapshot that
+every client keeps by the same rule as any other record.
+
 ```ts
 class Message {
   body?: {                      // required on creation; absent on tombstones (§4.4)
@@ -621,9 +664,8 @@ class Message {
 }
 ```
 
-A message is one object. A client sends only the fields that it controls. The
-server broadcasts the complete object as an authoritative **snapshot** at one
-log position.
+A message is one object. The server broadcasts the complete object as an
+authoritative **snapshot** at one log position.
 
 ```jsonc
 // ->
@@ -786,6 +828,12 @@ A minimal client (informative):
 
 ## 4. Capabilities
 
+Everything beyond the core is optional. Each capability adds one coherent
+feature, such as history, rooms, or reactions, and says what a client does
+without it. So a client written for the core keeps working on any server, and
+a server can grow one capability at a time. The sections start with the
+capabilities closest to the core.
+
 `server.capabilities` lists the optional features of the server. A capability
 shows support, not permission. Servers still apply local policy to each
 request. Nothing is negotiated. Clients ignore capabilities that they do not
@@ -934,6 +982,10 @@ effect is different:
 ```
 
 ### 4.2 `history`
+
+Live delivery covers only the time that a client is connected. `history` fills
+the gaps. It pages through the log of a room, so that a client can show older
+messages and recover what it missed while it was away.
 
 Capability `history`. A `history` request is a stateless query for a window of
 the **log** of a room. Without `room_id`, it queries the default room
@@ -1332,6 +1384,9 @@ cleared. Both forms return `{"room_id": "..."}`.
 
 ### 4.4 `edit`
 
+A message is a record, so an edit is only a new snapshot of it at a later log
+position. The same mechanism moves and deletes messages.
+
 Capability `edit`. A `message` request with an existing `message_id` **saves**
 that message:
 
@@ -1423,6 +1478,11 @@ rewrite of a logged record. Clients that hold the old content drop it when
 they receive the new tombstone.
 
 ### 4.5 `status`
+
+Presence and notification control share a capability, because both answer one
+question: is now a good time to reach this user? A status tells others whether
+the user is around. Idle reports and mutes tell the server when to hold back
+notifications.
 
 Capability `status`. Users set a presence `status` with `me`
 ([§3.3](#33-identity)). Clients use the `status` request to report idle
@@ -1607,6 +1667,11 @@ room of the message. The result is `{}`.
 - The server MAY log nothing for a request that does not change the state.
 
 ### 4.8 Embeds and avatars
+
+Messages can carry more than text: files, live output, previews of links, or
+interactive content. Each embed has a `kind` that selects how to render it,
+and every client has a fallback for kinds that it does not know. Avatars are
+here because they use the same uploads.
 
 ```ts
 class Embed {
@@ -1793,6 +1858,11 @@ to the name of the user.
 
 ### 4.9 Push
 
+Push reaches users when no client is open, such as a phone in a pocket. The
+server sends a small payload to a push service that the client registered, and
+the client shows it as a notification. Push has no capability of its own.
+`server.push` advertises it.
+
 `server.push` ([§3.1](#31-server-frame)) maps each supported push kind to its
 public configuration. Its `wake` key lists the wake scopes that the server
 supports. If `server.push` is present, the server accepts `push_register` and
@@ -1948,6 +2018,9 @@ most 2048 bytes.
 
 ### 4.10 WebAuthn authentication
 
+Passkeys let users sign in without passwords or shared tokens, with a
+credential that their device keeps.
+
 Servers that list `webauthn` in `server.auth` MUST use this exchange. No
 separate capability is necessary.
 
@@ -1997,6 +2070,9 @@ expire. A mismatched origin is `denied`.
 
 ### 4.11 Email authentication
 
+Email sign-in proves that a user controls an address. It suits sign-up and
+account recovery, and works on any device that gets mail.
+
 Servers that list `email` in `server.auth` verify an address with a temporary
 token that they send to it. An `auth` request with `email` proposes a sign-in
 or an addition. An `auth` request with `token` approves it:
@@ -2021,12 +2097,12 @@ or an addition. An `auth` request with `token` approves it:
 - The server emails a temporary token for the proposal, as a link, a code to
   type, or both. A token that is short enough to type, such as six digits,
   works only on the connection that made the proposal. A token that works on
-  other connections must be unguessable.
+  other connections MUST be unguessable.
 - A connection has one pending proposal, and a new one replaces it. A proposal
   expires within minutes. Approval uses it up. A few failed attempts cancel
   it.
 - Approval of a sign-in authenticates the connection that presents the token.
-  That connection must not be signed in already. The result carries `you` and
+  That connection MUST NOT be signed in already. The result carries `you` and
   a bearer `token` for later connections ([§3.2](#32-authentication)).
 - Approval of an addition adds the address to the account that proposed it,
   and returns `{}`.

@@ -21,6 +21,13 @@ We aim to substantially simplify the chat protocol by taking advantage of severa
 - One websocket to start, additional signaling bootstrapped from there (e.g. HTTP upload target, WebRTC, etc).
 - Multimedia-friendly: Upload images, audio, whatever.
 
+## Specification
+
+- [PROTOCOL.md](PROTOCOL.md): the Apron Chat Protocol. It stands alone; read it first.
+- [HISTORY.md](HISTORY.md): changes by protocol version.
+- [`schema/apron.schema.json`](schema/apron.schema.json): an informative JSON Schema of the frames, for validation and editor completion. Where it disagrees with PROTOCOL.md, PROTOCOL.md wins.
+- [`tests/fixtures`](tests/fixtures): wire fixtures that implementations can test against.
+
 ## License
 
 MIT
