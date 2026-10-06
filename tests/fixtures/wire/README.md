@@ -33,9 +33,12 @@ positive and below `2^53`, and every comparison of `log_id`s or
 `message_id`s is numeric (`"9" < "10"`).
 
 Run every variant twice: once with the literal frames, once with
-`"jsonrpc": "2.0"` added at the top level of each incoming frame (including
-replies built from `reply` steps). Do not alter nested data. Outgoing client
-frames may use either envelope. Expectations never depend on a generated
+`"jsonrpc": "2.0"` added at the top level of each frame sent to the client
+(including replies built from `reply` steps). Do not alter nested data.
+Clients omit `jsonrpc` from the frames they send, in both runs
+([PROTOCOL.md §1](../../../PROTOCOL.md#1-transport--framing)); request
+matching ignores the key, and the session runner only checks that a client
+that sends it anyway sends `"2.0"`. Expectations never depend on a generated
 request ID or on optional envelope fields.
 
 ## Records, replay, and the logical projection
@@ -544,8 +547,10 @@ define, such as methods and embed kinds, start with `ext:`;
 `core-session.json` keeps `future_notice` unprefixed on purpose, for a method
 that a later protocol version defines. `tests/schema/validate.py` checks
 this, `apron: 8` in every `server` frame, that no frame arrives between an
-`auth` request and its result, that a client writes `ext` only to a server
-with capability `ext`, and that no file repeats a variant.
+`auth` request and its result, that a client writes each `ext` key only to a
+server with capability `ext` or the capability of the extension that defines
+the key (such as `irc` to a server with `ext:irc`), and that no file repeats a
+variant.
 
 Not covered:
 
