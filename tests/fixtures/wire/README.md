@@ -290,7 +290,7 @@ and clients do not have to send it back:
   `ext` when the operation is invoked.
 - Without capability `ext`, the server may drop `ext`, and a client that knows
   no advertised extension sends none, even when the latest record carries an
-  extension's data under its name.
+  extension's data under its name (`ext-without-capability.json`).
 
 ### Connecting
 
@@ -469,6 +469,7 @@ no sleeps, timers, or DOM selectors.
 | `membership.json` | the joined set with members from the listing behind `auth`, the guest's own join after the `auth` result, `listRooms` with members, `joinRoom` and `leaveRoom` settling on `{}` after their memberships and `room_update` `joined` and `left`, others' memberships keeping member lists current, an `updated` thread not joined staying hidden, removal by the server |
 | `room-list-delta.json` | a token resume lists only the joined rooms changed since the kept checkpoints and resumes the kept rooms behind `auth`; `left` removes rooms and keeps the others, a result without `left` is a full listing |
 | `ext-merge.json` | capability `ext`: a save and a `room_set` built without `ext` while another writer adds it, and the server's snapshot and record keep it; `user` notifications merge `ext` one level down, and an empty value clears one key |
+| `ext-without-capability.json` | a server without capability `ext` whose extension (`ext:irc`) keeps its data in `ext`: an edit, a `room_set`, and a delete built from records with `ext` send none, and the tombstone carries none |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
 | `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
 | `sign-in.json` | the automatic join, the statuses that others see, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object |
