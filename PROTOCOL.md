@@ -16,20 +16,7 @@ in about a hundred lines of code. Everything else is an optional capability
 ([§4](#4-capabilities)) that a server advertises, with a fallback for clients
 and servers that lack it.
 
-§1 and §2 describe the wire: how frames travel, and how they identify things.
-§3 is the core that every server implements. §4 describes the capabilities,
-roughly in order of how commonly they are implemented. The appendices hold
-conventions, scenarios that are valid but easy to get wrong, and designs under
-consideration.
-
-The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, MAY, and OPTIONAL
-are to be interpreted as described in BCP 14
-([RFC 2119](https://www.rfc-editor.org/rfc/rfc2119),
-[RFC 8174](https://www.rfc-editor.org/rfc/rfc8174)) when, and only when, they
-appear in all capitals. In examples, `->` marks a frame from the client, and
-`<-` a frame from the server.
-
-This example shows a short session:
+Example of a valid session:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
