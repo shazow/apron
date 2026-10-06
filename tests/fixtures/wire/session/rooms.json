@@ -5,9 +5,9 @@
   "description": "createRoom sends room_set with only the fields it sets (a thread adds parent_room_id and a description); updateRoom sends room_set resubmitting title, description, and ext from the latest record, never parent_room_id. Created rooms arrive as room_update joined, edits as updated, and both replace the record in full; a top-level room is created, posted in, then given a description, and a room in left leaves the visible set.",
   "references": [
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#431-listing",
-    "PROTOCOL.md#433-updates",
-    "PROTOCOL.md#434-creating-and-editing",
+    "PROTOCOL.md#461-listing",
+    "PROTOCOL.md#463-updates",
+    "PROTOCOL.md#464-creating-and-editing",
     "PROTOCOL.md#35-messages"
   ],
   "variants": [

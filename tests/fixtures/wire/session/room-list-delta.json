@@ -5,9 +5,9 @@
   "description": "Reconnecting as the same identity (a token resume), the client lists only its joined rooms whose latest_log_id is past the least checkpoint of the rooms it kept, and resumes each kept room's recovery from its checkpoint, all right behind auth. A result with left is a listing of changes: joined rooms are refreshed or new, rooms in left go, and every other kept room stays as it was. A result without left comes from a server that ignored the position: it is a full listing, and kept rooms missing from it go. Joins and leaves are memberships in the rooms' logs, so a room left meanwhile has moved past the position. This server keeps its members' memberships in the log.",
   "references": [
     "PROTOCOL.md#32-authentication",
-    "PROTOCOL.md#41-history",
-    "PROTOCOL.md#431-listing",
-    "PROTOCOL.md#432-membership"
+    "PROTOCOL.md#42-history",
+    "PROTOCOL.md#461-listing",
+    "PROTOCOL.md#462-membership"
   ],
   "variants": [
     {

@@ -5,8 +5,8 @@
   "description": "One kept user object per user_id, merged field by field from current objects only (you, user notifications, room members and users): a present field replaces, an empty value clears the field and is kept, a missing one changes nothing. Recorded objects (a message's from, a membership's user) never merge, and history carries no users. Each message renders its sender field by field: the kept object, else the from it carries, else the user_id, and a field the kept object cleared never falls back to the from; a sender with no kept object renders as its from. A membership changes the room's members, not the kept users.",
   "references": [
     "PROTOCOL.md#33-identity",
-    "PROTOCOL.md#41-history",
-    "PROTOCOL.md#432-membership"
+    "PROTOCOL.md#42-history",
+    "PROTOCOL.md#462-membership"
   ],
   "variants": [
     {
