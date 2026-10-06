@@ -483,7 +483,8 @@ Clients keep one user object for each `user_id`:
 - Clients replace the kept object with a complete object.
 - Clients merge every other current object into the kept object. Each field
   that it carries replaces the kept value. An empty value (`""`, `[]`, `{}`)
-  clears the field. Fields that it does not carry stay the same. `null` is an
+  clears the field, except `ext`, which merges by its keys
+  ([§3.5](#35-messages)). Fields that it does not carry stay the same. `null` is an
   ordinary value.
 - Clients never merge recorded objects.
 - Clients show each field from the kept object. If the kept object does not
