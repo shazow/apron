@@ -229,7 +229,11 @@ Each operation step (`send` through `loadOlder`) tracks its outcome under its
 fulfills, an `error` rejects. They never wait for a broadcast. Servers send
 the notifications a request causes on the requesting connection before its
 result ([PROTOCOL.md §1](../../../PROTOCOL.md#1-transport--framing)), and the fixtures do, but a conforming client does not
-depend on it (a broadcast may also not come at all). `loadRoom` and
+depend on it (a broadcast may also not come at all). A sign-in is the
+exception: every notification it causes, such as an automatic join or the
+statuses and mutes in effect, comes after the `auth` result
+([PROTOCOL.md §3.2](../../../PROTOCOL.md#32-authentication)), so no fixture delivers a frame between capturing an
+`auth` request and replying to it. `loadRoom` and
 `loadOlder` fulfill when their page is applied and reject on an error or
 invalid page. Operation and capture labels are unique within a variant.
 
@@ -442,7 +446,7 @@ no sleeps, timers, or DOM selectors.
 | `auth-barrier.json` | `auth` and the joined listing sent back to back; after a failed `auth` the denied listing changes nothing |
 | `core-session.json` | a server without capability `rooms`: guest auth, a first post without `room_id` whose broadcast refers to the default room before the result, `activity` typing, bare `reply_to` answered by an embedded snapshot, a `~private` notice, `server` replacement, unknown notifications, rooms learned from their messages including one whose ID starts with `~`, and a logged `~server` notice in the room it names |
 | `commands.json` | `command` with and without mentions, its result and error, a `~private` reply that is never stored, and `body.mentions` on a message |
-| `membership.json` | the joined set with members from the listing behind `auth`, the guest's own join before the `auth` result, `listRooms` with members, `joinRoom` and `leaveRoom` settling on `{}` after their memberships and `room_update` `joined` and `left`, others' memberships keeping member lists current, an `updated` thread not joined staying hidden, removal by the server |
+| `membership.json` | the joined set with members from the listing behind `auth`, the guest's own join after the `auth` result, `listRooms` with members, `joinRoom` and `leaveRoom` settling on `{}` after their memberships and `room_update` `joined` and `left`, others' memberships keeping member lists current, an `updated` thread not joined staying hidden, removal by the server |
 | `room-list-delta.json` | a token resume lists only the joined rooms changed since the kept checkpoints and resumes the kept rooms behind `auth`; `left` removes rooms and keeps the others, a result without `left` is a full listing |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
 | `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
@@ -494,7 +498,8 @@ were checked with an independent reference reducer and client):
 - Mutation results name the saved message, the created message's creation
   snapshot, or the created or updated room (`room_set`); `reactions`,
   `room_join`, `room_leave`, and successful `command` results are `{}`. They
-  follow the notifications their request caused on the connection.
+  follow the notifications their request caused on the connection, except an
+  `auth` result, which precedes them.
 - A `room_list` with `members: true` carries each room's complete `members`
   and a `users` array; a `room_update` `joined` carries `members`. A joined
   listing with `latest_log_id` either has `left` (possibly empty) or is a full
