@@ -4,6 +4,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 
 ## v7 (2026-09-29)
 
+- A `user` notification carries `old` only when the same account takes a new `user_id`, such as a guest becoming a new account. Signing in to an existing account is announced as the previous identity's departure.
 - Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
 - Private rooms (`private: true`) are visible only to their members, and new threads inherit it; `room_join` and `room_leave` may take a `user_id` to add or remove others.
 - Optional `member_count` when a server truncates `members`.

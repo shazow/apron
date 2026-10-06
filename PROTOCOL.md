@@ -448,6 +448,10 @@ memberships, not `user` notifications ([§4.3.2](#432-membership)).
   connection now acts as the new identity: it receives deliveries for the
   new identity's rooms ([§3.4](#34-rooms)), and clients re-derive per-user state such as
   their room list ([§4.3.1](#431-listing)) and their own reactions ([§4.5](#45-reactions)).
+- `old` means the same account under a new `user_id`, such as a guest that
+  becomes a new account.
+- When a connection signs in to an existing account, servers announce the
+  previous identity's departure, not an `old` change.
 - After a `user_id` change, logged records keep the old `user_id`; clients
   MAY alias it to the new identity.
 - Servers SHOULD NOT reissue a retired `user_id` to another user.
