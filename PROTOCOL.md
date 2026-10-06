@@ -108,6 +108,19 @@ reply to its request, and every other frame is a one-way notification.
   server answers with `{"method":"pong"}`, also before authentication. A
   server MAY close a connection that sent pings and then stopped.
 
+**Extension names.** A name that this document does not define starts with
+`ext:`, such as the capability `ext:irc`. This applies to every name that a
+list in this document can extend, such as a method, a capability, an auth
+scheme, or a kind. This document never defines a name with that prefix. An
+extension named `ext:irc` keeps its data under the key `irc` in `ext` objects
+([§3.5](#35-messages)). Display values, such as a status or a role, are free
+text and take no prefix.
+
+Receivers handle unknown names as the section that defines them says. As a
+rule, a request that depends on an unknown name fails, and an unknown name in
+a frame that is only read is ignored, or shown with the fallback of its
+section.
+
 ### 1.1 Envelope and replies
 
 A request carries a string `id` ([§2](#2-identifiers)), and gets exactly one
@@ -860,9 +873,6 @@ Some features have no capability:
 - `server.auth` enables passkeys and email sign-in
   ([§4.10](#410-webauthn-authentication), [§4.11](#411-email-authentication)).
 - `server.ping` enables liveness checks ([§1](#1-transport--framing)).
-
-By convention, third-party extension capabilities use an `ext:` prefix, such
-as `ext:irc`.
 
 Six frame patterns cover everything that is logged or announced:
 
@@ -1899,8 +1909,8 @@ supports. If `server.push` is present, the server accepts `push_register` and
 
 - `kind` is a key of `server.push` other than `wake`. Fields other than `url`,
   `push_id`, and `wake` are specific to the kind. Unknown kinds are
-  `invalid_params`. Third-party kinds use the `ext:` prefix
-  ([§4](#4-capabilities)), and define their own delivery.
+  `invalid_params`. Third-party kinds ([§1](#1-transport--framing)) define
+  their own delivery.
 - `url` is required. A registration belongs to the authenticated user and its
   `url`. It stays after the connection that made it closes.
 - A registration with the same `url` replaces the earlier registration of the
@@ -2007,7 +2017,6 @@ most 2048 bytes.
   scopes in `wake`. An empty `wake` wakes for nothing. Without `wake`, the
   server uses its default scopes. These SHOULD be `mentions` and `replies`,
   where advertised.
-- Third-party scopes use the `ext:` prefix.
 - A push that `mute` or a `dnd` status ([§4.5](#45-status)) silences has no
   `message`. It goes only to registrations that wake for `badge`.
 - Servers do not wake a user for the user's own messages. Server policy
