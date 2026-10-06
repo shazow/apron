@@ -1852,13 +1852,14 @@ request.
   notification. Servers MAY delay it.
 - Clients take the user's own `status` from `you`. Other objects about the
   user carry what others see.
-- A sign-in is an `auth` that signs the connection in. An `auth` that adds
-  a passkey or address to a signed-in connection is not one.
+- A sign-in is an `auth` that signs the connection in as a user it isn't
+  already signed in as. An `auth` that adds a passkey or address is not one.
 - After a sign-in, servers send, for each user who shares a room with the
   user, the `status` others see, other than `offline` and `""`. They send
   it after the `auth` result.
-- Clients drop kept `status` values when they reconnect after more than 60
-  seconds.
+- Clients drop kept `status` values at each sign-in.
+- Servers include `status` in each current user object that `room_list`
+  and `room_update` carry, `offline` and `""` included.
 - A user without a `status` has no known status.
 - Clients show an unknown `status` value as unknown, with the value.
 
@@ -1899,8 +1900,6 @@ request.
   and `idle: false` when someone is again.
 - Clients MAY wait about 30 seconds after attention ends before sending
   `idle: true`, but not on a connection that starts unattended.
-- Servers MAY treat a connection that has never sent `idle` as idle after
-  a server-defined period without activity.
 - Servers never send `idle`.
 - `mute` is `true`, `false`, or seconds. It silences the user's
   notifications everywhere or, with `room_id`, in that room and its
