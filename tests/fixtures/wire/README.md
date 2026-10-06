@@ -532,11 +532,27 @@ Keep fixture expectations explicit and reviewable. Add variants only when
 they must produce the same final state (or use `expected: {}` with a final
 `expect` per variant); use intermediate `expect` steps when ordering matters.
 Keep the invariants above when adding frames. Use generated data for volume
-benchmarks rather than large checked-in logs.
+benchmarks rather than large checked-in logs. Names that PROTOCOL.md does not
+define, such as methods and embed kinds, start with `ext:`;
+`core-session.json` keeps `future_notice` unprefixed on purpose, for a method
+that a later protocol version defines. `tests/schema/validate.py` checks
+this, `apron: 8` in every `server` frame, that no frame arrives between an
+`auth` request and its result, and that no file repeats a variant.
 
-Not covered: `me` response semantics, liveness `ping` and `status` `idle`
-(they depend on timers and focus; the client's unit tests cover them),
-opening a thread without joining it, typing expiry, read markers,
-deduplication lifetime, embeds and uploads (including `/avatar`), push, RTC,
-WebAuthn (see `tests/fixtures/webauthn.json`), renderer behavior beyond
-`senders`, and performance.
+Not covered:
+
+- `me` requests and their complete `you`.
+- The `status` request (`idle` and `mute`, its `{}` result, and an error
+  that changes nothing), and the mutes that the client keeps: no step sends
+  it, and the session state has no mutes. `sign-in.json` receives `status`
+  notifications only to show that they leave the rest of the state alone.
+- Liveness `ping`, and typing expiry (they depend on timers).
+- Opening a thread without joining it, read markers, and deduplication
+  lifetime.
+- Embeds and uploads (including `/avatar`), beyond unknown kinds kept as
+  given.
+- Email sign-in, and WebAuthn ceremonies (see `tests/fixtures/webauthn.json`).
+- Push delivery, and how a client handles a payload.
+  `tests/fixtures/push.json` holds payload and registration shapes, which
+  `tests/schema/validate.py` checks, including the 2048-byte limit.
+- RTC, renderer behavior beyond `senders`, and performance.
