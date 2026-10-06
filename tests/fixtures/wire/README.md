@@ -41,7 +41,7 @@ request ID or on optional envelope fields.
 ## Records, replay, and the logical projection
 
 Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#2-identifiers), [§3.4](../../../PROTOCOL.md#34-rooms), [§3.5](../../../PROTOCOL.md#35-messages),
-[§4.2](../../../PROTOCOL.md#42-history)–[§4.7](../../../PROTOCOL.md#47-reactions)). The client keeps four stores, one record per key:
+[§4.2](../../../PROTOCOL.md#42-history)–[§4.7](../../../PROTOCOL.md#47-reactions), [§4.12](../../../PROTOCOL.md#412-ext)). The client keeps four stores, one record per key:
 
 | record | key | sources |
 |---|---|---|
@@ -264,12 +264,12 @@ operation is invoked.
 |---|---|---|
 | `send` | `message` | `{room_id?: room, body: {text, format, mentions?}, reply_to?: {message_id}}`: no `room_id` without `room`; `mentions` only when given |
 | `command` | `command` | `{room_id?: room, body: {text, mentions?}}`: `text` as typed, slash included |
-| `editMessage` | `message` | latest snapshot's client fields with `body.text` replaced: `{message_id, room_id, body, reply_to?, ext?}`; `body` keeps `format`, `mentions`, `embeds`, and any other body keys |
-| `moveMessage` | `message` | `{message_id, room_id: room, body, reply_to?, ext?}` from the latest snapshot |
-| `deleteMessage` | `message` | `{message_id, room_id, reply_to?, ext?, deleted: true}` from the latest snapshot; no `body` |
+| `editMessage` | `message` | latest snapshot's client fields with `body.text` replaced: `{message_id, room_id, body, reply_to?}`; `body` keeps `format`, `mentions`, `embeds`, and any other body keys |
+| `moveMessage` | `message` | `{message_id, room_id: room, body, reply_to?}` from the latest snapshot |
+| `deleteMessage` | `message` | `{message_id, room_id, reply_to?, deleted: true}` from the latest snapshot; no `body` |
 | `react` | `reactions` | `{message_id, emojis}` with `emojis` as given |
 | `createRoom` | `room_set` | `{parent_room_id?, title?, description?}`: only the keys given; no `room_id`, no `ext` |
-| `updateRoom` | `room_set` | `{room_id, title?, description?, ext?}` from the latest record with the patch applied; never `parent_room_id` |
+| `updateRoom` | `room_set` | `{room_id, title?, description?}` from the latest record with the patch applied; never `parent_room_id` |
 | `joinRoom` / `leaveRoom` | `room_join` / `room_leave` | `{room_id: room}` |
 | `listRooms` | `room_list` | `{filter: "not_joined", members: true}`, or `{parent_room_id, filter: "not_joined"}` |
 | (recovery) | `history` | `{room_id, after, before}`, or `{room_id, after}` for a resume sent behind `auth` (see below), plus an optional positive `limit` |
@@ -279,12 +279,18 @@ operation is invoked.
 In saves, `reply_to` is always resubmitted bare even when the stored snapshot
 embedded it, `deleted` is omitted unless deleting, and fields absent from the
 latest snapshot stay absent. Room updates resubmit `title` and `description`.
-`ext` is optional in saves and room updates: clients do not have to send it
-back, and a write merges it, so one that leaves it out keeps the server's
-`ext` ([PROTOCOL.md §3.5](../../../PROTOCOL.md#35-messages)). If a client
-sends `ext`, it sends the latest record's `ext` unchanged. Because mutation
-params match exactly, the fixtures save only messages and rooms whose latest
-record has no `ext` when the operation is invoked.
+
+No operation changes `ext` ([PROTOCOL.md §4.12](../../../PROTOCOL.md#412-ext)),
+and clients do not have to send it back:
+
+- With capability `ext`, a write merges `ext`, so a save that leaves it out
+  keeps the server's `ext`. A client may instead resend the latest record's
+  `ext` unchanged. Because mutation params match exactly, the fixtures with
+  capability `ext` save only messages and rooms whose latest record has no
+  `ext` when the operation is invoked.
+- Without capability `ext`, the server may drop `ext`, and a client that knows
+  no advertised extension sends none, even when the latest record carries an
+  extension's data under its name.
 
 ### Connecting
 
@@ -412,7 +418,7 @@ The normalized session state has these keys:
     replaces, a missing one stays. A `user` notification carries `user_id`
     and the fields that changed.
   - An empty value (`""`, `[]`, `{}`) is kept: it records a cleared field.
-  - `ext` merges one level down ([PROTOCOL.md §3.5](../../../PROTOCOL.md#35-messages)): each key that a merged
+  - `ext` merges one level down ([PROTOCOL.md §4.12](../../../PROTOCOL.md#412-ext)): each key that a merged
     object's `ext` carries replaces the kept key, and other keys stay. As at
     the top level, a key with an empty value is kept with that value.
   - At each sign-in ([PROTOCOL.md §3.2](../../../PROTOCOL.md#32-authentication)), such as the first successful `auth`
@@ -462,7 +468,7 @@ no sleeps, timers, or DOM selectors.
 | `commands.json` | `command` with and without mentions, its result and error, a `~private` reply that is never stored, and `body.mentions` on a message |
 | `membership.json` | the joined set with members from the listing behind `auth`, the guest's own join after the `auth` result, `listRooms` with members, `joinRoom` and `leaveRoom` settling on `{}` after their memberships and `room_update` `joined` and `left`, others' memberships keeping member lists current, an `updated` thread not joined staying hidden, removal by the server |
 | `room-list-delta.json` | a token resume lists only the joined rooms changed since the kept checkpoints and resumes the kept rooms behind `auth`; `left` removes rooms and keeps the others, a result without `left` is a full listing |
-| `ext-merge.json` | a save and a `room_set` built without `ext` while another writer adds it: the server's snapshot and record keep it; `user` notifications merge `ext` one level down, and an empty value clears one key |
+| `ext-merge.json` | capability `ext`: a save and a `room_set` built without `ext` while another writer adds it, and the server's snapshot and record keep it; `user` notifications merge `ext` one level down, and an empty value clears one key |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
 | `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
 | `sign-in.json` | the automatic join, the statuses that others see, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object |
@@ -537,7 +543,8 @@ define, such as methods and embed kinds, start with `ext:`;
 `core-session.json` keeps `future_notice` unprefixed on purpose, for a method
 that a later protocol version defines. `tests/schema/validate.py` checks
 this, `apron: 8` in every `server` frame, that no frame arrives between an
-`auth` request and its result, and that no file repeats a variant.
+`auth` request and its result, that a client writes `ext` only to a server
+with capability `ext`, and that no file repeats a variant.
 
 Not covered:
 

@@ -5,7 +5,8 @@
   "description": "null has no deletion meaning: null values inside ext and embeds are stored and projected literally, distinct from absent keys.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#44-edit"
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#412-ext"
   ],
   "variants": [
     {

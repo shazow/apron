@@ -7,7 +7,8 @@
 Besides the schema, it checks rules the schema cannot express: every server
 frame speaks protocol 8, names that PROTOCOL.md does not define start with
 ext:, no session fixture delivers a frame between an auth request and its
-result, no fixture repeats a variant, and the cases of tests/fixtures/push.json
+result, a client writes ext only to a server with capability ext, no fixture
+repeats a variant, and the cases of tests/fixtures/push.json
 are valid, or break a rule, as they say (including the 2048-byte payload limit).
 
 Run from the repository root: uv run tests/schema/validate.py
@@ -61,7 +62,7 @@ VERSION = 8
 # Any other name starts with "ext:".
 KNOWN = {
     "method": set(SCHEMA["$defs"]["UnknownMethod"]["not"]["enum"]),
-    "capability": {"command", "history", "rooms", "edit", "status", "activity", "reactions", "embed:upload", "embed:stream"},
+    "capability": {"command", "history", "rooms", "edit", "status", "activity", "reactions", "embed:upload", "embed:stream", "ext"},
     "auth scheme": {"guest", "token", "webauthn", "email"},
     "embed kind": {"upload", "stream", "iframe", "html", "actions"},
     "push kind": {"relay", "webpush"},
@@ -74,6 +75,9 @@ UNPREFIXED = {
 }
 
 PUSH_LIMIT = 2048
+
+# Requests that write ext (§4.12).
+EXT_WRITES = {"me", "message", "room_set"}
 
 
 def names(value):
@@ -127,9 +131,16 @@ def check_result(method, reply, where):
 def check_steps(steps, where, file, variant):
     requests = {}
     signing_in = set()  # auth requests captured and not yet answered
+    capabilities = []  # of the latest server frame
     for i, step in enumerate(steps):
         at = f"{where} step {i}"
         check_names(step, at, file)
+        frame = step.get("receive", {})
+        if frame.get("method") == "server":
+            capabilities = frame.get("params", {}).get("capabilities", [])
+        match = step.get("request", {}).get("match", {})
+        if match.get("method") in EXT_WRITES and "ext" in match.get("params", {}) and "ext" not in capabilities:
+            errors.append(f"{at}: the client writes ext to a server without capability ext (§4.12)")
         if "receive" in step and signing_in:
             errors.append(f"{at}: a frame arrives between auth {sorted(signing_in)} and its result (§3.2)")
         if "request" in step and step["request"]["match"].get("method") == "auth":

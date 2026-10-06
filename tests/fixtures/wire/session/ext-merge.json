@@ -2,18 +2,18 @@
   "format": 4,
   "kind": "session",
   "name": "Writes and user notifications merge ext",
-  "description": "Writes merge ext one level down, so a write that leaves ext out keeps the server's ext. The client builds an edit and a room_set from records without ext; before their own snapshot and record arrive, another writer (a bridge) adds ext, and the server keeps it in the result of the save. The client installs the snapshots and records whole. User notifications merge ext the same way: a key with an empty value clears only that key (kept as the empty value, as at the top level), and keys that a notification leaves out stay. The variant does not decide whether the client would send ext back, since its records have none when it builds the requests.",
+  "description": "With capability ext, the server keeps the ext that clients write, and writes merge it one level down, so a write that leaves ext out keeps the server's ext. The client builds an edit and a room_set from records without ext; before their own snapshot and record arrive, another writer (a bridge) adds ext, and the server keeps it in the result of the save. The client installs the snapshots and records whole. User notifications merge ext the same way: a key with an empty value clears only that key (kept as the empty value, as at the top level), and keys that a notification leaves out stay. The variant does not decide whether the client would send ext back, since its records have none when it builds the requests.",
   "references": [
     "PROTOCOL.md#33-identity",
-    "PROTOCOL.md#35-messages",
     "PROTOCOL.md#434-creating-and-editing",
-    "PROTOCOL.md#44-edit"
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#412-ext"
   ],
   "variants": [
     {
       "name": "concurrent-ext",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["edit","ext","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","ext":{"a":1,"b":2}}}}},
@@ -40,7 +40,7 @@
   ],
   "expected": {
     "you": {"user_id":"guest_1","name":"Ada","ext":{"a":"","b":2}},
-    "capabilities": ["edit","rooms"],
+    "capabilities": ["edit","ext","rooms"],
     "operations": {"edit":"fulfilled","rename":"fulfilled"},
     "users": {"bob":{"user_id":"bob","name":"Bob","ext":{"irc":{"nick":"bob_"},"matrix":{"mxid":"@bob:example.org"}}},"guest_1":{"user_id":"guest_1","name":"Ada","ext":{"a":"","b":2}}},
     "rooms": [
