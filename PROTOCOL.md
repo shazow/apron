@@ -661,7 +661,7 @@ class Message {
 
   room_id?: string;             // absent: the server's default room
   reply_to?: { message_id: string } | Message;   // bare from clients
-  ext?: object;                 // opaque extension data (§3.5)
+  ext?: object;                 // opaque extension data (§3.5); absent on tombstones (§4.4)
 
   // set by the server
   message_id?: string;          // absent on transient notices; sent by clients only to save (§4.4)
@@ -724,7 +724,8 @@ keys are extension names without the `ext:` prefix
 - A write merges `ext` one level down, by the rule for current user objects
   ([§3.3](#33-identity)). Each key that it carries replaces the kept value, an
   empty value clears that key, and keys that it leaves out stay. The value
-  under a key is replaced whole. `"ext": {}` changes nothing. Writes are `me`
+  under a key is replaced whole. `"ext": {}` changes nothing. A write that
+  creates a record merges into an empty `ext`. Writes are `me`
   ([§3.3](#33-identity)), message saves ([§4.4](#44-edit)), and `room_set`
   ([§4.3.4](#434-creating-and-editing)).
 - Clients merge `ext` in a `user` notification the same way. Complete user
