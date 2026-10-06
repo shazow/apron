@@ -382,9 +382,9 @@ before, unless they authenticate its owner.
 **Bearer tokens.** A successful `auth` result MAY carry `token`. The client
 uses it with `scheme: "token"` on later connections.
 
-- Any sign-in result MAY carry `token`, such as after a WebAuthn or email
-  sign-in ([§4.10](#410-webauthn-authentication),
-  [§4.11](#411-email-authentication)). Clients MAY ignore it.
+- It can follow any sign-in, such as a WebAuthn or email sign-in
+  ([§4.10](#410-webauthn-authentication), [§4.11](#411-email-authentication)).
+  Clients MAY ignore it.
 - Servers also send it in reply to `scheme: "token"` when they rotate the
   token that the client sent.
 - Clients save the latest `token`, which replaces any earlier one, and
@@ -698,7 +698,7 @@ authoritative **snapshot** at one log position.
 | `body`         | client | `text`, `format`, `embeds`, `mentions`                                  |
 | `reply_to`     | client | optional message object referring to the message replied to             |
 | `deleted`      | client | tombstone marker, default false ([§4.4](#44-edit))                      |
-| `ext`          | client | optional object of namespaced, opaque extension data                    |
+| `ext`          | client | optional extension data; writes merge it ([§3.5](#35-messages))          |
 
 **Extensions.** `ext` carries data that this document does not define. Its
 keys are namespaces, such as `irc`, or well-known names, such as `bio`:
@@ -1391,9 +1391,10 @@ that message:
   state, except `ext`, which merges. It removes omitted fields, and replaces
   objects and arrays whole.
 - `null` does not mean deletion.
-- Clients MUST send again every client field that they want to keep.
+- Clients MUST send again every client field that they want to keep, except
+  `ext`.
 - The server keeps `message_id`, `from`, and the other server fields.
-- Saves apply in server order, with no merge.
+- Saves apply in server order, and the later save wins.
 
 ```jsonc
 // -> edit

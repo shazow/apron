@@ -172,7 +172,7 @@ record, at least one message currently homed in it, or member state, sorted by
 | file | covers |
 |---|---|
 | `01-creation.json` | flat creation snapshot, live and from history |
-| `02-full-replacement.json` | omitted `body.format`, `reply_to`, and `ext` namespaces are removed; `ext` replaced, not merged |
+| `02-full-replacement.json` | omitted `body.format`, `reply_to`, and `ext` keys are removed; a later snapshot's complete `ext` replaces the earlier one |
 | `03-literal-null.json` | `null` stored inside `ext` and embeds |
 | `04-array-replacement.json` | embeds arrays replaced whole |
 | `05-tombstone.json` | tombstone wins over stale content; tombstones hide reactions (raw and compacted history) |
