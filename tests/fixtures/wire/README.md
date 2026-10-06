@@ -21,7 +21,7 @@ no browser or running example server is needed. No new dependencies are required
 
 Each file has `format: 4`, `kind` (`replay` or `session`), `name`,
 `description`, `references`, `variants`, and `expected`, and no other
-top-level keys. Frames are protocol 7. Each variant has `name` and ordered
+top-level keys. Frames are protocol 8. Each variant has `name` and ordered
 `steps`, starts with fresh client state, and must reach the top-level
 `expected` state. An `expect` step additionally checks an intermediate state.
 
@@ -77,7 +77,7 @@ winning membership gave.
   without `message_id` (such as a `~private` notice) is a **transient
   notice**: it is shown for the session, never installed, and never replaces
   or reorders anything ([PROTOCOL.md §3.5](../../../PROTOCOL.md#35-messages), [Appendix A.1](../../../PROTOCOL.md#a1-system-identities-and-scoped-notices)).
-- A history result is `{rooms?, messages?, reactions?, membership?, first_log_id?, last_log_id?, more, latest_log_id, history_log_id}`.
+- A history result is `{rooms?, messages?, reactions?, memberships?, first_log_id?, last_log_id?, more, latest_log_id, history_log_id}`.
   A missing array is empty. Install every record in all four arrays. Do not filter records by the
   requested room: a move snapshot in room A's history carries `room_id` B and
   must re-home the message into B.
@@ -172,7 +172,7 @@ record, at least one message currently homed in it, or member state, sorted by
 | file | covers |
 |---|---|
 | `01-creation.json` | flat creation snapshot, live and from history |
-| `02-full-replacement.json` | omitted `body.format`, `reply_to`, and `ext` keys are removed; a later snapshot's complete `ext` replaces the earlier one |
+| `02-full-replacement.json` | omitted `body.format`, `reply_to`, and `ext` keys are removed; a snapshot carries its complete `ext`, and clients replace `ext` whole (only writes merge it) |
 | `03-literal-null.json` | `null` stored inside `ext` and embeds |
 | `04-array-replacement.json` | embeds arrays replaced whole |
 | `05-tombstone.json` | tombstone wins over stale content; tombstones hide reactions (raw and compacted history) |
@@ -273,7 +273,7 @@ operation is invoked.
 | `joinRoom` / `leaveRoom` | `room_join` / `room_leave` | `{room_id: room}` |
 | `listRooms` | `room_list` | `{filter: "not_joined", members: true}`, or `{parent_room_id, filter: "not_joined"}` |
 | (recovery) | `history` | `{room_id, after, before}`, or `{room_id, after}` for a resume sent behind `auth` (see below), plus an optional positive `limit` |
-| (connect) | `auth` | `{scheme: "guest"}`, or `{scheme: "token", token}` when an earlier `auth` result on the session carried a `token` and the server offers `token`, plus optional `name`/`client` |
+| (connect) | `auth` | `{scheme: "guest"}`, or `{scheme: "token", token}` when an earlier `auth` result on the session carried a `token` and the server offers `token`, plus optional `name`/`agent` |
 | (right behind `auth`, capability `rooms`) | `room_list` | `{filter: "joined", members: true}`, plus `latest_log_id` on a token resume (see below); sent before the `auth` result |
 
 In saves, `reply_to` is always resubmitted bare even when the stored snapshot
