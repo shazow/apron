@@ -98,8 +98,7 @@ reply.
 Each method is either a request or a notification. A method is a request when
 its sender needs the reply: data, a confirmation that a change was applied, or
 an error. A method that only reports transient state, such as `activity` or
-`ping`, is a notification. Servers ignore an `id` on it and send no reply,
-also when the params are invalid. Extensions follow the same rule.
+`ping`, is a notification.
 
 ```jsonc
 // ->
