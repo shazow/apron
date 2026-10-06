@@ -2137,6 +2137,7 @@ as `irc`:
   notification carries at least each key that changed, with a cleared key as
   its empty value, and clients merge it the same way.
 - Clients do not have to parse `ext`, or send it back.
+- Size limits apply to the merged `ext`.
 - Without capability `ext`, servers MAY drop the `ext` that clients send.
 - An extension keeps its own data under its name in `ext`, on whatever object
   it defines, such as the `server` frame. It needs only its own capability.
