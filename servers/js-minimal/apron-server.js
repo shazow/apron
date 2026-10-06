@@ -1,13 +1,13 @@
-// Apron Chat v7 for trusted, compliant clients. Requires Bun; no dependencies.
+// Apron Chat v8 for trusted, compliant clients. Requires Bun; no dependencies.
 // Run: bun apron-server.js
 // LAN: HOST=0.0.0.0 PORT=8765 bun apron-server.js
-// One room, guest identities, names, replies, ext pass-through, and the latest
-// 1,000 log records of RAM history. Restart clears history; reconnect assigns a
-// new identity. No retry deduplication, edits, room changes, reactions, uploads,
-// credentials, or rate limits. Clients must send valid protocol frames;
-// malformed input may close the connection.
+// One room, guest identities, names, replies, and the latest 1,000 log records
+// of RAM history. Restart clears history; reconnect assigns a new identity. No
+// retry deduplication, edits, room changes, reactions, ext, uploads, credentials,
+// or rate limits. Clients must send valid protocol frames; malformed input may
+// close the connection.
 
-const greeting = { apron: 7, agent: "apron-bun/7", auth: ["guest"], capabilities: ["history"] };
+const greeting = { apron: 8, agent: "apron-bun/8", auth: ["guest"], capabilities: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
 
@@ -48,7 +48,7 @@ function readHistory(params) {
   });
   const slice = "after" in params ? matches.slice(0, limit) : matches.slice(-limit);
   const result = {
-    rooms: slice.filter(record => !record.message_id),
+    rooms: slice.filter(record => !record.message_id).map(room => ({ ...room, ...availability() })),
     messages: slice.filter(record => record.message_id),
     more: matches.length > limit,
     ...availability(),
@@ -76,7 +76,6 @@ function createMessage(you, params) {
     body: { format: "plain", ...params.body },
   };
   if ("reply_to" in params) message.reply_to = { message_id: replyTo };
-  if (params.ext) message.ext = params.ext;
   append(message);
   // Server.publish includes the sender; ws.publish would exclude it.
   server.publish("general", JSON.stringify({ method: "message", params: message }));
@@ -85,11 +84,16 @@ function createMessage(you, params) {
 
 // Keep this synchronous: history reads, commits, and broadcasts must stay ordered.
 function dispatch(ws, method, params) {
-  if (method === "auth") ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() }; // Any scheme.
+  if (method === "auth") {
+    check(params.scheme !== "webauthn" && params.scheme !== "email", "Unsupported scheme", -32601);
+    check(typeof params.scheme === "string", "Missing scheme");
+    // Guest-access policy: any other scheme signs in, ignoring credentials.
+    ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() };
+  }
   check(ws.data.you, "Authenticate first", -32001);
   if (method === "auth" || method === "me") {
     // "" clears the name and is kept, so clients see it cleared; profile
-    // avatar and ext are declined.
+    // avatar and ext are declined. `you` is complete: user_id and name.
     if (typeof params.name === "string") {
       ws.data.you = { ...ws.data.you, name: params.name };
     }
