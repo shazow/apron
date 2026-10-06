@@ -402,13 +402,27 @@ The normalized session state has these keys:
   before its `room_id` is known is not a room. Only server records appear;
   optimistic local echoes do not.
 - `users`: the kept user objects, one per `user_id`, keyed by `user_id` in
-  string order, merged field by field ([PROTOCOL.md §3.3](../../../PROTOCOL.md#33-identity)) from current objects only:
-  `you`, `new` in `user` notifications, and room `members` and `users` in
-  `room_list` results and `room_update` notifications. An empty value (`""`,
-  `[]`, `{}`) is kept: it records a cleared field. Recorded objects (a
-  message's or reaction's `from`, a membership's `user`) and `activity`
-  senders never merge. `old` with `new` makes the old `user_id` stand for the
-  new one; it merges nothing.
+  string order, from current objects only ([PROTOCOL.md §3.3](../../../PROTOCOL.md#33-identity)):
+  `you` and `new` in `user` notifications, `you` in `auth` results, and room
+  `members` and `users` in `room_list` results and `room_update`
+  notifications.
+  - Complete objects (`you` in an `auth` result, and `users`) replace the kept
+    object.
+  - Every other current object merges field by field: a present field
+    replaces, a missing one stays. A `user` notification carries `user_id`
+    and the fields that changed.
+  - An empty value (`""`, `[]`, `{}`) is kept: it records a cleared field.
+  - `ext` merges one level down ([PROTOCOL.md §3.5](../../../PROTOCOL.md#35-messages)): each key that a merged
+    object's `ext` carries replaces the kept key, and other keys stay. As at
+    the top level, a key with an empty value is kept with that value.
+  - At each sign-in (every successful `auth` on a new connection), the kept
+    `status` of every other user is dropped
+    ([PROTOCOL.md §4.5](../../../PROTOCOL.md#45-status)); the objects that
+    arrive after it set it again.
+  - Recorded objects (a message's or reaction's `from`, a membership's
+    `user`) and `activity` senders never merge.
+  - `old` with `new` makes the old `user_id` stand for the new one; it merges
+    nothing, and the old kept object stays.
 - `members`: for each visible room whose member list is known, keyed by
   `room_id`, the `user_id`s of its members (Member lists, above) in string
   order.
@@ -450,7 +464,7 @@ no sleeps, timers, or DOM selectors.
 | `room-list-delta.json` | a token resume lists only the joined rooms changed since the kept checkpoints and resumes the kept rooms behind `auth`; `left` removes rooms and keeps the others, a result without `left` is a full listing |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
 | `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
-| `users.json` | field-by-field merges of current objects from `you`, `members`, `users`, and `user`; `from` and membership users never merge; senders render from the kept object, else their `from`, and a cleared field never falls back; memberships change member lists, not users |
+| `users.json` | field-by-field merges of current objects from `you`, `members`, and `user`; complete `users` replace the kept object; `from` and membership users never merge; senders render from the kept object, else their `from`, and a cleared field never falls back until a complete object replaces it; memberships change member lists, not users; `old` and `new` make the old `user_id` stand for the new one |
 | `reactions.json` | react, change, clear, move re-log in the destination, `invalid_params`, tombstone hiding |
 | `request-errors.json` | denied send, save, and room creation keep the session usable |
 | `history-live-boundary.json` | fixed H with live records above it (edit, room update, reaction), mixed-kind pages (limit counts every kind), raw and compacted |
