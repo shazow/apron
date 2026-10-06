@@ -415,8 +415,8 @@ The normalized session state has these keys:
   - `ext` merges one level down ([PROTOCOL.md §3.5](../../../PROTOCOL.md#35-messages)): each key that a merged
     object's `ext` carries replaces the kept key, and other keys stay. As at
     the top level, a key with an empty value is kept with that value.
-  - At each sign-in (every successful `auth` on a new connection), the kept
-    `status` of every other user is dropped
+  - At each sign-in ([PROTOCOL.md §3.2](../../../PROTOCOL.md#32-authentication)), such as the first successful `auth`
+    on a new connection, the kept `status` of every other user is dropped
     ([PROTOCOL.md §4.5](../../../PROTOCOL.md#45-status)); the objects that
     arrive after it set it again.
   - Recorded objects (a message's or reaction's `from`, a membership's
