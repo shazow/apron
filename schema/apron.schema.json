@@ -23,7 +23,12 @@
     },
     "Ext": {
       "description": "Extension data, keyed by extension name without the ext: prefix; writes merge it one level deep (§3.5).",
-      "type": "object"
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "pattern": "^ext:"
+        }
+      }
     },
     "User": {
       "description": "A user object (§3.3). An empty value clears a field.",
@@ -57,6 +62,17 @@
       "required": [
         "user_id"
       ]
+    },
+    "RecordedUser": {
+      "description": "A recorded user object: the from of a message or a reaction, and the user of a membership. It describes the user at the time of the record, and carries no status (§3.3, §4.5).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/User"
+        }
+      ],
+      "properties": {
+        "status": false
+      }
     },
     "OgMedia": {
       "type": "object",
@@ -214,7 +230,7 @@
           "$ref": "#/$defs/LogId"
         },
         "from": {
-          "$ref": "#/$defs/User"
+          "$ref": "#/$defs/RecordedUser"
         },
         "prev_log_id": {
           "$ref": "#/$defs/LogId"
@@ -315,7 +331,7 @@
             "type": "object",
             "properties": {
               "user": {
-                "$ref": "#/$defs/User"
+                "$ref": "#/$defs/RecordedUser"
               },
               "joined": {
                 "type": "boolean"
@@ -353,7 +369,7 @@
             "type": "object",
             "properties": {
               "from": {
-                "$ref": "#/$defs/User"
+                "$ref": "#/$defs/RecordedUser"
               },
               "emojis": {
                 "type": "array",
@@ -417,10 +433,16 @@
           "exclusiveMinimum": 0
         },
         "status": {
-          "description": "Optional status values accepted, with capability status (§4.5).",
+          "description": "Optional status values accepted, with capability status; online and \"\" are always accepted and not listed (§4.5).",
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "not": {
+              "enum": [
+                "online",
+                ""
+              ]
+            }
           }
         },
         "push": {
@@ -700,7 +722,11 @@
       "type": "object",
       "properties": {
         "kind": {
-          "type": "string"
+          "description": "A key of server.push other than wake (§4.9).",
+          "type": "string",
+          "not": {
+            "const": "wake"
+          }
         },
         "url": {
           "type": "string"
@@ -1049,7 +1075,12 @@
             "new"
           ]
         }
-      ]
+      ],
+      "dependentRequired": {
+        "old": [
+          "new"
+        ]
+      }
     },
     "ReactionsEvent": {
       "$ref": "#/$defs/ReactionSet"
@@ -1437,6 +1468,23 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "ping"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "const": "method"
+            }
+          }
         }
       ]
     },
@@ -1744,7 +1792,12 @@
               "type": "object",
               "properties": {
                 "log_id": false
-              }
+              },
+              "required": [
+                "message_id",
+                "room_id",
+                "from"
+              ]
             }
           ]
         }
@@ -1799,7 +1852,10 @@
           ]
         },
         "idle": false
-      }
+      },
+      "required": [
+        "mute"
+      ]
     }
   }
 }
