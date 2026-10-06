@@ -1,0 +1,52 @@
+{
+  "format": 4,
+  "kind": "session",
+  "name": "Sign-in order and statuses",
+  "description": "Every notification that a sign-in causes on its connection comes after the auth result: the automatic join to general (room_update joined, with the membership), then, with capability status, a user notification with the status that others see of each user who shares a room, except offline and \"\", and one status notification for each mute in effect. At each sign-in the client drops the statuses it kept and applies the ones that arrive, so after a reconnect with the saved token the user who went offline has no status until the full listing reports offline. A complete you in the auth result replaces the kept object, so the avatar and the role that the earlier connection learned are gone. Mutes are not part of the session state.",
+  "references": [
+    "PROTOCOL.md#1-transport--framing",
+    "PROTOCOL.md#32-authentication",
+    "PROTOCOL.md#33-identity",
+    "PROTOCOL.md#433-updates",
+    "PROTOCOL.md#45-status"
+  ],
+  "variants": [
+    {
+      "name": "reconnect",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"expect":{"you":null,"rooms":[],"users":{}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online"},"token":"st_Hk41x9"}}},
+        {"receive":{"method":"room_update","params":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"bob"},{"user_id":"carol"},{"user_id":"guest_1"}]}],"memberships":[{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Ada"},"joined":true}]}]}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"idle"}}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"carol","status":"dnd"}}}},
+        {"receive":{"method":"status","params":{"room_id":"general","mute":true}}},
+        {"receive":{"method":"status","params":{"mute":1800}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online"},"rooms":[{"room_id":"general","log_id":"90","title":"General","messages":[]}],"members":{"general":["bob","carol","guest_1"]},"users":{"bob":{"user_id":"bob","status":"idle"},"carol":{"user_id":"carol","status":"dnd"},"guest_1":{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online"}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"bob"},{"user_id":"carol"},{"user_id":"guest_1"}]}],"users":[{"user_id":"bob","name":"Bob","status":"idle"},{"user_id":"carol","name":"Carol","status":"dnd"},{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online"}]}}},
+        {"receive":{"method":"user","params":{"you":{"user_id":"guest_1","roles":["admin"]}}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"online"}}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online","roles":["admin"]},"rooms":[{"room_id":"general","log_id":"90","title":"General","messages":[]}],"users":{"bob":{"user_id":"bob","name":"Bob","status":"online"},"carol":{"user_id":"carol","name":"Carol","status":"dnd"},"guest_1":{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online","roles":["admin"]}}}},
+        {"disconnect":true},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd"]}}},
+        {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
+        {"request":{"as":"rooms-again","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"}}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"carol","status":"dnd"}}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"rooms":[],"users":{"bob":{"user_id":"bob","name":"Bob"},"carol":{"user_id":"carol","name":"Carol","status":"dnd"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}}}},
+        {"reply":{"to":"rooms-again","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"bob"},{"user_id":"carol"},{"user_id":"guest_1"}]}],"users":[{"user_id":"bob","name":"Bob","status":"offline"},{"user_id":"carol","name":"Carol","status":"dnd"},{"user_id":"guest_1","name":"Ada","status":"online"}]}}}
+      ]
+    }
+  ],
+  "expected": {
+    "you": {"user_id":"guest_1","name":"Ada","status":"online"},
+    "capabilities": ["rooms","status"],
+    "rooms": [
+      {"room_id":"general","log_id":"90","title":"General","messages":[]}
+    ],
+    "members": {"general":["bob","carol","guest_1"]},
+    "users": {"bob":{"user_id":"bob","name":"Bob","status":"offline"},"carol":{"user_id":"carol","name":"Carol","status":"dnd"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}}
+  }
+}
