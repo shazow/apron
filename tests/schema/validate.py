@@ -115,12 +115,6 @@ def check_protocol():
         line = text[: block.start()].count("\n") + 1
         lines = block.group(1).splitlines()
         body = "\n".join("" if l.strip().startswith("//") else l for l in lines)
-        # The direction of each line: the arrow of the last comment above it.
-        direction, arrow = [], "->"
-        for l in lines:
-            if l.strip().startswith("// <-") or l.strip().startswith("// ->"):
-                arrow = l.strip()[3:5]
-            direction.append(arrow)
         requests = {}
         for start in (m.start() for m in re.finditer(r"^\s*\{", body, re.M)):
             try:
@@ -133,7 +127,6 @@ def check_protocol():
                 check(frame, "ClientRequest", where)
             elif "method" in frame:
                 client = frame["method"] in ("activity", "ping") and "from" not in frame.get("params", {})
-                client = client or frame["method"] == "status" and direction[body[: start + body[start:].index("{")].count("\n")] == "->"
                 check(frame, "ClientNotification" if client else "ServerNotification", where)
             elif "push_id" in frame or "unread" in frame:
                 check(frame, "PushPayload", where)

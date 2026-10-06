@@ -81,7 +81,7 @@ ignores room fields and shows a single room.
 - Servers reply `error/unsupported` to requests with unknown methods.
 - Notifications with unknown methods are ignored.
 - Servers ignore an `id` on a method that is only a notification, such as
-  `status`, and send no reply, even when its params are invalid.
+  `activity`, and send no reply, even when its params are invalid.
 - Implementations SHOULD accept frames up to 256 KiB. They MAY reject
   larger requests with `error/too_large`. Larger notifications may be
   dropped.
@@ -353,8 +353,7 @@ is what the server assigned. Servers SHOULD NOT give out a previously used
 `user_id` without authenticating its owner.
 
 Clients MAY pipeline `auth` before `server` arrives. Before successful auth,
-other requests get `denied` and other notifications are ignored, except
-`status` ([§4.11](#411-status)).
+other requests get `denied` and other notifications are ignored.
 The server MAY send notifications before auth, such as a `~private` welcome
 ([Appendix A.1](#a1-system-identities-and-scoped-notices), [Appendix B](#appendix-b--valid-scenarios-informative)).
 
@@ -1813,8 +1812,8 @@ sign-in or an addition, and one with `token` approves it:
 ### 4.11 `status`
 
 Capability `status`. Users set a presence `status` with `me` ([§3.3](#33-identity)).
-Clients report idle connections and the user's mutes with the `status`
-notification.
+Clients report idle connections and set the user's mutes with the `status`
+request.
 
 ```jsonc
 // <- the server frame accepts dnd and invisible
@@ -1865,28 +1864,42 @@ notification.
 
 ```jsonc
 // -> nobody has attended this connection for a while
-{"method": "status", "params": {"idle": true}}
+{"method": "status", "id": "c41", "params": {"idle": true}}
+// <-
+{"id": "c41", "result": {}}
 // <- to others who share a room, if Alice has no attended connection
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "idle"}}}
 // -> mute #random until unmuted, and everything for an hour
-{"method": "status", "params": {"room_id": "random", "mute": true}}
-{"method": "status", "params": {"mute": 3600}}
+{"method": "status", "id": "c42", "params": {"room_id": "random", "mute": true}}
+{"method": "status", "id": "c43", "params": {"mute": 3600}}
 // <- to each of Alice's connections
 {"method": "status", "params": {"room_id": "random", "mute": true}}
 {"method": "status", "params": {"mute": 3600}}
+// <-
+{"id": "c42", "result": {}}
+{"id": "c43", "result": {}}
+// -> too many changes
+{"method": "status", "id": "c44", "params": {"mute": false}}
+// <-
+{"id": "c44", "error": {"code": -32002, "message": "Too Many Requests", "data": {"retry_after": 5}}}
 // <- after a later sign-in, the mutes in effect
 {"method": "status", "params": {"room_id": "random", "mute": true}}
 {"method": "status", "params": {"mute": 1800}}
 ```
 
-- `status` is a notification. Clients MAY send it before authenticating.
-  It applies once authenticated.
+- Clients send `status` as a request. The server replies `{}` once it
+  applies the change.
+- On an error, such as `retry_after` or `invalid_params`, nothing changes.
+- Server-sent `status` is a notification.
 - Absent fields are unchanged.
-- `idle` (boolean) is about the sending connection: nobody is attending
-  it. `idle: false` ends it. `idle` ignores `room_id`.
-- Clients send a connection's initial `idle` at once, and `idle: false` at
-  once. They SHOULD send `idle: true` only after about 30 seconds
-  unattended.
+- `idle` (boolean) is about the sending connection: whether nobody is
+  attending it. `idle` ignores `room_id`.
+- A connection is attended until its client sends `idle: true`.
+- Clients send `idle: true` when nobody is attending the connection, and
+  `idle: false` when someone is again. They MAY wait about 30 seconds
+  before sending `idle: true`.
+- Servers MAY treat a connection that has never sent `idle` as idle after
+  a server-defined period without activity.
 - Servers never send `idle`.
 - `mute` is `true`, `false`, or seconds. It silences the user's
   notifications everywhere or, with `room_id`, in that room and its

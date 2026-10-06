@@ -979,6 +979,9 @@
     "PushUnregisterResult": {
       "type": "object"
     },
+    "StatusResult": {
+      "type": "object"
+    },
     "ServerEvent": {
       "$ref": "#/$defs/Server"
     },
@@ -1096,7 +1099,8 @@
                 "room_join",
                 "room_leave",
                 "room_list",
-                "room_set"
+                "room_set",
+                "status"
               ]
             },
             {
@@ -1357,11 +1361,33 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "status"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "params"
+            ],
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/StatusParams"
+              }
+            }
+          }
         }
       ]
     },
     "ClientNotification": {
-      "description": "A client notification (§1, §4.4, §4.11).",
+      "description": "A client notification (§1, §4.4).",
       "type": "object",
       "required": [
         "method"
@@ -1377,8 +1403,7 @@
             {
               "enum": [
                 "activity",
-                "ping",
-                "status"
+                "ping"
               ]
             },
             {
@@ -1409,28 +1434,6 @@
             "properties": {
               "params": {
                 "$ref": "#/$defs/ActivityParams"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "method": {
-                "const": "status"
-              }
-            },
-            "required": [
-              "method"
-            ]
-          },
-          "then": {
-            "required": [
-              "params"
-            ],
-            "properties": {
-              "params": {
-                "$ref": "#/$defs/StatusParams"
               }
             }
           }
