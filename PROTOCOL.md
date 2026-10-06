@@ -104,9 +104,9 @@ extension named `ext:irc` keeps its data under the key `irc` in `ext` objects
 text and take no prefix.
 
 Receivers handle unknown names as the section that defines them says. As a
-rule, a request that depends on an unknown name fails, and an unknown name in
-a frame that is only read is ignored, or shown with the fallback of its
-section.
+rule, a request that depends on an unknown name fails with `invalid_params`,
+and an unknown name in a frame that is only read is ignored, or shown with the
+fallback of its section.
 
 ### 1.1 Envelope and replies
 
@@ -116,8 +116,13 @@ reply.
 
 Each method is either a request or a notification. A method is a request when
 its sender needs the reply: data, a confirmation that a change was applied, or
-an error. A method that only reports transient state, such as `activity` or
-`ping`, is a notification.
+an error. A method that only reports transient state is a notification.
+Clients send requests with an `id`, and notifications without one:
+
+| sent by | requests (with `id`) | notifications (without `id`) |
+|---------|----------------------|------------------------------|
+| client  | `auth`, `me`, `message`, `command`, `history`, `room_list`, `room_join`, `room_leave`, `room_set`, `reactions`, `status`, `push_register`, `push_unregister` | `activity`, `ping` |
+| server  | none | `server`, `user`, `message`, `room_update`, `reactions`, `activity`, `status`, `pong` |
 
 ```jsonc
 // ->
@@ -167,10 +172,11 @@ These rules apply to every request:
 
 - A request that refers to an ID that does not exist, or that the user cannot
   see, is `invalid_params`.
-- A request that local policy does not allow is `denied`.
 - Servers MAY normalize, limit, or reject any value that a client sends, and
   MAY fill in values that it leaves out. Clients use what the server sends
   back, not what they sent.
+- A rejected value is `invalid_params`, or `too_large` for its size. `denied`
+  is for a well-formed request that the user or server does not allow.
 
 Other application errors MAY use JSON-RPC codes that are not reserved. A valid
 notification never gets an error reply.
@@ -384,7 +390,6 @@ uses it with `scheme: "token"` on later connections.
 
 - It can follow any sign-in, such as a WebAuthn or email sign-in
   ([§4.10](#410-webauthn-authentication), [§4.11](#411-email-authentication)).
-  Clients MAY ignore it.
 - Servers also send it in reply to `scheme: "token"` when they rotate the
   token that the client sent.
 - Clients save the latest `token`, which replaces any earlier one, and
@@ -425,8 +430,8 @@ it processes any later frame on the connection.
 - A **sign-in** is an `auth` that signs the connection in as a user that it is
   not already signed in as. An `auth` that adds a passkey or an address to the
   account is not a sign-in.
-- After a sign-in, the server sends notifications about the state of the new
-  identity after the `auth` result.
+- Every notification that a sign-in causes on its connection comes after the
+  `auth` result.
 
 ### 3.3 Identity
 
@@ -460,10 +465,14 @@ Every message carries its author in `from`:
 
 There are two kinds of user objects:
 
-- **Current** objects describe the user now. They are `you` and `new` in a
-  `user` notification, and room `members` and `users` in `room_list` and
-  `room_update` ([§4.3](#43-rooms)). `you`, `new`, and `users` carry every
-  profile field that the server publishes. `members` MAY carry only `user_id`.
+- **Current** objects describe the user now. They are `you` in `auth` and `me`
+  results, `you` and `new` in a `user` notification, and room `members` and
+  `users` in `room_list` and `room_update` ([§4.3](#43-rooms)).
+  - `you` in a result, and `users`, are **complete**: they carry every profile
+    field that the server publishes.
+  - A `user` notification carries `user_id` and at least the fields that
+    changed. It carries a cleared field as its empty value.
+  - `members` MAY carry only `user_id`.
 - **Recorded** objects describe the user at the time of a record. They are the
   `from` of a message or a reaction, and the `user` of a membership
   ([§4.3.2](#432-membership)). They carry `user_id`, and SHOULD carry `name`.
@@ -471,9 +480,11 @@ There are two kinds of user objects:
 
 Clients keep one user object for each `user_id`:
 
-- Clients merge every current object into the kept object. Each field that the
-  current object carries replaces the kept value. An empty value (`""`, `[]`,
-  `{}`) clears the field. Fields that it does not carry stay the same.
+- Clients replace the kept object with a complete object.
+- Clients merge every other current object into the kept object. Each field
+  that it carries replaces the kept value. An empty value (`""`, `[]`, `{}`)
+  clears the field. Fields that it does not carry stay the same. `null` is an
+  ordinary value.
 - Clients never merge recorded objects.
 - Clients show each field from the kept object. If the kept object does not
   have a field, they use the recorded object in the frame.
@@ -701,7 +712,8 @@ authoritative **snapshot** at one log position.
 | `ext`          | client | optional extension data; writes merge it ([§3.5](#35-messages))          |
 
 **Extensions.** `ext` carries data that this document does not define. Its
-keys are namespaces, such as `irc`, or well-known names, such as `bio`:
+keys are extension names without the `ext:` prefix
+([§1](#1-transport--framing)), such as `irc`:
 
 ```json
 "ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
@@ -711,11 +723,11 @@ keys are namespaces, such as `irc`, or well-known names, such as `bio`:
 - A write merges `ext` one level down, by the rule for current user objects
   ([§3.3](#33-identity)). Each key that it carries replaces the kept value, an
   empty value clears that key, and keys that it leaves out stay. The value
-  under a key is replaced whole. Writes are `me` ([§3.3](#33-identity)),
-  message saves ([§4.4](#44-edit)), and `room_set`
+  under a key is replaced whole. `"ext": {}` changes nothing. Writes are `me`
+  ([§3.3](#33-identity)), message saves ([§4.4](#44-edit)), and `room_set`
   ([§4.3.4](#434-creating-and-editing)).
-- Clients merge `ext` in current user objects the same way. Records carry
-  their complete `ext` ([§2](#2-identifiers)).
+- Clients merge `ext` in a `user` notification the same way. Complete user
+  objects and records carry their complete `ext` ([§2](#2-identifiers)).
 - Put data that must survive saves by other clients in `ext`, not in unknown
   top-level keys.
 
@@ -923,7 +935,7 @@ effect is different:
   "method": "room_update", "params": {
     "left": [{"room_id": "general"}],
     "memberships": [
-      {"log_id": "1724803900001", "room_id": "general", "members": [{"user": {"user_id": "guest_1234"}, "joined": false}]}
+      {"log_id": "1724803900001", "room_id": "general", "members": [{"user": {"user_id": "guest_1234", "name": "Guest"}, "joined": false}]}
     ]
   }
 }
@@ -1192,8 +1204,8 @@ recently active rooms. Servers list a private room only to its members
 
 With `members: true`, each room in `joined` and `not_joined` carries
 `members`. This lists every user who joined the room, as complete or partial
-user objects ([§3.3](#33-identity)). The result MAY carry `users`, the
-complete current objects of the users in `members`, each one time.
+user objects ([§3.3](#33-identity)). The result SHOULD carry `users`, the
+complete objects of the users in `members`, each one time.
 
 In a large room, a server MAY truncate `members`, for example to the most
 recently active users. It then SHOULD include `member_count`, the number of
@@ -1253,7 +1265,7 @@ has the user as a recorded object ([§3.3](#33-identity)), and `joined`.
   "method": "room_update", "params": {
     "left": [{"room_id": "1724803312001"}],
     "memberships": [
-      {"log_id": "1724803450200", "room_id": "1724803312001", "members": [{"user": {"user_id": "ada"}, "joined": false}]}
+      {"log_id": "1724803450200", "room_id": "1724803312001", "members": [{"user": {"user_id": "ada", "name": "Ada"}, "joined": false}]}
     ]
   }
 }
@@ -1447,8 +1459,8 @@ that is not empty.
 ```
 
 **Delete** is a save with `deleted: true`. `body` is then optional, and the
-server MUST omit it from the tombstone. `deleted: true` on creation is
-`invalid_params`.
+server MUST omit `body` and `ext` from the tombstone. `deleted: true` on
+creation is `invalid_params`.
 
 ```jsonc
 // ->
@@ -1497,7 +1509,7 @@ connections, and to set the mutes of the user.
 // -> do not disturb
 {"method": "me", "id": "c40", "params": {"status": "dnd"}}
 // <-
-{"id": "c40", "result": {"you": {"user_id": "alice", "status": "dnd"}}}
+{"id": "c40", "result": {"you": {"user_id": "alice", "name": "Alice", "status": "dnd"}}}
 // <- to others who share a room
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "dnd"}}}
 ```
@@ -1527,9 +1539,9 @@ connections, and to set the mutes of the user.
 
 - `status` is only in current user objects ([§3.3](#33-identity)). A change is
   a `user` notification. Servers MAY delay it.
-- Clients get the user's own `status` from `you`. Other objects about the
-  user carry what others see.
-- Current user objects carry `status` also when it is `offline` or `""`.
+- Clients take the user's own `status` only from `you`. Other objects about
+  the user carry what others see.
+- Complete user objects carry `status` also when it is `offline` or `""`.
 - A user without a `status` has no known status.
 - Clients show an unknown `status` value as unknown, with the value.
 
@@ -1580,22 +1592,24 @@ connections, and to set the mutes of the user.
 
 **Mute.**
 
-- `mute` is `true`, `false`, or a number of seconds. It silences the
-  notifications of the user everywhere. With `room_id`, it silences them only
-  in that room and its threads. `room_id` applies only to `mute`.
+- `mute` is `true`, `false`, or a positive integer number of seconds. It
+  silences the notifications of the user everywhere. With `room_id`, it
+  silences them only in that room and its threads. A `status` request with
+  `room_id` and no `mute` is `invalid_params`.
 - `mute` is private. Others never see it.
-- Servers without timed mutes treat seconds as `true`, and `0` as `false`.
+- Servers without timed mutes treat seconds as `true`.
 - Servers send each change to the mutes of the user to all connections of the
   user, as `status`. When a mute ends or is cleared, they send `mute: false`.
 - Clients apply a `status` that they receive as their own setting.
 
 **Sign-in.** At each sign-in ([§3.2](#32-authentication)), clients drop the
-statuses and mutes that they kept. The server then sends the current state:
+statuses and mutes that they kept, and apply the ones that arrive. After the
+`auth` result, the server sends:
 
-- The `status` that others see of each user who shares a room with the user,
-  except `offline` and `""`.
-- One `status` for each mute in effect, with the seconds left or `true`.
-  Clients treat each scope that the server does not send as unmuted.
+- A `user` notification with the `status` that others see of each user who
+  shares a room with the user, except `offline` and `""`.
+- One `status` notification for each mute in effect, with the seconds left or
+  `true`.
 
 ### 4.6 `activity`
 
@@ -1962,7 +1976,7 @@ most 2048 bytes.
   - Servers MAY leave messages that a room `mute` silences out of `unread`. A
     `mute` without `room_id` does not change `unread`.
 - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients
-  never install it as a snapshot.
+  never install it as a snapshot. Servers do not push transient notices.
   - Servers SHOULD omit `format` and `embeds`.
   - To fit the limit, servers MAY truncate `body.text`, and leave out any
     field except `message_id`, `room_id`, and `from.user_id`.
@@ -2021,10 +2035,9 @@ credential that their device keeps.
 Servers that list `webauthn` in `server.auth` MUST use this exchange. No
 separate capability is necessary.
 
-Both steps are `auth` requests with an `id` and `scheme: "webauthn"`. `action:
-"register"` creates a credential, and `action: "login"` signs in. Both steps
-use the same `action`. An `auth` without an `id` does not start or finish a
-ceremony.
+Both steps are `auth` requests with `scheme: "webauthn"`. `action: "register"`
+creates a credential, and `action: "login"` signs in. Both steps use the same
+`action`.
 
 | Step     | Additional request fields                      | Successful result                                        |
 |----------|------------------------------------------------|----------------------------------------------------------|

@@ -22,7 +22,7 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Extension data, keyed by namespace or well-known name; writes merge it one level deep (§3.5).",
+      "description": "Extension data, keyed by extension name without the ext: prefix; writes merge it one level deep (§3.5).",
       "type": "object"
     },
     "User": {
@@ -1753,6 +1753,11 @@
     "StatusParams": {
       "description": "§4.5",
       "type": "object",
+      "dependentRequired": {
+        "room_id": [
+          "mute"
+        ]
+      },
       "properties": {
         "room_id": {
           "type": "string"
@@ -1761,14 +1766,14 @@
           "type": "boolean"
         },
         "mute": {
-          "description": "true, false, or seconds (§4.5)",
+          "description": "true, false, or a positive number of seconds (§4.5)",
           "anyOf": [
             {
               "type": "boolean"
             },
             {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1
             }
           ]
         }
@@ -1782,14 +1787,14 @@
           "type": "string"
         },
         "mute": {
-          "description": "true, false, or seconds (§4.5)",
+          "description": "true, false, or a positive number of seconds (§4.5)",
           "anyOf": [
             {
               "type": "boolean"
             },
             {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1
             }
           ]
         },
