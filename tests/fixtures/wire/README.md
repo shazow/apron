@@ -468,7 +468,7 @@ no sleeps, timers, or DOM selectors.
 | `sign-in.json` | the automatic join, the statuses that others see, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object |
 | `users.json` | field-by-field merges of current objects from `you`, `members`, and `user`; complete `users` replace the kept object; `from` and membership users never merge; senders render from the kept object, else their `from`, and a cleared field never falls back until a complete object replaces it; memberships change member lists, not users; `old` and `new` make the old `user_id` stand for the new one |
 | `reactions.json` | react, change, clear, move re-log in the destination, `invalid_params`, tombstone hiding |
-| `request-errors.json` | denied send, save, and room creation keep the session usable |
+| `request-errors.json` | denied send, save, and room creation, `invalid_params` for a room the user cannot see, and `unsupported` for a command without capability `command` keep the session usable |
 | `history-live-boundary.json` | fixed H with live records above it (edit, room update, reaction), mixed-kind pages (limit counts every kind), raw and compacted |
 | `history-boundaries.json` | inclusive bound with eviction, bound overtaking a recovery by `room_update` or by page, sparse IDs, `null` bounds (empty log, expired cache, becoming retained, page head) |
 | `history-recovery-failure.json` | a head above the checkpoint resumes from `C + 1`; an error or invalid page keeps partial and buffered state; the next room record frame rebuilds |
