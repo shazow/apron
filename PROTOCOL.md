@@ -82,8 +82,6 @@ ignores room fields and shows a single room.
 - Server announcements and broadcasts are notifications.
 - Servers reply `error/unsupported` to requests with unknown methods.
 - Notifications with unknown methods are ignored.
-- Some methods are only notifications, such as `activity`. Servers ignore an
-  `id` on these methods and send no reply, also when the params are invalid.
 - Implementations SHOULD accept frames up to 256 KiB. They MAY reject a larger
   request with `error/too_large`, and MAY drop a larger notification.
 - A server MAY advertise `ping` ([§3.1](#31-server-frame)). Clients that
@@ -93,8 +91,15 @@ ignores room fields and shows a single room.
 
 ### 1.1 Envelope and replies
 
-A request carries a string `id` ([§2](#2-identifiers)). A frame with a
-`method` and no `id` is a notification.
+A request carries a string `id` ([§2](#2-identifiers)), and gets exactly one
+reply. A frame with a `method` and no `id` is a notification, and gets no
+reply.
+
+Each method is either a request or a notification. A method is a request when
+its sender needs the reply: data, a confirmation that a change was applied, or
+an error. A method that only reports transient state, such as `activity` or
+`ping`, is a notification. Servers ignore an `id` on it and send no reply,
+also when the params are invalid. Extensions follow the same rule.
 
 ```jsonc
 // ->
