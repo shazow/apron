@@ -2,7 +2,7 @@
   "format": 4,
   "kind": "session",
   "name": "Core session",
-  "description": "A server without capability rooms: guest authentication, a first post without room_id into the default room, whose room_id the broadcast reveals before the result confirms it, typing activity, a bare reply_to answered by an embedded snapshot, a transient ~private notice without message_id that is shown but never stored, server frame replacement, unknown notifications, rooms learned from the messages that arrive in them (a room_id starting with ~ is an ordinary room), and a logged ~server notice, an ordinary message in the room it refers to.",
+  "description": "A server without capability rooms: guest authentication, a first post without room_id into the default room, whose room_id the broadcast reveals before the result confirms it, typing activity, a bare reply_to answered by an embedded snapshot, a transient ~private notice without message_id that is shown but never stored, server frame replacement, unknown notifications (an extension's ext:notice, and future_notice, the one deliberately unprefixed name in the fixtures, standing for a method a later protocol version defines), rooms learned from the messages that arrive in them (a room_id starting with ~ is an ordinary room), and a logged ~server notice, an ordinary message in the room it refers to.",
   "references": [
     "PROTOCOL.md#11-envelope-and-replies",
     "PROTOCOL.md#31-server-frame",
@@ -39,6 +39,7 @@
         {"receive":{"method":"message","params":{"room_id":"general","from":{"user_id":"~private","name":"Only you"},"body":{"text":"Welcome to General!"}}}},
         {"expect":{"rooms":[{"room_id":"general","messages":[{"message_id":"1724803200001","log_id":"1724803200001","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"hello","format":"plain"}},{"message_id":"1724803200002","log_id":"1724803200002","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"**re**","format":"markdown"},"reply_to":{"message_id":"1724803200001"}}]}],"notices":[{"room_id":"general","from":{"user_id":"~private","name":"Only you"},"body":{"text":"Welcome to General!"}}]}},
         {"receive":{"method":"server","params":{"apron":8,"auth":["guest"]}}},
+        {"receive":{"method":"ext:notice","params":{"room_id":"general","text":"an extension's notification"}}},
         {"receive":{"method":"future_notice","params":{"room_id":"general","text":"not a message"}}},
         {"receive":{"method":"message","params":{"message_id":"1724803200003","log_id":"1724803200003","room_id":"other","from":{"user_id":"bob","name":"Bob"},"body":{"text":"elsewhere"}}}},
         {"receive":{"method":"message","params":{"message_id":"1724803200004","log_id":"1724803200004","room_id":"~ops","from":{"user_id":"bob","name":"Bob"},"body":{"text":"an ordinary room"}}}},
