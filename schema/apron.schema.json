@@ -22,7 +22,7 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Opaque extension data, keyed by namespace (§3.5).",
+      "description": "Extension data, keyed by namespace or well-known name; writes merge it one level deep (§3.5).",
       "type": "object"
     },
     "User": {

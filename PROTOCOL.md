@@ -555,7 +555,8 @@ The "set by" column means:
 
 - `server`: the server assigns the field. It is read-only
   ([§2](#2-identifiers)).
-- `client`: the client supplies the field. A save replaces it whole.
+- `client`: the client supplies the field. A save replaces it whole, except
+  `ext`, which merges ([§3.5](#35-messages)).
 - `delivery`: the view of this client. It is not logged. Clients always use
   the latest value, even if `log_id` did not change.
 
@@ -657,17 +658,24 @@ log position.
 | `deleted`      | client | tombstone marker, default false ([§4.4](#44-edit))                      |
 | `ext`          | client | optional object of namespaced, opaque extension data                    |
 
-**Extensions.** `ext` carries data the spec does not define, keyed by
-namespace:
+**Extensions.** `ext` carries data that this document does not define. Its
+keys are namespaces, such as `irc`, or well-known names, such as `bio`:
 
 ```json
 "ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
 ```
 
-Clients do not have to parse `ext`. When they save a message
-([§4.4](#44-edit)) or a room ([§4.3.4](#434-creating-and-editing)), they MUST
-send `ext` back unchanged, unless they intend to change it. Put data that must
-survive saves by other clients in `ext`, not in unknown top-level keys.
+- Clients do not have to parse `ext`, or send it back.
+- A write merges `ext` one level down, by the rule for current user objects
+  ([§3.3](#33-identity)). Each key that it carries replaces the kept value, an
+  empty value clears that key, and keys that it leaves out stay. The value
+  under a key is replaced whole. Writes are `me` ([§3.3](#33-identity)),
+  message saves ([§4.4](#44-edit)), and `room_set`
+  ([§4.3.4](#434-creating-and-editing)).
+- Clients merge `ext` in current user objects the same way. Records carry
+  their complete `ext` ([§2](#2-identifiers)).
+- Put data that must survive saves by other clients in `ext`, not in unknown
+  top-level keys.
 
 **Creating.**
 
@@ -1255,8 +1263,8 @@ the full list:
 `room_set` with `room_id` replaces the client fields of that room
 ([§3.4](#34-rooms)). Fields that end in `_id` are fixed at creation. `private`
 is also fixed if the server fixes it. If an edit omits `private`, the room
-keeps its value. Other omitted fields are cleared. Both forms return
-`{"room_id": "..."}`.
+keeps its value. `ext` merges ([§3.5](#35-messages)). Other omitted fields are
+cleared. Both forms return `{"room_id": "..."}`.
 
 ```jsonc
 // -> start a thread in general
@@ -1328,7 +1336,8 @@ Capability `edit`. A `message` request with an existing `message_id` **saves**
 that message:
 
 - A save replaces every client field ([§3.5](#35-messages)) with the submitted
-  state. It removes omitted fields, and replaces objects and arrays whole.
+  state, except `ext`, which merges. It removes omitted fields, and replaces
+  objects and arrays whole.
 - `null` does not mean deletion.
 - Clients MUST send again every client field that they want to keep.
 - The server keeps `message_id`, `from`, and the other server fields.
