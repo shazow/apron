@@ -124,8 +124,8 @@ Clients send requests with an `id`, and notifications without one:
 | client  | `auth`, `me`, `message`, `command`, `history`, `room_list`, `room_join`, `room_leave`, `room_set`, `reactions`, `status`, `push_register`, `push_unregister` | `activity`, `ping` |
 | server  | none | `server`, `user`, `message`, `room_update`, `reactions`, `activity`, `status`, `pong` |
 
-A server MAY ignore a request method sent without an `id`, and a notification
-method sent with one.
+A server MAY ignore a request method sent without an `id`. It MAY ignore the
+`id` of a notification method, and handle the frame as a notification.
 
 ```jsonc
 // ->
@@ -299,6 +299,7 @@ class Server {
   ping?: number;                // seconds between client pings (§1)
   push?: object;                // push kinds and wake scopes; enables push (§4.9)
   status?: string[];            // optional status values accepted (§4.5)
+  ext?: object;                 // extension data (§4.12)
 }
 ```
 
@@ -429,8 +430,8 @@ it processes any later frame on the connection.
 - Later requests use the authentication that the `auth` left on the
   connection. An `auth` that authenticates nothing, such as a failure or a
   WebAuthn `begin` step, changes nothing.
-- Before a successful `auth`, other requests get `denied`, and the server
-  ignores other notifications.
+- Before a successful `auth`, other requests get `denied`. The server ignores
+  other notifications, except `ping` ([§1](#1-transport--framing)).
 - The server MAY send notifications before `auth`, such as a `~private`
   welcome ([Appendix A.1](#a1-system-identities-and-scoped-notices),
   [Appendix B](#appendix-b--valid-scenarios-informative)).
@@ -454,6 +455,7 @@ class User {
   avatar?: string;              // image URL
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
   status?: string;              // current objects only (§4.5)
+  ext?: object;                 // "ext" capability (§4.12)
 }
 ```
 
@@ -466,7 +468,8 @@ Every message carries its author in `from`:
 **User objects.** Every identity on the wire uses the `User` shape: `you`,
 `new`, `old`, `from`, `members`, `users`, and the `user` of a membership.
 `user_id` is required and stable. The other fields are optional: `name`,
-`avatar` ([§4.8.6](#486-avatars)), and `roles` (below).
+`avatar` ([§4.8.6](#486-avatars)), `roles` (below), and, with capabilities,
+`status` ([§4.5](#45-status)) and `ext` ([§4.12](#412-ext)).
 
 There are two kinds of user objects:
 
@@ -580,6 +583,9 @@ class Room {
   // "rooms" capability
   members?: User[];             // only in some frames
   member_count?: number;        // total members, when `members` is truncated
+
+  // "ext" capability
+  ext?: object;                 // §4.12
 }
 ```
 
@@ -624,6 +630,7 @@ The "set by" column means:
 | `private`                 | client   | optional; visible only to members ([§4.3.4](#434-creating-and-editing))           |
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
 | `description`             | client   | optional string, CommonMark by convention: what the room is about                 |
+| `ext`                     | client   | optional extension data; merges by key ([§4.12](#412-ext))                         |
 | `latest_log_id`           | delivery | greatest `log_id` in the room's log, memberships included                         |
 | `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
 | `members`                 | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.3](#43-rooms))       |
@@ -675,6 +682,9 @@ class Message {
 
   // "edit" capability
   deleted?: boolean = false;
+
+  // "ext" capability
+  ext?: object;                 // absent on tombstones (§4.12)
 }
 ```
 
@@ -712,6 +722,7 @@ authoritative **snapshot** at one log position.
 | `body`         | client | `text`, `format`, `embeds`, `mentions`                                  |
 | `reply_to`     | client | optional message object referring to the message replied to             |
 | `deleted`      | client | tombstone marker, default false ([§4.4](#44-edit))                      |
+| `ext`          | client | optional extension data; merges by key ([§4.12](#412-ext))               |
 
 **Creating.**
 
@@ -729,7 +740,8 @@ authoritative **snapshot** at one log position.
 **Rendering.**
 
 - Clients MUST render both formats. `"markdown"` text is
-  [CommonMark](https://commonmark.org/).
+  [CommonMark](https://commonmark.org/). Clients MAY render common extensions,
+  such as tables, and MAY render soft line breaks as hard breaks.
 - Other fields that this document calls CommonMark follow the same rules.
   Clients MAY show them as plain text.
 - Clients MUST disable raw HTML in CommonMark, or sanitize it with the same
@@ -1523,7 +1535,8 @@ connections, and to set the mutes of the user.
 - `status` is only in current user objects ([§3.3](#33-identity)). A change is
   a `user` notification. Servers MAY delay it.
 - Clients take the user's own `status` only from `you`. Other objects about
-  the user carry what others see.
+  the user carry what others see. A complete object about the user, other than
+  `you`, does not replace the user's own `status`.
 - Complete user objects carry `status` also when it is `offline` or `""`.
 - A user without a `status` has no known status.
 - Clients show an unknown `status` value as unknown, with the value.
@@ -1589,8 +1602,10 @@ connections, and to set the mutes of the user.
 statuses and mutes that they kept, and apply the ones that arrive. After the
 `auth` result, the server sends:
 
-- A `user` notification with the `status` that others see of each user who
-  shares a room with the user, except `offline` and `""`.
+- One `user` notification for each user who shares a room with the user,
+  carrying in `new` the `status` that others see, except `offline` and `""`.
+  Servers MAY limit these to the users that they would list in `members`
+  ([§4.3.1](#431-listing)).
 - One `status` notification for each mute in effect, with the seconds left or
   `true`.
 
@@ -1950,17 +1965,18 @@ supports. If `server.push` is present, the server accepts `push_register` and
 most 2048 bytes.
 
 - `push_id`: the `push_id` of the registration, if it has one. Clients drop a
-  payload with a `push_id` that they do not know.
+  payload with a `push_id` that they do not know. A client that registered a
+  `push_id` MAY drop a payload without one.
 - `unread` (optional): the unread count of the user, as the server counts it,
   such as messages after the read cursors of the user ([§4.6](#46-activity)).
   It is the same for all registrations of the user. Clients MAY show it as an
   app badge.
-  - Servers that advertise `badge` send `unread`.
+    - Servers whose `server.push.wake` lists `badge` send `unread`.
   - Servers MAY leave messages that a room `mute` silences out of `unread`. A
     `mute` without `room_id` does not change `unread`.
 - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients
   never install it as a snapshot. Servers do not push transient notices.
-    - Servers SHOULD omit `format`, `embeds`, and `ext`.
+  - Servers SHOULD omit `format`, `embeds`, and `ext`.
   - To fit the limit, servers MAY truncate `body.text`, and leave out any
     field except `message_id`, `room_id`, and `from.user_id`.
   - A payload without `message` shows no notification.
@@ -2132,12 +2148,16 @@ as `irc`:
 - Writes are `me` ([§3.3](#33-identity)), `message` requests
   ([§3.5](#35-messages), [§4.4](#44-edit)), and `room_set`
   ([§4.3.4](#434-creating-and-editing)). A write that creates a record, or
-  saves a tombstone, merges into an empty `ext`. A tombstone carries no `ext`.
+  saves a message whose current snapshot is a tombstone, merges into an empty
+  `ext`. A save with `deleted: true` drops `ext`.
 - Complete user objects and records carry their complete `ext`. A `user`
   notification carries at least each key that changed, with a cleared key as
   its empty value, and clients merge it the same way.
 - Clients do not have to parse `ext`, or send it back.
-- Size limits apply to the merged `ext`.
+- Size limits apply to the merged `ext`. A write whose merged `ext` is over a
+  limit is `too_large`, and changes nothing.
+- Clients send `ext` only to a server that advertises capability `ext`, or the
+  capability of the extension that defines the key.
 - Without capability `ext`, servers MAY drop the `ext` that clients send.
 - An extension keeps its own data under its name in `ext`, on whatever object
   it defines, such as the `server` frame. It needs only its own capability.
