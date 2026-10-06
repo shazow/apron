@@ -2129,10 +2129,10 @@ as `irc`:
   kept value, an empty value (`""`, `[]`, `{}`) clears that key, and keys that
   it leaves out stay. The value under a key is replaced whole. `null` is an
   ordinary value, and `"ext": {}` changes nothing.
-- Writes are `me` ([§3.3](#33-identity)), message saves ([§4.4](#44-edit)),
-  and `room_set` ([§4.3.4](#434-creating-and-editing)). A write that creates a
-  record, or saves a tombstone, merges into an empty `ext`. A tombstone
-  carries no `ext`.
+- Writes are `me` ([§3.3](#33-identity)), `message` requests
+  ([§3.5](#35-messages), [§4.4](#44-edit)), and `room_set`
+  ([§4.3.4](#434-creating-and-editing)). A write that creates a record, or
+  saves a tombstone, merges into an empty `ext`. A tombstone carries no `ext`.
 - Complete user objects and records carry their complete `ext`. A `user`
   notification carries each key that changed, with a cleared key as its empty
   value, and clients merge it the same way.
