@@ -22,7 +22,7 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Extension data, keyed by extension name without the ext: prefix; writes merge it one level deep (§3.5).",
+      "description": "Extension data, keyed by extension name without the ext: prefix; with capability ext, writes merge it one level deep (§4.12).",
       "type": "object",
       "propertyNames": {
         "not": {

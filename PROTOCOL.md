@@ -75,7 +75,7 @@ reply to its request, and every other frame is a one-way notification.
   requests, responses, and notifications (`method`, `params`, `id`, `result`,
   `error`). They omit the `"jsonrpc": "2.0"` key, and every `id` is a string.
 - Implementations MUST ignore unknown keys, and MAY drop them. Extension data
-  goes in `ext` ([§3.5](#35-messages)).
+  goes in `ext` ([§4.12](#412-ext)).
 - Servers MAY process requests concurrently and reply in any order. If a
   client needs one request applied before another, it waits for the first
   reply.
@@ -100,8 +100,8 @@ reply to its request, and every other frame is a one-way notification.
 list in this document can extend, such as a method, a capability, an auth
 scheme, or a kind. This document never defines a name with that prefix. An
 extension named `ext:irc` keeps its data under the key `irc` in `ext` objects
-([§3.5](#35-messages)). Display values, such as a status or a role, are free
-text and take no prefix.
+([§4.12](#412-ext)). Display values, such as a status or a role, are free text
+and take no prefix.
 
 Receivers handle unknown names as the section that defines them says. As a
 rule, a request that depends on an unknown name fails with `invalid_params`,
@@ -299,7 +299,6 @@ class Server {
   ping?: number;                // seconds between client pings (§1)
   push?: object;                // push kinds and wake scopes; enables push (§4.9)
   status?: string[];            // optional status values accepted (§4.5)
-  ext?: object;                 // opaque extension data (§3.5)
 }
 ```
 
@@ -455,7 +454,6 @@ class User {
   avatar?: string;              // image URL
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
   status?: string;              // current objects only (§4.5)
-  ext?: object;                 // opaque extension data (§3.5)
 }
 ```
 
@@ -468,8 +466,7 @@ Every message carries its author in `from`:
 **User objects.** Every identity on the wire uses the `User` shape: `you`,
 `new`, `old`, `from`, `members`, `users`, and the `user` of a membership.
 `user_id` is required and stable. The other fields are optional: `name`,
-`avatar` ([§4.8.6](#486-avatars)), `roles` (below), and `ext`
-([§3.5](#35-messages)).
+`avatar` ([§4.8.6](#486-avatars)), and `roles` (below).
 
 There are two kinds of user objects:
 
@@ -492,8 +489,8 @@ Clients keep one user object for each `user_id`:
 - Clients merge every other current object into the kept object. Each field
   that it carries replaces the kept value. An empty value (`""`, `[]`, `{}`)
   clears the field, except `ext`, which merges by its keys
-  ([§3.5](#35-messages)). Fields that it does not carry stay the same. `null` is an
-  ordinary value.
+  ([§4.12](#412-ext)). Fields that it does not carry stay the same. `null` is
+  an ordinary value.
 - Clients never merge recorded objects.
 - Clients show each field from the kept object. If the kept object does not
   have a field, they use the recorded object in the frame.
@@ -503,12 +500,12 @@ Clients keep one user object for each `user_id`:
 
 **Profile.** A `me` request changes the user's own profile after
 authentication. It merges by the same rules as a current object. The settable
-fields are `name`, `avatar`, `ext`, and, with capability `status`, `status`
-([§4.5](#45-status)). `roles` is not settable. Servers announce a cleared
-field as its empty value:
+fields are `name`, `avatar`, and, with capabilities `status`
+([§4.5](#45-status)) and `ext` ([§4.12](#412-ext)), `status` and `ext`.
+`roles` is not settable. Servers announce a cleared field as its empty value:
 
 ```jsonc
-// -> rename and clear the avatar; ext is untouched
+// -> rename and clear the avatar
 {"method": "me", "id": "c2", "params": {"name": "Alice ⚙", "avatar": ""}}
 // <-
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙", "avatar": ""}}}
@@ -573,7 +570,6 @@ class Room {
   private?: boolean = false;    // members only (§4.3.4)
   title?: string;               // absent: shown as room_id
   description?: string;         // CommonMark by convention
-  ext?: object;                 // opaque extension data (§3.5)
 
   // "history" capability: required when advertised
   log_id?: string;
@@ -615,7 +611,7 @@ The "set by" column means:
 - `server`: the server assigns the field. It is read-only
   ([§2](#2-identifiers)).
 - `client`: the client supplies the field. A save replaces it whole, except
-  `ext`, which merges ([§3.5](#35-messages)).
+  `ext`, which merges ([§4.12](#412-ext)).
 - `delivery`: the view of this client. It is not logged. Clients always use
   the latest value, even if `log_id` did not change.
 
@@ -628,7 +624,6 @@ The "set by" column means:
 | `private`                 | client   | optional; visible only to members ([§4.3.4](#434-creating-and-editing))           |
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
 | `description`             | client   | optional string, CommonMark by convention: what the room is about                 |
-| `ext`                     | client   | optional opaque extension data ([§3.5](#35-messages))                             |
 | `latest_log_id`           | delivery | greatest `log_id` in the room's log, memberships included                         |
 | `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
 | `members`                 | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.3](#43-rooms))       |
@@ -669,7 +664,6 @@ class Message {
 
   room_id?: string;             // absent: the server's default room
   reply_to?: { message_id: string } | Message;   // bare from clients
-  ext?: object;                 // opaque extension data (§3.5); absent on tombstones (§4.4)
 
   // set by the server
   message_id?: string;          // absent on transient notices; sent by clients only to save (§4.4)
@@ -718,28 +712,6 @@ authoritative **snapshot** at one log position.
 | `body`         | client | `text`, `format`, `embeds`, `mentions`                                  |
 | `reply_to`     | client | optional message object referring to the message replied to             |
 | `deleted`      | client | tombstone marker, default false ([§4.4](#44-edit))                      |
-| `ext`          | client | optional extension data; writes merge it ([§3.5](#35-messages))          |
-
-**Extensions.** `ext` carries data that this document does not define. Its
-keys are extension names without the `ext:` prefix
-([§1](#1-transport--framing)), such as `irc`:
-
-```json
-"ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
-```
-
-- Clients do not have to parse `ext`, or send it back.
-- A write merges `ext` one level down, by the rule for current user objects
-  ([§3.3](#33-identity)). Each key that it carries replaces the kept value, an
-  empty value clears that key, and keys that it leaves out stay. The value
-  under a key is replaced whole. `"ext": {}` changes nothing. A write that
-  creates a record, or saves a tombstone, merges into an empty `ext`. Writes
-  are `me` ([§3.3](#33-identity)), message saves ([§4.4](#44-edit)), and
-  `room_set` ([§4.3.4](#434-creating-and-editing)).
-- Clients merge `ext` in a `user` notification the same way. Complete user
-  objects and records carry their complete `ext` ([§2](#2-identifiers)).
-- Put data that must survive saves by other clients in `ext`, not in unknown
-  top-level keys.
 
 **Creating.**
 
@@ -873,6 +845,7 @@ the client uses the fallback in this table:
 | `reactions`    | emoji reactions on messages                                 | reaction controls hidden     | [§4.7](#47-reactions)      |
 | `embed:upload` | `upload` embeds: files the sender writes over HTTP          | no attachments               | [§4.8.4](#484-embedupload) |
 | `embed:stream` | live-streamed text in a message                             | post the finished text       | [§4.8.5](#485-embedstream) |
+| `ext`          | extension data kept on users, messages, and rooms           | servers may drop `ext`       | [§4.12](#412-ext)          |
 
 Some features have no capability:
 
@@ -1334,7 +1307,7 @@ the full list:
 `room_set` with `room_id` replaces the client fields of that room
 ([§3.4](#34-rooms)). Fields that end in `_id` are fixed at creation. `private`
 is also fixed if the server fixes it. If an edit omits `private`, the room
-keeps its value. `ext` merges ([§3.5](#35-messages)). Other omitted fields are
+keeps its value. `ext` merges ([§4.12](#412-ext)). Other omitted fields are
 cleared. Both forms return `{"room_id": "..."}`.
 
 ```jsonc
@@ -1410,8 +1383,8 @@ Capability `edit`. A `message` request with an existing `message_id` **saves**
 that message:
 
 - A save replaces every client field ([§3.5](#35-messages)) with the submitted
-  state, except `ext`, which merges. It removes omitted fields, and replaces
-  objects and arrays whole.
+  state, except `ext`, which merges ([§4.12](#412-ext)). It removes omitted
+  fields, and replaces objects and arrays whole.
 - `null` does not mean deletion.
 - Clients MUST send again every client field that they want to keep, except
   `ext`.
@@ -2136,6 +2109,49 @@ or an addition. An `auth` request with `token` approves it:
   server.
 - Account creation for unknown addresses, send rate limits (`retry_after`),
   and the bearer token's lifetime are server policy.
+
+### 4.12 `ext`
+
+Some data has no field in this document: a bridge's IDs for the messages it
+relays, an agent's settings for a room, or a user's time zone. Capability
+`ext` gives that data a place that survives other clients' saves.
+
+Capability `ext`. Servers keep the `ext` that clients write on users,
+messages, and rooms, and merge it as below. `ext` is an object whose keys are
+extension names without the `ext:` prefix ([§1](#1-transport--framing)), such
+as `irc`:
+
+```json
+"ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
+```
+
+- A write merges `ext` one level down. Each key that it carries replaces the
+  kept value, an empty value (`""`, `[]`, `{}`) clears that key, and keys that
+  it leaves out stay. The value under a key is replaced whole. `null` is an
+  ordinary value, and `"ext": {}` changes nothing.
+- Writes are `me` ([§3.3](#33-identity)), message saves ([§4.4](#44-edit)),
+  and `room_set` ([§4.3.4](#434-creating-and-editing)). A write that creates a
+  record, or saves a tombstone, merges into an empty `ext`. A tombstone
+  carries no `ext`.
+- Complete user objects and records carry their complete `ext`. A `user`
+  notification carries each key that changed, with a cleared key as its empty
+  value, and clients merge it the same way.
+- Clients do not have to parse `ext`, or send it back.
+- Without capability `ext`, servers MAY drop the `ext` that clients send.
+- An extension keeps its own data under its name in `ext`, on whatever object
+  it defines, such as the `server` frame. It needs only its own capability.
+
+```jsonc
+// kept: "ext": {"irc": {"nick": "ada_"}, "tz": "Europe/Oslo"}
+// -> change the time zone only
+{"method": "me", "id": "c50", "params": {"ext": {"tz": "America/Toronto"}}}
+// <-
+{"id": "c50", "result": {"you": {"user_id": "ada", "name": "Ada", "ext": {"irc": {"nick": "ada_"}, "tz": "America/Toronto"}}}}
+// -> clear irc
+{"method": "me", "id": "c51", "params": {"ext": {"irc": ""}}}
+// <-
+{"id": "c51", "result": {"you": {"user_id": "ada", "name": "Ada", "ext": {"tz": "America/Toronto"}}}}
+```
 
 ---
 

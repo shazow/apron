@@ -8,7 +8,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - The `status` request reports `idle` per connection and sets the user's private `mute` (`true`, `false`, or seconds), globally or per room. Servers echo mutes to all the user's connections.
 - Push kind `webpush` (VAPID); `relay` may carry `keys` for ciphertext. Registrations carry a `push_id` and `wake` scopes (`mentions`, `private`, `replies`, `joined`, `badge`). The payload is `{push_id, unread, message}` of at most 2048 bytes, with `TTL` and `Urgency` headers.
 - `you` in `auth` and `me` results and listing `users` are complete and replace the kept object; `user` notifications carry what changed.
-- Writes merge `ext` one level deep: an empty value clears a key, and keys left out stay. Clients need not send `ext` back.
+- `ext` moves out of the core into capability `ext` (§4.12): servers keep the `ext` clients write on users, messages, and rooms, and writes merge it one level deep. Clients need not send `ext` back.
 - Extension names start with `ext:`; an extension `ext:foo` keeps its data under `ext.foo`.
 - Every notification a sign-in causes follows the `auth` result, and clients drop kept statuses and mutes at each sign-in. A sign-in to an existing account is announced as a departure; `old` is only for a new `user_id` on the same account.
 - §1.1 lists request and notification methods, and gathers general errors: unknown or hidden IDs and rejected values are `invalid_params`, size limits `too_large`, policy and count limits `denied`.
