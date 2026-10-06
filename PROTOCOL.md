@@ -18,7 +18,7 @@ Here's an example exchange to get a taste:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"apron": 8, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -255,7 +255,7 @@ frame, unprompted. There is no client hello.
 ```json
 {
   "method": "server", "params": {
-    "apron": 7,
+    "apron": 8,
     "agent": "impl-name/1.0",
     "capabilities": ["history", "edit"],
     "auth": ["token"]
@@ -1498,7 +1498,7 @@ enables `push_register` and `push_unregister`.
 // <- the server frame offers relay and webpush
 {
   "method": "server", "params": {
-    "apron": 7, "capabilities": ["status"], "auth": ["webauthn", "token"],
+    "apron": 8, "capabilities": ["status"], "auth": ["webauthn", "token"],
     "push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
   }
 }
@@ -1823,7 +1823,7 @@ request.
 // <- the server frame accepts dnd and invisible
 {
   "method": "server", "params": {
-    "apron": 7, "capabilities": ["status"], "auth": ["token"],
+    "apron": 8, "capabilities": ["status"], "auth": ["token"],
     "status": ["dnd", "invisible"]
   }
 }
@@ -2023,7 +2023,7 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // <-
-  {"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+  {"method": "server", "params": {"apron": 8, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
   // <- before any auth
   {
     "method": "message", "params": {
@@ -2051,7 +2051,7 @@ implementations accept them. Each follows from the sections it cites.
   {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
   {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
   // <-
-  {"method": "server", "params": {"apron": 7, "capabilities": ["rooms"], "auth": ["token"]}}
+  {"method": "server", "params": {"apron": 8, "capabilities": ["rooms"], "auth": ["token"]}}
   // <-
   {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
   // <- then the bot closes the connection

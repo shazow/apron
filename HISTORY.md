@@ -2,16 +2,9 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first.
 
-## v7 (2026-09-29)
+## v8 (2026-10-06)
 
 - A `user` notification carries `old` only when the same account takes a new `user_id`, such as a guest becoming a new account. Signing in to an existing account is announced as the previous identity's departure.
-- Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
-- Private rooms (`private: true`) are visible only to their members, and new threads inherit it; `room_join` and `room_leave` may take a `user_id` to add or remove others.
-- Optional `member_count` when a server truncates `members`.
-- Membership records arrive in `room_update` `memberships`, replacing the `membership` notification. The `history` key is renamed `memberships`.
-- Email sign-in scheme (`email`): a request with `email` proposes a sign-in or an addition, and one with `token` approves it. Any `auth` result may carry a rotated bearer `token`.
-- `server.signup` lists the schemes that create accounts.
-- A passkey registration's `name` labels the passkey (`user.name` and `user.displayName`).
 - Capability `status`: users set `status` with `me`: `online` (the default), `""` (none), and optionally `dnd` or `invisible`, which `server.status` lists when accepted. Others see `online` as `online` (attended), `idle` (connected, none attended), or `offline` (no connections), `dnd` as `dnd` only while the user is connected, and `invisible` as `offline`. Clients take their own status from `you`. A sign-in is an `auth` that signs the connection in as a user it isn't already signed in as, not one that adds a passkey or address. A change is a `user` notification. After a sign-in, servers send, after the `auth` result, the status others see of each user who shares a room, other than `offline` and `""`; clients drop kept statuses at each sign-in. Current user objects in `room_list` and `room_update` carry `status`, `offline` and `""` included. A user without a status has no known status, and unknown values show as unknown.
 - The `status` request carries `idle` for the sending connection and the user's private `mute` (`true`, `false`, or seconds), everywhere or, with `room_id`, in one room and its threads. Its result is `{}`, and on an error nothing changes. Clients don't send it before sign-in. A connection starts attended. Servers send each mute change to all the user's connections, and the mutes in effect after the result of a sign-in, as `status` notifications. `room_id` scopes only `mute`. `dnd` silences like `mute`. Replaces `activity` `away`.
 - Servers ignore an `id` on a notification-only method, even with invalid params.
@@ -19,6 +12,16 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - A registration belongs to its user and `url`, and carries an optional client-chosen `push_id` that every payload repeats; clients keep one notification per `push_id` and `message_id`. Servers may refuse a registration with `denied`, and an endpoint they won't send to is `invalid_params`. Unregistering an unknown `url` succeeds, and clients should unregister before signing out. Servers may expire registrations that clients don't renew or that exceed a per-user limit, and remove any registration whose `url` won't accept pushes, such as on 404 or 410.
 - `server.push.wake` advertises wake scopes (`mentions`, `private`, `replies`, `joined`, `badge`), and a registration's `wake` picks among them; the default is `mentions` and `replies`. `wake` is not a push kind. Servers don't wake a user for their own messages, and send what `mute` or `dnd` silences only as `badge` pushes without `message`.
 - The payload is an object of at most 2048 bytes with `push_id`, an optional `unread` count and the `message`, replacing the bare message object. Servers may truncate `body.text` and drop any `message` field but `message_id`, `room_id`, and `from.user_id` to fit. `badge` pushes count changes without `message`.
+
+## v7 (2026-09-29)
+
+- Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
+- Private rooms (`private: true`) are visible only to their members, and new threads inherit it; `room_join` and `room_leave` may take a `user_id` to add or remove others.
+- Optional `member_count` when a server truncates `members`.
+- Membership records arrive in `room_update` `memberships`, replacing the `membership` notification. The `history` key is renamed `memberships`.
+- Email sign-in scheme (`email`): a request with `email` proposes a sign-in or an addition, and one with `token` approves it. Any `auth` result may carry a rotated bearer `token`.
+- `server.signup` lists the schemes that create accounts.
+- A passkey registration's `name` labels the passkey (`user.name` and `user.displayName`).
 - `server.welcome` for sign-in instructions.
 - User objects may carry server-defined `roles`. An empty value (`""`, `[]`, `{}`) clears a field and is kept, so it never falls back to a recorded `from`.
 - System identities use `~` (`~server`, `~room`, `~private`); text prefixes are `@user`, `#room`, `~system`.
