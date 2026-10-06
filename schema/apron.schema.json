@@ -36,7 +36,7 @@
           "type": "string"
         },
         "avatar": {
-          "description": "Image URL (§4.7.6).",
+          "description": "Image URL (§4.8.6).",
           "type": "string"
         },
         "roles": {
@@ -51,7 +51,7 @@
         },
         "status": {
           "type": "string",
-          "description": "Current objects only. Set with me: online (default), \"\" (none), dnd, or invisible. Seen by others: online, idle, offline, dnd, or \"\". Clients show other values as unknown (§4.8)"
+          "description": "Current objects only. Set with me: online (default), \"\" (none), dnd, or invisible. Seen by others: online, idle, offline, dnd, or \"\". Clients show other values as unknown (§4.5)"
         }
       },
       "required": [
@@ -79,7 +79,7 @@
       }
     },
     "Og": {
-      "description": "OpenGraph description of an embed (§4.7.1).",
+      "description": "OpenGraph description of an embed (§4.8.1).",
       "type": "object",
       "properties": {
         "title": {
@@ -103,7 +103,7 @@
       }
     },
     "Embed": {
-      "description": "An embed in a message body (§4.7).",
+      "description": "An embed in a message body (§4.8).",
       "type": "object",
       "properties": {
         "kind": {
@@ -129,7 +129,7 @@
           "type": "string"
         },
         "format": {
-          "description": "Stream text format (§4.7.5).",
+          "description": "Stream text format (§4.8.5).",
           "type": "string",
           "default": "plain"
         },
@@ -300,7 +300,7 @@
       ]
     },
     "Membership": {
-      "description": "A membership record (§4.6.2).",
+      "description": "A membership record (§4.3.2).",
       "type": "object",
       "properties": {
         "log_id": {
@@ -335,7 +335,7 @@
       ]
     },
     "ReactionSet": {
-      "description": "A reactions record (§4.5).",
+      "description": "A reactions record (§4.7).",
       "type": "object",
       "properties": {
         "log_id": {
@@ -417,7 +417,7 @@
           "exclusiveMinimum": 0
         },
         "status": {
-          "description": "Optional status values accepted, with capability status (§4.8).",
+          "description": "Optional status values accepted, with capability status (§4.5).",
           "type": "array",
           "items": {
             "type": "string"
@@ -531,7 +531,7 @@
         },
         "status": {
           "type": "string",
-          "description": "With capability status (§4.8)"
+          "description": "With capability status (§4.5)"
         }
       }
     },
@@ -557,7 +557,7 @@
           "type": "boolean"
         }
       },
-      "description": "Creates a message, or saves one given message_id (§3.5, §4.3)."
+      "description": "Creates a message, or saves one given message_id (§3.5, §4.4)."
     },
     "CommandParams": {
       "type": "object",
@@ -597,7 +597,7 @@
       }
     },
     "RoomListParams": {
-      "description": "§4.6.1",
+      "description": "§4.3.1",
       "type": "object",
       "properties": {
         "filter": {
@@ -623,7 +623,7 @@
       }
     },
     "RoomJoinParams": {
-      "description": "§4.6.2",
+      "description": "§4.3.2",
       "type": "object",
       "properties": {
         "room_id": {
@@ -638,7 +638,7 @@
       ]
     },
     "RoomLeaveParams": {
-      "description": "§4.6.2",
+      "description": "§4.3.2",
       "type": "object",
       "properties": {
         "room_id": {
@@ -653,7 +653,7 @@
       ]
     },
     "RoomSetParams": {
-      "description": "§4.6.4",
+      "description": "§4.3.4",
       "type": "object",
       "properties": {
         "room_id": {
@@ -677,7 +677,7 @@
       }
     },
     "ReactionsParams": {
-      "description": "§4.5",
+      "description": "§4.7",
       "type": "object",
       "properties": {
         "message_id": {
@@ -764,7 +764,7 @@
       ]
     },
     "ActivityParams": {
-      "description": "§4.4",
+      "description": "§4.6",
       "type": "object",
       "properties": {
         "room_id": {
@@ -924,7 +924,7 @@
       ]
     },
     "RoomListResult": {
-      "description": "§4.6.1",
+      "description": "§4.3.1",
       "type": "object",
       "properties": {
         "joined": {
@@ -989,7 +989,7 @@
       "$ref": "#/$defs/Message"
     },
     "RoomUpdateEvent": {
-      "description": "§4.6.3",
+      "description": "§4.3.3",
       "type": "object",
       "properties": {
         "joined": {
@@ -1055,7 +1055,7 @@
       "$ref": "#/$defs/ReactionSet"
     },
     "ActivityEvent": {
-      "description": "§4.4",
+      "description": "§4.6",
       "type": "object",
       "properties": {
         "room_id": {
@@ -1387,7 +1387,7 @@
       ]
     },
     "ClientNotification": {
-      "description": "A client notification (§1, §4.4).",
+      "description": "A client notification (§1, §4.6).",
       "type": "object",
       "required": [
         "method"
@@ -1441,7 +1441,7 @@
       ]
     },
     "ServerNotification": {
-      "description": "A server notification (§1, §4.8).",
+      "description": "A server notification (§1, §4.5).",
       "type": "object",
       "required": [
         "method"
@@ -1751,7 +1751,7 @@
       }
     },
     "StatusParams": {
-      "description": "§4.8",
+      "description": "§4.5",
       "type": "object",
       "properties": {
         "room_id": {
@@ -1761,7 +1761,7 @@
           "type": "boolean"
         },
         "mute": {
-          "description": "true, false, or seconds (§4.8)",
+          "description": "true, false, or seconds (§4.5)",
           "anyOf": [
             {
               "type": "boolean"
@@ -1775,14 +1775,14 @@
       }
     },
     "StatusEvent": {
-      "description": "§4.8: a mute of the user's, from the server",
+      "description": "§4.5: a mute of the user's, from the server",
       "type": "object",
       "properties": {
         "room_id": {
           "type": "string"
         },
         "mute": {
-          "description": "true, false, or seconds (§4.8)",
+          "description": "true, false, or seconds (§4.5)",
           "anyOf": [
             {
               "type": "boolean"

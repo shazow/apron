@@ -41,7 +41,7 @@ request ID or on optional envelope fields.
 ## Records, replay, and the logical projection
 
 Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#2-identifiers), [§3.4](../../../PROTOCOL.md#34-rooms), [§3.5](../../../PROTOCOL.md#35-messages),
-[§4.2](../../../PROTOCOL.md#42-history)–[§4.5](../../../PROTOCOL.md#45-reactions)). The client keeps four stores, one record per key:
+[§4.2](../../../PROTOCOL.md#42-history)–[§4.7](../../../PROTOCOL.md#47-reactions)). The client keeps four stores, one record per key:
 
 | record | key | sources |
 |---|---|---|
@@ -59,7 +59,7 @@ which may omit it) always replaces. Replacement is whole: omitted fields
 disappear, objects and arrays are never merged, and `null` is a stored value.
 
 **Member lists.** A room's `members` in a `room_list` result or a
-`room_update` `joined` is complete ([PROTOCOL.md §4.6.1](../../../PROTOCOL.md#461-listing)): it replaces the
+`room_update` `joined` is complete ([PROTOCOL.md §4.3.1](../../../PROTOCOL.md#431-listing)): it replaces the
 room's member list as of the same room's `latest_log_id` in that frame (the
 list's position). Memberships at or below the position are already in it and
 are ignored; greater ones apply on top by the replay rule, whether they arrived
@@ -252,7 +252,7 @@ stay queued. Then:
 
 ### What a conforming client sends
 
-These are exact (PROTOCOL.md [§3.5](../../../PROTOCOL.md#35-messages), [§4.3](../../../PROTOCOL.md#43-edit), [§4.6](../../../PROTOCOL.md#46-rooms), [§4.5](../../../PROTOCOL.md#45-reactions), [§4.1](../../../PROTOCOL.md#41-command)). "Latest snapshot" and
+These are exact (PROTOCOL.md [§3.5](../../../PROTOCOL.md#35-messages), [§4.4](../../../PROTOCOL.md#44-edit), [§4.3](../../../PROTOCOL.md#43-rooms), [§4.7](../../../PROTOCOL.md#47-reactions), [§4.1](../../../PROTOCOL.md#41-command)). "Latest snapshot" and
 "latest record" mean the stored record under the replay rule at the moment the
 operation is invoked.
 
@@ -413,7 +413,7 @@ The normalized session state has these keys:
   each `{room_id, from, body?}` (`room_id` as sent).
 - `directory`: the `room_id`s of the latest `listRooms` result without
   `parent_room_id`, in the order listed.
-- `typing`: active typing indicators `{room_id, from}` ([PROTOCOL.md §4.4](../../../PROTOCOL.md#44-activity)),
+- `typing`: active typing indicators `{room_id, from}` ([PROTOCOL.md §4.6](../../../PROTOCOL.md#46-activity)),
   sorted by `room_id` then `from.user_id`. An `activity` frame with
   `typing > 0` adds or refreshes one; `typing: 0` removes it; an `activity`
   frame without `typing` leaves it unchanged. Fixture servers that send

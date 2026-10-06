@@ -6,9 +6,9 @@
   "references": [
     "PROTOCOL.md#34-rooms",
     "PROTOCOL.md#42-history",
-    "PROTOCOL.md#43-edit",
-    "PROTOCOL.md#46-rooms",
-    "PROTOCOL.md#45-reactions"
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#43-rooms",
+    "PROTOCOL.md#47-reactions"
   ],
   "variants": [
     {

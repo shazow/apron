@@ -5,7 +5,7 @@
   "description": "Arrays in a snapshot replace the previous array; elements are never merged by index.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#43-edit"
+    "PROTOCOL.md#44-edit"
   ],
   "variants": [
     {
