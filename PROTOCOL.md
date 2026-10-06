@@ -1894,10 +1894,11 @@ request.
 - Absent fields are unchanged.
 - `idle` (boolean) is about the sending connection: whether nobody is
   attending it. `idle` ignores `room_id`.
-- A connection is attended until its client sends `idle: true`.
-- Clients send `idle: true` when nobody is attending the connection, and
-  `idle: false` when someone is again. They MAY wait about 30 seconds
-  before sending `idle: true`.
+- A connection starts attended, with nothing kept from earlier
+  connections. Its client sends `idle: true` when nobody is attending it,
+  and `idle: false` when someone is again.
+- Clients MAY wait about 30 seconds after attention ends before sending
+  `idle: true`, but not on a connection that starts unattended.
 - Servers MAY treat a connection that has never sent `idle` as idle after
   a server-defined period without activity.
 - Servers never send `idle`.
