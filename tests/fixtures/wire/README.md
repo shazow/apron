@@ -260,7 +260,7 @@ operation is invoked.
 |---|---|---|
 | `send` | `message` | `{room_id?: room, body: {text, format, mentions?}, reply_to?: {message_id}}`: no `room_id` without `room`; `mentions` only when given |
 | `command` | `command` | `{room_id?: room, body: {text, mentions?}}`: `text` as typed, slash included |
-| `editMessage` | `message` | latest snapshot's client fields with `body.text` replaced: `{message_id, room_id, body, reply_to?, ext?}`; `body` keeps `format`, `embeds`, and any other body keys |
+| `editMessage` | `message` | latest snapshot's client fields with `body.text` replaced: `{message_id, room_id, body, reply_to?, ext?}`; `body` keeps `format`, `mentions`, `embeds`, and any other body keys |
 | `moveMessage` | `message` | `{message_id, room_id: room, body, reply_to?, ext?}` from the latest snapshot |
 | `deleteMessage` | `message` | `{message_id, room_id, reply_to?, ext?, deleted: true}` from the latest snapshot; no `body` |
 | `react` | `reactions` | `{message_id, emojis}` with `emojis` as given |
@@ -273,10 +273,14 @@ operation is invoked.
 | (right behind `auth`, capability `rooms`) | `room_list` | `{filter: "joined", members: true}`, plus `latest_log_id` on a token resume (see below); sent before the `auth` result |
 
 In saves, `reply_to` is always resubmitted bare even when the stored snapshot
-embedded it, `ext` is resubmitted unchanged (including `"__proto__"` keys),
-`deleted` is omitted unless deleting, and fields absent from the latest
-snapshot stay absent. Room updates resubmit `description` and `ext`
-unchanged.
+embedded it, `deleted` is omitted unless deleting, and fields absent from the
+latest snapshot stay absent. Room updates resubmit `title` and `description`.
+`ext` is optional in saves and room updates: clients do not have to send it
+back, and a write merges it, so one that leaves it out keeps the server's
+`ext` ([PROTOCOL.md §3.5](../../../PROTOCOL.md#35-messages)). If a client
+sends `ext`, it sends the latest record's `ext` unchanged. Because mutation
+params match exactly, the fixtures save only messages and rooms whose latest
+record has no `ext` when the operation is invoked.
 
 ### Connecting
 
@@ -440,8 +444,8 @@ no sleeps, timers, or DOM selectors.
 | `commands.json` | `command` with and without mentions, its result and error, a `~private` reply that is never stored, and `body.mentions` on a message |
 | `membership.json` | the joined set with members from the listing behind `auth`, the guest's own join before the `auth` result, `listRooms` with members, `joinRoom` and `leaveRoom` settling on `{}` after their memberships and `room_update` `joined` and `left`, others' memberships keeping member lists current, an `updated` thread not joined staying hidden, removal by the server |
 | `room-list-delta.json` | a token resume lists only the joined rooms changed since the kept checkpoints and resumes the kept rooms behind `auth`; `left` removes rooms and keeps the others, a result without `left` is a full listing |
-| `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, bare `reply_to`, and `ext` from the latest snapshot |
-| `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title`, `description`, and `ext`, full record replacement, `left` |
+| `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
+| `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
 | `users.json` | field-by-field merges of current objects from `you`, `members`, `users`, and `user`; `from` and membership users never merge; senders render from the kept object, else their `from`, and a cleared field never falls back; memberships change member lists, not users |
 | `reactions.json` | react, change, clear, move re-log in the destination, `invalid_params`, tombstone hiding |
 | `request-errors.json` | denied send, save, and room creation keep the session usable |
