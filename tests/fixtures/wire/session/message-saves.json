@@ -2,7 +2,7 @@
   "format": 4,
   "kind": "session",
   "name": "Message saves resubmit every client field",
-  "description": "Edit, move, and delete are saves built from the latest snapshot: they resubmit room_id, body (only text changed on edit, keeping format, mentions, and embeds of an unknown kind), and a bare reply_to, including a change published from another connection. A move refers to the destination thread room; a delete omits body. The message carries no ext: clients do not have to send ext back, so these exact params do not decide it (ext-merge.json covers saves that leave ext out).",
+  "description": "Edit, move, and delete are saves built from the latest snapshot: they resubmit room_id, body (only text changed on edit, keeping format, mentions, and embeds of an unknown kind), and a bare reply_to, including a change published from another connection. A move refers to the destination thread room; a delete omits body. The server has no capability ext (ext-merge.json and ext-without-capability.json cover ext in saves).",
   "references": [
     "PROTOCOL.md#35-messages",
     "PROTOCOL.md#44-edit",

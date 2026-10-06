@@ -13,9 +13,9 @@ The session fixtures run in
 (`make test-wire`, and in its CI), which checks out this repository as a
 submodule. The replay fixtures run in
 [apron-chat/apron-web](https://github.com/apron-chat/apron-web)'s unit tests
-(`npm test`), which also check out this repository as a submodule. Session tests use the actual
-TypeScript client with Node.js 24 WebSockets and a small Go transport peer;
-no browser or running example server is needed. No new dependencies are required.
+(`npm test`), which also check out this repository as a submodule. Session
+tests use the actual TypeScript client with Node.js 24 WebSockets and a small
+Go transport peer; no browser or running server is needed.
 
 ## Common structure
 
@@ -549,7 +549,8 @@ with capability `ext`, and that no file repeats a variant.
 
 Not covered:
 
-- `me` requests and their complete `you`.
+- `me` requests and their complete `you`, and writes that change `ext`: no
+  step sends `me` or sets `ext`.
 - The `status` request (`idle` and `mute`, its `{}` result, and an error
   that changes nothing), and the mutes that the client keeps: no step sends
   it, and the session state has no mutes. `sign-in.json` receives `status`

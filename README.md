@@ -26,7 +26,7 @@ We aim to substantially simplify the chat protocol by taking advantage of severa
 - [PROTOCOL.md](PROTOCOL.md): the Apron Chat Protocol. It stands alone; read it first.
 - [HISTORY.md](HISTORY.md): changes by protocol version.
 - [`schema/apron.schema.json`](schema/apron.schema.json): an informative JSON Schema of the frames, for validation and editor completion. Where it disagrees with PROTOCOL.md, PROTOCOL.md wins.
-- [`tests/fixtures`](tests/fixtures): wire fixtures that implementations can test against.
+- [`tests/fixtures`](tests/fixtures): conformance fixtures that implementations can test against. The [wire fixture README](tests/fixtures/wire/README.md) describes the wire fixtures, and [DEVELOPMENT.md](DEVELOPMENT.md) says where each fixture runs.
 
 ## License
 
