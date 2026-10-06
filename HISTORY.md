@@ -14,6 +14,8 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - The payload is an object of at most 2048 bytes with `push_id`, an optional `unread` count and the `message`, replacing the bare message object. Servers may truncate `body.text` and drop any `message` field but `message_id`, `room_id`, and `from.user_id` to fit. `badge` pushes count changes without `message`.
 - Capability sections in §4 are ordered by how commonly they are implemented, which renumbers them: `command` 4.1, `history` 4.2, `rooms` 4.3, `edit` 4.4, `status` 4.5, `activity` 4.6, `reactions` 4.7, embeds and avatars 4.8, push 4.9, WebAuthn 4.10, email 4.11.
 
+Entries for v7 and earlier use the previous section numbers, as in [PROTOCOL.md at v7](https://github.com/shazow/apron/blob/d44564a1e4da7087321ff566fa0d5624c9718566/PROTOCOL.md).
+
 ## v7 (2026-09-29)
 
 - Rooms carry a Markdown `description`, edited with `room_set`, replacing `intro_message`; threads no longer point to a message.
