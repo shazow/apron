@@ -1579,8 +1579,8 @@ connections, and to set the mutes of the user.
 - A connection starts as attended. It keeps nothing from earlier connections.
   Its client sends `idle: true` when nobody attends it, and `idle: false` when
   somebody attends it again.
-- Clients MAY wait about 30 seconds after attention stops before they send
-  `idle: true`. They do not wait on a connection that starts unattended.
+- Clients MAY wait before they send `idle: true`, such as a few minutes
+  without input. They do not wait on a connection that starts unattended.
 - Servers never send `idle`.
 
 **Mute.**
