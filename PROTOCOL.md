@@ -1,11 +1,11 @@
 # Apron Chat Protocol
 
-Apron Chat Protocol is for groups whose members mostly trust
-each other: a team, a household, or a set of bots and the people who run them.
-That trust keeps the protocol small. There is no public federation, spam
-defense, or sybil resistance to coordinate. The server is the authority on
-identity, membership, and history, and a client can be little more than a
-renderer of what the server sends.
+Apron Chat Protocol is for groups whose members mostly trust each other: a
+team, a household, or a set of bots and the people who run them. That trust
+keeps the protocol small. There is no public federation, spam defense, or
+sybil resistance to coordinate. The server is the authority on identity,
+membership, and history, and a client can be little more than a renderer of
+what the server sends.
 
 The goal is many Apron Chat apps and servers that work with each other. A
 client can connect to any Apron server, and a server can be a full chat
@@ -28,7 +28,7 @@ Example of a valid session:
 // <- server assigns the identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
 
-// -> client requests the joined rooms and its members (server may ignore the filters)
+// -> client requests the joined rooms and their members (server may ignore the filters)
 {"method": "room_list", "id": "c2", "params": {"filter": "joined", "members": true}}
 
 // <- one room
@@ -56,8 +56,9 @@ Example of a valid session:
 {"id": "c3", "result": {"message_id": "1724803200042"}}
 ```
 
-This example uses the rooms capability. An implementation without it
-ignores room fields and shows a single room.
+This example uses capability `rooms` ([§4.3](#43-rooms)) to list rooms.
+Without it, the client skips `room_list` and learns the room from the
+broadcast.
 
 ---
 
