@@ -59,7 +59,7 @@ INVALID = {
 
 VERSION = 8
 
-# Names that PROTOCOL.md defines, by the list that an extension can add to (§1).
+# Names that PROTOCOL.md defines, by the list that an extension can add to (§4).
 # Any other name starts with "ext:".
 KNOWN = {
     "method": set(SCHEMA["$defs"]["UnknownMethod"]["not"]["enum"]),

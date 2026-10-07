@@ -3,8 +3,8 @@
   "kind": "history",
   "description": "Protocol v8 room and history availability boundaries, including a room whose history was discarded (null history_log_id). `room` is the room record as `room_list` lists it, delivery fields included. Records are flat snapshots; history results carry rooms, messages, reactions, and memberships arrays, each of which may be omitted when empty.",
   "references": [
-    "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#42-history",
+    "PROTOCOL.md#42-rooms",
+    "PROTOCOL.md#43-history",
     "https://github.com/apron-chat/apron-server-cloudflare/blob/main/SPEC.md#9-rolling-history-and-base-protocol-availability"
   ],
   "cases": [

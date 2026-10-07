@@ -4,11 +4,11 @@
   "name": "Room and thread creation and updates",
   "description": "createRoom sends room_set with only the fields it sets (a thread adds parent_room_id and a description); updateRoom sends room_set resubmitting title and description from the latest record, never parent_room_id, including a change made by another member. Created rooms arrive as room_update joined, edits as updated, and both replace the record in full; a top-level room is created, posted in, then given a description, and a room in left leaves the visible set. The server has no capability ext (ext-merge.json and ext-without-capability.json cover ext in room_set).",
   "references": [
-    "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#431-listing",
-    "PROTOCOL.md#433-updates",
-    "PROTOCOL.md#434-creating-and-editing",
-    "PROTOCOL.md#35-messages"
+    "PROTOCOL.md#35-messages",
+    "PROTOCOL.md#42-rooms",
+    "PROTOCOL.md#421-listing",
+    "PROTOCOL.md#423-updates",
+    "PROTOCOL.md#424-creating-and-editing"
   ],
   "variants": [
     {

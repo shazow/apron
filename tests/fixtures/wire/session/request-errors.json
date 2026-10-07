@@ -8,7 +8,7 @@
     "PROTOCOL.md#11-envelope-and-replies",
     "PROTOCOL.md#12-retries-and-deduplication",
     "PROTOCOL.md#41-command",
-    "PROTOCOL.md#43-rooms",
+    "PROTOCOL.md#42-rooms",
     "PROTOCOL.md#44-edit"
   ],
   "variants": [

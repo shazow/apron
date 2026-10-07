@@ -22,7 +22,7 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Extension data, keyed by extension name without the ext: prefix (§1). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.12).",
+      "description": "Extension data, keyed by extension name without the ext: prefix (§4). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.12).",
       "type": "object",
       "propertyNames": {
         "not": {
@@ -267,7 +267,7 @@
       }
     },
     "Room": {
-      "description": "A room record (§3.4).",
+      "description": "A room record (§4.2).",
       "type": "object",
       "properties": {
         "room_id": {
@@ -336,7 +336,7 @@
       ]
     },
     "Membership": {
-      "description": "A membership record (§4.3.2).",
+      "description": "A membership record (§4.2.2).",
       "type": "object",
       "properties": {
         "log_id": {
@@ -624,7 +624,7 @@
       "description": "§4.1"
     },
     "HistoryParams": {
-      "description": "§4.2",
+      "description": "§4.3",
       "type": "object",
       "properties": {
         "room_id": {
@@ -643,7 +643,7 @@
       }
     },
     "RoomListParams": {
-      "description": "§4.3.1",
+      "description": "§4.2.1",
       "type": "object",
       "properties": {
         "filter": {
@@ -669,7 +669,7 @@
       }
     },
     "RoomJoinParams": {
-      "description": "§4.3.2",
+      "description": "§4.2.2",
       "type": "object",
       "properties": {
         "room_id": {
@@ -684,7 +684,7 @@
       ]
     },
     "RoomLeaveParams": {
-      "description": "§4.3.2",
+      "description": "§4.2.2",
       "type": "object",
       "properties": {
         "room_id": {
@@ -699,7 +699,7 @@
       ]
     },
     "RoomSetParams": {
-      "description": "§4.3.4",
+      "description": "§4.2.4",
       "type": "object",
       "properties": {
         "room_id": {
@@ -918,7 +918,7 @@
       }
     },
     "HistoryResult": {
-      "description": "§4.2",
+      "description": "§4.3",
       "type": "object",
       "properties": {
         "rooms": {
@@ -975,7 +975,7 @@
       ]
     },
     "RoomListResult": {
-      "description": "§4.3.1",
+      "description": "§4.2.1",
       "type": "object",
       "properties": {
         "joined": {
@@ -1040,7 +1040,7 @@
       "$ref": "#/$defs/Message"
     },
     "RoomUpdateEvent": {
-      "description": "§4.3.3",
+      "description": "§4.2.3",
       "type": "object",
       "properties": {
         "joined": {
@@ -1841,7 +1841,16 @@
           "type": "string"
         },
         "idle": {
-          "type": "boolean"
+          "description": "false, or the seconds since nobody attended the connection (§4.5)",
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
         },
         "mute": {
           "description": "true, false, or a positive number of seconds (§4.5)",

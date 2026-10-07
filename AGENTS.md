@@ -41,8 +41,8 @@ fixtures, or implementations from it.
   implies or what is up to the implementation.
 - Generalize rather than enumerate. Before adding a rule, check whether a
   general one already covers it: unknown or hidden IDs, policy refusals,
-  server normalization (§1.1), ordering (§1), merging (§3.3), extension
-  names (§1). Don't restate a general rule in a section.
+  unknown names (§1), server normalization (§1.1), ordering (§1), merging
+  (§3.3), extension names (§4). Don't restate a general rule in a section.
 - Merges are one level deep: a field that's present replaces the kept
   value, an empty value clears it, and an absent field stays. `ext` merges
   the same way, one level into its keys.

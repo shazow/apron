@@ -4,8 +4,8 @@
   "name": "History recovery with interleaved live records",
   "description": "Recovery fixes H = 105 from the announcement and pages with before: H even after a live room update reports latest_log_id 107. Pages mix room records, snapshots, and reaction sets (the server clamps limit to 5 records of any kind). Live records above H (an edit, a room update, a reaction on a message only history provides) are buffered and win over older history.",
   "references": [
-    "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#42-history",
+    "PROTOCOL.md#42-rooms",
+    "PROTOCOL.md#43-history",
     "PROTOCOL.md#47-reactions"
   ],
   "variants": [

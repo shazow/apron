@@ -5,7 +5,7 @@
   "description": "A fresh guest identity authenticates after transport loss. The client rebuilds its protocol view from the new connection: rooms are empty until listed again. Each room's records, floor and checkpoint are kept across the loss, so the kept room's recovery resumes after its checkpoint instead of paging the whole retained range, sent right behind auth and the listing before either result (auth is a barrier) and without a head, which its page supplies; it covers message and reaction records, keeping the original sender and yielding each message once. A guest's listing is always a full one: the new identity is not the kept rooms'. This server keeps guests' memberships out of the log.",
   "references": [
     "PROTOCOL.md#32-authentication",
-    "PROTOCOL.md#42-history",
+    "PROTOCOL.md#43-history",
     "PROTOCOL.md#47-reactions"
   ],
   "variants": [
