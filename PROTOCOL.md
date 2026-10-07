@@ -1539,7 +1539,7 @@ connections, and to set the mutes of the user.
 - Clients show an unknown `status` value as unknown, with the value.
 
 ```jsonc
-// -> nobody has attended this connection for a while
+// -> nobody attends this connection
 {"method": "status", "id": "c41", "params": {"idle": true}}
 // <-
 {"id": "c41", "result": {}}
@@ -1574,13 +1574,17 @@ connections, and to set the mutes of the user.
 
 **Idle.**
 
-- `idle` (boolean) is about the sending connection. It is `true` when nobody
-  attends that connection.
+- `idle` is about the sending connection. It is `false` when somebody attends
+  that connection. Otherwise it is `true`, or a non-negative integer number of
+  seconds since attention stopped. `true` is the same as `0`.
 - A connection starts as attended. It keeps nothing from earlier connections.
-  Its client sends `idle: true` when nobody attends it, and `idle: false` when
+  Its client sends `idle` when nobody attends it, and `idle: false` when
   somebody attends it again.
-- Clients MAY wait before they send `idle: true`, such as a few minutes
-  without input. They do not wait on a connection that starts unattended.
+- Clients MAY wait before they send `idle`, such as a few minutes without
+  input. They then SHOULD send the seconds since the last input. They do not
+  wait on a connection that starts unattended.
+- Servers MAY treat the connection as idle from the time that `idle` reports,
+  such as to wake the user for mentions since then ([§4.9](#49-push)).
 - Servers never send `idle`.
 
 **Mute.**
