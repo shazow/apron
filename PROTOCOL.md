@@ -75,8 +75,7 @@ reply to its request, and every other frame is a one-way notification.
 - Frames use the shape of [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
   requests, responses, and notifications (`method`, `params`, `id`, `result`,
   `error`). They omit the `"jsonrpc": "2.0"` key, and every `id` is a string.
-- Implementations MUST ignore unknown keys, and MAY drop them. Extension data
-  goes in `ext` ([§4.12](#412-ext)).
+- Implementations MUST ignore unknown keys, and MAY drop them.
 - Servers MAY process requests concurrently and reply in any order. If a
   client needs one request applied before another, it waits for the first
   reply.
@@ -89,25 +88,16 @@ reply to its request, and every other frame is a one-way notification.
 - Server announcements and broadcasts are notifications.
 - Servers reply `error/unsupported` to requests with unknown methods.
 - Notifications with unknown methods are ignored.
+- A request that depends on an unknown name, such as an auth scheme or a
+  kind, fails with `invalid_params`.
+- Receivers ignore an unknown name in any other frame, or show the fallback of
+  its section.
 - Implementations SHOULD accept frames up to 256 KiB. They MAY reject a larger
   request with `error/too_large`, and MAY drop a larger notification.
 - A server MAY advertise `ping` ([§3.1](#31-server-frame)). Clients that
   support it then send exactly `{"method":"ping"}` at that interval. The
   server answers with `{"method":"pong"}`, also before authentication. A
   server MAY close a connection that sent pings and then stopped.
-
-**Extension names.** A name that this document does not define starts with
-`ext:`, such as the capability `ext:irc`. This applies to every name that a
-list in this document can extend, such as a method, a capability, an auth
-scheme, or a kind. This document never defines a name with that prefix. An
-extension named `ext:irc` keeps its data under the key `irc` in `ext` objects
-([§4.12](#412-ext)). Display values, such as a status or a role, are free text
-and take no prefix.
-
-Receivers handle unknown names as the section that defines them says. As a
-rule, a request that depends on an unknown name fails with `invalid_params`,
-and an unknown name in a frame that is only read is ignored, or shown with the
-fallback of its section.
 
 ### 1.1 Envelope and replies
 
@@ -868,6 +858,12 @@ Some features have no capability:
 - `server.auth` enables passkeys and email sign-in
   ([§4.10](#410-webauthn-authentication), [§4.11](#411-email-authentication)).
 - `server.ping` enables liveness checks ([§1](#1-transport--framing)).
+
+**Extension names.** A name that this document does not define starts with
+`ext:`, such as the capability `ext:irc`. This applies to every list of names
+that an extension can add to, such as methods, capabilities, auth schemes, and
+kinds. This document never defines a name with that prefix. Display values,
+such as a status or a role, are free text and take no prefix.
 
 Six frame patterns cover everything that is logged or announced:
 
@@ -1909,9 +1905,8 @@ supports. If `server.push` is present, the server accepts `push_register` and
 **Registration.**
 
 - `kind` is a key of `server.push` other than `wake`. Fields other than `url`,
-  `push_id`, and `wake` are specific to the kind. Unknown kinds are
-  `invalid_params`. Third-party kinds ([§1](#1-transport--framing)) define
-  their own delivery.
+  `push_id`, and `wake` are specific to the kind. Third-party kinds
+  ([§4](#4-capabilities)) define their own delivery.
 - `url` is required. A registration belongs to the authenticated user and its
   `url`. It stays after the connection that made it closes.
 - A registration with the same `url` replaces the earlier registration of the
@@ -2135,7 +2130,7 @@ relays, an agent's settings for a room, or a user's time zone. Capability
 
 Capability `ext`. Servers keep the `ext` that clients write on users,
 messages, and rooms, and merge it as below. `ext` is an object whose keys are
-extension names without the `ext:` prefix ([§1](#1-transport--framing)), such
+extension names without the `ext:` prefix ([§4](#4-capabilities)), such
 as `irc`:
 
 ```json
