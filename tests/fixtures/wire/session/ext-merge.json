@@ -5,7 +5,7 @@
   "description": "With capability ext, the server keeps the ext that clients write, and writes merge it one level down, so a write that leaves ext out keeps the server's ext. The client builds an edit and a room_set from records without ext; before their own snapshot and record arrive, another writer (a bridge) adds ext, and the server keeps it in the result of the save. The client installs the snapshots and records whole. User notifications merge ext the same way: a key with an empty value clears only that key (kept as the empty value, as at the top level), and keys that a notification leaves out stay. The variant does not decide whether the client would send ext back, since its records have none when it builds the requests.",
   "references": [
     "PROTOCOL.md#33-identity",
-    "PROTOCOL.md#434-creating-and-editing",
+    "PROTOCOL.md#424-creating-and-editing",
     "PROTOCOL.md#44-edit",
     "PROTOCOL.md#412-ext"
   ],

@@ -5,7 +5,7 @@
   "description": "A server without capability ext may drop the ext that clients write. An extension still keeps its own data under its name in ext with only its own capability: here ext:irc keeps ext.irc on the room and the message. The client knows no advertised extension, so its edit, room_set, and delete, built from records that carry ext.irc, send no ext. The server's snapshot and record keep the extension's data, and the tombstone carries no ext.",
   "references": [
     "PROTOCOL.md#1-transport--framing",
-    "PROTOCOL.md#434-creating-and-editing",
+    "PROTOCOL.md#424-creating-and-editing",
     "PROTOCOL.md#44-edit",
     "PROTOCOL.md#412-ext"
   ],

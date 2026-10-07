@@ -6,7 +6,7 @@
   "references": [
     "PROTOCOL.md#1-transport--framing",
     "PROTOCOL.md#32-authentication",
-    "PROTOCOL.md#431-listing"
+    "PROTOCOL.md#421-listing"
   ],
   "variants": [
     {

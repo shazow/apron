@@ -44,7 +44,7 @@ request ID or on optional envelope fields.
 ## Records, replay, and the logical projection
 
 Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#2-identifiers), [§3.4](../../../PROTOCOL.md#34-rooms), [§3.5](../../../PROTOCOL.md#35-messages),
-[§4.2](../../../PROTOCOL.md#42-history)–[§4.7](../../../PROTOCOL.md#47-reactions), [§4.12](../../../PROTOCOL.md#412-ext)). The client keeps four stores, one record per key:
+[§4.2](../../../PROTOCOL.md#42-rooms)–[§4.7](../../../PROTOCOL.md#47-reactions), [§4.12](../../../PROTOCOL.md#412-ext)). The client keeps four stores, one record per key:
 
 | record | key | sources |
 |---|---|---|
@@ -62,7 +62,7 @@ which may omit it) always replaces. Replacement is whole: omitted fields
 disappear, objects and arrays are never merged, and `null` is a stored value.
 
 **Member lists.** A room's `members` in a `room_list` result or a
-`room_update` `joined` is complete ([PROTOCOL.md §4.3.1](../../../PROTOCOL.md#431-listing)): it replaces the
+`room_update` `joined` is complete ([PROTOCOL.md §4.2.1](../../../PROTOCOL.md#421-listing)): it replaces the
 room's member list as of the same room's `latest_log_id` in that frame (the
 list's position). Memberships at or below the position are already in it and
 are ignored; greater ones apply on top by the replay rule, whether they arrived
@@ -259,7 +259,7 @@ stay queued. Then:
 
 ### What a conforming client sends
 
-These are exact (PROTOCOL.md [§3.5](../../../PROTOCOL.md#35-messages), [§4.4](../../../PROTOCOL.md#44-edit), [§4.3](../../../PROTOCOL.md#43-rooms), [§4.7](../../../PROTOCOL.md#47-reactions), [§4.1](../../../PROTOCOL.md#41-command)). "Latest snapshot" and
+These are exact (PROTOCOL.md [§3.5](../../../PROTOCOL.md#35-messages), [§4.4](../../../PROTOCOL.md#44-edit), [§4.2](../../../PROTOCOL.md#42-rooms), [§4.7](../../../PROTOCOL.md#47-reactions), [§4.1](../../../PROTOCOL.md#41-command)). "Latest snapshot" and
 "latest record" mean the stored record under the replay rule at the moment the
 operation is invoked.
 
@@ -325,7 +325,7 @@ requests behind it are denied and change nothing.
 ### History recovery profile
 
 The fixtures pin the example client's recovery profile. It is a test profile
-built from [PROTOCOL.md §4.2](../../../PROTOCOL.md#42-history), not
+built from [PROTOCOL.md §4.3](../../../PROTOCOL.md#43-history), not
 the only conforming strategy. The recovery state below is kept per room across
 a lost connection (see Session state); a room that becomes visible for the
 first time starts without it. A **room record frame** below is any frame that
@@ -456,7 +456,7 @@ On `disconnect` the client's protocol view is rebuilt from the next
 connection: `you` is `null`, `capabilities` and `typing` are `[]`, and `rooms` is `[]`
 until rooms are listed again. The record stores (member lists included),
 floors, checkpoints, users, and notices are kept, so each room listed again
-resumes from its checkpoint rather than recovering in full ([PROTOCOL.md §4.2](../../../PROTOCOL.md#42-history), recovery from `C + 1`). (The UI may keep showing the old view meanwhile; that is not part
+resumes from its checkpoint rather than recovering in full ([PROTOCOL.md §4.3](../../../PROTOCOL.md#43-history), recovery from `C + 1`). (The UI may keep showing the old view meanwhile; that is not part
 of the projection.) A pending operation across a disconnect is unconstrained.
 
 An omitted top-level `expected` key is unconstrained; `expected: {}` means

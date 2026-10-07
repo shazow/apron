@@ -5,13 +5,13 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 ## v8 (2026-10-06)
 
 - Capability `status`: users set `status` with `me` (`online`, `""`, and optionally `dnd` or `invisible`, listed in `server.status`); others see `online`, `idle`, `offline`, or `dnd`. Replaces `activity` `away`.
-- The `status` request reports `idle` per connection and sets the user's private `mute` (`true`, `false`, or seconds), globally or per room. Servers echo mutes to all the user's connections.
+- The `status` request reports `idle` per connection (`false`, or the seconds since nobody attended it) and sets the user's private `mute` (`true`, `false`, or seconds), globally or per room. Servers echo mutes to all the user's connections.
 - Push kind `webpush` (VAPID); `relay` may carry `keys` for ciphertext. Registrations carry a `push_id` and `wake` scopes (`mentions`, `private`, `replies`, `joined`, `badge`). The payload is `{push_id, unread, message}` of at most 2048 bytes, with `TTL` and `Urgency` headers.
 - `you` in `auth` and `me` results and listing `users` are complete and replace the kept object; `user` notifications carry what changed.
 - `ext` moves out of the core into capability `ext` (§4.12): servers keep the `ext` clients write on users, messages, and rooms, and writes merge it one level deep. Clients need not send `ext` back.
 - Extension names start with `ext:`; an extension `ext:foo` keeps its data under `ext.foo`.
 - Every notification a sign-in causes follows the `auth` result, and clients drop kept statuses and mutes at each sign-in. A sign-in to an existing account is announced as a departure; `old` is only for a new `user_id` on the same account.
-- §1.1 lists request and notification methods, and gathers general errors: unknown or hidden IDs and rejected values are `invalid_params`, size limits `too_large`, policy and count limits `denied`.
+- §1.1 lists the core request and notification methods, and the §4 intro the rest. §1.1 also gathers general errors: unknown or hidden IDs and rejected values are `invalid_params`, size limits `too_large`, policy and count limits `denied`.
 - `markdown` means CommonMark.
 - §4 is reordered by how commonly each capability is implemented, which renumbers it.
 
