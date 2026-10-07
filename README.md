@@ -15,10 +15,10 @@ Apron keeps the chat protocol simple by taking advantage of several trust assump
 1. Read the [PROTOCOL.md](PROTOCOL.md)
 2. Try the live demo: [web.apron.chat](https://web.apron.chat/)
 3. Explore some implementations:
-  - https://github.com/apron-chat/apron-web (frontend for the live demo above)
-  - https://github.com/apron-chat/apron-server-cloudflare (demo server running on a Cloudflare Worker free tier with limited functionality)
-  - https://github.com/apron-chat/apron-server-go (more complete reference server for self-hosting)
-  - https://github.com/apron-chat/apron-pr-bot (github pull request bot used on the demo server)
+   - https://github.com/apron-chat/apron-web (frontend for the live demo above)
+   - https://github.com/apron-chat/apron-server-cloudflare (demo server running on a Cloudflare Worker free tier with limited functionality)
+   - https://github.com/apron-chat/apron-server-go (more complete reference server for self-hosting)
+   - https://github.com/apron-chat/apron-pr-bot (github pull request bot used on the demo server)
 
 ## Assumptions & Goals
 
@@ -26,8 +26,7 @@ Apron keeps the chat protocol simple by taking advantage of several trust assump
 - Backend is authoritative: Identity, membership, history, threading, mutation. The frontend generally acts as a dumb renderer.
 - Backends can be trivial: An afternoon or one-shot LLM prompt should implement a working backend provider.
 - Any frontend, many backends: Aspiring to have many Apron-compatible chat frontends and backends.
-- Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases.
-- Stateless protocol: Server is not required to hold per-client state between requests.
+- Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases..
 - One websocket to start, additional signaling bootstrapped from there (e.g. HTTP upload target, WebRTC, etc).
 - Multimedia-friendly: Upload images, audio, whatever.
 
