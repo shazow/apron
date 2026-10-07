@@ -1,6 +1,6 @@
 # Apron Chat Protocol
 
-Apron Chat Protocol is a chat protocol for groups whose members mostly trust
+Apron Chat Protocol is for groups whose members mostly trust
 each other: a team, a household, or a set of bots and the people who run them.
 That trust keeps the protocol small. There is no public federation, spam
 defense, or sybil resistance to coordinate. The server is the authority on
