@@ -1,14 +1,24 @@
-# apron
+# Apron Chat Protocol
 
-A bottomless chat frontend for any headless backend.
+Apron aspires to create an ecosystem of _bottomless_ Apron chat clients that work with any headless Apron server.
 
-What is "bottomless"? It's the opposite of "headless", bottomless apps are frontends that you can point at a protocol provider and they act as a renderer. For example: Web browsers are bottomless renderers of HTTP.
+For example: Web browsers are bottomless renderers of HTTP. There are a bunch of browsers, and there's astronomically many web servers. We want this for chat!
 
-We aim to substantially simplify the chat protocol by taking advantage of several trust assumptions.
+Apron keeps the chat protocol simple by taking advantage of several trust assumptions: A server is authoritative, there is no federation, there is no greater social network. It should be extremely easy to implement a basic server (~100 lines of code), and moderately easy to build a basic client.
 
-**Status**: v0 alpha, protocol is stabilizing but expect some minor changes.
+**Status**: v1 beta, core protocol is stable, capabilities are being validated
 
 <img width="721.5" height="536" alt="Screenshot of the Sveltekit Apron Chat implementation" src="https://github.com/user-attachments/assets/bdd4b15c-485e-4c19-838b-75c748dd2890" />
+
+## Getting Started
+
+1. Read the [PROTOCOL.md](PROTOCOL.md)
+2. Try the live demo: [web.apron.chat](https://web.apron.chat/)
+3. Explore some implementations:
+  - https://github.com/apron-chat/apron-web (frontend for the live demo above)
+  - https://github.com/apron-chat/apron-server-cloudflare (demo server running on a Cloudflare Worker free tier with limited functionality)
+  - https://github.com/apron-chat/apron-server-go (more complete reference server for self-hosting)
+  - https://github.com/apron-chat/apron-pr-bot (github pull request bot used on the demo server)
 
 ## Assumptions & Goals
 
@@ -23,10 +33,14 @@ We aim to substantially simplify the chat protocol by taking advantage of severa
 
 ## Specification
 
-- [PROTOCOL.md](PROTOCOL.md): the Apron Chat Protocol. It stands alone; read it first.
+- [PROTOCOL.md](PROTOCOL.md): the authoritative Apron Chat Protocol definition.
 - [HISTORY.md](HISTORY.md): changes by protocol version.
-- [`schema/apron.schema.json`](schema/apron.schema.json): an informative JSON Schema of the frames, for validation and editor completion. Where it disagrees with PROTOCOL.md, PROTOCOL.md wins.
+- [`schema/apron.schema.json`](schema/apron.schema.json): an informative JSON Schema of the frames, for validation and editor completion.
 - [`tests/fixtures`](tests/fixtures): conformance fixtures that implementations can test against. The [wire fixture README](tests/fixtures/wire/README.md) describes the wire fixtures, and [DEVELOPMENT.md](DEVELOPMENT.md) says where each fixture runs.
+
+## AI Usage
+
+The PROTOCOL.md was very carefully hand-edited but also iterated upon with the help of LLMs. Server and client implementations were more fully derived by autocoding harnesses by using the protocol as a source of truth. This semi-automated validation cycle allowed for refining the protocol more rapidly and precisely, by immediately exploring the edge cases of functionality.
 
 ## License
 
