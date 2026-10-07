@@ -1,0 +1,47 @@
+{
+  "format": 4,
+  "kind": "session",
+  "name": "Without capability ext, saves carry no ext",
+  "description": "A server without capability ext may drop the ext that clients write. An extension still keeps its own data under its name in ext with only its own capability: here ext:irc keeps ext.irc on the room and the message. The client knows no advertised extension, so its edit, room_set, and delete, built from records that carry ext.irc, send no ext. The server's snapshot and record keep the extension's data, and the tombstone carries no ext.",
+  "references": [
+    "PROTOCOL.md#1-transport--framing",
+    "PROTOCOL.md#434-creating-and-editing",
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#412-ext"
+  ],
+  "variants": [
+    {
+      "name": "extension-data",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["edit","ext:irc","rooms"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","ext":{"irc":{"channel":"#general"}},"members":[{"user_id":"guest_1"}]}],"users":[{"user_id":"guest_1","name":"Ada"}]}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"draft","format":"plain"},"ext":{"irc":{"msgid":"a1b2"}}}}},
+        {"expect":{"rooms":[{"room_id":"general","log_id":"90","title":"General","ext":{"irc":{"channel":"#general"}},"messages":[{"message_id":"101","log_id":"101","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"draft","format":"plain"},"ext":{"irc":{"msgid":"a1b2"}}}]}]}},
+        {"editMessage":{"as":"edit","message_id":"101","text":"final"}},
+        {"request":{"as":"edit-request","match":{"method":"message","params":{"message_id":"101","room_id":"general","body":{"text":"final","format":"plain"}}}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"102","room_id":"general","prev_log_id":"101","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"final","format":"plain"},"ext":{"irc":{"msgid":"a1b2"}}}}},
+        {"reply":{"to":"edit-request","result":{"message_id":"101"}}},
+        {"expect":{"operations":{"edit":"fulfilled"},"rooms":[{"room_id":"general","log_id":"90","title":"General","ext":{"irc":{"channel":"#general"}},"messages":[{"message_id":"101","log_id":"102","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"body":{"text":"final","format":"plain"},"ext":{"irc":{"msgid":"a1b2"}}}]}]}},
+        {"updateRoom":{"as":"rename","room":"general","title":"General (ops)"}},
+        {"request":{"as":"rename-request","match":{"method":"room_set","params":{"room_id":"general","title":"General (ops)"}}}},
+        {"receive":{"method":"room_update","params":{"updated":[{"room_id":"general","log_id":"103","prev_log_id":"90","title":"General (ops)","ext":{"irc":{"channel":"#general"}}}]}}},
+        {"reply":{"to":"rename-request","result":{"room_id":"general"}}},
+        {"deleteMessage":{"as":"delete","message_id":"101"}},
+        {"request":{"as":"delete-request","match":{"method":"message","params":{"message_id":"101","room_id":"general","deleted":true}}}},
+        {"receive":{"method":"message","params":{"message_id":"101","log_id":"104","room_id":"general","prev_log_id":"102","from":{"user_id":"guest_1","name":"Ada"},"deleted":true}}},
+        {"reply":{"to":"delete-request","result":{"message_id":"101"}}}
+      ]
+    }
+  ],
+  "expected": {
+    "you": {"user_id":"guest_1","name":"Ada"},
+    "capabilities": ["edit","ext:irc","rooms"],
+    "operations": {"edit":"fulfilled","rename":"fulfilled","delete":"fulfilled"},
+    "rooms": [
+      {"room_id":"general","log_id":"103","title":"General (ops)","ext":{"irc":{"channel":"#general"}},"messages":[{"message_id":"101","log_id":"104","room_id":"general","from":{"user_id":"guest_1","name":"Ada"},"deleted":true}]}
+    ]
+  }
+}

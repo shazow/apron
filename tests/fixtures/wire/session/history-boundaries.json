@@ -5,13 +5,13 @@
   "description": "The effective lower bound (history_log_id, or latest_log_id + 1 when null, using the frame's or page's own head) is inclusive and only grows. When it grows the client evicts the room's messages whose latest snapshot is below it; if it overtakes the next position a recovery needs (reported by a room frame or a page) the client rebuilds from the new bound with the same H, keeping buffered live records at or above the bound. Continuation arithmetic is numeric on sparse millisecond IDs. A null bound needs no request until a later room frame reports a head above the checkpoint. The fixture server clamps pages to 2 records. Each variant ends with its own expectation.",
   "references": [
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#41-history"
+    "PROTOCOL.md#42-history"
   ],
   "variants": [
     {
       "name": "exact-lower-bound-and-live-buffer",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -29,7 +29,7 @@
     {
       "name": "overtaken-by-room-frame",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -47,7 +47,7 @@
     {
       "name": "overtaken-by-response",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -65,7 +65,7 @@
     {
       "name": "sparse-timestamp-logs",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -80,7 +80,7 @@
     {
       "name": "null-boundary-empty-log",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -91,7 +91,7 @@
     {
       "name": "null-boundary-clears-expired-cache",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -106,7 +106,7 @@
     {
       "name": "null-boundary-becomes-retained",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -121,7 +121,7 @@
     {
       "name": "null-page-uses-page-head",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},

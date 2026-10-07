@@ -2,11 +2,12 @@
   "format": 4,
   "kind": "replay",
   "name": "Omitted fields are removed rather than merged",
-  "description": "A later snapshot replaces the whole message: omitted body.format, reply_to, and ext namespaces disappear, and ext is replaced rather than merged.",
+  "description": "A later snapshot replaces the whole message: omitted body.format, reply_to, and ext keys disappear. A snapshot carries its complete ext, and clients replace ext whole rather than merging it; only writes merge ext.",
   "references": [
     "PROTOCOL.md#2-identifiers",
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#42-edit"
+    "PROTOCOL.md#44-edit",
+    "PROTOCOL.md#412-ext"
   ],
   "variants": [
     {

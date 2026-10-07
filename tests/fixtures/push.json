@@ -1,0 +1,277 @@
+{
+  "format": 1,
+  "kind": "push",
+  "description": "Push payloads and registrations (§4.9). A payload is a UTF-8 JSON object of at most 2048 bytes, measured here as compact JSON (no whitespace between tokens). A valid payload conforms to the schema and fits; each invalid one breaks the one rule its why states. Registrations are push_register params. tests/schema/validate.py checks both.",
+  "references": [
+    "PROTOCOL.md#49-push"
+  ],
+  "payloads": [
+    {
+      "name": "message",
+      "valid": true,
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "unread": 2,
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice",
+            "name": "Alice"
+          },
+          "body": {
+            "text": "Deploy is done, can someone check the dashboards?"
+          }
+        }
+      }
+    },
+    {
+      "name": "badge",
+      "valid": true,
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "unread": 0
+      }
+    },
+    {
+      "name": "registration-without-push-id",
+      "valid": true,
+      "payload": {
+        "unread": 3
+      }
+    },
+    {
+      "name": "truncated-to-required-fields",
+      "valid": true,
+      "payload": {
+        "push_id": "a-b_C9",
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice"
+          }
+        }
+      }
+    },
+    {
+      "name": "long-text-that-fits",
+      "valid": true,
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice",
+            "name": "Alice"
+          },
+          "reply_to": {
+            "message_id": "1724803100000"
+          },
+          "body": {
+            "text": "Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. Deploy is done. ",
+            "mentions": [
+              "bob"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "message-with-log-id",
+      "valid": false,
+      "why": "a pushed message has no log_id",
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "message": {
+          "message_id": "1724803200042",
+          "log_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice"
+          }
+        }
+      }
+    },
+    {
+      "name": "transient-notice",
+      "valid": false,
+      "why": "servers do not push transient notices, so message_id is required",
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "message": {
+          "room_id": "general",
+          "from": {
+            "user_id": "~private",
+            "name": "Only you"
+          },
+          "body": {
+            "text": "Welcome"
+          }
+        }
+      }
+    },
+    {
+      "name": "message-without-room",
+      "valid": false,
+      "why": "room_id is never left out",
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "message": {
+          "message_id": "1724803200042",
+          "from": {
+            "user_id": "alice"
+          }
+        }
+      }
+    },
+    {
+      "name": "message-without-sender",
+      "valid": false,
+      "why": "from.user_id is never left out",
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "name": "Alice"
+          }
+        }
+      }
+    },
+    {
+      "name": "push-id-characters",
+      "valid": false,
+      "why": "push_id is made of A-Z a-z 0-9 - _",
+      "payload": {
+        "push_id": "t65S5/XBst9b+SDp",
+        "unread": 1
+      }
+    },
+    {
+      "name": "push-id-length",
+      "valid": false,
+      "why": "push_id is at most 64 characters",
+      "payload": {
+        "push_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "unread": 1
+      }
+    },
+    {
+      "name": "negative-unread",
+      "valid": false,
+      "why": "unread is a count",
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "unread": -1
+      }
+    },
+    {
+      "name": "over-2048-bytes",
+      "valid": false,
+      "why": "1100 characters of text take 2200 bytes in UTF-8",
+      "payload": {
+        "push_id": "t65S5XBst9bSDpjJ",
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice"
+          },
+          "body": {
+            "text": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+          }
+        }
+      }
+    }
+  ],
+  "registrations": [
+    {
+      "name": "relay-with-keys",
+      "valid": true,
+      "params": {
+        "kind": "relay",
+        "url": "https://relay.example/p/xyz",
+        "token": "rt_1",
+        "push_id": "t65S5XBst9bSDpjJ",
+        "keys": {
+          "p256dh": "BKx",
+          "auth": "Q2w"
+        }
+      }
+    },
+    {
+      "name": "relay-plain",
+      "valid": true,
+      "params": {
+        "kind": "relay",
+        "url": "https://relay.example/p/xyz"
+      }
+    },
+    {
+      "name": "webpush",
+      "valid": true,
+      "params": {
+        "kind": "webpush",
+        "url": "https://push.example/s/abc",
+        "push_id": "t65S5XBst9bSDpjJ",
+        "keys": {
+          "p256dh": "BOr",
+          "auth": "Hn3"
+        },
+        "wake": [
+          "mentions",
+          "private",
+          "ext:digest"
+        ]
+      }
+    },
+    {
+      "name": "extension-kind",
+      "valid": true,
+      "params": {
+        "kind": "ext:apns",
+        "url": "https://relay.example/apns",
+        "device": "a1b2"
+      }
+    },
+    {
+      "name": "wake-is-not-a-kind",
+      "valid": false,
+      "why": "wake is a key of server.push, not a kind",
+      "params": {
+        "kind": "wake",
+        "url": "https://push.example/s/abc"
+      }
+    },
+    {
+      "name": "webpush-without-keys",
+      "valid": false,
+      "why": "webpush requires keys",
+      "params": {
+        "kind": "webpush",
+        "url": "https://push.example/s/abc"
+      }
+    },
+    {
+      "name": "without-url",
+      "valid": false,
+      "why": "url is required",
+      "params": {
+        "kind": "relay"
+      }
+    },
+    {
+      "name": "push-id-characters",
+      "valid": false,
+      "why": "push_id is made of A-Z a-z 0-9 - _",
+      "params": {
+        "kind": "relay",
+        "url": "https://relay.example/p/xyz",
+        "push_id": "chat.example/ada"
+      }
+    }
+  ]
+}

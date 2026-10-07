@@ -18,7 +18,17 @@ repositories, each with its own development guide, tests, and CI:
 
 The Go server and the web client check out this repository as a submodule to
 run the fixtures; after a protocol or fixture change, update the submodule
-there.
+there:
+
+- The session fixtures (`tests/fixtures/wire/session`) run in the Go server's
+  `make test-wire`, through `tests/interop/wire.spec.ts`. Each fixture plays
+  the server, and the web client is under test.
+- The replay fixtures (`tests/fixtures/wire/replay`) run in the web client's
+  `npm test`, through `src/lib/protocol/wire-replay.test.ts`, and
+  `tests/fixtures/history.json` and `tests/fixtures/webauthn.json` through
+  `src/lib/protocol/protocol-fixtures.test.ts`.
+- `tests/fixtures/push.json` holds push payloads and registrations that only
+  `tests/schema/validate.py` checks.
 
 ## Schema
 

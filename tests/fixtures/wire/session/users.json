@@ -2,17 +2,18 @@
   "format": 4,
   "kind": "session",
   "name": "User objects",
-  "description": "One kept user object per user_id, merged field by field from current objects only (you, user notifications, room members and users): a present field replaces, an empty value clears the field and is kept, a missing one changes nothing. Recorded objects (a message's from, a membership's user) never merge, and history carries no users. Each message renders its sender field by field: the kept object, else the from it carries, else the user_id, and a field the kept object cleared never falls back to the from; a sender with no kept object renders as its from. A membership changes the room's members, not the kept users.",
+  "description": "One kept user object per user_id, from current objects only (you, user notifications, room members and users). Complete objects (you in a result, and users in a listing) replace the kept object; every other current object merges field by field: a present field replaces, an empty value clears the field and is kept, a missing one changes nothing. A user notification carries user_id and the fields that changed. Recorded objects (a message's from, a membership's user) never merge, and history carries no users. Each message renders its sender field by field: the kept object, else the from it carries, else the user_id, and a field the kept object cleared never falls back to the from; once a complete object replaces a cleared field, the from shows again. A sender with no kept object renders as its from. A membership changes the room's members, not the kept users. A user notification with old and new makes the old user_id stand for the new one: senders render from the new kept object, and the old one is kept unchanged (member lists after it are not asserted, since clients MAY treat records with the old user_id as the new identity).",
   "references": [
     "PROTOCOL.md#33-identity",
-    "PROTOCOL.md#41-history",
-    "PROTOCOL.md#432-membership"
+    "PROTOCOL.md#42-history",
+    "PROTOCOL.md#432-membership",
+    "PROTOCOL.md#431-listing"
   ],
   "variants": [
     {
       "name": "merge",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
@@ -25,22 +26,29 @@
         {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"14","room_id":"general","members":[{"user":{"user_id":"dana","name":"Dana"},"joined":true}]}]}}},
         {"receive":{"method":"message","params":{"message_id":"15","log_id":"15","room_id":"general","from":{"user_id":"dana","name":"Dana"},"body":{"text":"hello all"}}}},
         {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}},"members":{"general":["bob","carol","dana","guest_1"]},"senders":{"11":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"15":{"user_id":"dana","name":"Dana"}}}},
-        {"receive":{"method":"user","params":{"new":{"user_id":"bob"}}}},
-        {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png"},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","roles":["bot"]}}}},
+        {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Qm7xk2/bob.png","roles":["bot"]},"carol":{"user_id":"carol"},"guest_1":{"user_id":"guest_1","name":"Ada"}}}},
         {"receive":{"method":"user","params":{"new":{"user_id":"bob","avatar":""}}}},
         {"receive":{"method":"user","params":{"new":{"user_id":"dana","name":"Dana D"}}}},
         {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"16","room_id":"general","members":[{"user":{"user_id":"carol","name":"Carol"},"joined":false}]}]}}},
-        {"receive":{"method":"user","params":{"you":{"user_id":"guest_1","name":"Ada L"}}}}
+        {"receive":{"method":"user","params":{"you":{"user_id":"guest_1","name":"Ada L"}}}},
+        {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","avatar":"","roles":["bot"]},"carol":{"user_id":"carol"},"dana":{"user_id":"dana","name":"Dana D"},"guest_1":{"user_id":"guest_1","name":"Ada L"}},"members":{"general":["bob","dana","guest_1"]},"senders":{"11":{"user_id":"bob","name":"Bob","roles":["bot"]},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob","roles":["bot"]},"15":{"user_id":"dana","name":"Dana D"}}}},
+        {"listRooms":{"as":"browse"}},
+        {"request":{"as":"browse-request","match":{"method":"room_list","params":{"filter":"not_joined","members":true}}}},
+        {"reply":{"to":"browse-request","result":{"not_joined":[{"room_id":"ops","log_id":"17","title":"Ops","latest_log_id":"17","history_log_id":"17","members":[{"user_id":"bob"}]}],"users":[{"user_id":"bob","name":"Bob"}]}}},
+        {"expect":{"directory":["ops"],"users":{"bob":{"user_id":"bob","name":"Bob"},"carol":{"user_id":"carol"},"dana":{"user_id":"dana","name":"Dana D"},"guest_1":{"user_id":"guest_1","name":"Ada L"}},"senders":{"11":{"user_id":"bob","name":"Bob"},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Old9/bob.png"},"15":{"user_id":"dana","name":"Dana D"}}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"dana_2","name":"Dana"},"old":{"user_id":"dana","name":"Dana D"}}}}
       ]
     }
   ],
   "expected": {
     "you": {"user_id":"guest_1","name":"Ada L"},
-    "users": {"bob":{"user_id":"bob","name":"Bob","avatar":""},"carol":{"user_id":"carol"},"dana":{"user_id":"dana","name":"Dana D"},"guest_1":{"user_id":"guest_1","name":"Ada L"}},
-    "members": {"general":["bob","dana","guest_1"]},
-    "senders": {"11":{"user_id":"bob","name":"Bob"},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob"},"15":{"user_id":"dana","name":"Dana D"}},
+    "users": {"bob":{"user_id":"bob","name":"Bob"},"carol":{"user_id":"carol"},"dana":{"user_id":"dana","name":"Dana D"},"dana_2":{"user_id":"dana_2","name":"Dana"},"guest_1":{"user_id":"guest_1","name":"Ada L"}},
+    "senders": {"11":{"user_id":"bob","name":"Bob"},"12":{"user_id":"carol","name":"Carol"},"13":{"user_id":"bob","name":"Bob","avatar":"https://chat.example/f/Old9/bob.png"},"15":{"user_id":"dana_2","name":"Dana"}},
     "rooms": [
       {"room_id":"general","log_id":"10","title":"General","messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Robert"},"body":{"text":"posted as Robert"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"carol","name":"Carol"},"body":{"text":"hi"}},{"message_id":"13","log_id":"13","room_id":"general","from":{"user_id":"bob","name":"Bobby","avatar":"https://chat.example/f/Old9/bob.png"},"body":{"text":"renamed since?"}},{"message_id":"15","log_id":"15","room_id":"general","from":{"user_id":"dana","name":"Dana"},"body":{"text":"hello all"}}]}
-    ]
+    ],
+    "operations": {"browse":"fulfilled"},
+    "directory": ["ops"]
   }
 }

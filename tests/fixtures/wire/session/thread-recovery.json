@@ -5,15 +5,15 @@
   "description": "Top-level rooms recover when announced; the thread room 103 loads only on loadRoom, as its own room with H = 107: its newest page first, then an older page on loadOlder. A move (log 104) appears in both rooms' history and re-homes the message whichever page arrives first. Thread pages mix room records, snapshots, and reactions (server limit 3); a live thread record above H is buffered.",
   "references": [
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#41-history",
+    "PROTOCOL.md#42-history",
     "PROTOCOL.md#43-rooms",
-    "PROTOCOL.md#42-edit"
+    "PROTOCOL.md#44-edit"
   ],
   "variants": [
     {
       "name": "room-then-thread",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
@@ -36,7 +36,7 @@
     {
       "name": "interleaved",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","edit","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","edit","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},

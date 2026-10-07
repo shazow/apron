@@ -22,8 +22,13 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Opaque extension data, keyed by namespace (§3.5).",
-      "type": "object"
+      "description": "Extension data, keyed by extension name without the ext: prefix (§1). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.12).",
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "pattern": "^ext:"
+        }
+      }
     },
     "User": {
       "description": "A user object (§3.3). An empty value clears a field.",
@@ -36,7 +41,7 @@
           "type": "string"
         },
         "avatar": {
-          "description": "Image URL (§4.6.6).",
+          "description": "Image URL (§4.8.6).",
           "type": "string"
         },
         "roles": {
@@ -46,13 +51,29 @@
             "type": "string"
           }
         },
+        "status": {
+          "type": "string",
+          "description": "Current objects only. Set with me: online (default), \"\" (none), dnd, or invisible. Seen by others: online, idle, offline, dnd, or \"\". Clients show other values as unknown (§4.5)"
+        },
         "ext": {
+          "description": "Extension data (§4.12). Complete objects carry all of it; a user notification carries the keys that changed.",
           "$ref": "#/$defs/Ext"
         }
       },
       "required": [
         "user_id"
       ]
+    },
+    "RecordedUser": {
+      "description": "A recorded user object: the from of a message or a reaction, and the user of a membership. It describes the user at the time of the record, and carries no status (§3.3, §4.5).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/User"
+        }
+      ],
+      "properties": {
+        "status": false
+      }
     },
     "OgMedia": {
       "type": "object",
@@ -75,7 +96,7 @@
       }
     },
     "Og": {
-      "description": "OpenGraph description of an embed (§4.6.1).",
+      "description": "OpenGraph description of an embed (§4.8.1).",
       "type": "object",
       "properties": {
         "title": {
@@ -99,7 +120,7 @@
       }
     },
     "Embed": {
-      "description": "An embed in a message body (§4.6).",
+      "description": "An embed in a message body (§4.8).",
       "type": "object",
       "properties": {
         "kind": {
@@ -125,7 +146,7 @@
           "type": "string"
         },
         "format": {
-          "description": "Stream text format (§4.6.5).",
+          "description": "Stream text format (§4.8.5).",
           "type": "string",
           "default": "plain"
         },
@@ -199,9 +220,6 @@
             }
           ]
         },
-        "ext": {
-          "$ref": "#/$defs/Ext"
-        },
         "message_id": {
           "description": "Absent on transient notices.",
           "type": "string"
@@ -210,7 +228,7 @@
           "$ref": "#/$defs/LogId"
         },
         "from": {
-          "$ref": "#/$defs/User"
+          "$ref": "#/$defs/RecordedUser"
         },
         "prev_log_id": {
           "$ref": "#/$defs/LogId"
@@ -221,11 +239,32 @@
         "deleted": {
           "type": "boolean",
           "default": false
+        },
+        "ext": {
+          "description": "Extension data (§4.12). Absent on tombstones.",
+          "$ref": "#/$defs/Ext"
         }
       },
       "required": [
         "from"
-      ]
+      ],
+      "if": {
+        "properties": {
+          "deleted": {
+            "const": true
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "then": {
+        "description": "A tombstone carries no body and no ext (§4.4).",
+        "properties": {
+          "body": false,
+          "ext": false
+        }
+      }
     },
     "Room": {
       "description": "A room record (§3.4).",
@@ -246,9 +285,6 @@
         },
         "description": {
           "type": "string"
-        },
-        "ext": {
-          "$ref": "#/$defs/Ext"
         },
         "log_id": {
           "$ref": "#/$defs/LogId"
@@ -278,6 +314,10 @@
         "member_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "ext": {
+          "description": "Extension data (§4.12).",
+          "$ref": "#/$defs/Ext"
         }
       },
       "required": [
@@ -311,7 +351,7 @@
             "type": "object",
             "properties": {
               "user": {
-                "$ref": "#/$defs/User"
+                "$ref": "#/$defs/RecordedUser"
               },
               "joined": {
                 "type": "boolean"
@@ -331,7 +371,7 @@
       ]
     },
     "ReactionSet": {
-      "description": "A reactions record (§4.5).",
+      "description": "A reactions record (§4.7).",
       "type": "object",
       "properties": {
         "log_id": {
@@ -349,7 +389,7 @@
             "type": "object",
             "properties": {
               "from": {
-                "$ref": "#/$defs/User"
+                "$ref": "#/$defs/RecordedUser"
               },
               "emojis": {
                 "type": "array",
@@ -412,10 +452,43 @@
           "type": "number",
           "exclusiveMinimum": 0
         },
+        "status": {
+          "description": "Optional status values accepted, with capability status; online and \"\" are always accepted and not listed (§4.5).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "not": {
+              "enum": [
+                "online",
+                ""
+              ]
+            }
+          }
+        },
         "push": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "webpush": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key"
+              ]
+            },
+            "wake": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         },
         "ext": {
+          "description": "Data of extensions that define it on the server frame, each under its name (§4.12).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -442,7 +515,7 @@
       ]
     },
     "AuthParams": {
-      "description": "§3.2, §4.9, §4.10",
+      "description": "§3.2, §4.10, §4.11",
       "type": "object",
       "properties": {
         "scheme": {
@@ -496,7 +569,12 @@
         "avatar": {
           "type": "string"
         },
+        "status": {
+          "type": "string",
+          "description": "With capability status (§4.5)"
+        },
         "ext": {
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
           "$ref": "#/$defs/Ext"
         }
       }
@@ -513,17 +591,18 @@
         "reply_to": {
           "$ref": "#/$defs/MessageRef"
         },
-        "ext": {
-          "$ref": "#/$defs/Ext"
-        },
         "message_id": {
           "type": "string"
         },
         "deleted": {
           "type": "boolean"
+        },
+        "ext": {
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "$ref": "#/$defs/Ext"
         }
       },
-      "description": "Creates a message, or saves one given message_id (§3.5, §4.2)."
+      "description": "Creates a message, or saves one given message_id (§3.5, §4.4)."
     },
     "CommandParams": {
       "type": "object",
@@ -538,13 +617,14 @@
           "$ref": "#/$defs/MessageRef"
         },
         "ext": {
+          "description": "Extension data, an argument like the other params (§4.1, §4.12).",
           "$ref": "#/$defs/Ext"
         }
       },
-      "description": "§4.8"
+      "description": "§4.1"
     },
     "HistoryParams": {
-      "description": "§4.1",
+      "description": "§4.2",
       "type": "object",
       "properties": {
         "room_id": {
@@ -638,12 +718,13 @@
           "type": "string"
         },
         "ext": {
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
           "$ref": "#/$defs/Ext"
         }
       }
     },
     "ReactionsParams": {
-      "description": "§4.5",
+      "description": "§4.7",
       "type": "object",
       "properties": {
         "message_id": {
@@ -662,26 +743,67 @@
       ]
     },
     "PushRegisterParams": {
-      "description": "§4.7",
+      "description": "§4.9",
       "type": "object",
       "properties": {
         "kind": {
-          "type": "string"
+          "description": "A key of server.push other than wake (§4.9).",
+          "type": "string",
+          "not": {
+            "const": "wake"
+          }
         },
         "url": {
           "type": "string"
         },
         "token": {
           "type": "string"
+        },
+        "push_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "keys": {
+          "type": "object",
+          "properties": {
+            "p256dh": {
+              "type": "string"
+            },
+            "auth": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "p256dh",
+            "auth"
+          ]
+        },
+        "wake": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "kind",
         "url"
-      ]
+      ],
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webpush"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "keys"
+        ]
+      }
     },
     "PushUnregisterParams": {
-      "description": "§4.7",
+      "description": "§4.9",
       "type": "object",
       "properties": {
         "url": {
@@ -693,7 +815,7 @@
       ]
     },
     "ActivityParams": {
-      "description": "§4.4",
+      "description": "§4.6",
       "type": "object",
       "properties": {
         "room_id": {
@@ -705,9 +827,6 @@
         },
         "read_message_id": {
           "type": "string"
-        },
-        "away": {
-          "type": "boolean"
         }
       }
     },
@@ -799,7 +918,7 @@
       }
     },
     "HistoryResult": {
-      "description": "§4.1",
+      "description": "§4.2",
       "type": "object",
       "properties": {
         "rooms": {
@@ -911,6 +1030,9 @@
     "PushUnregisterResult": {
       "type": "object"
     },
+    "StatusResult": {
+      "type": "object"
+    },
     "ServerEvent": {
       "$ref": "#/$defs/Server"
     },
@@ -978,13 +1100,18 @@
             "new"
           ]
         }
-      ]
+      ],
+      "dependentRequired": {
+        "old": [
+          "new"
+        ]
+      }
     },
     "ReactionsEvent": {
       "$ref": "#/$defs/ReactionSet"
     },
     "ActivityEvent": {
-      "description": "§4.4",
+      "description": "§4.6",
       "type": "object",
       "properties": {
         "room_id": {
@@ -1028,7 +1155,8 @@
                 "room_join",
                 "room_leave",
                 "room_list",
-                "room_set"
+                "room_set",
+                "status"
               ]
             },
             {
@@ -1289,11 +1417,33 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "status"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "params"
+            ],
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/StatusParams"
+              }
+            }
+          }
         }
       ]
     },
     "ClientNotification": {
-      "description": "A client notification (§1, §4.4).",
+      "description": "A client notification (§1, §4.6).",
       "type": "object",
       "required": [
         "method"
@@ -1343,11 +1493,28 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "ping"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "const": "method"
+            }
+          }
         }
       ]
     },
     "ServerNotification": {
-      "description": "A server notification (§1).",
+      "description": "A server notification (§1, §4.5).",
       "type": "object",
       "required": [
         "method"
@@ -1368,7 +1535,8 @@
                 "room_update",
                 "server",
                 "user",
-                "pong"
+                "pong",
+                "status"
               ]
             },
             {
@@ -1512,6 +1680,28 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "status"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "params"
+            ],
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/StatusEvent"
+              }
+            }
+          }
         }
       ]
     },
@@ -1601,9 +1791,96 @@
           "room_set",
           "room_update",
           "server",
+          "status",
           "user"
         ]
       }
+    },
+    "PushPayload": {
+      "description": "§4.9: the payload every push kind delivers",
+      "type": "object",
+      "properties": {
+        "push_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "unread": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Message"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "log_id": false
+              },
+              "required": [
+                "message_id",
+                "room_id",
+                "from"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "StatusParams": {
+      "description": "§4.5",
+      "type": "object",
+      "dependentRequired": {
+        "room_id": [
+          "mute"
+        ]
+      },
+      "properties": {
+        "room_id": {
+          "type": "string"
+        },
+        "idle": {
+          "type": "boolean"
+        },
+        "mute": {
+          "description": "true, false, or a positive number of seconds (§4.5)",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        }
+      }
+    },
+    "StatusEvent": {
+      "description": "§4.5: a mute of the user's, from the server",
+      "type": "object",
+      "properties": {
+        "room_id": {
+          "type": "string"
+        },
+        "mute": {
+          "description": "true, false, or a positive number of seconds (§4.5)",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "idle": false
+      },
+      "required": [
+        "mute"
+      ]
     }
   }
 }

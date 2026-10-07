@@ -3,7 +3,7 @@
   "kind": "webauthn",
   "description": "Canonical two-step passkey wire shapes. Credential bytes are synthetic and do not establish cryptographic validity.",
   "references": [
-    "PROTOCOL.md#49-webauthn-authentication"
+    "PROTOCOL.md#410-webauthn-authentication"
   ],
   "cases": [
     {

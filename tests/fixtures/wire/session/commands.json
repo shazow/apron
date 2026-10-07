@@ -5,14 +5,14 @@
   "description": "A command takes a message's params (room_id, body.text as typed, mentions) and settles on its result or error; nothing is posted. Its reply is a ~private notice without message_id: shown in its room, never stored. A message lists its mentions in body.mentions.",
   "references": [
     "PROTOCOL.md#35-messages",
-    "PROTOCOL.md#48-command",
+    "PROTOCOL.md#41-command",
     "PROTOCOL.md#a1-system-identities-and-scoped-notices"
   ],
   "variants": [
     {
       "name": "help-kick-mention",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["rooms","command"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["rooms","command"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},

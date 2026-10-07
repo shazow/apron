@@ -5,7 +5,7 @@
   "description": "Reconnecting as the same identity (a token resume), the client lists only its joined rooms whose latest_log_id is past the least checkpoint of the rooms it kept, and resumes each kept room's recovery from its checkpoint, all right behind auth. A result with left is a listing of changes: joined rooms are refreshed or new, rooms in left go, and every other kept room stays as it was. A result without left comes from a server that ignored the position: it is a full listing, and kept rooms missing from it go. Joins and leaves are memberships in the rooms' logs, so a room left meanwhile has moved past the position. This server keeps its members' memberships in the log.",
   "references": [
     "PROTOCOL.md#32-authentication",
-    "PROTOCOL.md#41-history",
+    "PROTOCOL.md#42-history",
     "PROTOCOL.md#431-listing",
     "PROTOCOL.md#432-membership"
   ],
@@ -13,7 +13,7 @@
     {
       "name": "changes-with-left",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"ada","name":"Ada"},"token":"resume-1"}}},
@@ -23,7 +23,7 @@
         {"expect":{"rooms":[{"room_id":"general","log_id":"10","title":"General","messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Bob"},"body":{"text":"one"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"bob","name":"Bob"},"body":{"text":"two"}}]},{"room_id":"ops","log_id":"20","title":"Ops","messages":[]}]}},
         {"disconnect":true},
         {"expect":{"you":null,"rooms":[]}},
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"resume-1"}}}},
         {"request":{"as":"changes","match":{"method":"room_list","params":{"filter":"joined","members":true,"latest_log_id":"12"}}}},
         {"request":{"as":"resume","match":{"method":"history","params":{"room_id":"general","after":"13"}}}},
@@ -37,7 +37,7 @@
     {
       "name": "full-listing-without-left",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"ada","name":"Ada"},"token":"resume-1"}}},
@@ -45,7 +45,7 @@
         {"request":{"as":"history","match":{"method":"history","params":{"room_id":"general","after":"10","before":"12"}}}},
         {"reply":{"to":"history","result":{"messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Bob"},"body":{"text":"one"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"bob","name":"Bob"},"body":{"text":"two"}}],"first_log_id":"11","last_log_id":"12","more":false,"latest_log_id":"12","history_log_id":"10"}}},
         {"disconnect":true},
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"resume-1"}}}},
         {"request":{"as":"changes","match":{"method":"room_list","params":{"filter":"joined","members":true,"latest_log_id":"12"}}}},
         {"request":{"as":"resume","match":{"method":"history","params":{"room_id":"general","after":"13"}}}},
@@ -58,7 +58,7 @@
     {
       "name": "nothing-changed",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"ada","name":"Ada"},"token":"resume-1"}}},
@@ -66,7 +66,7 @@
         {"request":{"as":"history","match":{"method":"history","params":{"room_id":"general","after":"10","before":"12"}}}},
         {"reply":{"to":"history","result":{"messages":[{"message_id":"11","log_id":"11","room_id":"general","from":{"user_id":"bob","name":"Bob"},"body":{"text":"one"}},{"message_id":"12","log_id":"12","room_id":"general","from":{"user_id":"bob","name":"Bob"},"body":{"text":"two"}}],"first_log_id":"11","last_log_id":"12","more":false,"latest_log_id":"12","history_log_id":"10"}}},
         {"disconnect":true},
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest","token"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"resume-1"}}}},
         {"request":{"as":"changes","match":{"method":"room_list","params":{"filter":"joined","members":true,"latest_log_id":"12"}}}},
         {"request":{"as":"resume","match":{"method":"history","params":{"room_id":"general","after":"13"}}}},

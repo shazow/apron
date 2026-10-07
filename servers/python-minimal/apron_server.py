@@ -3,14 +3,14 @@
 # requires-python = ">=3.10"
 # dependencies = ["websockets>=14,<17"]
 # ///
-"""Apron Chat v7 for trusted, compliant clients.
+"""Apron Chat v8 for trusted, compliant clients.
 
 Run: uv run apron_server.py [--host 0.0.0.0] [--port 8765]
 Or:  python -m pip install 'websockets>=14,<17'; python apron_server.py
 
-One room, guest identities, names, replies, ext pass-through, and the latest
-1,000 log records of history. No edits, room changes, reactions, persistence,
-or retry deduplication. Reconnects get new IDs. Input shapes/types are assumed
+One room, guest identities, names, replies, and the latest 1,000 log records
+of history. No edits, room changes, reactions, ext, persistence, or retry
+deduplication. Reconnects get new IDs. Input shapes/types are assumed
 valid; malformed input may close a connection instead of returning protocol
 errors. No outgoing buffer limits.
 """
@@ -26,7 +26,7 @@ from websockets.asyncio.server import broadcast, serve
 from websockets.exceptions import ConnectionClosed
 
 
-GREETING = {"apron": 7, "agent": "apron-python/7", "auth": ["guest"],
+GREETING = {"apron": 8, "agent": "apron-python/8", "auth": ["guest"],
             "capabilities": ["history"]}
 
 
@@ -67,7 +67,7 @@ class ApronServer:
         after, before = int(p.get("after", "0")), int(p.get("before", self.last_id))
         matches = [r for r in self.log if after <= int(r["log_id"]) <= before]
         page = matches[:limit] if "after" in p else matches[-limit:]
-        result = {"rooms": [r for r in page if "message_id" not in r],
+        result = {"rooms": [{**r, **self.availability()} for r in page if "message_id" not in r],
                   "messages": [r for r in page if "message_id" in r],
                   "more": len(matches) > limit, **self.availability()}
         if page:
@@ -90,8 +90,6 @@ class ApronServer:
                    "from": dict(you), "body": {"format": "plain", **p["body"]}}
         if reply_to:
             message["reply_to"] = {"message_id": reply_to["message_id"]}
-        if p.get("ext"):
-            message["ext"] = p["ext"]
         self.log.append(message)
         send(self.clients, method="message", params=message)
         return {"message_id": message_id}
@@ -99,13 +97,17 @@ class ApronServer:
     def dispatch(self, ws, method, p):
         # No awaits: mutation, history selection, and live delivery are atomic
         # with respect to other connections on this event loop.
-        if method == "auth" and ws not in self.clients:  # Any scheme is accepted.
-            self.clients[ws] = {"user_id": "guest_" + uuid4().hex}
+        if method == "auth":
+            scheme = p.get("scheme")
+            require(scheme not in ("webauthn", "email"), "Unsupported scheme", -32601)
+            require(isinstance(scheme, str), "Missing scheme")
+            # Guest-access policy: any other scheme signs in, ignoring credentials.
+            self.clients.setdefault(ws, {"user_id": "guest_" + uuid4().hex})
 
         require(ws in self.clients, "Authenticate first", -32001)
         if method in ("auth", "me"):
             # "" clears the name and is kept, so clients see it cleared; profile
-            # avatar and ext are declined.
+            # avatar and ext are declined. `you` is complete: user_id and name.
             if isinstance(p.get("name"), str):
                 self.clients[ws] = {**self.clients[ws], "name": p["name"]}
             return {"you": self.clients[ws]}

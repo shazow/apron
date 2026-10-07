@@ -2,7 +2,7 @@
   "format": 4,
   "kind": "session",
   "name": "Room membership",
-  "description": "With capability rooms the visible rooms are the joined set: room_list with filter joined and members, sent right behind auth (threads included), then room_update. Every join and leave is a logged membership, delivered to the room's members before and after the change and before the room_update and result the request causes; the guest's own join at auth may arrive before the auth result. Member lists start from each joined room's members and follow memberships. listRooms asks for rooms not joined, with their members; joinRoom and leaveRoom send only room_id and settle on {}, while the room itself comes and goes by room_update joined and left, which also covers being removed. An updated record of a thread not joined is not visible.",
+  "description": "With capability rooms the visible rooms are the joined set: room_list with filter joined and members, sent right behind auth (threads included), then room_update. Every join and leave is a logged membership, delivered to the room's members before and after the change and before the room_update and result the request causes; the guest's own join at sign-in arrives after the auth result, like every notification a sign-in causes. Member lists start from each joined room's members and follow memberships. listRooms asks for rooms not joined, with their members; joinRoom and leaveRoom send only room_id and settle on {}, while the room itself comes and goes by room_update joined and left, which also covers being removed. An updated record of a thread not joined is not visible.",
   "references": [
     "PROTOCOL.md#1-transport--framing",
     "PROTOCOL.md#32-authentication",
@@ -15,11 +15,11 @@
     {
       "name": "join-and-leave",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
-        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":true}]}]}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Guest"}}}},
+        {"receive":{"method":"room_update","params":{"memberships":[{"log_id":"91","room_id":"general","members":[{"user":{"user_id":"guest_1","name":"Guest"},"joined":true}]}]}}},
         {"reply":{"to":"rooms","result":{"joined":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","latest_log_id":"103","members":[{"user_id":"bob"},{"user_id":"guest_1"}]},{"room_id":"general","log_id":"90","title":"General","latest_log_id":"103","members":[{"user_id":"bob"},{"user_id":"guest_1"}]}],"users":[{"user_id":"bob","name":"Bob"},{"user_id":"guest_1","name":"Guest"}]}}},
         {"expect":{"rooms":[{"room_id":"102","log_id":"102","parent_room_id":"general","title":"Deploy","messages":[]},{"room_id":"general","log_id":"90","title":"General","messages":[]}],"members":{"102":["bob","guest_1"],"general":["bob","guest_1"]}}},
         {"listRooms":{"as":"browse"}},

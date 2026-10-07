@@ -5,14 +5,14 @@
   "description": "Recovery fixes H = 105 from the announcement and pages with before: H even after a live room update reports latest_log_id 107. Pages mix room records, snapshots, and reaction sets (the server clamps limit to 5 records of any kind). Live records above H (an edit, a room update, a reaction on a message only history provides) are buffered and win over older history.",
   "references": [
     "PROTOCOL.md#34-rooms",
-    "PROTOCOL.md#41-history",
-    "PROTOCOL.md#45-reactions"
+    "PROTOCOL.md#42-history",
+    "PROTOCOL.md#47-reactions"
   ],
   "variants": [
     {
       "name": "raw",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"expect":{"you":{"user_id":"guest_1"}}},
@@ -30,7 +30,7 @@
     {
       "name": "compacted",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":7,"auth":["guest"],"capabilities":["history","rooms"]}}},
+        {"receive":{"method":"server","params":{"apron":8,"auth":["guest"],"capabilities":["history","rooms"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1"}}}},
         {"expect":{"you":{"user_id":"guest_1"}}},
