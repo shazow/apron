@@ -1,12 +1,12 @@
 # Apron Chat Protocol
 
-Apron aspires to create an ecosystem of _bottomless_ Apron chat clients that work with any headless Apron server.
+Apron is a simple chat protocol that takes advantage of several trust assumptions: A server is authoritative, there is no federation, messages inside a server are not end-to-end encrypted, there is no greater social network. It's more like Slack and less like Signal.
 
-For example: Web browsers are bottomless renderers of HTTP. There are a bunch of browsers, and there's astronomically many web servers. We want this for chat!
+It should be extremely easy to implement a basic server (~100 lines of code) that works with any client, and moderately easy to build a basic client (just a few lines for a stateless bot, maybe a few thousand lines for a more featureful client).
 
-Apron keeps the chat protocol simple by taking advantage of several trust assumptions: A server is authoritative, there is no federation, there is no greater social network. It should be extremely easy to implement a basic server (~100 lines of code), and moderately easy to build a basic client.
+Do you need a custom self-hosted group chat? Consider using the Apron Chat Protocol!
 
-**Status**: v1 beta, core protocol is stable, capabilities are being validated
+**Status**: v1.0 beta, core protocol is stable
 
 <img width="721.5" height="536" alt="Screenshot of the Sveltekit Apron Chat implementation" src="https://github.com/user-attachments/assets/bdd4b15c-485e-4c19-838b-75c748dd2890" />
 
@@ -37,9 +37,16 @@ Apron keeps the chat protocol simple by taking advantage of several trust assump
 - [`schema/apron.schema.json`](schema/apron.schema.json): an informative JSON Schema of the frames, for validation and editor completion.
 - [`tests/fixtures`](tests/fixtures): conformance fixtures that implementations can test against. The [wire fixture README](tests/fixtures/wire/README.md) describes the wire fixtures, and [DEVELOPMENT.md](DEVELOPMENT.md) says where each fixture runs.
 
-## AI Usage
+## Background
 
-The PROTOCOL.md was very carefully hand-edited but also iterated upon with the help of LLMs. Server and client implementations were more fully derived by autocoding harnesses by using the protocol as a source of truth. This semi-automated validation cycle allowed for refining the protocol more rapidly and precisely, by immediately exploring the edge cases of functionality.
+Apron was inspired by many previous chat protocols and apps:
+- I created [ssh.chat](https://ssh.chat) in 2014 which spawned an ecosystem of bots, clients, forks, and bridges to other protocols. It endured many feature requests, attacks, and hundreds of thousands of unique visitors after landing on the HN frontpage 7+ times. 
+- Protocols reviewed over the years include IRC (v3 and earlier), Matrix, XMPP, XMTP, and others.
+- Functionality and design is inspired by Slack, Zulip, Discord, and others.
+
+AI usage:
+- PROTOCOL.md was very carefully hand-edited but also iterated upon with the help of LLMs.
+- Reference server and client implementations are derived by autocoding harnesses using the protocol as a source of truth.
 
 ## License
 
