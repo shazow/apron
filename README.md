@@ -39,10 +39,14 @@ Do you need a custom self-hosted group chat? Consider using the Apron Chat Proto
 
 ## Background
 
+Apron was designed to address two main frustrations:
+- Chat apps are too tightly coupled with their network. (You can't self-host Discord, or use it without connecting to the official Discord network of users).
+- It's too hard to implement a basic server that works with any client, or a basic client that works with any server. (Some protocols prioritize one over the other, but I haven't found a good incremental balance for both.)
+
 Apron was inspired by many previous chat protocols and apps:
 - I created [ssh.chat](https://ssh.chat) in 2014 which spawned an ecosystem of bots, clients, forks, and bridges to other protocols. It endured many feature requests, attacks, and hundreds of thousands of unique visitors after landing on the HN frontpage 7+ times. 
 - Protocols reviewed over the years include IRC (v3 and earlier), Matrix, XMPP, XMTP, and others.
-- Functionality and design is inspired by Slack, Zulip, Discord, and others.
+- Functionality and design is inspired by Zulip, Discord, Slack, and others.
 
 AI usage:
 - PROTOCOL.md was very carefully hand-edited but also iterated upon with the help of LLMs.
