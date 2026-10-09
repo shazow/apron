@@ -26,6 +26,7 @@ Do you need a custom self-hosted group chat? Consider using the Apron Chat Proto
 - Backend is authoritative: Identity, membership, history, threading, mutation. The frontend generally acts as a dumb renderer.
 - Backends can be trivial: An afternoon or one-shot LLM prompt should implement a working backend provider.
 - Any frontend, many backends: Aspiring to have many Apron-compatible chat frontends and backends.
+- Encryption is a transport detail: Self-hosters should leverage TLS to secure the connection between the server and clients.
 - Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases..
 - One websocket to start, additional signaling bootstrapped from there (e.g. HTTP upload target, WebRTC, etc).
 - Multimedia-friendly: Upload images, audio, whatever.
