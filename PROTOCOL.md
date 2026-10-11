@@ -1,5 +1,9 @@
 # Apron Chat Protocol
 
+| Version  | 8 |
+|---------|---|
+
+
 Apron Chat Protocol is for groups whose members mostly trust each other: a
 team, a household, or a set of bots and the people who run them. That trust
 keeps the protocol small. There is no public federation, spam defense, or
