@@ -1,6 +1,6 @@
 # Apron Chat Protocol
 
-| Version  | 8 |
+| Protocol Version  | 8 |
 |---------|---|
 
 
