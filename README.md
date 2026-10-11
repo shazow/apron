@@ -16,7 +16,7 @@ Do you need a custom self-hosted group chat? Consider using the Apron Chat Proto
 2. Try the live demo: [web.apron.chat](https://web.apron.chat/)
 3. Explore some implementations:
    - https://github.com/apron-chat/apron-web (frontend for the live demo above)
-   - https://github.com/apron-chat/apron-server-cloudflare (demo server running on a Cloudflare Worker free tier with limited functionality)
+   - https://github.com/apron-chat/apron-server-cloudflare (demo server running on a Cloudflare Worker free tier with limited functionality, most of the code is keeping usage under the free quota)
    - https://github.com/apron-chat/apron-server-go (more complete reference server for self-hosting)
    - https://github.com/apron-chat/apron-pr-bot (github pull request bot used on the demo server)
 
