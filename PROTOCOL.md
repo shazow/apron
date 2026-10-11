@@ -363,49 +363,44 @@ class AuthResult {
 {"id": "c1", "result": {"you": {"user_id": "alice", "name": "Alice"}}}
 ```
 
-`params.scheme` selects the scheme:
-
-- `guest`: no credentials. The server assigns the identity. Suggested
-  convention: `guest_` plus a global counter, such as `guest_1234`
-  ([§3.3](#33-identity)).
-- `token`: a bearer string. This is the reference default.
-- `webauthn`: optional passkey scheme ([§4.10](#410-webauthn-authentication)).
-- `email`: optional sign-in by a code sent to an email address
-  ([§4.11](#411-email-authentication)).
-
-A scheme that this document defines but the server does not offer is
-`unsupported`.
-
-Under a guest-access policy, a server MAY accept `auth` with `token` or a
-scheme that this document does not define, and ignore the credentials.
-
-`name` and `user_id` are optional requests, and work with any scheme. `you` is
-what the server assigned. Servers SHOULD NOT assign a `user_id` that was used
-before, unless they authenticate its owner.
+- `params.scheme` selects the scheme:
+  - `guest`: no credentials. The server assigns the identity. Suggested
+    convention: `guest_` plus a global counter, such as `guest_1234`
+    ([§3.3](#33-identity)).
+  - `token`: a bearer string. This is the reference default.
+  - `webauthn`: optional passkey scheme
+    ([§4.10](#410-webauthn-authentication)).
+  - `email`: optional sign-in by a code sent to an email address
+    ([§4.11](#411-email-authentication)).
+- A scheme that this document defines but the server does not offer is
+  `unsupported`.
+- Under a guest-access policy, a server MAY accept `auth` with `token` or a
+  scheme that this document does not define, and ignore the credentials.
+- With `server.signup`, `server.auth` lists the schemes that sign in, and
+  `signup` lists the schemes that create an account. For example, `"auth":
+  ["token"], "signup": ["guest"]` means: join as a guest, then sign in with
+  the token that the server issues.
+- `server.welcome` tells users how the schemes of this server fit together,
+  such as "Join as a guest. Your client keeps a token to sign you back in."
+  Clients show it on the sign-in screen as CommonMark ([§3.5](#35-messages)),
+  and never parse it.
+- `name` and `user_id` are optional requests, and work with any scheme. `you`
+  is what the server assigned.
+- Servers SHOULD NOT assign a `user_id` that was used before, unless they
+  authenticate its owner.
 
 **Bearer tokens.** A successful `auth` result MAY carry `token`. The client
 uses it with `scheme: "token"` on later connections.
 
-- It can follow any sign-in.
 - Servers also send it in reply to `scheme: "token"` when they rotate the
   token that the client sent.
 - Clients save the latest `token`, which replaces any earlier one, and
   reconnect with it.
 - A server MAY reject a token that it replaced. Expired and revoked tokens are
   `denied`.
+- If a token is the only way back into an account, the client SHOULD
+  encourage its user to add another scheme that the server offers.
 - Lifetime, rotation, and revocation are server policy.
-
-**Sign-up.** With `signup`, `auth` lists the schemes that sign in, and
-`signup` lists the schemes that create an account. For example, `"auth":
-["token"], "signup": ["guest"]` means: join as a guest, then sign in with the
-token that the server issues. If a token is the only way back into an account,
-the client SHOULD encourage its user to add another scheme that the server
-offers.
-
-**Welcome.** `server.welcome` is free text for the sign-in screen. It tells
-users how the schemes of this server fit together, such as "Join as a guest.
-Your client keeps a token to sign you back in." It is CommonMark
-([§3.5](#35-messages)). Clients never parse it.
 
 **Order.** `auth` is a barrier. The server finishes an `auth` request before
 it processes any later frame on the connection.
