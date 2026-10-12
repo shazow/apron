@@ -326,7 +326,7 @@ class Auth {
   user_id?: string;             // requested user_id
   agent?: string;               // implementation/version string, for debugging
 
-  // "token" and "email" schemes
+  // "token", "email", and "external" schemes
   token?: string;
 
   // "webauthn" scheme (§4.10)
@@ -335,8 +335,10 @@ class Auth {
   challenge_id?: string;        // finish
   credential?: object;          // finish
 
-  // "email" scheme (§4.11)
-  email?: string;
+  // "email" and "external" schemes (§4.11)
+  state?: string;
+  email?: string;               // email
+  return_url?: string;          // external
 }
 
 class AuthResult {
@@ -346,6 +348,9 @@ class AuthResult {
   // "webauthn" scheme, begin step
   challenge_id?: string;
   public_key?: object;          // WebAuthn options
+
+  // "external" scheme, proposal
+  url?: string;
 }
 ```
 
@@ -371,7 +376,9 @@ class AuthResult {
   - `webauthn`: optional passkey scheme
     ([§4.10](#410-webauthn-authentication)).
   - `email`: optional sign-in by a code sent to an email address
-    ([§4.11](#411-email-authentication)).
+    ([§4.11](#411-email-and-external-sign-in)).
+  - `external`: optional sign-in on a web page of the server
+    ([§4.11](#411-email-and-external-sign-in)).
 - A scheme that this document defines but the server does not offer is
   `unsupported`.
 - Under a guest-access policy, a server MAY accept `auth` with `token` or a
@@ -782,8 +789,9 @@ Some features have no capability:
 - Embeds other than `upload` and `stream` are body content
   ([§4.8](#48-embeds-and-avatars)).
 - `server.push` enables push ([§4.9](#49-push)).
-- `server.auth` enables passkeys and email sign-in
-  ([§4.10](#410-webauthn-authentication), [§4.11](#411-email-authentication)).
+- `server.auth` enables passkeys, and email and external sign-in
+  ([§4.10](#410-webauthn-authentication),
+  [§4.11](#411-email-and-external-sign-in)).
 - `server.ping` enables liveness checks ([§1](#1-transport--framing)).
 
 The features in this section add these methods
@@ -2077,22 +2085,26 @@ registration identity.
 MUST bind such a token to the allowed origin of the ceremony, and MUST make it
 expire. A mismatched origin is `denied`.
 
-### 4.11 Email authentication
+### 4.11 Email and external sign-in
 
-Email sign-in proves that a user controls an address. It suits sign-up and
-account recovery, and works on any device that gets mail.
+Some sign-ins finish outside the connection. Email sign-in proves that a user
+controls an address. It suits sign-up and account recovery, and works on any
+device that gets mail. External sign-in sends the user to a web page of the
+server. The page can put any sign-in portal in front of Apron, such as OAuth,
+OpenID Connect, SAML, SSO, or a password check against a SASL backend.
 
-Servers that list `email` in `server.auth` verify an address with a temporary
-token that they send to it. An `auth` request with `email` proposes a sign-in
-or an addition. An `auth` request with `token` approves it:
+Servers that list `email` or `external` in `server.auth` use this exchange. An
+`auth` request without `token` proposes a sign-in or an addition. The server
+delivers a temporary token outside the connection. An `auth` request with that
+`token` approves the proposal:
 
 ```jsonc
 // -> propose signing in with this address
-{"method": "auth", "id": "c1", "params": {"scheme": "email", "email": "ada@example.com"}}
+{"method": "auth", "id": "c1", "params": {"scheme": "email", "email": "ada@example.com", "state": "q8Rz…"}}
 // <- nothing is authenticated yet
 {"id": "c1", "result": {}}
 
-// email: "Your code is 418092, or open https://chat.example/login#token=Hk41x9…"
+// email: "Your code is 418092, or open https://chat.example/login#token=Hk41x9…&state=q8Rz…"
 
 // -> on any connection not signed in, such as one opened by the link
 {"method": "auth", "id": "c2", "params": {"scheme": "email", "token": "Hk41x9…"}}
@@ -2100,31 +2112,80 @@ or an addition. An `auth` request with `token` approves it:
 {"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
 ```
 
-- A proposal returns `{}`, whether or not the address has an account. On a
-  connection that is signed in to an account, guests included, it proposes to
-  add the address to that account. Otherwise it proposes a sign-in.
-- The server emails a temporary token for the proposal, as a link, a code to
-  type, or both. A token that is short enough to type, such as six digits,
-  works only on the connection that made the proposal. A token that works on
-  other connections MUST be unguessable.
+```jsonc
+// -> propose an external sign-in that returns to this client
+{"method": "auth", "id": "c1", "params": {"scheme": "external", "return_url": "https://web.apron.chat/", "state": "q8Rz…"}}
+// <- the page to open
+{"id": "c1", "result": {"url": "https://chat.example/sso?p=Qm7x…"}}
+
+// the page signs the user in, then redirects to
+// https://web.apron.chat/#token=Hk41x9…&state=q8Rz…&server=wss%3A%2F%2Fchat.example%2F
+
+// -> on a connection from https://web.apron.chat
+{"method": "auth", "id": "c2", "params": {"scheme": "external", "token": "Hk41x9…"}}
+// <-
+{"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
+```
+
+**Proposals.**
+
+- A proposal is an `auth` request without `token`. It authenticates nothing.
+- On a connection that is signed in to an account, guests included, a
+  proposal adds to that account. Otherwise it proposes a sign-in.
 - A connection has one pending proposal, and a new one replaces it. A proposal
   expires within minutes. Approval uses it up. A few failed attempts cancel
   it.
+- A proposal MAY carry `state`, an unguessable value that the client chooses
+  (like OAuth's `state`, it guards against a link that signs the user in to
+  someone else's account). The server returns it unchanged with the temporary
+  token.
+
+**Temporary tokens.**
+
+- The server delivers a temporary token for the proposal, as a link, a code to
+  type, or both.
+- A token that is short enough to type, such as six digits, works only on the
+  connection that made the proposal. A token that works on other connections
+  MUST be unguessable.
+- A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
+  when the proposal carried `state`, plus `&server=…` with the server's
+  WebSocket URL when the link opens a client that is not tied to one server.
+- A client asks its user before it uses a link without the `state` of a
+  proposal that the client made.
+
+**Approval.**
+
+- Approval is an `auth` request with the scheme of the proposal and `token`.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and
   a bearer `token` for later connections ([§3.2](#32-authentication)).
-- Approval of an addition adds the address to the account that proposed it,
-  and returns `{}`.
+- Approval of an addition adds the address or the external identity to the
+  account that proposed it, and returns `{}`.
 - An invalid, expired, or used token is `denied`. A sign-in token on a
-  signed-in connection is also `denied`, and so is an address that belongs to
-  another account.
-- The server builds any link from its own configuration and puts the token
-  in the URL fragment.
-- The suggested fragment is `#token=…`, plus `&server=…` with the server's
-  WebSocket URL when the link opens a client that is not tied to one
-  server.
+  signed-in connection is also `denied`, and so is an address or an external
+  identity that belongs to another account.
+
+**Email.**
+
+- A proposal carries `email`. It returns `{}`, whether or not the address has
+  an account.
+- The server emails the temporary token. It builds any link from its own
+  configuration.
 - Account creation for unknown addresses, send rate limits (`retry_after`),
   and the bearer token's lifetime are server policy.
+
+**External.**
+
+- A proposal MAY carry `return_url`, a URL of the client. It returns `url`, a
+  page of the server. The client opens `url` in a browser.
+- The page signs the user in by a method that the server chooses.
+- With `return_url`, the page shows the host of `return_url` before the user
+  signs in. It then redirects to `return_url` with the link fragment.
+- Without `return_url`, the page shows a code to type.
+- Servers SHOULD accept a link token only on a connection from the origin of
+  `return_url`, such as by the WebSocket `Origin` header.
+- Which `return_url` values a server accepts, and account creation for new
+  external identities, are server policy.
 
 ### 4.12 `ext`
 
