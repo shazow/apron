@@ -207,7 +207,8 @@ Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated `user_id`
 How long a server remembers an `id` is implementation-defined. Before
 authentication there is no `user_id`, so a request `id` applies only to its
 connection. The server MUST execute `auth` on each connection, also when it
-repeats an `id`.
+repeats an `id` (a deduplicated result would sign in a connection that
+presented no credentials).
 
 ---
 
@@ -1724,7 +1725,8 @@ card ([§3.5](#35-messages)).
 ```
 
 - `iframe`: render with `sandbox="allow-scripts"`, and **never** with
-  `allow-same-origin` too. Allow no top navigation and no popups. Use a
+  `allow-same-origin` too (together, they let the embed remove its own
+  sandbox). Allow no top navigation and no popups. Use a
   restrictive Permissions-Policy. Clamp the dimensions, because `height` is
   only a suggestion. Load lazily, and limit the number of live iframes at one
   time.
@@ -2149,7 +2151,7 @@ delivers a temporary token outside the connection. An `auth` request with that
   type, or both.
 - A temporary token expires within minutes of its delivery.
 - A token that is short enough to type, such as six digits, works only on the
-  connection that made the proposal. A token that works on other connections
+  connection that made the proposal (short codes are easy to guess). A token that works on other connections
   MUST be unguessable.
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
@@ -2167,7 +2169,8 @@ delivers a temporary token outside the connection. An `auth` request with that
   That connection MUST NOT be signed in already. The result carries `you` and
   a bearer `token` for later connections ([§3.2](#32-authentication)).
 - Approval of an addition works only on a connection that is signed in to the
-  account that proposed it. It adds the address or the external identity to
+  account that proposed it (otherwise someone could lead a victim to link the
+  victim's identity to the other person's account). It adds the address or the external identity to
   that account, and returns `{}`.
 - An invalid, expired, or used token is `denied`. A sign-in token on a
   signed-in connection is also `denied`, and so is an address or an external
@@ -2185,7 +2188,8 @@ delivers a temporary token outside the connection. An `auth` request with that
 **External.**
 
 - A proposal MAY carry `return_url`, a URL of the client. Servers MUST accept
-  only a `return_url` on an origin that they trust.
+  only a `return_url` on an origin that they trust (otherwise the page would
+  hand a working token to any site).
 - A proposal returns `url`, a page of the server. `url` is an absolute `https`
   URL, or `http` on a loopback host. Clients reject any other `url`, such as
   `javascript:…`.
@@ -2249,6 +2253,116 @@ as `irc`:
 // <-
 {"id": "c51", "result": {"you": {"user_id": "ada", "name": "Ada", "ext": {"tz": "America/Toronto"}}}}
 ```
+
+---
+
+## 5. Security considerations
+
+This section is informative. It states the threats that the rules of this
+document guard against, and refers to those rules.
+
+### 5.1 Trust model
+
+Apron is for groups whose members mostly trust each other and their server. It
+does not defend against everything.
+
+- The server is the authority on identity, membership, and history. Its users
+  trust it with their messages.
+- Content from other users is untrusted. Clients render it as data, never as
+  code.
+- A client can connect to any server. So a client does not run a server's
+  markup or scripts, or open its URLs unchecked.
+- The protocol assumes an encrypted transport, such as WebSocket over TLS.
+- Spam, sybil attacks, and public federation are out of scope. There is no
+  end-to-end encryption, so a server operator can read every message.
+
+### 5.2 Rendering
+
+Message text, embeds, and room descriptions come from other users. A client
+that renders them as markup would run their code.
+
+- Clients disable raw HTML in CommonMark, or sanitize it
+  ([§3.5](#35-messages)).
+- Clients sanitize `html` embeds from every source, because servers relay
+  embeds from users and bridges ([§4.8](#48-embeds-and-avatars)).
+- `iframe` embeds run in a sandbox without `allow-same-origin`
+  ([§4.8](#48-embeds-and-avatars)).
+- Clients open only an `https` `url` for external sign-in, so a server cannot
+  run script in the client with a `javascript:` URL
+  ([§4.11](#411-email-and-external-sign-in)).
+
+### 5.3 Impersonation
+
+- Display names are not unique. Clients show `Name (@user_id)` when two users
+  share a name ([§3.3](#33-identity)).
+- `user_id`s that start with `~` are reserved, so no user can pose as the
+  server or a room ([Appendix A.3](#a3-prefixes-in-text)).
+- Logged messages and mentions refer to a `user_id`. Servers do not give a
+  retired `user_id` to another user, who would inherit them
+  ([§3.3](#33-identity)).
+- Roles are labels for display, and give no permissions on the client
+  ([§3.3](#33-identity)).
+
+### 5.4 Privacy
+
+- An ID that the user cannot see gets the same error as an ID that does not
+  exist, so errors do not reveal hidden rooms or users
+  ([§1.1](#11-envelope-and-replies)).
+- An email proposal returns `{}` for every address, so proposals do not
+  reveal which addresses have accounts
+  ([§4.11](#411-email-and-external-sign-in)).
+- Clients do not load `og` media or streams from other origins. Each load
+  would tell a third party the reader's address and when they read
+  ([§4.8.1](#481-opengraph-metadata-og), [§4.8.5](#485-embedstream)).
+- Link tokens travel in the URL fragment, which browsers send neither to
+  servers nor in `Referer` ([§4.11](#411-email-and-external-sign-in)).
+- Mutes are private to their user ([§4.5](#45-status)).
+
+### 5.5 Sign-in
+
+- The server executes `auth` on each connection, also when it repeats an `id`.
+  A deduplicated result would sign in a connection that presented no
+  credentials ([§1.2](#12-retries-and-deduplication)).
+- A short code works only on the connection that proposed, and failed attempts
+  from any connection count against the proposal. Otherwise six digits are
+  easy to guess ([§4.11](#411-email-and-external-sign-in)).
+- A link carries the `state` of its proposal. Without it, a client could
+  follow someone else's link into that person's account
+  ([§4.11](#411-email-and-external-sign-in)).
+- A signed-in connection cannot approve a sign-in, so a link cannot silently
+  switch a session to another account
+  ([§4.11](#411-email-and-external-sign-in)).
+- An addition works only on the proposing account's connection. Otherwise
+  someone could lead a victim to link the victim's identity to the other
+  person's account ([§4.11](#411-email-and-external-sign-in)).
+- Servers accept only a `return_url` on a trusted origin. Otherwise the
+  sign-in page would hand a working token to any site
+  ([§4.11](#411-email-and-external-sign-in)).
+- The sign-in page asks the user to confirm before it redirects, and tells the
+  user where to type a code. Someone else may have started the sign-in
+  ([§4.11](#411-email-and-external-sign-in)).
+- WebAuthn challenges are bound to their connection, action, and origin, so a
+  challenge cannot be replayed in another ceremony
+  ([§4.10](#410-webauthn-authentication)).
+- Bearer tokens from WebAuthn and link tokens from external sign-in are bound
+  to an origin, so a stolen token does not work from another site
+  ([§4.10](#410-webauthn-authentication),
+  [§4.11](#411-email-and-external-sign-in)).
+
+### 5.6 Integrity
+
+- The destination of a move is a room that the caller can see, so a move
+  cannot post into a hidden room ([§4.4](#44-edit)).
+- A client that asked for a private room checks that it got one before it
+  posts. A server that ignores the field would create a public room
+  ([§4.2.4](#424-creating-and-editing)).
+- The server owns `embed_id` and the URLs that it hosts, so a client cannot
+  point an embed at a file that it does not own
+  ([§4.8.2](#482-embed-identity)).
+- Hosted URLs are unguessable, because anyone can fetch them without signing
+  in ([§4.8.2](#482-embed-identity)).
+- `write_url` is a credential that expires, so only the sender can write an
+  upload ([§4.8.3](#483-writes)).
 
 ---
 

@@ -9,14 +9,15 @@ fixtures, or implementations from it.
 ### Structure
 
 - Keep the order: introduction, transport, identifiers, core (§3), then
-  capabilities (§4), then appendices. Core sections don't depend on
+  capabilities (§4), then security considerations (§5), then appendices. Core sections don't depend on
   capabilities; mention one only to point to it.
 - Order §4 by how commonly a capability is implemented, not by when it was
   added.
 - A section MAY open with a short paragraph of context and motivation. Write
   it as prose; the rules follow as bullets.
 - Group long sections under bold labels (**Delivery.**, **Mute.**) rather
-  than new numbered headings.
+  than new numbered headings. §5 is the exception: it has a numbered
+  subsection for each kind of threat.
 
 ### Sentences
 
@@ -36,6 +37,9 @@ fixtures, or implementations from it.
 
 - State rules, not their consequences. Say what an implementation must do
   and let implementers work out the effects.
+- §5 explains the threats that rules guard against, and states no rules of its
+  own. A rule whose reason is not obvious MAY end with a short parenthesis
+  that states the threat. When a guarding rule changes, update §5 too.
 - Prefer less text, but not at the cost of clarity. A change replaces
   wording rather than adding to it, and leaves out what another rule
   implies or what is up to the implementation.
