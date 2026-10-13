@@ -2093,8 +2093,9 @@ device that gets mail. External sign-in sends the user to a web page of the
 server. The page can put any sign-in portal in front of Apron, such as OAuth,
 OpenID Connect, SAML, SSO, or a password check against a SASL backend.
 
-Servers that list `email` or `external` in `server.auth` use this exchange. An
-`auth` request without `token` proposes a sign-in or an addition. The server
+Servers that list `email` or `external` in `server.auth` use this exchange,
+and also list `token`. An `auth` request without `token` proposes a sign-in or
+an addition. The server
 delivers a temporary token outside the connection. An `auth` request with that
 `token` approves the proposal:
 
@@ -2132,18 +2133,21 @@ delivers a temporary token outside the connection. An `auth` request with that
 - A proposal is an `auth` request without `token`. It authenticates nothing.
 - On a connection that is signed in to an account, guests included, a
   proposal adds to that account. Otherwise it proposes a sign-in.
-- A connection has one pending proposal, and a new one replaces it. A proposal
-  expires within minutes. Approval uses it up. A few failed attempts cancel
-  it.
-- A proposal MAY carry `state`, an unguessable value that the client chooses
-  (like OAuth's `state`, it guards against a link that signs the user in to
-  someone else's account). The server returns it unchanged with the temporary
-  token.
+- A connection has one pending proposal, and a new one replaces it.
+- A proposal expires within minutes. A disconnect does not cancel it.
+  Approval uses it up.
+- Failed attempts count against the proposal, whichever connection makes them.
+  A few failed attempts cancel it.
+- A proposal MAY carry `state`, an unguessable value of at most 256 bytes that
+  the client chooses (like OAuth's `state`, it guards against a link that
+  signs the user in to someone else's account). The server returns it
+  unchanged in each link.
 
 **Temporary tokens.**
 
 - The server delivers a temporary token for the proposal, as a link, a code to
   type, or both.
+- A temporary token expires within minutes of its delivery.
 - A token that is short enough to type, such as six digits, works only on the
   connection that made the proposal. A token that works on other connections
   MUST be unguessable.
@@ -2152,15 +2156,19 @@ delivers a temporary token outside the connection. An `auth` request with that
   WebSocket URL when the link opens a client that is not tied to one server.
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made.
+- For a link with the `state` of its own proposal, a client uses the server
+  that it proposed to, and ignores `server`.
 
 **Approval.**
 
-- Approval is an `auth` request with the scheme of the proposal and `token`.
+- Approval is an `auth` request with `token` and either scheme that the server
+  offers.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and
   a bearer `token` for later connections ([§3.2](#32-authentication)).
-- Approval of an addition adds the address or the external identity to the
-  account that proposed it, and returns `{}`.
+- Approval of an addition works only on a connection that is signed in to the
+  account that proposed it. It adds the address or the external identity to
+  that account, and returns `{}`.
 - An invalid, expired, or used token is `denied`. A sign-in token on a
   signed-in connection is also `denied`, and so is an address or an external
   identity that belongs to another account.
@@ -2176,16 +2184,23 @@ delivers a temporary token outside the connection. An `auth` request with that
 
 **External.**
 
-- A proposal MAY carry `return_url`, a URL of the client. It returns `url`, a
-  page of the server. The client opens `url` in a browser.
-- The page signs the user in by a method that the server chooses.
-- With `return_url`, the page shows the host of `return_url` before the user
-  signs in. It then redirects to `return_url` with the link fragment.
-- Without `return_url`, the page shows a code to type.
+- A proposal MAY carry `return_url`, a URL of the client. Servers MUST accept
+  only a `return_url` on an origin that they trust.
+- A proposal returns `url`, a page of the server. `url` is an absolute `https`
+  URL, or `http` on a loopback host. Clients reject any other `url`, such as
+  `javascript:…`.
+- The client opens `url` in a browser. The page signs the user in by a method
+  that the server chooses.
+- With `return_url`, the page shows its host, and whether the user signs in
+  or adds an identity. The page asks the user to confirm before it redirects,
+  also when the user is already signed in to the page.
+- The page redirects to `return_url` with the link fragment, which replaces
+  any fragment of `return_url`.
+- Without `return_url`, the page shows a code to type after the user signs in.
+  It tells the user to type the code only in the client where they started.
 - Servers SHOULD accept a link token only on a connection from the origin of
   `return_url`, such as by the WebSocket `Origin` header.
-- Which `return_url` values a server accepts, and account creation for new
-  external identities, are server policy.
+- Account creation for new external identities is server policy.
 
 ### 4.12 `ext`
 
