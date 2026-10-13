@@ -251,6 +251,7 @@ All IDs are strings.
 
 - For each key, clients keep the record with the greatest `log_id`. The source
   (live, history, or embedded) and the arrival order do not matter.
+- At an equal `log_id`, a tombstone wins ([§4.4](#44-edit)).
 - Server fields are read-only: a request never changes them.
 
 **Opaque IDs** — `room_id`, `user_id`, and request `id`.
@@ -561,7 +562,7 @@ class Room {
 
   // "history" capability: required when advertised
   log_id?: string;
-  prev_log_id?: string;
+  prev_log_id?: string;         // optional (§4.3)
   latest_log_id?: string;
   history_log_id?: string | null;
 
@@ -1377,9 +1378,9 @@ earlier state. The order across the arrays does not matter.
 2. Get the `latest_log_id` of the room from its room record
    ([§4.2.1](#421-listing)) or from a `history` page. Call it H. Keep only the
    buffered records above H.
-3. Page forward with `before: H` until `more: false`. If the client has a
-   checkpoint C, start at `after: C + 1`. Otherwise start at `after:
-   history_log_id`.
+3. With a checkpoint C, page forward from `after: C + 1` with `before: H`
+   until `more: false`. Without one, start at `after: history_log_id`, or load
+   the newest page with `before: H` and older pages on demand.
 4. Apply the buffered records. The checkpoint is now H.
 
 If the effective lower bound of a response is past the next position that the
@@ -1483,8 +1484,7 @@ Clients show tombstones, and hide their reactions.
 **Redaction.** Earlier snapshots of a deleted message still hold its content.
 A server MAY rewrite them, and embedded copies of them ([§3.5](#35-messages)),
 into tombstones at their original `log_id`s. This is the only permitted
-rewrite of a logged record. Clients that hold the old content drop it when
-they receive the new tombstone.
+rewrite of a logged record.
 
 ### 4.5 `status`
 
