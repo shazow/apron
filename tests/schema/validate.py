@@ -64,7 +64,7 @@ VERSION = 8
 KNOWN = {
     "method": set(SCHEMA["$defs"]["UnknownMethod"]["not"]["enum"]),
     "capability": {"command", "history", "rooms", "edit", "status", "activity", "reactions", "embed:upload", "embed:stream", "ext"},
-    "auth scheme": {"guest", "token", "webauthn", "email"},
+    "auth scheme": {"guest", "token", "webauthn", "email", "external"},
     "embed kind": {"upload", "stream", "iframe", "html"},
     "push kind": {"relay", "webpush"},
     "wake scope": {"mentions", "private", "replies", "joined", "badge"},

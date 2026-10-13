@@ -85,7 +85,7 @@ function createMessage(you, params) {
 // Keep this synchronous: history reads, commits, and broadcasts must stay ordered.
 function dispatch(ws, method, params) {
   if (method === "auth") {
-    check(params.scheme !== "webauthn" && params.scheme !== "email", "Unsupported scheme", -32601);
+    check(!["webauthn", "email", "external"].includes(params.scheme), "Unsupported scheme", -32601);
     check(typeof params.scheme === "string", "Missing scheme");
     // Guest-access policy: any other scheme signs in, ignoring credentials.
     ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() };

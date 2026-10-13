@@ -536,6 +536,15 @@
         "email": {
           "type": "string"
         },
+        "state": {
+          "description": "email and external proposals: an unguessable value the client chooses, returned unchanged in each link (§4.11).",
+          "type": "string",
+          "maxLength": 256
+        },
+        "return_url": {
+          "description": "external proposals: where the sign-in page redirects with the link fragment; only on an origin the server trusts (§4.11).",
+          "type": "string"
+        },
         "action": {
           "enum": [
             "register",
@@ -845,6 +854,11 @@
         },
         "public_key": {
           "type": "object"
+        },
+        "url": {
+          "description": "external proposals: the sign-in page to open, an absolute https URL (http only on a loopback host) (§4.11).",
+          "type": "string",
+          "pattern": "^(https://|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])([:/]|$))"
         }
       }
     },

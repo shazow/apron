@@ -14,7 +14,7 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 
 - Apron protocol v8, advertising capability `history`.
 - One shared default room, `general`: requests without `room_id` use it, and its creation record, titled "General", is in history while retained. Without capability `rooms`, clients learn the room from the messages and history in it.
-- Guest authentication with `guest_` user IDs and changeable display names (`auth` or `me`; `""` clears the name). Under its guest-access policy the server accepts any scheme and ignores credentials, except `webauthn` and `email`, which are `error/unsupported`. A missing scheme is `error/invalid_params`.
+- Guest authentication with `guest_` user IDs and changeable display names (`auth` or `me`; `""` clears the name). Under its guest-access policy the server accepts any scheme and ignores credentials, except `webauthn`, `email`, and `external`, which are `error/unsupported`. A missing scheme is `error/invalid_params`.
 - `auth` and `me` results carry the complete `you`: `user_id` and `name`. Profile `avatar` and `ext` are declined.
 - Ordered, flat message snapshot broadcasts, including to the sender, before the sender's result. `message_id` equals the message's creation `log_id`. A message with no text and no embeds is neither logged nor broadcast.
 - Replies via `reply_to` (a bare `{"message_id": ...}` reference); `body` (with `format` defaulting to `plain`) and embeds pass through.

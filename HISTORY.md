@@ -12,6 +12,9 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - Extension names start with `ext:`; an extension `ext:foo` keeps its data under `ext.foo`.
 - Every notification a sign-in causes follows the `auth` result, and clients drop kept statuses and mutes at each sign-in. A sign-in to an existing account is announced as a departure; `old` is only for a new `user_id` on the same account.
 - §1.1 lists the core request and notification methods, and the §4 intro the rest. §1.1 also gathers general errors: unknown or hidden IDs and rejected values are `invalid_params`, size limits `too_large`, policy and count limits `denied`.
+- Scheme `external` (§4.11): a proposal returns `url`, a page of the server that signs the user in by any method. The page redirects to the client's `return_url` with a temporary token in the fragment, or shows a code to type. Servers accept only a `return_url` on an origin they trust.
+- `email` and `external` share §4.11, "Email and external sign-in". A proposal may carry `state`, which links return. Approval takes either scheme, and an addition approves only on a connection of the proposing account. A disconnect keeps a proposal, and temporary tokens expire within minutes of delivery. Servers that offer either scheme also offer `token`.
+- At an equal `log_id`, a tombstone wins. Recovery without a checkpoint may start at the newest page.
 - `markdown` means CommonMark.
 - §4 is reordered by how commonly each capability is implemented, which renumbers it.
 
