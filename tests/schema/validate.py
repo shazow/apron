@@ -57,7 +57,7 @@ INVALID = {
     ("history-recovery-failure.json", "invalid-page", 15): "a page without metadata",
 }
 
-VERSION = 8
+VERSION = 9
 
 # Names that PROTOCOL.md defines, by the list that an extension can add to (§4).
 # Any other name starts with "ext:".
