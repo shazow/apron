@@ -2258,111 +2258,146 @@ as `irc`:
 
 ## 5. Security considerations
 
-This section is informative. It states the threats that the rules of this
-document guard against, and refers to those rules.
+This section is informative. It explains the threats that the rules of earlier
+sections guard against, and refers to those rules.
 
 ### 5.1 Trust model
 
-Apron is for groups whose members mostly trust each other and their server. It
-does not defend against everything.
+Apron is for groups whose members mostly trust each other. The server is the
+single authority on identity, membership, and history. Within that model, the
+rules aim to keep a malicious or compromised member, an untrusted link or
+embed, or a bug in one implementation from compromising other clients or the
+server.
 
-- The server is the authority on identity, membership, and history. Its users
-  trust it with their messages.
+- Users trust their server with their messages. There is no end-to-end
+  encryption, so the server's operator can read every message.
 - Content from other users is untrusted. Clients render it as data, never as
   code.
 - A client can connect to any server. So a client does not run a server's
   markup or scripts, or open its URLs unchecked.
-- The protocol assumes an encrypted transport, such as WebSocket over TLS.
-- Spam, sybil attacks, and public federation are out of scope. There is no
-  end-to-end encryption, so a server operator can read every message.
+- Apron does not encrypt frames itself. Over an untrusted network, it relies
+  on an encrypted and authenticated transport, such as WebSocket over TLS
+  (`wss:`).
+- Spam, sybil attacks, and public federation are out of scope.
 
-### 5.2 Rendering
+### 5.2 Authentication
 
-Message text, embeds, and room descriptions come from other users. A client
-that renders them as markup would run their code.
+- `auth` is a barrier ([§3.2](#32-authentication)). Requests that follow it
+  never run without authentication, or as an earlier identity.
+- The server executes `auth` on each connection, also when it repeats an `id`
+  ([§1.2](#12-retries-and-deduplication)). A deduplicated result would sign in
+  a connection that presented no credentials.
+- WebAuthn challenges are bound to their connection, action, RP ID, origin,
+  and registration identity ([§4.10](#410-webauthn-authentication)). So one
+  ceremony cannot complete another, and a login cannot pass as a
+  registration.
+- A bearer `token` from WebAuthn is bound to the origin of its ceremony
+  ([§4.10](#410-webauthn-authentication)). So a stolen token does not work from
+  another web origin.
+- An email proposal returns `{}` for every address
+  ([§4.11](#411-email-and-external-sign-in)). So proposals do not reveal which
+  addresses have accounts.
+- A short code works only on the connection that proposed, and failed attempts
+  from any connection count against the proposal
+  ([§4.11](#411-email-and-external-sign-in)). This stops brute force across
+  connections.
+- Link tokens travel in the URL fragment
+  ([§4.11](#411-email-and-external-sign-in)). Browsers do not send fragments in
+  request lines or `Referer` headers, so tokens stay out of server logs.
+- A link carries the `state` of its proposal
+  ([§4.11](#411-email-and-external-sign-in)). Without it, a client could follow
+  someone else's link into that person's account (login cross-site request
+  forgery).
+- A signed-in connection cannot approve a sign-in
+  ([§4.11](#411-email-and-external-sign-in)). So a link cannot silently switch
+  a session to another account.
+- An addition works only on a connection of the account that proposed it
+  ([§4.11](#411-email-and-external-sign-in)). Otherwise someone could lead a
+  victim to link the victim's identity to the other person's account.
+- Servers accept only a `return_url` on a trusted origin, and bind link tokens
+  to that origin ([§4.11](#411-email-and-external-sign-in)). Otherwise the
+  sign-in page would be an open redirect that hands working tokens to any site.
+- The sign-in page asks the user to confirm before it redirects, and tells the
+  user where to type a code ([§4.11](#411-email-and-external-sign-in)). Someone
+  else may have started the sign-in, as in device-code phishing.
 
-- Clients disable raw HTML in CommonMark, or sanitize it
-  ([§3.5](#35-messages)).
-- Clients sanitize `html` embeds from every source, because servers relay
-  embeds from users and bridges ([§4.8](#48-embeds-and-avatars)).
-- `iframe` embeds run in a sandbox without `allow-same-origin`
-  ([§4.8](#48-embeds-and-avatars)).
-- Clients open only an `https` `url` for external sign-in, so a server cannot
-  run script in the client with a `javascript:` URL
-  ([§4.11](#411-email-and-external-sign-in)).
+### 5.3 Identity and access control
 
-### 5.3 Impersonation
-
-- Display names are not unique. Clients show `Name (@user_id)` when two users
-  share a name ([§3.3](#33-identity)).
-- `user_id`s that start with `~` are reserved, so no user can pose as the
-  server or a room ([Appendix A.3](#a3-prefixes-in-text)).
-- Logged messages and mentions refer to a `user_id`. Servers do not give a
-  retired `user_id` to another user, who would inherit them
+- Display names are free text, and users can change them. Clients show
+  `Name (@user_id)` when two known `user_id`s share a name
   ([§3.3](#33-identity)).
-- Roles are labels for display, and give no permissions on the client
-  ([§3.3](#33-identity)).
-
-### 5.4 Privacy
-
-- An ID that the user cannot see gets the same error as an ID that does not
-  exist, so errors do not reveal hidden rooms or users
-  ([§1.1](#11-envelope-and-replies)).
-- An email proposal returns `{}` for every address, so proposals do not
-  reveal which addresses have accounts
-  ([§4.11](#411-email-and-external-sign-in)).
-- Clients do not load `og` media or streams from other origins. Each load
-  would tell a third party the reader's address and when they read
-  ([§4.8.1](#481-opengraph-metadata-og), [§4.8.5](#485-embedstream)).
-- Link tokens travel in the URL fragment, which browsers send neither to
-  servers nor in `Referer` ([§4.11](#411-email-and-external-sign-in)).
+- Clients never merge recorded user objects into current ones
+  ([§3.3](#33-identity)). So an old history page cannot overwrite a current
+  profile.
+- Servers do not give a retired `user_id` to another user
+  ([§3.3](#33-identity)). Logged messages and mentions refer to it, and the
+  new owner would inherit them.
+- `roles` are labels for display only ([§3.3](#33-identity)). The server
+  enforces all permissions.
+- `user_id`s that start with `~` are reserved for system identities
+  ([Appendix A.3](#a3-prefixes-in-text)). So no user can pose as the server or
+  a room.
+- An ID that the caller cannot see gets the same `invalid_params` as an ID
+  that does not exist ([§1.1](#11-envelope-and-replies)). So callers cannot
+  probe whether private rooms or messages exist.
+- A client that asked for a private room checks for `private: true` before it
+  posts ([§4.2.4](#424-creating-and-editing)). A server that ignored the field
+  would have created a public room.
+- The destination of a move is a room that the caller can see
+  ([§4.4](#44-edit)). So a move cannot post into a hidden room.
 - Mutes are private to their user ([§4.5](#45-status)).
 
-### 5.5 Sign-in
+### 5.4 Untrusted content
 
-- The server executes `auth` on each connection, also when it repeats an `id`.
-  A deduplicated result would sign in a connection that presented no
-  credentials ([§1.2](#12-retries-and-deduplication)).
-- A short code works only on the connection that proposed, and failed attempts
-  from any connection count against the proposal. Otherwise six digits are
-  easy to guess ([§4.11](#411-email-and-external-sign-in)).
-- A link carries the `state` of its proposal. Without it, a client could
-  follow someone else's link into that person's account
-  ([§4.11](#411-email-and-external-sign-in)).
-- A signed-in connection cannot approve a sign-in, so a link cannot silently
-  switch a session to another account
-  ([§4.11](#411-email-and-external-sign-in)).
-- An addition works only on the proposing account's connection. Otherwise
-  someone could lead a victim to link the victim's identity to the other
-  person's account ([§4.11](#411-email-and-external-sign-in)).
-- Servers accept only a `return_url` on a trusted origin. Otherwise the
-  sign-in page would hand a working token to any site
-  ([§4.11](#411-email-and-external-sign-in)).
-- The sign-in page asks the user to confirm before it redirects, and tells the
-  user where to type a code. Someone else may have started the sign-in
-  ([§4.11](#411-email-and-external-sign-in)).
-- WebAuthn challenges are bound to their connection, action, and origin, so a
-  challenge cannot be replayed in another ceremony
-  ([§4.10](#410-webauthn-authentication)).
-- Bearer tokens from WebAuthn and link tokens from external sign-in are bound
-  to an origin, so a stolen token does not work from another site
-  ([§4.10](#410-webauthn-authentication),
-  [§4.11](#411-email-and-external-sign-in)).
+- Clients disable or sanitize raw HTML in CommonMark ([§3.5](#35-messages)),
+  and sanitize `html` embeds from every source
+  ([§4.8](#48-embeds-and-avatars)). This prevents stored cross-site scripting
+  (XSS).
+- `iframe` embeds run with `sandbox="allow-scripts"`, never with
+  `allow-same-origin` too ([§4.8](#48-embeds-and-avatars)). Together, they
+  would let the embed read the client's storage and bearer token, or remove
+  its own sandbox.
+- Clients load avatars only as images, never as documents
+  ([§4.8.6](#486-avatars)). So an uploaded SVG cannot run script.
+- Clients open only an `https` `url` for external sign-in
+  ([§4.11](#411-email-and-external-sign-in)). So a server cannot run script in
+  the client with a `javascript:` URL.
 
-### 5.6 Integrity
+### 5.5 Network privacy and server requests
 
-- The destination of a move is a room that the caller can see, so a move
-  cannot post into a hidden room ([§4.4](#44-edit)).
-- A client that asked for a private room checks that it got one before it
-  posts. A server that ignores the field would create a public room
-  ([§4.2.4](#424-creating-and-editing)).
-- The server owns `embed_id` and the URLs that it hosts, so a client cannot
-  point an embed at a file that it does not own
-  ([§4.8.2](#482-embed-identity)).
-- Hosted URLs are unguessable, because anyone can fetch them without signing
-  in ([§4.8.2](#482-embed-identity)).
-- `write_url` is a credential that expires, so only the sender can write an
-  upload ([§4.8.3](#483-writes)).
+- Servers host or proxy `og` media and serve streams themselves, and clients
+  load neither from other origins ([§4.8.1](#481-opengraph-metadata-og),
+  [§4.8.5](#485-embedstream)). Otherwise a message could act as a tracking
+  beacon that reveals the IP addresses of its readers.
+- Hosted upload and stream URLs are unguessable
+  ([§4.8.2](#482-embed-identity)). So nobody can enumerate files across rooms.
+- Servers delete hosted content when its embed is removed, or when its
+  message is deleted or redacted ([§4.8.2](#482-embed-identity)). So deleted
+  attachments do not stay available.
+- The server owns `embed_id` and the URLs that it hosts
+  ([§4.8.2](#482-embed-identity)). So a client cannot point an embed at a file
+  that it does not own.
+- `write_url` is a credential that expires ([§4.8.3](#483-writes)). So only
+  the sender can write an upload.
+- Servers accept only `https` push endpoints that do not resolve to internal
+  addresses ([§4.9](#49-push)). This prevents server-side request forgery
+  (SSRF) against the server's network.
+- Clients drop push payloads with an unknown `push_id` ([§4.9](#49-push)). So
+  stale pushes for a removed account, and forged pushes to a known endpoint,
+  show no notification.
+
+### 5.6 Resource limits
+
+- Size limits apply to the merged `ext` ([§4.12](#412-ext)). So repeated small
+  merges cannot grow a record without bound.
+- Receivers can reject frames larger than 256 KiB
+  ([§1](#1-transport--framing)).
+- Servers deduplicate by `(user_id, id)`, not by `id` alone
+  ([§1.2](#12-retries-and-deduplication)). So the request IDs of one user or
+  connection never collide with another's.
+- After `denied`, clients do not reconnect on their own. After `retry_after`,
+  they wait for the delay ([§1.1](#11-envelope-and-replies)). This prevents
+  reconnection storms from revoked or misconfigured clients.
 
 ---
 
