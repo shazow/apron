@@ -1,8 +1,8 @@
 # Apron Chat Protocol
 
-Apron is a simple chat protocol that takes advantage of several trust assumptions: A server is authoritative, there is no federation, messages inside a server are not end-to-end encrypted, there is no greater social network. It's more like Slack and less like Signal.
+Apron is a simple chat protocol that takes advantage of several trade-offs: A server is authoritative, there is no federation, messages inside a server are not end-to-end encrypted, there is no greater social network.
 
-It should be extremely easy to implement a basic server (~100 lines of code) that works with any client, and moderately easy to build a basic client (just a few lines for a stateless bot, maybe a few thousand lines for a more featureful client).
+It should be extremely easy to implement a basic server (~100 lines of code) that works with any client (just a few lines for a stateless bot).
 
 Do you need a custom self-hosted group chat? Consider using the Apron Chat Protocol!
 
@@ -30,6 +30,11 @@ Do you need a custom self-hosted group chat? Consider using the Apron Chat Proto
 - Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases..
 - One websocket to start, additional signaling bootstrapped from there (e.g. HTTP upload target, WebRTC, etc).
 - Multimedia-friendly: Upload images, audio, whatever.
+
+## Tradeoffs
+
+- Auth: Instead of using full SASL, we include a few high-impact login primitives that are most useful for self-hosting small group chats: The primary forms are `guest` (anonymous users that may have restricted access) and `token` (hard to guess opaque string that may be rotated). Beyond that we include WebAuthn challenge (Passkeys), and a couple of modified forms of "Token" mode: `email` (server sends a short-duration Token via email) and `external` (allows implementing any other portal like OAuth/OIDC or SASL or others which converts to a `token`). For many self-hosted cases, `guest` and `token` should suffice, which are by far the easiest to implement correctly.
+- Payloads: Instead of minimizing payload sizes through tight packing and avoiding full state updates, we have a fairly readable JSON messages that may include excessive details which make it much easier to implement clients that are immediately useful with every response. For example, messages may include the full user object so that the client doesn't need to pull a lookup table of users before being able to display messages. Because we're targeting small self-hosted servers rather than massive federated rooms with millions of users, this is a reasonable tradeoff.
 
 ## Specification
 
