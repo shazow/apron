@@ -1,4 +1,4 @@
-// Apron Chat v8 for trusted, compliant clients. Requires Bun; no dependencies.
+// Apron Chat v9 for trusted, compliant clients. Requires Bun; no dependencies.
 // Run: bun apron-server.js
 // LAN: HOST=0.0.0.0 PORT=8765 bun apron-server.js
 // One room, guest identities, names, replies, and the latest 1,000 log records
@@ -7,7 +7,7 @@
 // or rate limits. Clients must send valid protocol frames; malformed input may
 // close the connection.
 
-const greeting = { apron: 8, agent: "apron-bun/8", auth: ["guest"], capabilities: ["history"] };
+const greeting = { apron: 9, agent: "apron-bun/9", auth: ["guest"], capabilities: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
 let lastLogId = 0;
 
@@ -85,7 +85,7 @@ function createMessage(you, params) {
 // Keep this synchronous: history reads, commits, and broadcasts must stay ordered.
 function dispatch(ws, method, params) {
   if (method === "auth") {
-    check(params.scheme !== "webauthn" && params.scheme !== "email", "Unsupported scheme", -32601);
+    check(!["webauthn", "email", "external"].includes(params.scheme), "Unsupported scheme", -32601);
     check(typeof params.scheme === "string", "Missing scheme");
     // Guest-access policy: any other scheme signs in, ignoring credentials.
     ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() };

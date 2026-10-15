@@ -57,14 +57,14 @@ INVALID = {
     ("history-recovery-failure.json", "invalid-page", 15): "a page without metadata",
 }
 
-VERSION = 8
+VERSION = 9
 
 # Names that PROTOCOL.md defines, by the list that an extension can add to (§4).
 # Any other name starts with "ext:".
 KNOWN = {
     "method": set(SCHEMA["$defs"]["UnknownMethod"]["not"]["enum"]),
     "capability": {"command", "history", "rooms", "edit", "status", "activity", "reactions", "embed:upload", "embed:stream", "ext"},
-    "auth scheme": {"guest", "token", "webauthn", "email"},
+    "auth scheme": {"guest", "token", "webauthn", "email", "external"},
     "embed kind": {"upload", "stream", "iframe", "html"},
     "push kind": {"relay", "webpush"},
     "wake scope": {"mentions", "private", "replies", "joined", "badge"},

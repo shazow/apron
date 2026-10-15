@@ -1,6 +1,6 @@
 # Apron Chat Protocol
 
-| Protocol Version  | 8 |
+| Protocol Version  | 9 |
 |---------|---|
 
 
@@ -24,7 +24,7 @@ Example of a valid session:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"apron": 8, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -207,7 +207,8 @@ Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated `user_id`
 How long a server remembers an `id` is implementation-defined. Before
 authentication there is no `user_id`, so a request `id` applies only to its
 connection. The server MUST execute `auth` on each connection, also when it
-repeats an `id`.
+repeats an `id` (a deduplicated result would sign in a connection that
+presented no credentials).
 
 ---
 
@@ -251,6 +252,7 @@ All IDs are strings.
 
 - For each key, clients keep the record with the greatest `log_id`. The source
   (live, history, or embedded) and the arrival order do not matter.
+- At an equal `log_id`, a tombstone wins ([§4.4](#44-edit)).
 - Server fields are read-only: a request never changes them.
 
 **Opaque IDs** — `room_id`, `user_id`, and request `id`.
@@ -299,7 +301,7 @@ immediately. The client does not send a hello first.
 ```json
 {
   "method": "server", "params": {
-    "apron": 8,
+    "apron": 9,
     "agent": "impl-name/1.0",
     "capabilities": ["history", "edit"],
     "auth": ["token"]
@@ -326,7 +328,7 @@ class Auth {
   user_id?: string;             // requested user_id
   agent?: string;               // implementation/version string, for debugging
 
-  // "token" and "email" schemes
+  // "token", "email", and "external" schemes
   token?: string;
 
   // "webauthn" scheme (§4.10)
@@ -335,8 +337,10 @@ class Auth {
   challenge_id?: string;        // finish
   credential?: object;          // finish
 
-  // "email" scheme (§4.11)
-  email?: string;
+  // "email" and "external" schemes (§4.11)
+  state?: string;
+  email?: string;               // email
+  return_url?: string;          // external
 }
 
 class AuthResult {
@@ -346,6 +350,9 @@ class AuthResult {
   // "webauthn" scheme, begin step
   challenge_id?: string;
   public_key?: object;          // WebAuthn options
+
+  // "external" scheme, proposal
+  url?: string;
 }
 ```
 
@@ -363,49 +370,46 @@ class AuthResult {
 {"id": "c1", "result": {"you": {"user_id": "alice", "name": "Alice"}}}
 ```
 
-`params.scheme` selects the scheme:
-
-- `guest`: no credentials. The server assigns the identity. Suggested
-  convention: `guest_` plus a global counter, such as `guest_1234`
-  ([§3.3](#33-identity)).
-- `token`: a bearer string. This is the reference default.
-- `webauthn`: optional passkey scheme ([§4.10](#410-webauthn-authentication)).
-- `email`: optional sign-in by a code sent to an email address
-  ([§4.11](#411-email-authentication)).
-
-A scheme that this document defines but the server does not offer is
-`unsupported`.
-
-Under a guest-access policy, a server MAY accept `auth` with `token` or a
-scheme that this document does not define, and ignore the credentials.
-
-`name` and `user_id` are optional requests, and work with any scheme. `you` is
-what the server assigned. Servers SHOULD NOT assign a `user_id` that was used
-before, unless they authenticate its owner.
+- `params.scheme` selects the scheme:
+  - `guest`: no credentials. The server assigns the identity. Suggested
+    convention: `guest_` plus a global counter, such as `guest_1234`
+    ([§3.3](#33-identity)).
+  - `token`: a bearer string. This is the reference default.
+  - `webauthn`: optional passkey scheme
+    ([§4.10](#410-webauthn-authentication)).
+  - `email`: optional sign-in by a code sent to an email address
+    ([§4.11](#411-email-and-external-sign-in)).
+  - `external`: optional sign-in on a web page of the server
+    ([§4.11](#411-email-and-external-sign-in)).
+- A scheme that this document defines but the server does not offer is
+  `unsupported`.
+- Under a guest-access policy, a server MAY accept `auth` with `token` or a
+  scheme that this document does not define, and ignore the credentials.
+- With `server.signup`, `server.auth` lists the schemes that sign in, and
+  `signup` lists the schemes that create an account. For example, `"auth":
+  ["token"], "signup": ["guest"]` means: join as a guest, then sign in with
+  the token that the server issues.
+- `server.welcome` tells users how the schemes of this server fit together,
+  such as "Join as a guest. Your client keeps a token to sign you back in."
+  Clients show it on the sign-in screen as CommonMark ([§3.5](#35-messages)),
+  and never parse it.
+- `name` and `user_id` are optional requests, and work with any scheme. `you`
+  is what the server assigned.
+- Servers SHOULD NOT assign a `user_id` that was used before, unless they
+  authenticate its owner.
 
 **Bearer tokens.** A successful `auth` result MAY carry `token`. The client
 uses it with `scheme: "token"` on later connections.
 
-- It can follow any sign-in.
 - Servers also send it in reply to `scheme: "token"` when they rotate the
   token that the client sent.
 - Clients save the latest `token`, which replaces any earlier one, and
   reconnect with it.
 - A server MAY reject a token that it replaced. Expired and revoked tokens are
   `denied`.
+- If a token is the only way back into an account, the client SHOULD
+  encourage its user to add another scheme that the server offers.
 - Lifetime, rotation, and revocation are server policy.
-
-**Sign-up.** With `signup`, `auth` lists the schemes that sign in, and
-`signup` lists the schemes that create an account. For example, `"auth":
-["token"], "signup": ["guest"]` means: join as a guest, then sign in with the
-token that the server issues. If a token is the only way back into an account,
-the client SHOULD encourage its user to add another scheme that the server
-offers.
-
-**Welcome.** `server.welcome` is free text for the sign-in screen. It tells
-users how the schemes of this server fit together, such as "Join as a guest.
-Your client keeps a token to sign you back in." It is CommonMark
-([§3.5](#35-messages)). Clients never parse it.
 
 **Order.** `auth` is a barrier. The server finishes an `auth` request before
 it processes any later frame on the connection.
@@ -559,7 +563,7 @@ class Room {
 
   // "history" capability: required when advertised
   log_id?: string;
-  prev_log_id?: string;
+  prev_log_id?: string;         // optional (§4.3)
   latest_log_id?: string;
   history_log_id?: string | null;
 
@@ -787,8 +791,9 @@ Some features have no capability:
 - Embeds other than `upload` and `stream` are body content
   ([§4.8](#48-embeds-and-avatars)).
 - `server.push` enables push ([§4.9](#49-push)).
-- `server.auth` enables passkeys and email sign-in
-  ([§4.10](#410-webauthn-authentication), [§4.11](#411-email-authentication)).
+- `server.auth` enables passkeys, and email and external sign-in
+  ([§4.10](#410-webauthn-authentication),
+  [§4.11](#411-email-and-external-sign-in)).
 - `server.ping` enables liveness checks ([§1](#1-transport--framing)).
 
 The features in this section add these methods
@@ -1374,9 +1379,9 @@ earlier state. The order across the arrays does not matter.
 2. Get the `latest_log_id` of the room from its room record
    ([§4.2.1](#421-listing)) or from a `history` page. Call it H. Keep only the
    buffered records above H.
-3. Page forward with `before: H` until `more: false`. If the client has a
-   checkpoint C, start at `after: C + 1`. Otherwise start at `after:
-   history_log_id`.
+3. With a checkpoint C, page forward from `after: C + 1` with `before: H`
+   until `more: false`. Without one, start at `after: history_log_id`, or load
+   the newest page with `before: H` and older pages on demand.
 4. Apply the buffered records. The checkpoint is now H.
 
 If the effective lower bound of a response is past the next position that the
@@ -1480,8 +1485,7 @@ Clients show tombstones, and hide their reactions.
 **Redaction.** Earlier snapshots of a deleted message still hold its content.
 A server MAY rewrite them, and embedded copies of them ([§3.5](#35-messages)),
 into tombstones at their original `log_id`s. This is the only permitted
-rewrite of a logged record. Clients that hold the old content drop it when
-they receive the new tombstone.
+rewrite of a logged record.
 
 ### 4.5 `status`
 
@@ -1498,7 +1502,7 @@ connections, and to set the mutes of the user.
 // <- the server frame accepts dnd and invisible
 {
   "method": "server", "params": {
-    "apron": 8, "capabilities": ["status"], "auth": ["token"],
+    "apron": 9, "capabilities": ["status"], "auth": ["token"],
     "status": ["dnd", "invisible"]
   }
 }
@@ -1721,7 +1725,8 @@ card ([§3.5](#35-messages)).
 ```
 
 - `iframe`: render with `sandbox="allow-scripts"`, and **never** with
-  `allow-same-origin` too. Allow no top navigation and no popups. Use a
+  `allow-same-origin` too (together, they let the embed remove its own
+  sandbox). Allow no top navigation and no popups. Use a
   restrictive Permissions-Policy. Clamp the dimensions, because `height` is
   only a suggestion. Load lazily, and limit the number of live iframes at one
   time.
@@ -1889,7 +1894,7 @@ supports. If `server.push` is present, the server accepts `push_register` and
 // <- the server frame offers relay and webpush
 {
   "method": "server", "params": {
-    "apron": 8, "capabilities": ["status"], "auth": ["webauthn", "token"],
+    "apron": 9, "capabilities": ["status"], "auth": ["webauthn", "token"],
     "push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
   }
 }
@@ -2082,22 +2087,27 @@ registration identity.
 MUST bind such a token to the allowed origin of the ceremony, and MUST make it
 expire. A mismatched origin is `denied`.
 
-### 4.11 Email authentication
+### 4.11 Email and external sign-in
 
-Email sign-in proves that a user controls an address. It suits sign-up and
-account recovery, and works on any device that gets mail.
+Some sign-ins finish outside the connection. Email sign-in proves that a user
+controls an address. It suits sign-up and account recovery, and works on any
+device that gets mail. External sign-in sends the user to a web page of the
+server. The page can put any sign-in portal in front of Apron, such as OAuth,
+OpenID Connect, SAML, SSO, or a password check against a SASL backend.
 
-Servers that list `email` in `server.auth` verify an address with a temporary
-token that they send to it. An `auth` request with `email` proposes a sign-in
-or an addition. An `auth` request with `token` approves it:
+Servers that list `email` or `external` in `server.auth` use this exchange,
+and also list `token`. An `auth` request without `token` proposes a sign-in or
+an addition. The server
+delivers a temporary token outside the connection. An `auth` request with that
+`token` approves the proposal:
 
 ```jsonc
 // -> propose signing in with this address
-{"method": "auth", "id": "c1", "params": {"scheme": "email", "email": "ada@example.com"}}
+{"method": "auth", "id": "c1", "params": {"scheme": "email", "email": "ada@example.com", "state": "q8Rz…"}}
 // <- nothing is authenticated yet
 {"id": "c1", "result": {}}
 
-// email: "Your code is 418092, or open https://chat.example/login#token=Hk41x9…"
+// email: "Your code is 418092, or open https://chat.example/login#token=Hk41x9…&state=q8Rz…"
 
 // -> on any connection not signed in, such as one opened by the link
 {"method": "auth", "id": "c2", "params": {"scheme": "email", "token": "Hk41x9…"}}
@@ -2105,31 +2115,96 @@ or an addition. An `auth` request with `token` approves it:
 {"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
 ```
 
-- A proposal returns `{}`, whether or not the address has an account. On a
-  connection that is signed in to an account, guests included, it proposes to
-  add the address to that account. Otherwise it proposes a sign-in.
-- The server emails a temporary token for the proposal, as a link, a code to
-  type, or both. A token that is short enough to type, such as six digits,
-  works only on the connection that made the proposal. A token that works on
-  other connections MUST be unguessable.
-- A connection has one pending proposal, and a new one replaces it. A proposal
-  expires within minutes. Approval uses it up. A few failed attempts cancel
-  it.
+```jsonc
+// -> propose an external sign-in that returns to this client
+{"method": "auth", "id": "c1", "params": {"scheme": "external", "return_url": "https://web.apron.chat/", "state": "q8Rz…"}}
+// <- the page to open
+{"id": "c1", "result": {"url": "https://chat.example/sso?p=Qm7x…"}}
+
+// the page signs the user in, then redirects to
+// https://web.apron.chat/#token=Hk41x9…&state=q8Rz…&server=wss%3A%2F%2Fchat.example%2F
+
+// -> on a connection from https://web.apron.chat
+{"method": "auth", "id": "c2", "params": {"scheme": "external", "token": "Hk41x9…"}}
+// <-
+{"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
+```
+
+**Proposals.**
+
+- A proposal is an `auth` request without `token`. It authenticates nothing.
+- On a connection that is signed in to an account, guests included, a
+  proposal adds to that account. Otherwise it proposes a sign-in.
+- A connection has one pending proposal, and a new one replaces it.
+- A proposal expires within minutes. A disconnect does not cancel it.
+  Approval uses it up.
+- Failed attempts count against the proposal, whichever connection makes them.
+  A few failed attempts cancel it.
+- A proposal MAY carry `state`, an unguessable value of at most 256 bytes that
+  the client chooses (like OAuth's `state`, it guards against a link that
+  signs the user in to someone else's account). The server returns it
+  unchanged in each link.
+
+**Temporary tokens.**
+
+- The server delivers a temporary token for the proposal, as a link, a code to
+  type, or both.
+- A temporary token expires within minutes of its delivery.
+- A token that is short enough to type, such as six digits, works only on the
+  connection that made the proposal (short codes are easy to guess). A token that works on other connections
+  MUST be unguessable.
+- A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
+  when the proposal carried `state`, plus `&server=…` with the server's
+  WebSocket URL when the link opens a client that is not tied to one server.
+- A client asks its user before it uses a link without the `state` of a
+  proposal that the client made.
+- For a link with the `state` of its own proposal, a client uses the server
+  that it proposed to, and ignores `server`.
+
+**Approval.**
+
+- Approval is an `auth` request with `token` and either scheme that the server
+  offers.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and
   a bearer `token` for later connections ([§3.2](#32-authentication)).
-- Approval of an addition adds the address to the account that proposed it,
-  and returns `{}`.
+- Approval of an addition works only on a connection that is signed in to the
+  account that proposed it (otherwise someone could lead a victim to link the
+  victim's identity to the other person's account). It adds the address or the external identity to
+  that account, and returns `{}`.
 - An invalid, expired, or used token is `denied`. A sign-in token on a
-  signed-in connection is also `denied`, and so is an address that belongs to
-  another account.
-- The server builds any link from its own configuration and puts the token
-  in the URL fragment.
-- The suggested fragment is `#token=…`, plus `&server=…` with the server's
-  WebSocket URL when the link opens a client that is not tied to one
-  server.
+  signed-in connection is also `denied`, and so is an address or an external
+  identity that belongs to another account.
+
+**Email.**
+
+- A proposal carries `email`. It returns `{}`, whether or not the address has
+  an account.
+- The server emails the temporary token. It builds any link from its own
+  configuration.
 - Account creation for unknown addresses, send rate limits (`retry_after`),
   and the bearer token's lifetime are server policy.
+
+**External.**
+
+- A proposal MAY carry `return_url`, a URL of the client. Servers MUST accept
+  only a `return_url` on an origin that they trust (otherwise the page would
+  hand a working token to any site).
+- A proposal returns `url`, a page of the server. `url` is an absolute `https`
+  URL, or `http` on a loopback host. Clients reject any other `url`, such as
+  `javascript:…`.
+- The client opens `url` in a browser. The page signs the user in by a method
+  that the server chooses.
+- With `return_url`, the page shows its host, and whether the user signs in
+  or adds an identity. The page asks the user to confirm before it redirects,
+  also when the user is already signed in to the page.
+- The page redirects to `return_url` with the link fragment, which replaces
+  any fragment of `return_url`.
+- Without `return_url`, the page shows a code to type after the user signs in.
+  It tells the user to type the code only in the client where they started.
+- Servers SHOULD accept a link token only on a connection from the origin of
+  `return_url`, such as by the WebSocket `Origin` header.
+- Account creation for new external identities is server policy.
 
 ### 4.12 `ext`
 
@@ -2178,6 +2253,151 @@ as `irc`:
 // <-
 {"id": "c51", "result": {"you": {"user_id": "ada", "name": "Ada", "ext": {"tz": "America/Toronto"}}}}
 ```
+
+---
+
+## 5. Security considerations
+
+This section is informative. It explains the threats that the rules of earlier
+sections guard against, and refers to those rules.
+
+### 5.1 Trust model
+
+Apron is for groups whose members mostly trust each other. The server is the
+single authority on identity, membership, and history. Within that model, the
+rules aim to keep a malicious or compromised member, an untrusted link or
+embed, or a bug in one implementation from compromising other clients or the
+server.
+
+- Users trust their server with their messages. There is no end-to-end
+  encryption, so the server's operator can read every message.
+- Content from other users is untrusted. Clients render it as data, never as
+  code.
+- A client can connect to any server. So a client does not run a server's
+  markup or scripts, or open its URLs unchecked.
+- Apron does not encrypt frames itself. Over an untrusted network, it relies
+  on an encrypted and authenticated transport, such as WebSocket over TLS
+  (`wss:`).
+- Spam, sybil attacks, and public federation are out of scope.
+
+### 5.2 Authentication
+
+- `auth` is a barrier ([§3.2](#32-authentication)). Requests that follow it
+  never run without authentication, or as an earlier identity.
+- The server executes `auth` on each connection, also when it repeats an `id`
+  ([§1.2](#12-retries-and-deduplication)). A deduplicated result would sign in
+  a connection that presented no credentials.
+- WebAuthn challenges are bound to their connection, action, RP ID, origin,
+  and registration identity ([§4.10](#410-webauthn-authentication)). So one
+  ceremony cannot complete another, and a login cannot pass as a
+  registration.
+- A bearer `token` from WebAuthn is bound to the origin of its ceremony
+  ([§4.10](#410-webauthn-authentication)). So a stolen token does not work from
+  another web origin.
+- An email proposal returns `{}` for every address
+  ([§4.11](#411-email-and-external-sign-in)). So proposals do not reveal which
+  addresses have accounts.
+- A short code works only on the connection that proposed, and failed attempts
+  from any connection count against the proposal
+  ([§4.11](#411-email-and-external-sign-in)). This stops brute force across
+  connections.
+- Link tokens travel in the URL fragment
+  ([§4.11](#411-email-and-external-sign-in)). Browsers do not send fragments in
+  request lines or `Referer` headers, so tokens stay out of server logs.
+- A link carries the `state` of its proposal
+  ([§4.11](#411-email-and-external-sign-in)). Without it, a client could follow
+  someone else's link into that person's account (login cross-site request
+  forgery).
+- A signed-in connection cannot approve a sign-in
+  ([§4.11](#411-email-and-external-sign-in)). So a link cannot silently switch
+  a session to another account.
+- An addition works only on a connection of the account that proposed it
+  ([§4.11](#411-email-and-external-sign-in)). Otherwise someone could lead a
+  victim to link the victim's identity to the other person's account.
+- Servers accept only a `return_url` on a trusted origin, and bind link tokens
+  to that origin ([§4.11](#411-email-and-external-sign-in)). Otherwise the
+  sign-in page would be an open redirect that hands working tokens to any site.
+- The sign-in page asks the user to confirm before it redirects, and tells the
+  user where to type a code ([§4.11](#411-email-and-external-sign-in)). Someone
+  else may have started the sign-in, as in device-code phishing.
+
+### 5.3 Identity and access control
+
+- Display names are free text, and users can change them. Clients show
+  `Name (@user_id)` when two known `user_id`s share a name
+  ([§3.3](#33-identity)).
+- Clients never merge recorded user objects into current ones
+  ([§3.3](#33-identity)). So an old history page cannot overwrite a current
+  profile.
+- Servers do not give a retired `user_id` to another user
+  ([§3.3](#33-identity)). Logged messages and mentions refer to it, and the
+  new owner would inherit them.
+- `roles` are labels for display only ([§3.3](#33-identity)). The server
+  enforces all permissions.
+- `user_id`s that start with `~` are reserved for system identities
+  ([Appendix A.3](#a3-prefixes-in-text)). So no user can pose as the server or
+  a room.
+- An ID that the caller cannot see gets the same `invalid_params` as an ID
+  that does not exist ([§1.1](#11-envelope-and-replies)). So callers cannot
+  probe whether private rooms or messages exist.
+- A client that asked for a private room checks for `private: true` before it
+  posts ([§4.2.4](#424-creating-and-editing)). A server that ignored the field
+  would have created a public room.
+- The destination of a move is a room that the caller can see
+  ([§4.4](#44-edit)). So a move cannot post into a hidden room.
+- Mutes are private to their user ([§4.5](#45-status)).
+
+### 5.4 Untrusted content
+
+- Clients disable or sanitize raw HTML in CommonMark ([§3.5](#35-messages)),
+  and sanitize `html` embeds from every source
+  ([§4.8](#48-embeds-and-avatars)). This prevents stored cross-site scripting
+  (XSS).
+- `iframe` embeds run with `sandbox="allow-scripts"`, never with
+  `allow-same-origin` too ([§4.8](#48-embeds-and-avatars)). Together, they
+  would let the embed read the client's storage and bearer token, or remove
+  its own sandbox.
+- Clients load avatars only as images, never as documents
+  ([§4.8.6](#486-avatars)). So an uploaded SVG cannot run script.
+- Clients open only an `https` `url` for external sign-in
+  ([§4.11](#411-email-and-external-sign-in)). So a server cannot run script in
+  the client with a `javascript:` URL.
+
+### 5.5 Network privacy and server requests
+
+- Servers host or proxy `og` media and serve streams themselves, and clients
+  load neither from other origins ([§4.8.1](#481-opengraph-metadata-og),
+  [§4.8.5](#485-embedstream)). Otherwise a message could act as a tracking
+  beacon that reveals the IP addresses of its readers.
+- Hosted upload and stream URLs are unguessable
+  ([§4.8.2](#482-embed-identity)). So nobody can enumerate files across rooms.
+- Servers delete hosted content when its embed is removed, or when its
+  message is deleted or redacted ([§4.8.2](#482-embed-identity)). So deleted
+  attachments do not stay available.
+- The server owns `embed_id` and the URLs that it hosts
+  ([§4.8.2](#482-embed-identity)). So a client cannot point an embed at a file
+  that it does not own.
+- `write_url` is a credential that expires ([§4.8.3](#483-writes)). So only
+  the sender can write an upload.
+- Servers accept only `https` push endpoints that do not resolve to internal
+  addresses ([§4.9](#49-push)). This prevents server-side request forgery
+  (SSRF) against the server's network.
+- Clients drop push payloads with an unknown `push_id` ([§4.9](#49-push)). So
+  stale pushes for a removed account, and forged pushes to a known endpoint,
+  show no notification.
+
+### 5.6 Resource limits
+
+- Size limits apply to the merged `ext` ([§4.12](#412-ext)). So repeated small
+  merges cannot grow a record without bound.
+- Receivers can reject frames larger than 256 KiB
+  ([§1](#1-transport--framing)).
+- Servers deduplicate by `(user_id, id)`, not by `id` alone
+  ([§1.2](#12-retries-and-deduplication)). So the request IDs of one user or
+  connection never collide with another's.
+- After `denied`, clients do not reconnect on their own. After `retry_after`,
+  they wait for the delay ([§1.1](#11-envelope-and-replies)). This prevents
+  reconnection storms from revoked or misconfigured clients.
 
 ---
 
@@ -2284,7 +2504,7 @@ implementations accept them. Each follows from the sections it cites.
 
   ```jsonc
   // <-
-  {"method": "server", "params": {"apron": 8, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+  {"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
   // <- before any auth
   {
     "method": "message", "params": {
@@ -2312,7 +2532,7 @@ implementations accept them. Each follows from the sections it cites.
   {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
   {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
   // <-
-  {"method": "server", "params": {"apron": 8, "capabilities": ["rooms"], "auth": ["token"]}}
+  {"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["token"]}}
   // <-
   {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
   // <- then the bot closes the connection

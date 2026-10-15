@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["websockets>=14,<17"]
 # ///
-"""Apron Chat v8 for trusted, compliant clients.
+"""Apron Chat v9 for trusted, compliant clients.
 
 Run: uv run apron_server.py [--host 0.0.0.0] [--port 8765]
 Or:  python -m pip install 'websockets>=14,<17'; python apron_server.py
@@ -26,7 +26,7 @@ from websockets.asyncio.server import broadcast, serve
 from websockets.exceptions import ConnectionClosed
 
 
-GREETING = {"apron": 8, "agent": "apron-python/8", "auth": ["guest"],
+GREETING = {"apron": 9, "agent": "apron-python/9", "auth": ["guest"],
             "capabilities": ["history"]}
 
 
@@ -99,7 +99,7 @@ class ApronServer:
         # with respect to other connections on this event loop.
         if method == "auth":
             scheme = p.get("scheme")
-            require(scheme not in ("webauthn", "email"), "Unsupported scheme", -32601)
+            require(scheme not in ("webauthn", "email", "external"), "Unsupported scheme", -32601)
             require(isinstance(scheme, str), "Missing scheme")
             # Guest-access policy: any other scheme signs in, ignoring credentials.
             self.clients.setdefault(ws, {"user_id": "guest_" + uuid4().hex})
