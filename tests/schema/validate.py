@@ -5,7 +5,7 @@
 """Validate the fixtures and PROTOCOL.md examples against schema/apron.schema.json.
 
 Besides the schema, it checks rules the schema cannot express: every server
-frame speaks protocol 8, names that PROTOCOL.md does not define start with
+frame speaks protocol 9, names that PROTOCOL.md does not define start with
 ext:, no session fixture delivers a frame between an auth request and its
 result, a client writes each ext key only to a server with capability ext or
 the capability of the extension that defines the key (ext:<key>), no fixture

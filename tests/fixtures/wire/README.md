@@ -21,7 +21,7 @@ Go transport peer; no browser or running server is needed.
 
 Each file has `format: 4`, `kind` (`replay` or `session`), `name`,
 `description`, `references`, `variants`, and `expected`, and no other
-top-level keys. Frames are protocol 8. Each variant has `name` and ordered
+top-level keys. Frames are protocol 9. Each variant has `name` and ordered
 `steps`, starts with fresh client state, and must reach the top-level
 `expected` state. An `expect` step additionally checks an intermediate state.
 
@@ -191,6 +191,7 @@ record, at least one message currently homed in it, or member state, sorted by
 | `15-embedded-snapshots.json` | `reply_to` snapshots install by the replay rule; stale embeds ignored; bare and dangling references install nothing |
 | `16-transient-notices.json` | `message` notifications without `message_id` install nothing, with or without `room_id`; a logged `~server` notice is an ordinary snapshot in the room it names |
 | `17-memberships.json` | memberships by the replay rule from live, raw and compacted history; a complete `members` list as of its room's head, before or after newer memberships; leaves kept through compaction |
+| `18-user-id-forms.json` | user IDs as email addresses (plus-tagged too) and in federated forms with `@` and `:`, as keys of messages, mentions, reactions, member lists, and memberships; string order puts `+` and `:` before `@` |
 
 The TypeScript adapter is
 [`src/lib/protocol/wire-replay.test.ts`](https://github.com/apron-chat/apron-web/blob/main/src/lib/protocol/wire-replay.test.ts)
