@@ -17,9 +17,14 @@
       "type": "string"
     },
     "UserId": {
-      "description": "A user_id: 1 to 255 characters from A-Z a-z 0-9 _ . - + @ : ~, not starting with @ (§2).",
+      "description": "A user_id: not empty, with no whitespace or control characters (§2). Suggested convention: letters, digits, _ . - (Appendix A.3).",
       "type": "string",
-      "pattern": "^[A-Za-z0-9_.+:~-][A-Za-z0-9_.+@:~-]{0,254}$"
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "RoomId": {
+      "description": "A room_id: not empty, with no whitespace or control characters (§2). Suggested convention: letters, digits, _ . - (Appendix A.3).",
+      "type": "string",
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$"
     },
     "LogId": {
       "description": "A position in the server's log: decimal Unix epoch milliseconds (§2).",
@@ -213,7 +218,7 @@
           "$ref": "#/$defs/Body"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reply_to": {
           "anyOf": [
@@ -239,7 +244,7 @@
           "$ref": "#/$defs/LogId"
         },
         "prev_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "deleted": {
           "type": "boolean",
@@ -276,10 +281,10 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "parent_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "private": {
           "type": "boolean",
@@ -333,7 +338,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         }
       },
       "required": [
@@ -348,7 +353,7 @@
           "$ref": "#/$defs/LogId"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "members": {
           "type": "array",
@@ -386,7 +391,7 @@
           "type": "string"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reactions": {
           "type": "array",
@@ -600,7 +605,7 @@
           "$ref": "#/$defs/Body"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reply_to": {
           "$ref": "#/$defs/MessageRef"
@@ -625,7 +630,7 @@
           "$ref": "#/$defs/Body"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reply_to": {
           "$ref": "#/$defs/MessageRef"
@@ -642,7 +647,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "after": {
           "$ref": "#/$defs/LogId"
@@ -669,10 +674,10 @@
           "default": "all"
         },
         "parent_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "members": {
           "type": "boolean"
@@ -687,7 +692,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "user_id": {
           "$ref": "#/$defs/UserId"
@@ -702,7 +707,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "user_id": {
           "$ref": "#/$defs/UserId"
@@ -717,10 +722,10 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "parent_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "private": {
           "type": "boolean"
@@ -833,7 +838,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "typing": {
           "type": "number",
@@ -1033,7 +1038,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         }
       },
       "required": [
@@ -1134,7 +1139,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "from": {
           "$ref": "#/$defs/User"
@@ -1857,7 +1862,7 @@
       },
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "idle": {
           "description": "false, or the seconds since nobody attended the connection (§4.5)",
@@ -1890,7 +1895,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "mute": {
           "description": "true, false, or a positive number of seconds (§4.5)",

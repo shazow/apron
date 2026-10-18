@@ -258,9 +258,8 @@ All IDs are strings.
 **Opaque IDs** — `room_id`, `user_id`, and request `id`.
 
 - Any string. The side that creates the ID chooses it.
-- `room_id` and `user_id` are server-assigned.
-- A `user_id` MUST be 1 to 255 characters from `A-Z`, `a-z`, `0-9`, and
-  `_ . - + @ : ~`. It MUST NOT start with `@`.
+- `room_id` and `user_id` are server-assigned. They MUST NOT be empty, or
+  contain whitespace or control characters.
 - Request `id`s SHOULD be random. They identify operations, not log
   positions.
 
@@ -2480,13 +2479,14 @@ A prefix says what kind of ID follows:
   starts and ends with a letter, a digit, or `_`.
 - The prefix is not preceded by a letter or digit, so `foo@bar.com` and
   `tag#ops` contain neither.
-- Suggested convention: servers assign ordinary `user_id`s from letters,
-  digits, `_`, `.`, and `-`, starting and ending with a letter, a digit, or
-  `_`, such as `guest_1234`. This keeps the other characters free for special
-  meanings, such as system identities (`~server`), federated users
-  (`carol@b.example`), or email addresses as IDs.
-- Suggested convention: when users choose their own `user_id`, servers accept
-  only that subset.
+- Suggested convention: servers assign ordinary `user_id`s and `room_id`s
+  from letters, digits, `_`, `.`, and `-`, starting and ending with a letter,
+  a digit, or `_`, such as `guest_1234` or `general`. This keeps the other
+  characters free for special meanings, such as system identities
+  (`~server`), federated users (`carol@b.example`), or email addresses as
+  IDs.
+- Suggested convention: when users choose their own IDs, servers accept only
+  that subset.
 - `user_id`s beginning with `~` are reserved for system identities. Servers
   SHOULD NOT assign them to users.
 - How `text` renders is up to the client.
