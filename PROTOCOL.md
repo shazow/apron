@@ -259,7 +259,8 @@ All IDs are strings.
 
 - Any string. The side that creates the ID chooses it.
 - `room_id` and `user_id` are server-assigned.
-- Servers MUST NOT assign a `user_id` that starts with `@`.
+- A `user_id` MUST be 1 to 255 characters from `A-Z`, `a-z`, `0-9`, and
+  `_ . - + @ : ~`. It MUST NOT start with `@`.
 - Request `id`s SHOULD be random. They identify operations, not log
   positions.
 
@@ -2335,9 +2336,10 @@ server.
   new owner would inherit them.
 - `roles` are labels for display only ([§3.3](#33-identity)). The server
   enforces all permissions.
-- `user_id`s that start with `~` are reserved for system identities
-  ([Appendix A.3](#a3-prefixes-in-text)). So no user can pose as the server or
-  a room.
+- `user_id`s that start with `~` are reserved for system identities, and the
+  suggested convention keeps `@` and `:` out of the IDs that users choose
+  ([Appendix A.3](#a3-prefixes-in-text)). So no user can pose as the server, a
+  room, or a federated user.
 - An ID that the caller cannot see gets the same `invalid_params` as an ID
   that does not exist ([§1.1](#11-envelope-and-replies)). So callers cannot
   probe whether private rooms or messages exist.
@@ -2474,12 +2476,17 @@ A prefix says what kind of ID follows:
 | `#`    | a room            | a reference to the room; it mentions no one                 |
 | `~`    | a system identity | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices))     |
 
-- After `@` or `#`, the ID is a run of `[A-Za-z0-9_.+@-]` that starts with a
-  letter, a digit, or `_`. Trailing `.`, `-`, `+`, and `@` are not part of it.
+- After `@` or `#`, the ID is the longest run of `[A-Za-z0-9_.+@:-]` that
+  starts and ends with a letter, a digit, or `_`.
 - The prefix is not preceded by a letter or digit, so `foo@bar.com` and
   `tag#ops` contain neither.
-- Servers that want users and rooms to be mentionable mint IDs that match
-  this run, such as `guest_1234` or `ada@example.com`.
+- Suggested convention: servers assign ordinary `user_id`s from letters,
+  digits, `_`, `.`, and `-`, starting and ending with a letter, a digit, or
+  `_`, such as `guest_1234`. This keeps the other characters free for special
+  meanings, such as system identities (`~server`), federated users
+  (`carol@b.example`), or email addresses as IDs.
+- Suggested convention: when users choose their own `user_id`, servers accept
+  only that subset.
 - `user_id`s beginning with `~` are reserved for system identities. Servers
   SHOULD NOT assign them to users.
 - How `text` renders is up to the client.

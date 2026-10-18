@@ -16,6 +16,11 @@
       "description": "A request id (§1.1, §2).",
       "type": "string"
     },
+    "UserId": {
+      "description": "A user_id: 1 to 255 characters from A-Z a-z 0-9 _ . - + @ : ~, not starting with @ (§2).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.+:~-][A-Za-z0-9_.+@:~-]{0,254}$"
+    },
     "LogId": {
       "description": "A position in the server's log: decimal Unix epoch milliseconds (§2).",
       "type": "string",
@@ -35,7 +40,7 @@
       "type": "object",
       "properties": {
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         },
         "name": {
           "type": "string"
@@ -177,7 +182,7 @@
           "description": "The user_ids the message mentions.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/UserId"
           }
         },
         "embeds": {
@@ -525,7 +530,7 @@
           "type": "string"
         },
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         },
         "agent": {
           "type": "string"
@@ -685,7 +690,7 @@
           "type": "string"
         },
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         }
       },
       "required": [
@@ -700,7 +705,7 @@
           "type": "string"
         },
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         }
       },
       "required": [

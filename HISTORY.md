@@ -10,7 +10,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - `idle` is `false`, or the seconds since nobody attended the connection, so servers can treat the connection as idle from then.
 - §4.2 is now `rooms` and §4.3 `history`, which renumbers both. Room records are defined in §4.2, and extension names in the §4 intro.
 - §1.1 lists the core request and notification methods, and the §4 intro the rest.
-- A `user_id` never starts with `@`. A mention in text (Appendix A.3) may contain `+` and `@` after its first character, so `@ada@example.com` mentions `ada@example.com`.
+- A `user_id` is 1 to 255 characters from `A-Z a-z 0-9 _ . - + @ : ~`, and does not start with `@`. A mention in text (Appendix A.3) is the longest run of `[A-Za-z0-9_.+@:-]` that starts and ends with a letter, a digit, or `_`, so `@ada@example.com` and `@carol:b.example` are mentions. A suggested convention keeps ordinary and user-chosen IDs to letters, digits, `_`, `.`, and `-`.
 
 ## v8 (2026-10-06)
 
