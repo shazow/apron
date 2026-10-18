@@ -259,6 +259,7 @@ All IDs are strings.
 
 - Any string. The side that creates the ID chooses it.
 - `room_id` and `user_id` are server-assigned.
+- Servers MUST NOT assign a `user_id` that starts with `@`.
 - Request `id`s SHOULD be random. They identify operations, not log
   positions.
 
@@ -2473,12 +2474,12 @@ A prefix says what kind of ID follows:
 | `#`    | a room            | a reference to the room; it mentions no one                 |
 | `~`    | a system identity | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices))     |
 
-- After `@` or `#`, the ID is a run of `[A-Za-z0-9_.-]`. Trailing `.` and
-  `-` are not part of it.
+- After `@` or `#`, the ID is a run of `[A-Za-z0-9_.+@-]` that starts with a
+  letter, a digit, or `_`. Trailing `.`, `-`, `+`, and `@` are not part of it.
 - The prefix is not preceded by a letter or digit, so `foo@bar.com` and
   `tag#ops` contain neither.
-- Servers that want users and rooms to be mentionable mint IDs from
-  `[A-Za-z0-9_.-]`, such as `guest_1234`.
+- Servers that want users and rooms to be mentionable mint IDs that match
+  this run, such as `guest_1234` or `ada@example.com`.
 - `user_id`s beginning with `~` are reserved for system identities. Servers
   SHOULD NOT assign them to users.
 - How `text` renders is up to the client.

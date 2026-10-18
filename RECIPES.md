@@ -37,7 +37,7 @@ give it only the rooms and rights that it needs.
 | Replies and mentions | Map `reply_to.message_id` and the IDs in `mentions` through the map. |
 | Edits and deletes | The origin publishes a new snapshot. The mirror writes a new snapshot of its copy. |
 | Reactions and memberships | Map both parts of the key: `(message_id, user_id)` and `(room_id, user_id)`. |
-| Remote users | Ordinary users on the mirror, with IDs that it assigns, such as `carol.b.example`. Use `[A-Za-z0-9_.-]` to keep them mentionable ([Appendix A.3](PROTOCOL.md#a3-prefixes-in-text)), and never reuse a retired ID ([§3.3](PROTOCOL.md#33-identity)). |
+| Remote users | Ordinary users on the mirror, with IDs that it assigns, such as `carol@b.example`, which stays mentionable ([Appendix A.3](PROTOCOL.md#a3-prefixes-in-text)). The mirror never gives a local user an ID in a peer's form, and never reuses a retired ID ([§3.3](PROTOCOL.md#33-identity)). IDs are opaque, so clients read the origin from `ext.peer.origin` on the user object, not from the ID. |
 | Uploads and streams | Copy or proxy them. Clients do not load media from other origins ([§4.8.1](PROTOCOL.md#481-opengraph-metadata-og), [§4.8.2](PROTOCOL.md#482-embed-identity)). |
 | Loops | Mark mirrored records, such as `"ext": {"peer": {"origin": "b.example", "message_id": "…"}}` ([§4.12](PROTOCOL.md#412-ext)). Never mirror a record that carries the other server's mark. |
 | Sign-in | Optional: one server's `external` sign-in can use the other server as its identity provider ([§4.11](PROTOCOL.md#411-email-and-external-sign-in)). |
