@@ -1,8 +1,8 @@
 # Apron Chat Protocol
 
-| Protocol Version  | 9 |
-|---------|---|
-
+| Protocol Version | 9          |
+|------------------|------------|
+| Last Updated     | 2026-10-18 |
 
 Apron Chat Protocol is for groups whose members mostly trust each other: a
 team, a household, or a set of bots and the people who run them. That trust
