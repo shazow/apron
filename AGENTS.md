@@ -66,6 +66,8 @@ fixtures, or implementations from it.
 
 - Every change to the wire goes in HISTORY.md under the current protocol
   version. Editorial changes don't, unless they renumber sections.
+- PROTOCOL.md's front matter (`version`, `updated`) matches the newest
+  HISTORY.md entry (`## vN (YYYY-MM-DD)`); the schema check enforces it.
 - When sections are renumbered, update every link, the schema, and the
   fixtures in the same change.
 - Keep `schema/apron.schema.json` in step with PROTOCOL.md, and run

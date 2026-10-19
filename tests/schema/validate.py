@@ -5,8 +5,9 @@
 """Validate the fixtures and PROTOCOL.md examples against schema/apron.schema.json.
 
 Besides the schema, it checks rules the schema cannot express: every server
-frame speaks protocol 9, names that PROTOCOL.md does not define start with
-ext:, no session fixture delivers a frame between an auth request and its
+frame speaks the version in PROTOCOL.md's front matter, which with its date is
+the newest entry of HISTORY.md, names that PROTOCOL.md does not define start
+with ext:, no session fixture delivers a frame between an auth request and its
 result, a client writes each ext key only to a server with capability ext or
 the capability of the extension that defines the key (ext:<key>), no fixture
 repeats a variant, and the cases of tests/fixtures/push.json are valid, or
@@ -57,7 +58,15 @@ INVALID = {
     ("history-recovery-failure.json", "invalid-page", 15): "a page without metadata",
 }
 
-VERSION = 9
+# PROTOCOL.md's front matter: key: value lines between --- rules.
+front = re.match(r"---\n(.*?)\n---\n", (ROOT / "PROTOCOL.md").read_text(), re.S)
+if not front:
+    sys.exit("PROTOCOL.md: no front matter")
+META = dict(line.split(": ", 1) for line in front[1].splitlines())
+VERSION = int(META["version"])
+latest = re.search(r"^## (v\d+ \(.*?\))$", (ROOT / "HISTORY.md").read_text(), re.M)
+if not latest or latest[1] != f"v{VERSION} ({META['updated']})":
+    errors.append(f"HISTORY.md: newest entry is not v{VERSION} ({META['updated']}), from PROTOCOL.md's front matter")
 
 # Names that PROTOCOL.md defines, by the list that an extension can add to (§4).
 # Any other name starts with "ext:".
