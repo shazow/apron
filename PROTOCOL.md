@@ -39,7 +39,11 @@ Example of a valid session:
 {
   "id": "c2", "result": {
     "joined": [
-      {"room_id": "general", "title": "General", "members": [{"user_id": "guest_1234", "name": "Ada"}]}
+      {
+        "room_id": "general",
+        "title": "General",
+        "members": [{"user_id": "guest_1234", "name": "Ada"}]
+      }
     ]
   }
 }
