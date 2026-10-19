@@ -2,7 +2,7 @@
   "format": 4,
   "kind": "session",
   "name": "Idle reports and mutes",
-  "description": "The status request (capability status). A connection starts attended: the client sends idle only after the auth result, at once when it starts unattended, as the seconds since attention stopped, then idle: false when somebody attends again. A new connection keeps nothing, so the client reports idle again after a reconnect. A mute takes effect when the server's status notification arrives, before the {} result; an error changes nothing. A room's mute from another connection ends with mute: false. At each sign-in the client drops the mutes it kept and applies the ones that arrive.",
+  "description": "The status request (capability status). A connection starts attended. The client sends idle at once on a connection that starts unattended, as the seconds since attention stopped, then idle: false when somebody attends again. A new connection keeps nothing, so the client reports idle again after a reconnect. A mute applies by its {} result at the latest, and an error changes nothing. The server's default mutes the random room at the first sign-in, and another connection's mute: false ends it. At each sign-in the client drops the mutes it kept and applies the ones that arrive: while the client is away, another connection resumes notifications and mutes ops.",
   "references": [
     "PROTOCOL.md#322-order",
     "PROTOCOL.md#453-the-status-request",
