@@ -1,0 +1,67 @@
+{
+  "format": 4,
+  "kind": "session",
+  "name": "Idle reports and mutes",
+  "description": "The status request (capability status). A connection starts attended. The client sends idle at once on a connection that starts unattended, as the seconds since attention stopped, then idle: false when somebody attends again. A new connection keeps nothing, so the client reports idle again after a reconnect. A mute applies by its {} result at the latest, and an error changes nothing. The server's default mutes the random room at the first sign-in, and another connection's mute: false ends it. At each sign-in the client drops the mutes it kept and applies the ones that arrive: while the client is away, another connection resumes notifications and mutes ops.",
+  "references": [
+    "PROTOCOL.md#322-order",
+    "PROTOCOL.md#453-the-status-request",
+    "PROTOCOL.md#454-sign-in"
+  ],
+  "variants": [
+    {
+      "name": "idle",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"idle":120},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"},"token":"st_Hk41x9"}}},
+        {"request":{"as":"starts-idle","match":{"method":"status","params":{"idle":120}}}},
+        {"reply":{"to":"starts-idle","result":{}}},
+        {"idle":false},
+        {"request":{"as":"attended","match":{"method":"status","params":{"idle":false}}}},
+        {"reply":{"to":"attended","result":{}}},
+        {"idle":300},
+        {"request":{"as":"unattended","match":{"method":"status","params":{"idle":300}}}},
+        {"reply":{"to":"unattended","result":{}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"mutes":{}}},
+        {"disconnect":true},
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
+        {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
+        {"request":{"as":"idle-again","match":{"method":"status","params":{"idle":300}}}},
+        {"reply":{"to":"idle-again","result":{}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"mutes":{}}}
+      ]
+    },
+    {
+      "name": "mute",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"},"token":"st_Hk41x9"}}},
+        {"receive":{"method":"status","params":{"room_id":"random","mute":true}}},
+        {"expect":{"mutes":{"random":true}}},
+        {"mute":{"as":"pause","mute":3600}},
+        {"request":{"as":"pause-request","match":{"method":"status","params":{"mute":3600}}}},
+        {"receive":{"method":"status","params":{"mute":3600}}},
+        {"reply":{"to":"pause-request","result":{}}},
+        {"expect":{"operations":{"pause":"fulfilled"},"mutes":{"":"timed","random":true}}},
+        {"mute":{"as":"resume","mute":false}},
+        {"request":{"as":"resume-request","match":{"method":"status","params":{"mute":false}}}},
+        {"reply":{"to":"resume-request","error":{"code":-32002,"message":"Too Many Requests","data":{"retry_after":5}}}},
+        {"expect":{"operations":{"pause":"fulfilled","resume":"rejected"},"mutes":{"":"timed","random":true}}},
+        {"receive":{"method":"status","params":{"room_id":"random","mute":false}}},
+        {"expect":{"mutes":{"":"timed"}}},
+        {"disconnect":true},
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
+        {"expect":{"you":null,"mutes":{"":"timed"}}},
+        {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
+        {"receive":{"method":"status","params":{"room_id":"ops","mute":true}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"mutes":{"ops":true}}}
+      ]
+    }
+  ],
+  "expected": {}
+}

@@ -54,12 +54,15 @@ Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#
 | membership | `(room_id, user.user_id)` | `room_update` `memberships`, history `memberships` (one per element of `members[]`) |
 
 **Replay rule.** A record replaces the stored record for its key only when its
-`log_id` is numerically greater; an equal or lower `log_id` is ignored. This
-holds regardless of source (live, history, embedded) and arrival order. A
-reaction or membership element takes its record's `log_id`. The only
-exception: a room record without `log_id` (a server without capability `history`,
-which may omit it) always replaces. Replacement is whole: omitted fields
-disappear, objects and arrays are never merged, and `null` is a stored value.
+`log_id` is numerically greater, or when it is a tombstone at an equal `log_id`
+(a redaction, PROTOCOL.md [§2.3](../../../PROTOCOL.md#23-records-and-replay),
+[§4.4](../../../PROTOCOL.md#44-edit)). Any other equal or lower `log_id` is
+ignored. This holds regardless of source (live, history, embedded) and arrival
+order. A reaction or membership element takes its record's `log_id`. The only
+exception: a room record without `log_id` (a server without capability
+`history`, which may omit it) always replaces. Replacement is whole: omitted
+fields disappear, objects and arrays are never merged, and `null` is a stored
+value.
 
 **Member lists.** A room's `members` in a `room_list` result or a
 `room_update` `joined` is complete ([PROTOCOL.md §4.2.1](../../../PROTOCOL.md#421-listing)): it replaces the
@@ -178,7 +181,7 @@ record, at least one message currently homed in it, or member state, sorted by
 | `02-full-replacement.json` | omitted `body.format`, `reply_to`, and `ext` keys are removed; a snapshot carries its complete `ext`, and clients replace `ext` whole (only writes merge it) |
 | `03-literal-null.json` | `null` stored inside `ext` and embeds |
 | `04-array-replacement.json` | embeds arrays replaced whole |
-| `05-tombstone.json` | tombstone wins over stale content; tombstones hide reactions (raw and compacted history) |
+| `05-tombstone.json` | tombstone wins over stale content; a redacted tombstone at the content's own `log_id` wins too; tombstones hide reactions (raw and compacted history) |
 | `06-duplicate-replay.json` | repeated room records, snapshots, and reaction sets are ignored |
 | `07-snapshot-loaded.json` | history snapshot replaces a loaded message |
 | `08-snapshot-unloaded.json` | an edit installs without its creation |
@@ -218,12 +221,14 @@ client's public API.
 | `moveMessage: {as, message_id, room}` | Save the message with `room_id` changed to `room`. |
 | `deleteMessage: {as, message_id}` | Save the message as a tombstone. |
 | `react: {as, message_id, emojis}` | Set the user's complete emoji set on the message (`[]` clears). |
+| `mute: {as, mute}` | Pause notifications everywhere for `mute` seconds, or until resumed (`true`), or resume them (`false`). |
 | `createRoom: {as, parent_room_id?, title?, description?}` | Create a room; with `parent_room_id` it is a thread. |
 | `updateRoom: {as, room, title?, description?}` | Patch a room's metadata: a present key sets the value (`null` clears it), an absent key keeps the current value. |
 | `joinRoom: {as, room}` / `leaveRoom: {as, room}` | Join or leave a room (or thread). |
 | `listRooms: {as, parent_room_id?}` | List the rooms not joined (with their members), or with `parent_room_id` that room's threads not joined. |
 | `loadRoom: {as, room}` | Open a thread room (a room with `parent_room_id`): load its history as its own room. |
 | `loadOlder: {as, room}` | Load the page of a thread room's history just before what `loadRoom` loaded. |
+| `idle: seconds` / `idle: false` | Tell the client that attention stopped `seconds` seconds ago and that any wait it applies before reporting is over, or, with `false`, that somebody attends it again. Not an operation: the client sends `status` when this differs from what its connection last reported, and a new connection starts attended. |
 | `disconnect: true` | Close the transport; subsequent frames go to a fresh connection. |
 | `expect: state` | Wait for the given keys of the session state (bounded deadline). |
 
@@ -253,14 +258,19 @@ stay queued. Then:
   arrays and scalars match exactly. Extra fields such as `auth.params.name`,
   `auth.params.agent`, and `history.params.limit` are unconstrained.
 - For mutations (`message`, `command`, `room_set`, `room_join`,
-  `room_leave`, `reactions`) `params` must equal `match.params` exactly, to
-  catch lost or unwanted fields.
+  `room_leave`, `reactions`, `status`) `params` must equal `match.params`
+  exactly, to catch lost or unwanted fields.
+- A `status` request also matches by which of `idle` and `mute` it carries,
+  so idle reports and mutes queue separately.
+- A number in `match.params.idle` matches from that number up to it plus the
+  whole seconds since the `idle` step, since time passes before the client
+  sends.
 - Captured IDs must be strings, distinct from every earlier captured ID in the
   variant.
 
 ### What a conforming client sends
 
-These are exact (PROTOCOL.md [§3.5](../../../PROTOCOL.md#35-messages), [§4.4](../../../PROTOCOL.md#44-edit), [§4.2](../../../PROTOCOL.md#42-rooms), [§4.7](../../../PROTOCOL.md#47-reactions), [§4.1](../../../PROTOCOL.md#41-command)). "Latest snapshot" and
+These are exact (PROTOCOL.md [§3.5](../../../PROTOCOL.md#35-messages), [§4.4](../../../PROTOCOL.md#44-edit), [§4.2](../../../PROTOCOL.md#42-rooms), [§4.7](../../../PROTOCOL.md#47-reactions), [§4.1](../../../PROTOCOL.md#41-command), [§4.5.3](../../../PROTOCOL.md#453-the-status-request)). "Latest snapshot" and
 "latest record" mean the stored record under the replay rule at the moment the
 operation is invoked.
 
@@ -272,6 +282,8 @@ operation is invoked.
 | `moveMessage` | `message` | `{message_id, room_id: room, body, reply_to?}` from the latest snapshot |
 | `deleteMessage` | `message` | `{message_id, room_id, reply_to?, deleted: true}` from the latest snapshot; no `body` |
 | `react` | `reactions` | `{message_id, emojis}` with `emojis` as given |
+| `mute` | `status` | `{mute}` as given |
+| (`idle`, capability `status`) | `status` | `{idle}`: the latest `idle` step's seconds plus the whole seconds since that step, or `false`. Sent at once on a connection that starts unattended, after its `auth` |
 | `createRoom` | `room_set` | `{parent_room_id?, title?, description?}`: only the keys given; no `room_id`, no `ext` |
 | `updateRoom` | `room_set` | `{room_id, title?, description?}` from the latest record with the patch applied; never `parent_room_id` |
 | `joinRoom` / `leaveRoom` | `room_join` / `room_leave` | `{room_id: room}` |
@@ -450,13 +462,20 @@ The normalized session state has these keys:
   `typing > 0` adds or refreshes one; `typing: 0` removes it; an `activity`
   frame without `typing` leaves it unchanged. Fixture servers that send
   `activity` advertise capability `activity`.
+- `mutes`: the mutes in effect
+  ([PROTOCOL.md §4.5.3](../../../PROTOCOL.md#453-the-status-request)), keyed by
+  `room_id`, and by `""` for the mute without `room_id`. Each is `true` until
+  unmuted, or `"timed"` for a number of seconds. `mute: false` removes the key.
+  A `status` error changes nothing. At each sign-in the client drops the kept
+  mutes, and the ones that arrive after it set them again
+  ([PROTOCOL.md §4.5.4](../../../PROTOCOL.md#454-sign-in)).
 - `operations`: operation labels mapped to `pending`, `fulfilled`, or
   `rejected`.
 
 On `disconnect` the client's protocol view is rebuilt from the next
 connection: `you` is `null`, `capabilities` and `typing` are `[]`, and `rooms` is `[]`
 until rooms are listed again. The record stores (member lists included),
-floors, checkpoints, users, and notices are kept, so each room listed again
+floors, checkpoints, users, mutes, and notices are kept, so each room listed again
 resumes from its checkpoint rather than recovering in full ([PROTOCOL.md §4.3](../../../PROTOCOL.md#43-history), recovery from `C + 1`). (The UI may keep showing the old view meanwhile; that is not part
 of the projection.) A pending operation across a disconnect is unconstrained.
 
@@ -476,7 +495,8 @@ no sleeps, timers, or DOM selectors.
 | `ext-without-capability.json` | a server without capability `ext` whose extension (`ext:irc`) keeps its data in `ext`: an edit, a `room_set`, and a delete built from records with `ext` send none, and the tombstone carries none |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
 | `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
-| `sign-in.json` | the automatic join, the statuses that others see, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object |
+| `sign-in.json` | the automatic join, the statuses that others see, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object; the mutes in effect replace the kept ones |
+| `status.json` | `idle` sent at once on a connection that starts unattended, as seconds, then `idle: false`, and again on a new connection; a `mute` applies by its `{}` result at the latest, and an error changes nothing; another connection's `mute: false` ends a room's mute; a sign-in replaces the kept mutes |
 | `users.json` | field-by-field merges of current objects from `you`, `members`, and `user`; complete `users` replace the kept object; `from` and membership users never merge; senders render from the kept object, else their `from`, and a cleared field never falls back until a complete object replaces it; memberships change member lists, not users; `old` and `new` make the old `user_id` stand for the new one |
 | `reactions.json` | react, change, clear, move re-log in the destination, `invalid_params`, tombstone hiding |
 | `request-errors.json` | denied send, save, and room creation, `invalid_params` for a room the user cannot see, and `unsupported` for a command without capability `command` keep the session usable |
@@ -499,11 +519,12 @@ Every session variant describes one plausible server, and these hold (they
 were checked with an independent reference reducer and client):
 
 - Each `log_id` identifies one record (one key, one content) across the whole
-  variant, across connections, and in embedded copies. `log_id`s are one
-  server-wide sequence: new live records on a connection arrive in strictly
-  increasing order, and above every `latest_log_id` already reported for their
-  room. A message's earliest snapshot is its creation, with
-  `log_id == message_id`.
+  variant, across connections, and in embedded copies. A redaction is the only
+  exception: it rewrites a message snapshot into a tombstone at the same
+  `log_id`. `log_id`s are one server-wide sequence: new live records on a
+  connection arrive in strictly increasing order, and above every
+  `latest_log_id` already reported for their room. A message's earliest snapshot
+  is its creation, with `log_id == message_id`.
 - A room record frame's `latest_log_id` is at least every record already delivered
   for the room; a page's is at least the room's head known when it was
   requested and at least its `last_log_id` (it may be captured before later live
@@ -534,8 +555,8 @@ were checked with an independent reference reducer and client):
 - A `room_update` `updated` for a room not joined describes a new or edited
   thread in a joined room; `left` lists only rooms that were visible.
 
-Replay variants obey the same one-record-per-`log_id` rule and the history
-metadata constraints that do not depend on request bounds.
+Replay variants obey the same one-record-per-`log_id` rule, redactions included,
+and the history metadata constraints that do not depend on request bounds.
 
 ## Scope and additions
 
@@ -557,10 +578,8 @@ Not covered:
 
 - `me` requests and their complete `you`, and writes that change `ext`: no
   step sends `me` or sets `ext`.
-- The `status` request (`idle` and `mute`, its `{}` result, and an error
-  that changes nothing), and the mutes that the client keeps: no step sends
-  it, and the session state has no mutes. `sign-in.json` receives `status`
-  notifications only to show that they leave the rest of the state alone.
+- Room mutes that the client sets, and a client's own expiry of a timed mute
+  (it depends on a timer).
 - Liveness `ping`, and typing expiry (they depend on timers).
 - Opening a thread without joining it, read markers, and deduplication
   lifetime.
