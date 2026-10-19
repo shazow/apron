@@ -6,8 +6,6 @@ It should be extremely easy to implement a basic server (~100 lines of code) tha
 
 Do you need a custom self-hosted group chat? Consider using the Apron Chat Protocol!
 
-**Status**: Beta, core protocol is stable
-
 <img width="721.5" height="536" alt="Screenshot of the Sveltekit Apron Chat implementation" src="https://github.com/user-attachments/assets/bdd4b15c-485e-4c19-838b-75c748dd2890" />
 
 ## Getting Started
