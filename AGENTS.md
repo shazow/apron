@@ -15,9 +15,6 @@ fixtures, or implementations from it.
   added.
 - A section MAY open with a short paragraph of context and motivation. Write
   it as prose; the rules follow as bullets.
-- Group long sections under bold labels (**Delivery.**, **Mute.**) rather
-  than new numbered headings. §5 is the exception: it has a numbered
-  subsection for each kind of threat.
 
 ### Sentences
 
