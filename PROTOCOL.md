@@ -2,7 +2,7 @@
 
 | Protocol Version | 9          |
 |------------------|------------|
-| Last Updated     | 2026-10-18 |
+| Last Updated     | 2026-10-19 |
 
 Apron Chat Protocol is for groups whose members mostly trust each other: a
 team, a household, or a set of bots and the people who run them. That trust
@@ -87,7 +87,7 @@ reply to its request, and every other frame is a one-way notification.
   before it. Clients apply frames in the order they arrive.
 - When a request causes notifications on its own connection, the server sends
   them before the result, such as the broadcast of a posted message. A sign-in
-  is the only exception ([§3.2](#32-authentication)).
+  is the only exception ([§3.2.2](#322-order)).
 - Server announcements and broadcasts are notifications.
 - Servers reply `error/unsupported` to requests with unknown methods.
 - Notifications with unknown methods are ignored.
@@ -104,9 +104,8 @@ reply to its request, and every other frame is a one-way notification.
 
 ### 1.1 Envelope and replies
 
-A request carries a string `id` ([§2](#2-identifiers)), and gets exactly one
-reply. A frame with a `method` and no `id` is a notification, and gets no
-reply.
+A request carries a string `id` ([§2.4](#24-opaque-ids)), and gets exactly one
+reply. A frame with a `method` and no `id` is a notification, and gets no reply.
 
 Each method is either a request or a notification. A method is a request when
 its sender needs the reply: data, a confirmation that a change was applied, or
@@ -197,7 +196,8 @@ A retry SHOULD keep the same `id`, `method`, and `params`, also across
 reconnects. A new operation MUST use a new `id`, and changed params make a new
 operation. Deduplication ignores the order of object keys.
 
-Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated `user_id`:
+Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated
+`user_id`:
 
 - The server does not execute or broadcast a duplicate again. The result of a
   duplicate shows the current state ([§1](#1-transport--framing)).
@@ -221,7 +221,9 @@ state. This section defines the IDs that make this work.
 
 All IDs are strings.
 
-**`log_id`** — position of one change in the server's append-only log.
+### 2.1 `log_id`
+
+A `log_id` is the position of one change in the server's append-only log.
 
 - Decimal string of Unix epoch milliseconds, such as `"1724803200042"`.
 - One strictly increasing sequence per server, covering every record.
@@ -232,18 +234,22 @@ All IDs are strings.
   parse them as integers.
 - Unique within one server only.
 - A room's log is the subsequence of records that touch that room
-  ([§4.3](#43-history)).
+  ([§4.3.1](#431-a-rooms-log)).
 - Reference generator: `str(max(unix_epoch_ms(), last_id + 1))`.
 
-**`message_id`** — permanent identity of a message.
+### 2.2 `message_id`
+
+A `message_id` is the permanent identity of a message.
 
 - Equal to the `log_id` of its creation; never changes.
 - Unique across rooms.
 - `log_id == message_id` marks the creation; later changes have greater
   `log_id`s.
 
-**Records and replay.** Every record is the complete state for its key at its
-`log_id`. Capabilities add other records, each with its own key:
+### 2.3 Records and replay
+
+Every record is the complete state for its key at its `log_id`. Capabilities add
+other records, each with its own key:
 
 | record           | key          |
 |------------------|--------------|
@@ -255,7 +261,9 @@ All IDs are strings.
 - At an equal `log_id`, a tombstone wins ([§4.4](#44-edit)).
 - Server fields are read-only: a request never changes them.
 
-**Opaque IDs** — `room_id`, `user_id`, and request `id`.
+### 2.4 Opaque IDs
+
+`room_id`, `user_id`, and request `id` are opaque.
 
 - Any string. The side that creates the ID chooses it.
 - `room_id` and `user_id` are server-assigned. They MUST NOT be empty, or
@@ -390,17 +398,19 @@ class AuthResult {
   `signup` lists the schemes that create an account. For example, `"auth":
   ["token"], "signup": ["guest"]` means: join as a guest, then sign in with
   the token that the server issues.
-- `server.welcome` tells users how the schemes of this server fit together,
-  such as "Join as a guest. Your client keeps a token to sign you back in."
-  Clients show it on the sign-in screen as CommonMark ([§3.5](#35-messages)),
-  and never parse it.
+- `server.welcome` tells users how the schemes of this server fit together, such
+  as "Join as a guest. Your client keeps a token to sign you back in." Clients
+  show it on the sign-in screen as CommonMark ([§3.5.2](#352-rendering)), and
+  never parse it.
 - `name` and `user_id` are optional requests, and work with any scheme. `you`
   is what the server assigned.
 - Servers SHOULD NOT assign a `user_id` that was used before, unless they
   authenticate its owner.
 
-**Bearer tokens.** A successful `auth` result MAY carry `token`. The client
-uses it with `scheme: "token"` on later connections.
+#### 3.2.1 Bearer tokens
+
+A successful `auth` result MAY carry `token`. The client uses it with
+`scheme: "token"` on later connections.
 
 - Servers also send it in reply to `scheme: "token"` when they rotate the
   token that the client sent.
@@ -412,8 +422,10 @@ uses it with `scheme: "token"` on later connections.
   encourage its user to add another scheme that the server offers.
 - Lifetime, rotation, and revocation are server policy.
 
-**Order.** `auth` is a barrier. The server finishes an `auth` request before
-it processes any later frame on the connection.
+#### 3.2.2 Order
+
+`auth` is a barrier. The server finishes an `auth` request before it processes
+any later frame on the connection.
 
 - Clients MAY send `auth` before `server` arrives. They MAY send other
   requests right after `auth`, without waiting for its result.
@@ -458,9 +470,10 @@ Every message carries its author in `from`:
 "from": {"user_id": "alice", "name": "Alice"}
 ```
 
-**User objects.** Every identity on the wire uses the `User` shape, such as
-`you`, `new`, `old`, and `from`. `user_id` is required and stable. The other
-fields are optional.
+#### 3.3.1 User objects
+
+Every identity on the wire uses the `User` shape, such as `you`, `new`, `old`,
+and `from`. `user_id` is required and stable. The other fields are optional.
 
 There are two kinds of user objects:
 
@@ -488,10 +501,11 @@ Clients keep one user object for each `user_id`:
 - Clients SHOULD show a user as `Name (@user_id)` where there is space. They
   MUST do this when they know another `user_id` with the same name.
 
-**Profile.** A `me` request changes the user's own profile after
-authentication. It merges by the same rules as a current object. Clients can
-set `name` and `avatar`. `roles` is not settable. Servers announce a cleared
-field as its empty value:
+#### 3.3.2 Profile
+
+A `me` request changes the user's own profile after authentication. It merges by
+the same rules as a current object. Clients can set `name` and `avatar`. `roles`
+is not settable. Servers announce a cleared field as its empty value:
 
 ```jsonc
 // -> rename and clear the avatar
@@ -500,10 +514,11 @@ field as its empty value:
 {"id": "c2", "result": {"you": {"user_id": "alice", "name": "Alice ⚙", "avatar": ""}}}
 ```
 
-**Changes.** After authentication, the server MAY send a `user` notification
-when a user object changes. It sends `you` to the user's own connections, and
-`new` to others who share a room with the user. `new` is the current object of
-the user.
+#### 3.3.3 Changes
+
+After authentication, the server MAY send a `user` notification when a user
+object changes. It sends `you` to the user's own connections, and `new` to
+others who share a room with the user. `new` is the current object of the user.
 
 ```jsonc
 // <- to the user's own connections
@@ -525,17 +540,17 @@ the user.
   again.
 - `old` means that the same account changed its `user_id` from `old.user_id`
   to `new.user_id`. An example is a guest that becomes a new account.
-- When a connection signs in ([§3.2](#32-authentication)) to an existing
-  account, servers announce that the previous identity left. They do not send
-  `old`.
+- When a connection signs in ([§3.2.2](#322-order)) to an existing account,
+  servers announce that the previous identity left. They do not send `old`.
 - After a `user_id` change, logged records keep the old `user_id`. Clients MAY
   treat it as the new identity.
 - Servers SHOULD NOT give a retired `user_id` to another user.
 
-**Roles.** Bots and agents are ordinary senders. Servers MAY assign `roles`,
-which are labels such as `"admin"`, `"moderator"`, or `"trusted"`. Suggested
-convention: `"bot"` marks an automated user, and `"admin"` marks a server
-operator.
+#### 3.3.4 Roles
+
+Bots and agents are ordinary senders. Servers MAY assign `roles`, which are
+labels such as `"admin"`, `"moderator"`, or `"trusted"`. Suggested convention:
+`"bot"` marks an automated user, and `"admin"` marks a server operator.
 
 - Clients show roles separately from the name, such as badges. They show
   unknown roles as written.
@@ -578,8 +593,8 @@ to its room ([§3.5](#35-messages)). A server without capability `rooms` MAY
 have only one room. Clients learn its `room_id` from its messages. If a client
 has no other data about a room, it uses the `room_id` as the title.
 
-**Delivery.** A connection receives the messages and other records of each
-room that its user joined. Without capability `rooms`, that is every room.
+A connection receives the **deliveries** of each room that its user joined: its
+messages and other records. Without capability `rooms`, that is every room.
 System notices go by their scope instead
 ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
 
@@ -643,9 +658,9 @@ authoritative **snapshot** at one log position.
 
 | field          | set by | meaning                                                                 |
 |----------------|--------|-------------------------------------------------------------------------|
-| `message_id`   | server | permanent ID ([§2](#2-identifiers))                                     |
-| `log_id`       | server | position of this snapshot in the log ([§2](#2-identifiers))             |
-| `prev_log_id`  | server | optional; this message's previous snapshot ([§4.3](#43-history))        |
+| `message_id`   | server | permanent ID ([§2.2](#22-message_id))                                     |
+| `log_id`       | server | position of this snapshot in the log ([§2.1](#21-log_id))             |
+| `prev_log_id`  | server | optional; this message's previous snapshot ([§4.3.1](#431-a-rooms-log))        |
 | `prev_room_id` | server | the previous snapshot's room, when it differs ([§4.4](#44-edit))        |
 | `from`         | server | author identity ([§3.3](#33-identity)), preserved across changes        |
 | `room_id`      | client | the room the message is in; omitted, the default room                   |
@@ -654,7 +669,7 @@ authoritative **snapshot** at one log position.
 | `deleted`      | client | tombstone marker, default false ([§4.4](#44-edit))                      |
 | `ext`          | client | optional extension data; merges by key ([§4.12](#412-ext))               |
 
-**Creating.**
+#### 3.5.1 Creating
 
 - `body` is required when a client creates a message. `text` defaults to `""`.
   `embeds` and `mentions` default to `[]`. `format` is `"plain"` or
@@ -664,10 +679,10 @@ authoritative **snapshot** at one log position.
 - Posting does not require joining the room.
 - A new message with no `text` and no `embeds` SHOULD NOT be logged or
   broadcast. Its result is then `{}`.
-- **Result:** `{"message_id": "..."}`, the permanent ID. The result is the
+- The result is `{"message_id": "..."}`, the permanent ID. It is the
   confirmation.
 
-**Rendering.**
+#### 3.5.2 Rendering
 
 - Clients MUST render both formats. `"markdown"` text is
   [CommonMark](https://commonmark.org/). Clients MAY render common extensions,
@@ -680,14 +695,15 @@ authoritative **snapshot** at one log position.
   Otherwise they render a labeled fallback card: the kind name, plus `url` or
   plain `text` if present.
 
-**Delivery.**
+#### 3.5.3 Delivery
 
 - The broadcast goes to the connections that receive the deliveries of the
   room ([§3.4](#34-rooms)).
 - On a live connection, servers deliver the snapshots of each room in
   ascending `log_id`, and each snapshot one time for each connection.
 - **Snapshots replace** earlier ones under the replay rule
-  ([§2](#2-identifiers)), also for messages that the client has not loaded.
+  ([§2.3](#23-records-and-replay)), also for messages that the client has not
+  loaded.
 - Servers MAY publish a snapshot of any message at any time. Clients MUST
   accept it, also without capability `edit`.
 - A `message` notification without `message_id` is a transient notice, such as
@@ -695,7 +711,7 @@ authoritative **snapshot** at one log position.
   ([Appendix A.1](#a1-system-identities-and-scoped-notices)). Clients show it,
   but never install it as a snapshot.
 
-**References.**
+#### 3.5.4 References
 
 - `reply_to` holds a message object. Clients send it bare, with only
   `message_id`. Servers MAY send a full snapshot, and clients install it like
@@ -705,9 +721,10 @@ authoritative **snapshot** at one log position.
 - Clients show the replying message even when the target is missing or
   deleted.
 
-**Mentions.** A message lists the users that it mentions in `body.mentions`.
-Usually its `body.text` also shows each one
-([Appendix A.3](#a3-prefixes-in-text)):
+#### 3.5.5 Mentions
+
+A message lists the users that it mentions in `body.mentions`. Usually its
+`body.text` also shows each one ([Appendix A.3](#a3-prefixes-in-text)):
 
 ```json
 "body": {
@@ -729,14 +746,16 @@ Usually its `body.text` also shows each one
 Every server:
 
 1. Sends a `server` frame on connect ([§3.1](#31-server-frame)).
-2. Accepts at least one `auth` scheme, replies with `you`, and finishes
-   `auth` before processing later frames ([§3.2](#32-authentication)).
-3. Accepts `message` without `room_id` into its default room ([§3.5](#35-messages)).
+2. Accepts at least one `auth` scheme, replies with `you`, and finishes `auth`
+   before processing later frames ([§3.2.2](#322-order)).
+3. Accepts `message` without `room_id` into its default room
+   ([§3.5.1](#351-creating)).
 4. Accepts `message` creation: replies with `message_id` and broadcasts the
    snapshot to the room ([§3.5](#35-messages)).
-5. Replies `error/unsupported` to unknown requests, including `message` with
-   a `message_id` when capability `edit` is absent; ignores unknown notifications.
-6. Follows [§1](#1-transport--framing) for framing and retries and [§2](#2-identifiers) for identifiers.
+5. Replies `error/unsupported` to unknown requests, including `message` with a
+   `message_id` when capability `edit` is absent; ignores unknown notifications.
+6. Follows [§1](#1-transport--framing) for framing and retries and
+   [§2](#2-identifiers) for identifiers.
 
 The opening example is a complete session with a server that has capability
 `rooms`. A minimal server skips `room_list`. Its client posts without
@@ -748,13 +767,14 @@ A minimal client (informative):
    ([§3.2](#32-authentication), [§3.5](#35-messages)).
 2. Groups messages by `room_id`, titling a room by its `room_id` unless it
    knows its record ([§3.4](#34-rooms)).
-3. Keeps each message's snapshot with the greatest `log_id`, from any
-   source, and renders tombstones ([§2](#2-identifiers), [§3.5](#35-messages)).
-4. Keeps one user object per `user_id`, merged from current objects and
-   falling back to `from`, and shows `Name (@user_id)` when two `user_id`s
-   share a name ([§3.3](#33-identity)).
-5. Renders `plain` and `markdown` text with raw HTML disabled, and a
-   fallback card for embed kinds it does not support ([§3.5](#35-messages)).
+3. Keeps each message's snapshot with the greatest `log_id`, from any source,
+   and renders tombstones ([§2.3](#23-records-and-replay),
+   [§3.5](#35-messages)).
+4. Keeps one user object per `user_id`, merged from current objects and falling
+   back to `from`, and shows `Name (@user_id)` when two `user_id`s share a name
+   ([§3.3.1](#331-user-objects)).
+5. Renders `plain` and `markdown` text with raw HTML disabled, and a fallback
+   card for embed kinds it does not support ([§3.5.2](#352-rendering)).
 6. Matches replies by `id`, acts on error codes, and ignores unknown
    notifications and keys ([§1](#1-transport--framing)).
 
@@ -764,9 +784,10 @@ A minimal client (informative):
 
 Everything beyond the core is optional. Each capability adds one coherent
 feature, such as history, rooms, or reactions, and says what a client does
-without it. So a client written for the core keeps working on any server, and
-a server can grow one capability at a time. The sections start with the
-capabilities closest to the core.
+without it. So a client written for the core keeps working on any server, and a
+server can grow one capability at a time. The sections start with the
+capabilities closest to the core. A section whose heading is a capability name
+defines that capability.
 
 `server.capabilities` lists the optional features of the server. A capability
 shows support, not permission. Servers still apply local policy to each
@@ -805,19 +826,19 @@ The features in this section add these methods
 | client  | `command`, `room_list`, `room_join`, `room_leave`, `room_set`, `history`, `status`, `reactions`, `push_register`, `push_unregister` | `activity` |
 | server  | none | `room_update`, `status`, `activity`, `reactions` |
 
-**Extension names.** A name that this document does not define starts with
-`ext:`, such as the capability `ext:irc`. This applies to every list of names
-that an extension can add to, such as methods, capabilities, auth schemes, and
-kinds. This document never defines a name with that prefix. Display values,
+A name that this document does not define is an **extension name**. It starts
+with `ext:`, such as the capability `ext:irc`. This applies to every list of
+names that an extension can add to, such as methods, capabilities, auth schemes,
+and kinds. This document never defines a name with that prefix. Display values,
 such as a status or a role, are free text and take no prefix.
 
 Six frame patterns cover everything that is logged or announced:
 
 - **Records** (room records, `message`): the complete state at a `log_id`
-  ([§2](#2-identifiers)).
+  ([§2.3](#23-records-and-replay)).
 - **Per-user state** (`reactions`, memberships): the user and their complete
   state for a scope. The newest wins for each user. Logged
-  ([§2](#2-identifiers)).
+  ([§2.3](#23-records-and-replay)).
 - **Activity** (`activity`): `from` and changes to the transient state of the
   user. Absent fields do not change it. Not logged.
 - **Announcements** (`server`): not logged, and sent again in full. Each one
@@ -825,14 +846,14 @@ Six frame patterns cover everything that is logged or announced:
 - **Room updates** (`room_update`): changes to the rooms of the user. They
   carry room records and memberships, never a full list
   ([§4.2.3](#423-updates)).
-- **Users** (`user`, and every current user object): not logged. Each one
-  merges into the kept object ([§3.3](#33-identity)).
+- **Users** (`user`, and every current user object): not logged. Each one merges
+  into the kept object ([§3.3.1](#331-user-objects)).
 
 ### 4.1 `command`
 
-Capability `command`. A `command` request sends an instruction to the server.
-It takes the same params as a new message ([§3.5](#35-messages)). Only its
-effect is different:
+Adds the `command` request, which sends an instruction to the server. It takes
+the same params as a new message ([§3.5](#35-messages)). Only its effect is
+different:
 
 - `body.text` is the command line as the user typed it, slash included.
   The server parses it.
@@ -845,9 +866,9 @@ effect is different:
 - The result is `{}`, or `{"embeds": [...]}` with write URLs for new `upload`
   embeds ([§4.8.3](#483-writes)). A failure is an ordinary error, and the
   client shows its `message`.
-- The server replies as needed with system notices ([Appendix A.1](#a1-system-identities-and-scoped-notices)).
-  It sends `~private` to the sender, `~room` to the room, and `~server` to
-  everyone.
+- The server replies as needed with system notices
+  ([Appendix A.1](#a1-system-identities-and-scoped-notices)). It sends
+  `~private` to the sender, `~room` to the room, and `~server` to everyone.
 - Effects arrive as the frames they cause, such as `room_update`.
 - Commands are for what a server provides beyond this spec, such as
   `/ban` with the server's own moderation rules.
@@ -932,12 +953,12 @@ effect is different:
 
 ### 4.2 `rooms`
 
-Capability `rooms` lets users find, join, and create rooms and threads. It
-adds the requests `room_list`, `room_join`, `room_leave`, and `room_set`, and
-the notification `room_update`. Visibility and membership are server policy.
+Lets users find, join, and create rooms and threads. It adds the requests
+`room_list`, `room_join`, `room_leave`, and `room_set`, and the notification
+`room_update`. Visibility and membership are server policy.
 
-**Room records.** A room record describes one room, as `room_list`,
-`room_update`, and `history` carry it:
+A **room record** describes one room, as `room_list`, `room_update`, and
+`history` carry it:
 
 ```json
 {
@@ -947,16 +968,17 @@ the notification `room_update`. Visibility and membership are server policy.
 }
 ```
 
-In the "set by" column, `server` fields are read-only ([§2](#2-identifiers)),
-and `room_set` replaces `client` fields ([§4.2.4](#424-creating-and-editing)).
-`delivery` fields are the view of this client. They are not logged. Clients
-always use the latest value, even if `log_id` did not change.
+In the "set by" column, `server` fields are read-only
+([§2.3](#23-records-and-replay)), and `room_set` replaces `client` fields
+([§4.2.4](#424-creating-and-editing)). `delivery` fields are the view of this
+client. They are not logged. Clients always use the latest value, even if
+`log_id` did not change.
 
 | field                     | set by   | meaning                                                                           |
 |---------------------------|----------|-----------------------------------------------------------------------------------|
 | `room_id`                 | server   | required                                                                          |
-| `log_id`                  | server   | position of this room record ([§2](#2-identifiers))                               |
-| `prev_log_id`             | server   | optional; this room's previous record ([§4.3](#43-history))                       |
+| `log_id`                  | server   | position of this room record ([§2.1](#21-log_id))                               |
+| `prev_log_id`             | server   | optional; this room's previous record ([§4.3.1](#431-a-rooms-log))                       |
 | `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.2.4](#424-creating-and-editing)) |
 | `private`                 | client   | optional; visible only to members ([§4.2.4](#424-creating-and-editing))           |
 | `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
@@ -967,14 +989,14 @@ always use the latest value, even if `log_id` did not change.
 | `members`                 | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.2.1](#421-listing)) |
 | `member_count`            | delivery | optional; how many users have joined, when `members` is truncated ([§4.2.1](#421-listing)) |
 
-A room record is complete ([§2](#2-identifiers)). A field that it omits is
-cleared. `members` and `member_count` are exceptions, because only some frames
-carry them.
+A room record is complete ([§2.3](#23-records-and-replay)). A field that it
+omits is cleared. `members` and `member_count` are exceptions, because only some
+frames carry them.
 
 `description` is the summary of the room, such as its purpose or the state of
 its conversation. Users who can edit the room can change it with `room_set`
 ([§4.2.4](#424-creating-and-editing)). It is CommonMark
-([§3.5](#35-messages)).
+([§3.5.2](#352-rendering)).
 
 A **thread** is a room with a `parent_room_id`. A client that ignores this
 field shows threads as ordinary rooms. A client that uses it groups threads
@@ -1084,7 +1106,7 @@ A join subscribes every connection of the user to the deliveries of the room
 Every membership change is a logged record in the room. This includes the
 creation of a room with `room_set`, and changes that the server makes. A
 membership record carries `members`, with one entry for each user. Each entry
-has the user as a recorded object ([§3.3](#33-identity)), and `joined`.
+has the user as a recorded object ([§3.3.1](#331-user-objects)), and `joined`.
 `room_update` delivers membership records in `memberships`
 ([§4.2.3](#423-updates)):
 
@@ -1127,9 +1149,10 @@ has the user as a recorded object ([§3.3](#33-identity)), and `joined`.
 ```
 
 - The key of a membership is `(room_id, user.user_id)`. The record with the
-  greatest `log_id` wins ([§2](#2-identifiers)). Live records carry one entry.
-  Compacted history records MAY carry more ([§4.3](#43-history)), and each
-  entry replaces the membership of that user.
+  greatest `log_id` wins ([§2.3](#23-records-and-replay)). Live records carry
+  one entry. Compacted history records MAY carry more
+  ([§4.3.4](#434-compaction)), and each entry replaces the membership of that
+  user.
 - The server delivers a membership record to the members of the room before
   and after the change. The record advances the `latest_log_id` of the room.
 - Clients start the member list of a room from its `members` in `room_list` or
@@ -1140,8 +1163,8 @@ has the user as a recorded object ([§3.3](#33-identity)), and `joined`.
   `latest_log_id` in `room_list` ([§4.2.1](#421-listing)).
 - Joins and leaves are membership records, not `user` notifications
   ([§3.3](#33-identity)).
-- Posting in a room does not require a join ([§3.5](#35-messages)). The server
-  MAY join the poster. A poster who did not join does not receive the
+- Posting in a room does not require a join ([§3.5.1](#351-creating)). The
+  server MAY join the poster. A poster who did not join does not receive the
   broadcast.
 
 #### 4.2.3 Updates
@@ -1253,9 +1276,9 @@ Live delivery covers only the time that a client is connected. `history` fills
 the gaps. It pages through the log of a room, so that a client can show older
 messages and recover what it missed while it was away.
 
-Capability `history`. A `history` request is a stateless query for a window of
-the **log** of a room. Without `room_id`, it queries the default room
-([§3.5](#35-messages)). The result splits the records by kind:
+Adds the `history` request, a stateless query for a window of the **log** of a
+room. Without `room_id`, it queries the default room ([§3.5.1](#351-creating)).
+The result splits the records by kind:
 
 - `rooms`: room records ([§4.2](#42-rooms)).
 - `messages`: message snapshots ([§3.5](#35-messages)).
@@ -1298,13 +1321,14 @@ the **log** of a room. Without `room_id`, it queries the default room
 }
 ```
 
-**Which rooms a record is in.** A record about a message, such as a snapshot
-or a reaction set, is in each room that the message is in just before or just
-after the record. Room records and memberships are in their own room. The
-earlier history of a moved message stays in the source room, and
-`prev_room_id` points there.
+#### 4.3.1 A room's log
 
-**Previous records.**
+A record about a message, such as a snapshot or a reaction set, is in each room
+that the message is in just before or just after the record. Room records and
+memberships are in their own room. The earlier history of a moved message stays
+in the source room, and `prev_room_id` points there.
+
+A record can point to the previous record for its key:
 
 - Room records and message snapshots MAY carry `prev_log_id`, the `log_id`
   of the previous record for the same key. Other records do not.
@@ -1313,7 +1337,7 @@ earlier history of a moved message stays in the source room, and
 - After a move ([§4.4](#44-edit)), a message snapshot whose previous record is
   in another room also carries `prev_room_id`. That is the room to ask.
 
-**Bounds and order.**
+#### 4.3.2 Bounds and order
 
 - `after` and `before` are inclusive `log_id` bounds. Either one MAY be
   omitted.
@@ -1334,18 +1358,19 @@ earlier history of a moved message stays in the source room, and
   use `before = first_log_id - 1`. Calculate these as numbers, and encode them
   as strings. Never calculate a continuation from compacted records.
 
-**Availability.** With this capability, room records MUST carry `log_id`,
-`latest_log_id`, and `history_log_id` ([§4.2](#42-rooms)). Every result also
-includes `latest_log_id` and `history_log_id`. The server reads them at the
-same time as the page. They describe the room, not the page. Retention can
-advance between requests, so clients check each response before they apply it.
-If the server rejects a request for lack of resources, it returns an error, not
-an empty result.
+#### 4.3.3 Availability and retention
 
-**Retention.**
+With this capability, room records MUST carry `log_id`, `latest_log_id`, and
+`history_log_id` ([§4.2](#42-rooms)). Every result also includes `latest_log_id`
+and `history_log_id`. The server reads them at the same time as the page. They
+describe the room, not the page. Retention can advance between requests, so
+clients check each response before they apply it. If the server rejects a
+request for lack of resources, it returns an error, not an empty result.
+
+Over time, servers compact or discard old history:
 
 - Servers SHOULD compact old history at rest, and not discard it. Compaction
-  keeps the latest record for each key, under the rules below.
+  keeps the latest record for each key ([§4.3.4](#434-compaction)).
 - Compacted history is still available. It does not move `history_log_id`.
 - A server that discards the start of the log advances `history_log_id`.
 - The effective lower bound is `history_log_id`. If `history_log_id` is
@@ -1355,8 +1380,9 @@ an empty result.
   membership record. This record lists every current member, with `joined:
   true` only.
 
-**Compaction (optional).** After the server selects the slice, it MAY compact
-it:
+#### 4.3.4 Compaction
+
+After the server selects the slice, it MAY compact it:
 
 - It MAY keep only the last room record and the last snapshot of each message
   in the slice.
@@ -1370,8 +1396,10 @@ it:
   changes after the slice.
 - A compacted page and an uncompacted page give the same final state.
 
-**Replay** follows [§2](#2-identifiers). A client can apply a record without
-earlier state. The order across the arrays does not matter.
+#### 4.3.5 Replay and recovery
+
+**Replay** follows [§2.3](#23-records-and-replay). A client can apply a record
+without earlier state. The order across the arrays does not matter.
 
 **Recovery**, for each room:
 
@@ -1395,8 +1423,7 @@ thread loads when the user opens it.
 A message is a record, so an edit is only a new snapshot of it at a later log
 position. The same mechanism moves and deletes messages.
 
-Capability `edit`. A `message` request with an existing `message_id` **saves**
-that message:
+Lets a `message` request with an existing `message_id` **save** that message:
 
 - A save replaces every client field ([§3.5](#35-messages)) with the submitted
   state, except `ext`, which merges ([§4.12](#412-ext)). It removes omitted
@@ -1407,7 +1434,7 @@ that message:
 - The server keeps `message_id`, `from`, and the other server fields.
 - Saves apply in server order, and the later save wins.
 - A save mentions only the users that it adds to `mentions`
-  ([§3.5](#35-messages)). Users that were already in the list are not
+  ([§3.5.5](#355-mentions)). Users that were already in the list are not
   mentioned again.
 
 ```jsonc
@@ -1431,12 +1458,12 @@ that message:
 {"id": "c12", "result": {"message_id": "1724803200042"}}
 ```
 
-**Move.** A save with a different `room_id` moves the message. The destination
-MUST exist, and the caller MUST be able to see it. The server delivers the
-snapshot to both rooms ([§4.3](#43-history)). Clients move the message, and do
-not treat it as deleted. The snapshot carries `prev_room_id`, the source room
-([§4.3](#43-history)). If the message has reactions, the server then logs one
-reactions record ([§4.7](#47-reactions)) in the destination, with every set
+A save with a different `room_id` **moves** the message. The destination MUST
+exist, and the caller MUST be able to see it. The server delivers the snapshot
+to both rooms ([§4.3.1](#431-a-rooms-log)). Clients move the message, and do not
+treat it as deleted. The snapshot carries `prev_room_id`, the source room
+([§4.3.1](#431-a-rooms-log)). If the message has reactions, the server then logs
+one reactions record ([§4.7](#47-reactions)) in the destination, with every set
 that is not empty.
 
 ```jsonc
@@ -1483,10 +1510,10 @@ creation is `invalid_params`.
 
 Clients show tombstones, and hide their reactions.
 
-**Redaction.** Earlier snapshots of a deleted message still hold its content.
-A server MAY rewrite them, and embedded copies of them ([§3.5](#35-messages)),
-into tombstones at their original `log_id`s. This is the only permitted
-rewrite of a logged record.
+Earlier snapshots of a deleted message still hold its content. A server MAY
+**redact** them: it rewrites them, and embedded copies of them
+([§3.5.4](#354-references)), into tombstones at their original `log_id`s.
+Redaction is the only permitted rewrite of a logged record.
 
 ### 4.5 `status`
 
@@ -1495,9 +1522,9 @@ question: is now a good time to reach this user? A status tells others whether
 the user is around. Idle reports and mutes tell the server when to hold back
 notifications.
 
-Capability `status`. Users set a presence `status` with `me`
-([§3.3](#33-identity)). Clients use the `status` request to report idle
-connections, and to set the mutes of the user.
+Lets users set a presence `status` with `me` ([§3.3.2](#332-profile)). Clients
+use the `status` request to report idle connections, and to set the mutes of the
+user.
 
 ```jsonc
 // <- the server frame accepts dnd and invisible
@@ -1515,7 +1542,7 @@ connections, and to set the mutes of the user.
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "dnd"}}}
 ```
 
-**Values.**
+#### 4.5.1 Values
 
 - A user sets one of these values:
   - `online`: the default. Others see the derived status below.
@@ -1536,10 +1563,10 @@ connections, and to set the mutes of the user.
 - Clients offer only the listed optional values.
 - A server without `idle` shows `online` for a connected user.
 
-**Delivery.**
+#### 4.5.2 Delivery
 
-- `status` is only in current user objects ([§3.3](#33-identity)). A change is
-  a `user` notification. Servers MAY delay it.
+- `status` is only in current user objects ([§3.3.1](#331-user-objects)). A
+  change is a `user` notification. Servers MAY delay it.
 - Clients take the user's own `status` only from `you`. Other objects about
   the user carry what others see. A complete object about the user, other than
   `you`, does not replace the user's own `status`.
@@ -1572,7 +1599,7 @@ connections, and to set the mutes of the user.
 {"method": "status", "params": {"mute": 1800}}
 ```
 
-**The `status` request.**
+#### 4.5.3 The `status` request
 
 - Clients send `status` as a request. The server replies `{}` when it applies
   the change.
@@ -1581,11 +1608,10 @@ connections, and to set the mutes of the user.
 - A `status` from the server is a notification.
 - Absent fields do not change.
 
-**Idle.**
+**`idle`** reports whether somebody attends the sending connection:
 
-- `idle` is about the sending connection. It is `false` when somebody attends
-  that connection. Otherwise it is the number of seconds since attention
-  stopped, a non-negative integer.
+- It is `false` when somebody attends that connection. Otherwise it is the
+  number of seconds since attention stopped, a non-negative integer.
 - A connection starts as attended. It keeps nothing from earlier connections.
   Its client sends `idle` when nobody attends it, and `idle: false` when
   somebody attends it again.
@@ -1593,24 +1619,26 @@ connections, and to set the mutes of the user.
   input. They then SHOULD send the seconds since the last input. They do not
   wait on a connection that starts unattended.
 - Servers MAY treat the connection as idle from the time that `idle` reports,
-  such as to wake the user for mentions since then ([§4.9](#49-push)).
+  such as to wake the user for mentions since then ([§4.9.4](#494-wake)).
 - Servers never send `idle`.
 
-**Mute.**
+**`mute`** silences the notifications of the user:
 
-- `mute` is `true`, `false`, or a positive integer number of seconds. It
-  silences the notifications of the user everywhere. With `room_id`, it
-  silences them only in that room and its threads. A `status` request with
-  `room_id` and no `mute` is `invalid_params`.
+- It is `true`, `false`, or a positive integer number of seconds. Without
+  `room_id`, it applies everywhere. With `room_id`, it applies only in that room
+  and its threads. A `status` request with `room_id` and no `mute` is
+  `invalid_params`.
 - `mute` is private. Others never see it.
 - Servers without timed mutes treat seconds as `true`.
 - Servers send each change to the mutes of the user to all connections of the
   user, as `status`. When a mute ends or is cleared, they send `mute: false`.
 - Clients apply a `status` that they receive as their own setting.
 
-**Sign-in.** At each sign-in ([§3.2](#32-authentication)), clients drop the
-statuses and mutes that they kept, and apply the ones that arrive. After the
-`auth` result, the server sends:
+#### 4.5.4 Sign-in
+
+At each sign-in ([§3.2.2](#322-order)), clients drop the statuses and mutes that
+they kept, and apply the ones that arrive. After the `auth` result, the server
+sends:
 
 - One `user` notification for each user who shares a room with the user,
   carrying in `new` the `status` that others see, except `offline` and `""`.
@@ -1621,10 +1649,10 @@ statuses and mutes that they kept, and apply the ones that arrive. After the
 
 ### 4.6 `activity`
 
-Capability `activity`. A client sends an `activity` notification when its
-activity changes. Activity is typing, and how far the user has read in a room.
-Each field that is present updates that state. Absent fields do not change it.
-Activity is not logged. Servers MAY ignore `typing` and `read_message_id`.
+Adds the `activity` notification. A client sends it when its activity changes.
+Activity is typing, and how far the user has read in a room. Each field that is
+present updates that state. Absent fields do not change it. Activity is not
+logged. Servers MAY ignore `typing` and `read_message_id`.
 
 ```jsonc
 // -> start typing
@@ -1654,9 +1682,9 @@ Activity is not logged. Servers MAY ignore `typing` and `read_message_id`.
 
 ### 4.7 `reactions`
 
-Capability `reactions`. A client sets its own complete set of emoji on one
-message. The server logs the change with a `log_id`, and broadcasts it to the
-room of the message. The result is `{}`.
+Lets a client set its own complete set of emoji on one message. The server logs
+the change with a `log_id`, and broadcasts it to the room of the message. The
+result is `{}`.
 
 ```jsonc
 // ->
@@ -1672,13 +1700,13 @@ room of the message. The result is `{}`.
 {"id": "c17", "result": {}}
 ```
 
-- The request refers only to the message. The logged record carries the room
-  of the message at that time ([§4.3](#43-history)).
-- The `reactions` array of the notification holds one element for each user.
-  Its `from` is a recorded user object ([§3.3](#33-identity)). Live broadcasts
-  carry one element. Compacted history records
-  ([§4.3](#43-history)) MAY carry more. Each element replaces the set of that
-  user on that message.
+- The request refers only to the message. The logged record carries the room of
+  the message at that time ([§4.3.1](#431-a-rooms-log)).
+- The `reactions` array of the notification holds one element for each user. Its
+  `from` is a recorded user object ([§3.3.1](#331-user-objects)). Live
+  broadcasts carry one element. Compacted history records
+  ([§4.3.4](#434-compaction)) MAY carry more. Each element replaces the set of
+  that user on that message.
 - Clients keep state for each `(message_id, user_id)`, and calculate the
   totals. They accept reactions for messages that they have not loaded.
 - `emojis` entries are strings. Duplicates collapse, and the order does not
@@ -1715,9 +1743,9 @@ class Embed {
 }
 ```
 
-`body.embeds` holds rich content in display order. `kind` selects the
-renderer. Clients render an unknown kind from `og`, or else as the fallback
-card ([§3.5](#35-messages)).
+`body.embeds` holds rich content in display order. `kind` selects the renderer.
+Clients render an unknown kind from `og`, or else as the fallback card
+([§3.5.2](#352-rendering)).
 
 ```json
 {"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/Qm7xk2…"}
@@ -1733,7 +1761,8 @@ card ([§3.5](#35-messages)).
   time.
 - `html`: sanitize it with an allowlist sanitizer, such as DOMPurify, before
   insertion. Do this for every source.
-- `upload` is [§4.8.4](#484-embedupload), and `stream` is [§4.8.5](#485-embedstream).
+- `upload` is [§4.8.4](#484-embedupload), and `stream` is
+  [§4.8.5](#485-embedstream).
 
 #### 4.8.1 OpenGraph metadata (`og`)
 
@@ -1818,9 +1847,10 @@ the `message` or `command` ([§4.1](#41-command)) lists them, in request order:
 
 #### 4.8.4 `embed:upload`
 
-Capability `embed:upload`. The sender gives an optional `title`, such as the
-file name. While `url` is absent, the upload is pending, and clients show a
-placeholder. On success, the server sets `url` to the file that it hosts.
+Adds `upload` embeds, files that the sender writes over HTTP. The sender gives
+an optional `title`, such as the file name. While `url` is absent, the upload is
+pending, and clients show a placeholder. On success, the server sets `url` to
+the file that it hosts.
 
 - The server SHOULD add `og` describing the file: `image` for a preview,
   and `video` or `audio` for playable media. It MAY keep what the sender
@@ -1829,9 +1859,9 @@ placeholder. On success, the server sets `url` to the file that it hosts.
 
 #### 4.8.5 `embed:stream`
 
-Capability `embed:stream`. A message can carry live text. The sender writes it
-over HTTP, and readers see it grow. Stream embeds follow the rules for embed
-identity ([§4.8.2](#482-embed-identity)) and writes ([§4.8.3](#483-writes)).
+Lets a message carry live text. The sender writes it over HTTP, and readers see
+it grow. Stream embeds follow the rules for embed identity
+([§4.8.2](#482-embed-identity)) and writes ([§4.8.3](#483-writes)).
 
 ```jsonc
 // -> the embed in a message request; the result and write follow §4.8.3
@@ -1843,9 +1873,9 @@ identity ([§4.8.2](#482-embed-identity)) and writes ([§4.8.3](#483-writes)).
 ```
 
 - `format` defines how to render the text. The default, `"plain"`, shows the
-  text as is, with its line breaks. Clients MAY support other formats
-  natively, such as `"markdown"` (CommonMark, [§3.5](#35-messages)) or
-  `"terminal"`. They render unknown formats as plain.
+  text as is, with its line breaks. Clients MAY support other formats natively,
+  such as `"markdown"` (CommonMark, [§3.5.2](#352-rendering)) or `"terminal"`.
+  They render unknown formats as plain.
 - Write: the sender sends UTF-8 text as a streaming `PUT` body to
   `write_url` ([§4.8.3](#483-writes)). The end of the body ends the stream.
 - Read: `GET url` returns the text that the server kept. It continues as more
@@ -1872,7 +1902,7 @@ to the name of the user.
   `embed:upload`. A `/avatar` command ([§4.1](#41-command)) with one `upload`
   embed asks the server to use that file as the avatar of the sender. When the
   upload completes, the server sets `avatar` and sends `user`
-  ([§3.3](#33-identity)).
+  ([§3.3.3](#333-changes)).
 - Clients choose which avatar sources to load, and MAY ignore any avatar. They
   load avatars only as images, never as documents. They bind or escape the
   values, and never insert them into HTML as raw text.
@@ -1917,7 +1947,7 @@ supports. If `server.push` is present, the server accepts `push_register` and
 {"method": "push_unregister", "id": "c32", "params": {"url": "https://relay.example/p/xyz"}}
 ```
 
-**Registration.**
+#### 4.9.1 Registration
 
 - `kind` is a key of `server.push` other than `wake`. Fields other than `url`,
   `push_id`, and `wake` are specific to the kind. Third-party kinds
@@ -1943,7 +1973,7 @@ supports. If `server.push` is present, the server accepts `push_register` and
 - Servers remove a registration whose `url` does not accept pushes, such as
   one that answers 404 or 410.
 
-**Kinds.**
+#### 4.9.2 Kinds
 
 - `relay`: the server sends the payload in a POST to `url`, with `token`
   (optional) as a bearer token. The relay is responsible for delivery after
@@ -1972,8 +2002,9 @@ supports. If `server.push` is present, the server accepts `push_register` and
   - `normal` for a push that only `joined` selects.
   - `high` for all other pushes.
 
-**Payload.** Every kind delivers the same payload: a UTF-8 JSON object of at
-most 2048 bytes.
+#### 4.9.3 Payload
+
+Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
 
 - `push_id`: the `push_id` of the registration, if it has one. Clients drop a
   payload with a `push_id` that they do not know. A client that registered a
@@ -2009,17 +2040,17 @@ most 2048 bytes.
 {"push_id": "t65S5XBst9bSDpjJ", "unread": 0}
 ```
 
-**Wake.**
+#### 4.9.4 Wake
 
 - `wake` (optional) lists the scopes that a registration wakes for. Each scope
   except `badge` selects new messages in rooms that the user can see:
   - `mentions`: messages whose `mentions` list the user
-    ([§3.5](#35-messages)). Servers MAY also wake for an edit that adds the
+    ([§3.5.5](#355-mentions)). Servers MAY also wake for an edit that adds the
     user to `mentions`.
   - `private`: messages in private rooms ([§4.2.4](#424-creating-and-editing))
     that the user joined, and in their threads.
   - `replies`: messages whose `reply_to` refers to a message of the user
-    ([§3.5](#35-messages)).
+    ([§3.5.4](#354-references)).
   - `joined`: messages in rooms that the user joined
     ([§4.2.2](#422-membership)).
   - `badge`: every change to `unread`. A push for a change that no other scope
@@ -2034,8 +2065,9 @@ most 2048 bytes.
 - Servers do not wake a user for the user's own messages. Server policy
   decides other wake rules, such as rate limits.
 - Suggested convention: wake a user only when every connection of the user is
-  idle ([§4.5](#45-status)) or closed. Servers MAY wait a short time first,
-  and skip the push if the `read_message_id` of the user is past the message.
+  idle ([§4.5.3](#453-the-status-request)) or closed. Servers MAY wait a short
+  time first, and skip the push if the `read_message_id` of the user is past the
+  message.
 
 ### 4.10 WebAuthn authentication
 
@@ -2054,12 +2086,11 @@ creates a credential, and `action: "login"` signs in. Both steps use the same
 | `begin`  | `step: "begin"`                                | `challenge_id` (opaque), `public_key` (WebAuthn options) |
 | `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` ([§3.3](#33-identity))                                             |
 
-`public_key` holds creation options for a registration, or request options for
-a login. It uses standard
+`public_key` holds creation options for a registration, or request options for a
+login. It uses standard
 [WebAuthn JSON](https://www.w3.org/TR/webauthn-3/#sctn-parseCreationOptionsFromJSON),
 with binary fields as unpadded base64url. Clients pass it to
-`navigator.credentials.create` or `.get`, and return the credential in
-`finish`.
+`navigator.credentials.create` or `.get`, and return the credential in `finish`.
 
 - Registration MUST require discoverable credentials.
 - Login omits `allowCredentials`, or sends an empty array.
@@ -2083,10 +2114,10 @@ registration identity.
 - Server policy decides who can register, and who can authenticate again.
 - Invalid challenges and failed verification are `denied`.
 
-**Session resume (optional).** A verified `finish` result MAY carry a bearer
-`token` ([§3.2](#32-authentication)) if the server also lists `token`. Servers
-MUST bind such a token to the allowed origin of the ceremony, and MUST make it
-expire. A mismatched origin is `denied`.
+A verified `finish` result MAY carry a bearer `token`
+([§3.2.1](#321-bearer-tokens)) to **resume the session**, if the server also
+lists `token`. Servers MUST bind such a token to the allowed origin of the
+ceremony, and MUST make it expire. A mismatched origin is `denied`.
 
 ### 4.11 Email and external sign-in
 
@@ -2131,7 +2162,7 @@ delivers a temporary token outside the connection. An `auth` request with that
 {"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
 ```
 
-**Proposals.**
+#### 4.11.1 Proposals
 
 - A proposal is an `auth` request without `token`. It authenticates nothing.
 - On a connection that is signed in to an account, guests included, a
@@ -2146,14 +2177,14 @@ delivers a temporary token outside the connection. An `auth` request with that
   signs the user in to someone else's account). The server returns it
   unchanged in each link.
 
-**Temporary tokens.**
+#### 4.11.2 Temporary tokens
 
 - The server delivers a temporary token for the proposal, as a link, a code to
   type, or both.
 - A temporary token expires within minutes of its delivery.
 - A token that is short enough to type, such as six digits, works only on the
-  connection that made the proposal (short codes are easy to guess). A token that works on other connections
-  MUST be unguessable.
+  connection that made the proposal (short codes are easy to guess). A token
+  that works on other connections MUST be unguessable.
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
   WebSocket URL when the link opens a client that is not tied to one server.
@@ -2162,22 +2193,22 @@ delivers a temporary token outside the connection. An `auth` request with that
 - For a link with the `state` of its own proposal, a client uses the server
   that it proposed to, and ignores `server`.
 
-**Approval.**
+#### 4.11.3 Approval
 
 - Approval is an `auth` request with `token` and either scheme that the server
   offers.
 - Approval of a sign-in authenticates the connection that presents the token.
-  That connection MUST NOT be signed in already. The result carries `you` and
-  a bearer `token` for later connections ([§3.2](#32-authentication)).
+  That connection MUST NOT be signed in already. The result carries `you` and a
+  bearer `token` for later connections ([§3.2.1](#321-bearer-tokens)).
 - Approval of an addition works only on a connection that is signed in to the
   account that proposed it (otherwise someone could lead a victim to link the
-  victim's identity to the other person's account). It adds the address or the external identity to
-  that account, and returns `{}`.
+  victim's identity to the other person's account). It adds the address or the
+  external identity to that account, and returns `{}`.
 - An invalid, expired, or used token is `denied`. A sign-in token on a
   signed-in connection is also `denied`, and so is an address or an external
   identity that belongs to another account.
 
-**Email.**
+#### 4.11.4 Email
 
 - A proposal carries `email`. It returns `{}`, whether or not the address has
   an account.
@@ -2186,7 +2217,7 @@ delivers a temporary token outside the connection. An `auth` request with that
 - Account creation for unknown addresses, send rate limits (`retry_after`),
   and the bearer token's lifetime are server policy.
 
-**External.**
+#### 4.11.5 External
 
 - A proposal MAY carry `return_url`, a URL of the client. Servers MUST accept
   only a `return_url` on an origin that they trust (otherwise the page would
@@ -2213,10 +2244,9 @@ Some data has no field in this document: a bridge's IDs for the messages it
 relays, an agent's settings for a room, or a user's time zone. Capability
 `ext` gives that data a place that survives other clients' saves.
 
-Capability `ext`. Servers keep the `ext` that clients write on users,
-messages, and rooms, and merge it as below. `ext` is an object whose keys are
-extension names without the `ext:` prefix ([§4](#4-capabilities)), such
-as `irc`:
+Keeps the `ext` that clients write on users, messages, and rooms, and merges it
+as below. `ext` is an object whose keys are extension names without the `ext:`
+prefix ([§4](#4-capabilities)), such as `irc`:
 
 ```json
 "ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
@@ -2226,11 +2256,11 @@ as `irc`:
   kept value, an empty value (`""`, `[]`, `{}`) clears that key, and keys that
   it leaves out stay. The value under a key is replaced whole. `null` is an
   ordinary value, and `"ext": {}` changes nothing.
-- Writes are `me` ([§3.3](#33-identity)), `message` requests
+- Writes are `me` ([§3.3.2](#332-profile)), `message` requests
   ([§3.5](#35-messages), [§4.4](#44-edit)), and `room_set`
-  ([§4.2.4](#424-creating-and-editing)). A write that creates a record, or
-  saves a message whose current snapshot is a tombstone, merges into an empty
-  `ext`. A save with `deleted: true` drops `ext`.
+  ([§4.2.4](#424-creating-and-editing)). A write that creates a record, or saves
+  a message whose current snapshot is a tombstone, merges into an empty `ext`. A
+  save with `deleted: true` drops `ext`.
 - Complete user objects and records carry their complete `ext`. A `user`
   notification carries at least each key that changed, with a cleared key as
   its empty value, and clients merge it the same way.
@@ -2283,8 +2313,8 @@ server.
 
 ### 5.2 Authentication
 
-- `auth` is a barrier ([§3.2](#32-authentication)). Requests that follow it
-  never run without authentication, or as an earlier identity.
+- `auth` is a barrier ([§3.2.2](#322-order)). Requests that follow it never run
+  without authentication, or as an earlier identity.
 - The server executes `auth` on each connection, also when it repeats an `id`
   ([§1.2](#12-retries-and-deduplication)). A deduplicated result would sign in
   a connection that presented no credentials.
@@ -2295,32 +2325,29 @@ server.
 - A bearer `token` from WebAuthn is bound to the origin of its ceremony
   ([§4.10](#410-webauthn-authentication)). So a stolen token does not work from
   another web origin.
-- An email proposal returns `{}` for every address
-  ([§4.11](#411-email-and-external-sign-in)). So proposals do not reveal which
-  addresses have accounts.
+- An email proposal returns `{}` for every address ([§4.11.1](#4111-proposals)).
+  So proposals do not reveal which addresses have accounts.
 - A short code works only on the connection that proposed, and failed attempts
   from any connection count against the proposal
-  ([§4.11](#411-email-and-external-sign-in)). This stops brute force across
+  ([§4.11.2](#4112-temporary-tokens)). This stops brute force across
   connections.
-- Link tokens travel in the URL fragment
-  ([§4.11](#411-email-and-external-sign-in)). Browsers do not send fragments in
-  request lines or `Referer` headers, so tokens stay out of server logs.
+- Link tokens travel in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
+  Browsers do not send fragments in request lines or `Referer` headers, so
+  tokens stay out of server logs.
 - A link carries the `state` of its proposal
-  ([§4.11](#411-email-and-external-sign-in)). Without it, a client could follow
-  someone else's link into that person's account (login cross-site request
-  forgery).
-- A signed-in connection cannot approve a sign-in
-  ([§4.11](#411-email-and-external-sign-in)). So a link cannot silently switch
-  a session to another account.
+  ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
+  else's link into that person's account (login cross-site request forgery).
+- A signed-in connection cannot approve a sign-in ([§4.11.3](#4113-approval)).
+  So a link cannot silently switch a session to another account.
 - An addition works only on a connection of the account that proposed it
-  ([§4.11](#411-email-and-external-sign-in)). Otherwise someone could lead a
-  victim to link the victim's identity to the other person's account.
+  ([§4.11.3](#4113-approval)). Otherwise someone could lead a victim to link the
+  victim's identity to the other person's account.
 - Servers accept only a `return_url` on a trusted origin, and bind link tokens
-  to that origin ([§4.11](#411-email-and-external-sign-in)). Otherwise the
-  sign-in page would be an open redirect that hands working tokens to any site.
+  to that origin ([§4.11.5](#4115-external)). Otherwise the sign-in page would
+  be an open redirect that hands working tokens to any site.
 - The sign-in page asks the user to confirm before it redirects, and tells the
-  user where to type a code ([§4.11](#411-email-and-external-sign-in)). Someone
-  else may have started the sign-in, as in device-code phishing.
+  user where to type a code ([§4.11.5](#4115-external)). Someone else may have
+  started the sign-in, as in device-code phishing.
 
 ### 5.3 Identity and access control
 
@@ -2347,14 +2374,13 @@ server.
   would have created a public room.
 - The destination of a move is a room that the caller can see
   ([§4.4](#44-edit)). So a move cannot post into a hidden room.
-- Mutes are private to their user ([§4.5](#45-status)).
+- Mutes are private to their user ([§4.5.3](#453-the-status-request)).
 
 ### 5.4 Untrusted content
 
-- Clients disable or sanitize raw HTML in CommonMark ([§3.5](#35-messages)),
-  and sanitize `html` embeds from every source
-  ([§4.8](#48-embeds-and-avatars)). This prevents stored cross-site scripting
-  (XSS).
+- Clients disable or sanitize raw HTML in CommonMark ([§3.5.2](#352-rendering)),
+  and sanitize `html` embeds from every source ([§4.8](#48-embeds-and-avatars)).
+  This prevents stored cross-site scripting (XSS).
 - `iframe` embeds run with `sandbox="allow-scripts"`, never with
   `allow-same-origin` too ([§4.8](#48-embeds-and-avatars)). Together, they
   would let the embed read the client's storage and bearer token, or remove
@@ -2362,8 +2388,8 @@ server.
 - Clients load avatars only as images, never as documents
   ([§4.8.6](#486-avatars)). So an uploaded SVG cannot run script.
 - Clients open only an `https` `url` for external sign-in
-  ([§4.11](#411-email-and-external-sign-in)). So a server cannot run script in
-  the client with a `javascript:` URL.
+  ([§4.11.5](#4115-external)). So a server cannot run script in the client with
+  a `javascript:` URL.
 
 ### 5.5 Network privacy and server requests
 
@@ -2382,10 +2408,10 @@ server.
 - `write_url` is a credential that expires ([§4.8.3](#483-writes)). So only
   the sender can write an upload.
 - Servers accept only `https` push endpoints that do not resolve to internal
-  addresses ([§4.9](#49-push)). This prevents server-side request forgery
-  (SSRF) against the server's network.
-- Clients drop push payloads with an unknown `push_id` ([§4.9](#49-push)). So
-  stale pushes for a removed account, and forged pushes to a known endpoint,
+  addresses ([§4.9.1](#491-registration)). This prevents server-side request
+  forgery (SSRF) against the server's network.
+- Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
+  So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
 
 ### 5.6 Resource limits
@@ -2424,9 +2450,10 @@ Three system identities tell the receiver who else got the message:
 - A server-wide notice also refers to a room, usually the default room
   ([§3.5](#35-messages)). It reaches every user whether or not they joined it.
 - These are sender identities that state a scope, not rooms.
-- Joins and leaves are memberships ([§4.2.2](#422-membership)), not `~room` messages.
-- `~private` messages are transient notices ([§3.5](#35-messages)). A private notice
-  that should last belongs in a room of its own.
+- Joins and leaves are memberships ([§4.2.2](#422-membership)), not `~room`
+  messages.
+- `~private` messages are transient notices ([§3.5.3](#353-delivery)). A private
+  notice that should last belongs in a room of its own.
 - A `~private` notice MAY omit `room_id`, like any message
   ([§3.5](#35-messages)). A client shows it even when it has no room to show
   it in yet, such as while it signs in.
@@ -2471,7 +2498,7 @@ A prefix says what kind of ID follows:
 
 | prefix | refers to         | in `body.text`                                              |
 |--------|-------------------|-------------------------------------------------------------|
-| `@`    | a user            | a mention ([§3.5](#35-messages)), listed in `body.mentions` too |
+| `@`    | a user            | a mention ([§3.5.5](#355-mentions)), listed in `body.mentions` too |
 | `#`    | a room            | a reference to the room; it mentions no one                 |
 | `~`    | a system identity | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices))     |
 
@@ -2490,10 +2517,10 @@ A prefix says what kind of ID follows:
 - `user_id`s beginning with `~` are reserved for system identities. Servers
   SHOULD NOT assign them to users.
 - How `text` renders is up to the client.
-- Clients MAY show an `@id` that refers to a known user with the user's
-  latest display name ([§3.3](#33-identity)), such as a chip. They MAY show a `#id` that
-  refers to a known room as a link with its title. Unknown IDs render as
-  written.
+- Clients MAY show an `@id` that refers to a known user with the user's latest
+  display name ([§3.3.1](#331-user-objects)), such as a chip. They MAY show a
+  `#id` that refers to a known room as a link with its title. Unknown IDs render
+  as written.
 
 ---
 
@@ -2502,64 +2529,70 @@ A prefix says what kind of ID follows:
 Exchanges that are valid under this spec but easy to get wrong, collected so
 implementations accept them. Each follows from the sections it cites.
 
-- **The server sends a welcome before `auth`.** Authentication gates what a
-  client sends, not what it receives ([§3.2](#32-authentication)). A server MAY follow its
-  `server` frame with a `~private` notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)), such as how to
-  sign in. It omits `room_id`, since the client knows no rooms yet. Sent
-  before the server reads any frame, it precedes the `auth` result even
-  when the client pipelined `auth`. The server sends it on each
-  connection. Clients MAY replace the previous one rather than show both.
+### B.1 The server sends a welcome before `auth`
 
-  ```jsonc
-  // <-
-  {"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
-  // <- before any auth
-  {
-    "method": "message", "params": {
-      "from": {"user_id": "~private", "name": "Only you"},
-      "body": {"text": "Guests can read along. **Sign in with a passkey** to post.", "format": "markdown"}
-    }
+Authentication gates what a client sends, not what it receives
+([§3.2.2](#322-order)). A server MAY follow its `server` frame with a `~private`
+notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)), such as how
+to sign in. It omits `room_id`, since the client knows no rooms yet. Sent before
+the server reads any frame, it precedes the `auth` result even when the client
+pipelined `auth`. The server sends it on each connection. Clients MAY replace
+the previous one rather than show both.
+
+```jsonc
+// <-
+{"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+// <- before any auth
+{
+  "method": "message", "params": {
+    "from": {"user_id": "~private", "name": "Only you"},
+    "body": {"text": "Guests can read along. **Sign in with a passkey** to post.", "format": "markdown"}
   }
-  // ->
-  {"method": "auth", "id": "c1", "params": {"scheme": "guest"}}
-  // <-
-  {"id": "c1", "result": {"you": {"user_id": "guest_1234"}}}
-  ```
+}
+// ->
+{"method": "auth", "id": "c1", "params": {"scheme": "guest"}}
+// <-
+{"id": "c1", "result": {"you": {"user_id": "guest_1234"}}}
+```
 
-- **A bot connects, posts once, and disconnects.** A deploy hook or cron
-  job needs no rooms. It MAY send `auth` and `message` together without
-  waiting for `server`, since `auth` is a barrier ([§3.2](#32-authentication)). Posting does
-  not require joining ([§3.5](#35-messages)), so the bot receives no broadcast. The
-  `message_id` result is its confirmation. It closes the connection once
-  that arrives. If the connection drops first, it resends the same
-  `id` and `params` on a new connection, and the server returns the
-  original result rather than posting twice ([§1.2](#12-retries-and-deduplication)).
+### B.2 A bot connects, posts once, and disconnects
 
-  ```jsonc
-  // -> both at once, before server arrives
-  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
-  {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
-  // <-
-  {"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["token"]}}
-  // <-
-  {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
-  // <- then the bot closes the connection
-  {"id": "deploy-7f3a", "result": {"message_id": "1724803200042"}}
-  ```
+A deploy hook or cron job needs no rooms. It MAY send `auth` and `message`
+together without waiting for `server`, since `auth` is a barrier
+([§3.2.2](#322-order)). Posting does not require joining
+([§3.5.1](#351-creating)), so the bot receives no broadcast. The `message_id`
+result is its confirmation. It closes the connection once that arrives. If the
+connection drops first, it resends the same `id` and `params` on a new
+connection, and the server returns the original result rather than posting twice
+([§1.2](#12-retries-and-deduplication)).
 
-- **An invite token signs up several people.** A server MAY treat a
-  `token` as an invitation that creates a new identity on each use, up to a
-  limit it sets, such as ten sign-ups from one link. Each result carries the
-  new identity's own `token`. The client saves it and reconnects with it
-  rather than the invite ([§3.2](#32-authentication)). Issuing and revoking invites are
-  server commands ([§4.1](#41-command)). A used-up or expired invite is `denied`.
+```jsonc
+// -> both at once, before server arrives
+{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
+{"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
+// <-
+{"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["token"]}}
+// <-
+{"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
+// <- then the bot closes the connection
+{"id": "deploy-7f3a", "result": {"message_id": "1724803200042"}}
+```
 
-  ```jsonc
-  // -> each invitee signs in with the shared invite
-  {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "inv_Qm7x...", "name": "Bob"}}
-  // <- a new identity, with its own token for later connections
-  {"id": "c1", "result": {"you": {"user_id": "bob", "name": "Bob"}, "token": "st_Hk41..."}}
-  ```
+### B.3 An invite token signs up several people
+
+A server MAY treat a `token` as an invitation that creates a new identity on
+each use, up to a limit it sets, such as ten sign-ups from one link. Each result
+carries the new identity's own `token`. The client saves it and reconnects with
+it rather than the invite ([§3.2.1](#321-bearer-tokens)). Issuing and revoking
+invites are server commands ([§4.1](#41-command)). A used-up or expired invite
+is `denied`.
+
+```jsonc
+// -> each invitee signs in with the shared invite
+{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "inv_Qm7x...", "name": "Bob"}}
+// <- a new identity, with its own token for later connections
+{"id": "c1", "result": {"you": {"user_id": "bob", "name": "Bob"}, "token": "st_Hk41..."}}
+```
 
 ---
 
@@ -2571,8 +2604,10 @@ can experiment and converge on them.
 ### C.1 WebRTC: signaling for audio, video, and peer-to-peer connections
 
 Planned capability `rtc` requires capability `rooms`. Any room can hold one
-WebRTC session at a time, and its members may join it ([§4.2.2](#422-membership)). The
-socket carries signaling. Media and data travel peer to peer.
+WebRTC session at a time, and its members may join it
+([§4.2.2](#422-membership)). The socket carries signaling. Media and data travel
+peer to peer. Mute and camera state, recording, and transcoding are left to
+clients and servers.
 
 ```ts
 class Room {    // besides the fields of §3.4
@@ -2585,28 +2620,29 @@ class User {    // in rtc_* frames, besides the fields of §3.3
 }
 ```
 
-**Who is in a session.** A room's `rtc` is a delivery field ([§4.2](#42-rooms)).
-It is present while the room has a session, lists each user in it once,
-and is absent otherwise. It reaches the room's members, and a public
-thread's parent members, through `room_list` and `room_update` `updated`.
-It lists users, not seats. Its appearance on a room is the ring. To reach a member who is
-offline, a caller's client also posts an ordinary message that mentions
+A room's **`rtc`** lists who is in a session. It is a delivery field
+([§4.2](#42-rooms)). It is present while the room has a session, lists each user
+in it once, and is absent otherwise. It reaches the room's members, and a public
+thread's parent members, through `room_list` and `room_update` `updated`. It
+lists users, not seats. Its appearance on a room is the ring. To reach a member
+who is offline, a caller's client also posts an ordinary message that mentions
 them ([§4.9](#49-push)).
 
-**Seats.** Room membership is per user; a session is per device. Each
-connection in a session holds a seat. The server assigns each seat a
-`peer_id` that is unguessable and unique within the session. User objects
-in `rtc_*` frames are recorded objects ([§3.3](#33-identity)), never merged. Each carries
-the `peer_id` of one seat. Clients key peers on `(user_id, peer_id)`.
+Room membership is per user; a session is per device. Each connection in a
+session holds a **seat**. The server assigns each seat a `peer_id` that is
+unguessable and unique within the session. User objects in `rtc_*` frames are
+recorded objects ([§3.3.1](#331-user-objects)), never merged. Each carries the
+`peer_id` of one seat. Clients key peers on `(user_id, peer_id)`.
 
-**Joining.** `rtc_join` takes a seat, starting the session if there is
-none. The result carries the joiner's `peer_id`, its ICE configuration with
-the time it expires, and `peers`, the seats already in the session, oldest
-first. The server handles one join per session at a time, so of two joins
-the later one's `peers` includes the earlier. The joiner offers to each
-peer, and they learn of it from its offer. Clients SHOULD NOT answer
-offers until their user has joined the session. Clients MAY use
-relay-only ICE, so servers SHOULD include TURN in `ice`.
+#### C.1.1 Joining
+
+`rtc_join` takes a seat, starting the session if there is none. The result
+carries the joiner's `peer_id`, its ICE configuration with the time it expires,
+and `peers`, the seats already in the session, oldest first. The server handles
+one join per session at a time, so of two joins the later one's `peers` includes
+the earlier. The joiner offers to each peer, and they learn of it from its
+offer. Clients SHOULD NOT answer offers until their user has joined the session.
+Clients MAY use relay-only ICE, so servers SHOULD include TURN in `ice`.
 
 ```jsonc
 // -> Bob's phone joins
@@ -2622,14 +2658,17 @@ relay-only ICE, so servers SHOULD include TURN in `ice`.
 }
 ```
 
-**Reclaiming and leaving.** A session outlives a dropped chat connection. `rtc_join` with a
-`peer_id` reclaims that seat for the same user after a reconnect, or
-refreshes `ice` before it expires (with a new request `id`, [§1.2](#12-retries-and-deduplication)); the
-other peers see no change. After reclaiming, a client restarts ICE with
-every peer not connected, using the fresh `ice`. Only a client that still
-holds its peer connections reclaims; otherwise it leaves and joins anew. A
-seat ends with `rtc_leave`, or when its connection stays closed past a
-grace period set by server policy. The session ends with its last seat.
+#### C.1.2 Reclaiming and leaving
+
+A session outlives a dropped chat connection. `rtc_join` with a `peer_id`
+reclaims that seat for the same user after a reconnect, or refreshes `ice`
+before it expires (with a new request `id`,
+[§1.2](#12-retries-and-deduplication)); the other peers see no change. After
+reclaiming, a client restarts ICE with every peer not connected, using the fresh
+`ice`. Only a client that still holds its peer connections reclaims; otherwise
+it leaves and joins anew. A seat ends with `rtc_leave`, or when its connection
+stays closed past a grace period set by server policy. The session ends with its
+last seat.
 
 ```jsonc
 // -> after reconnecting and authenticating
@@ -2638,12 +2677,13 @@ grace period set by server policy. The session ends with its last seat.
 {"method": "rtc_leave", "id": "c48", "params": {"room_id": "1724803950000"}}
 ```
 
-**Signaling.** `rtc_signal` is a notification relayed between seats. The
-sender refers to a seat in `to`. The server delivers it with the sender's
-seat in `from`. Only a connection holding a seat may send one. Signals
-from one seat to another arrive in order. The server drops signals to a
-seat whose connection is closed, that match no seat, or that exceed its
-rate or size limits. When a seat ends, the
+#### C.1.3 Signaling
+
+`rtc_signal` is a notification relayed between seats. The sender refers to a
+seat in `to`. The server delivers it with the sender's seat in `from`. Only a
+connection holding a seat may send one. Signals from one seat to another arrive
+in order. The server drops signals to a seat whose connection is closed, that
+match no seat, or that exceed its rate or size limits. When a seat ends, the
 server sends each remaining peer a signal from it with `payload: null`.
 
 ```jsonc
@@ -2672,33 +2712,32 @@ A `payload` is one of these:
 - `{"candidate": null}` ends the candidates.
 - `null` comes from the server only, and means the sending seat ended.
 
-Peers use perfect negotiation ([WebRTC §10.7](https://www.w3.org/TR/webrtc/#perfect-negotiation-example)). In each pair, the seat
-with the greater `peer_id` is polite. Receivers ignore unknown `payload` keys.
+Peers use perfect negotiation
+([WebRTC §10.7](https://www.w3.org/TR/webrtc/#perfect-negotiation-example)). In
+each pair, the seat with the greater `peer_id` is polite. Receivers ignore
+unknown `payload` keys.
 
-**Topology.** Mesh is the baseline. Peers negotiate pairwise and the server
-only relays. Clients SHOULD soft-cap participants. A server MAY instead put
-a session on a media server. `rtc_join` then returns a `transport`, such as
-`{"type": "livekit", "url": "wss://sfu.example", "token": "..."}`, in place
-of `ice` and `peers`, and the client follows that transport's own
-signaling. The server drives the room's `rtc` from it.
+**Mesh** is the baseline topology. Peers negotiate pairwise and the server only
+relays. Clients SHOULD soft-cap participants. A server MAY instead put a session
+on a media server. `rtc_join` then returns a `transport`, such as
+`{"type": "livekit", "url": "wss://sfu.example", "token": "..."}`, in place of
+`ice` and `peers`, and the client follows that transport's own signaling. The
+server drives the room's `rtc` from it.
 
-**Apron over a data channel.** A data channel whose WebRTC `protocol` is
-`apron/<protocol>`, with the version of [§3.1](#31-server-frame), carries Apron frames,
-one per ordered, reliable data channel message no larger than the remote
-peer's SCTP maximum. The oldest seat in the session hosts the room and
-runs the server side of Apron on its own device. That is `peers[0]`, or the
-joiner itself when there are no peers. Each other seat opens a channel to
-it. A guest authenticates with `guest`, and the host assigns it the
-identity of its seat. When the host's seat ends, the next oldest seat hosts
-a new Apron session on new channels. Earlier history stays with the
-clients that received it. A reclaimed seat keeps its age. Clients route
-other data channels by their `protocol` and close ones they do not
-support. In a mesh, DTLS encrypts the channel end to end. Its fingerprints
-travel through the chat server's signaling, so clients MAY pin or compare
-them.
+#### C.1.4 Apron over a data channel
 
-**Exclusions.** Mute and camera state, recording, and transcoding are left
-to clients and servers.
+A data channel whose WebRTC `protocol` is `apron/<protocol>`, with the version
+of [§3.1](#31-server-frame), carries Apron frames, one per ordered, reliable
+data channel message no larger than the remote peer's SCTP maximum. The oldest
+seat in the session hosts the room and runs the server side of Apron on its own
+device. That is `peers[0]`, or the joiner itself when there are no peers. Each
+other seat opens a channel to it. A guest authenticates with `guest`, and the
+host assigns it the identity of its seat. When the host's seat ends, the next
+oldest seat hosts a new Apron session on new channels. Earlier history stays
+with the clients that received it. A reclaimed seat keeps its age. Clients route
+other data channels by their `protocol` and close ones they do not support. In a
+mesh, DTLS encrypts the channel end to end. Its fingerprints travel through the
+chat server's signaling, so clients MAY pin or compare them.
 
 ### C.2 Multiplexing envelope
 
@@ -2769,9 +2808,9 @@ class Embed {   // "actions" kind, besides the fields of §4.8
 
 - Only servers set actions. A server drops or rebuilds an `actions` embed
   that a client sends.
-- Choosing one of `commands` sends its `command` as a `command` request, or
-  as the request it refers to, such as `/join` ([§4.1](#41-command)). When the message has
-  a `message_id`, the request's `reply_to` refers to it.
+- Choosing one of `commands` sends its `command` as a `command` request, or as
+  the request it refers to, such as `/join` ([§4.1](#41-command)). When the
+  message has a `message_id`, the request's `reply_to` refers to it.
 - Clients ignore groups they do not know ([§1](#1-transport--framing)).
-- Clients without `actions` support render the fallback card ([§3.5](#35-messages)).
-  Its `og` can spell out the commands to type.
+- Clients without `actions` support render the fallback card
+  ([§3.5.2](#352-rendering)). Its `og` can spell out the commands to type.

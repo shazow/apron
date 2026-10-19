@@ -15,6 +15,16 @@ fixtures, or implementations from it.
   added.
 - A section MAY open with a short paragraph of context and motivation. Write
   it as prose; the rules follow as bullets.
+- Give a numbered subheading to each topic that readers look up or link to.
+  A follow-on within one flow stays in its section, such as move and delete
+  after edit. Headings go no deeper than x.y.z.
+- A capability's heading is its name. Its first sentence starts with the verb
+  of what it adds, such as "Adds the `command` request, which…". This is the
+  one exception to an explicit subject.
+- Don't open a paragraph with a bold label, such as "**Move.** A save…". A
+  sentence MAY emphasize its topic instead: "**Delete** is a save…".
+- A line that groups the list after it ends with a colon.
+- Link to the subsection that holds the rule, not only its section.
 
 ### Sentences
 
@@ -43,7 +53,7 @@ fixtures, or implementations from it.
 - Generalize rather than enumerate. Before adding a rule, check whether a
   general one already covers it: unknown or hidden IDs, policy refusals,
   unknown names (§1), server normalization (§1.1), ordering (§1), merging
-  (§3.3), extension names (§4). Don't restate a general rule in a section.
+  (§3.3.1), extension names (§4). Don't restate a general rule in a section.
 - Merges are one level deep: a field that's present replaces the kept
   value, an empty value clears it, and an absent field stays. `ext` merges
   the same way, one level into its keys.
