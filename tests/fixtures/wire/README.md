@@ -54,7 +54,8 @@ Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#
 | membership | `(room_id, user.user_id)` | `room_update` `memberships`, history `memberships` (one per element of `members[]`) |
 
 **Replay rule.** A record replaces the stored record for its key only when its
-`log_id` is numerically greater; an equal or lower `log_id` is ignored. This
+`log_id` is numerically greater, or when it is a tombstone at an equal `log_id`
+(a redaction, [PROTOCOL.md §2.3](../../../PROTOCOL.md#23-records-and-replay)); any other equal or lower `log_id` is ignored. This
 holds regardless of source (live, history, embedded) and arrival order. A
 reaction or membership element takes its record's `log_id`. The only
 exception: a room record without `log_id` (a server without capability `history`,
@@ -178,7 +179,7 @@ record, at least one message currently homed in it, or member state, sorted by
 | `02-full-replacement.json` | omitted `body.format`, `reply_to`, and `ext` keys are removed; a snapshot carries its complete `ext`, and clients replace `ext` whole (only writes merge it) |
 | `03-literal-null.json` | `null` stored inside `ext` and embeds |
 | `04-array-replacement.json` | embeds arrays replaced whole |
-| `05-tombstone.json` | tombstone wins over stale content; tombstones hide reactions (raw and compacted history) |
+| `05-tombstone.json` | tombstone wins over stale content; a redacted tombstone at the content's own `log_id` wins too; tombstones hide reactions (raw and compacted history) |
 | `06-duplicate-replay.json` | repeated room records, snapshots, and reaction sets are ignored |
 | `07-snapshot-loaded.json` | history snapshot replaces a loaded message |
 | `08-snapshot-unloaded.json` | an edit installs without its creation |
@@ -513,7 +514,9 @@ Every session variant describes one plausible server, and these hold (they
 were checked with an independent reference reducer and client):
 
 - Each `log_id` identifies one record (one key, one content) across the whole
-  variant, across connections, and in embedded copies. `log_id`s are one
+  variant, across connections, and in embedded copies. A redaction is the only
+  exception: it rewrites a message snapshot into a tombstone at the same
+  `log_id`. `log_id`s are one
   server-wide sequence: new live records on a connection arrive in strictly
   increasing order, and above every `latest_log_id` already reported for their
   room. A message's earliest snapshot is its creation, with
