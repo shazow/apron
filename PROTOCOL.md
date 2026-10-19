@@ -69,8 +69,8 @@ broadcast.
 ## 1. Transport & framing
 
 Apron runs over any transport that carries whole JSON messages in both
-directions. The framing borrows from JSON-RPC, so that a client can match each
-reply to its request, and every other frame is a one-way notification.
+directions. The framing borrows from JSON-RPC: a client matches each reply to
+its request, and every other frame is a one-way notification.
 
 - WebSocket is the reference transport. Other transports work if they deliver
   whole frames.
@@ -109,9 +109,8 @@ reply. A frame with a `method` and no `id` is a notification, and gets no reply.
 
 Each method is either a request or a notification. A method is a request when
 its sender needs the reply: data, a confirmation that a change was applied, or
-an error. A method that only reports transient state is a notification.
-Clients send requests with an `id`, and notifications without one. These are
-the core methods, and capabilities add others ([§4](#4-capabilities)):
+an error. A method that only reports transient state is a notification. These
+are the core methods, and capabilities add others ([§4](#4-capabilities)):
 
 | sent by | requests (with `id`)    | notifications (without `id`)         |
 |---------|-------------------------|--------------------------------------|
@@ -133,7 +132,7 @@ A server MAY ignore a request method sent without an `id`. It MAY ignore the
 {"id": "c42", "result": {"message_id": "1724803200042"}}
 ```
 
-A notification omits `id` and receives no reply:
+A notification:
 
 ```json
 {"method": "activity", "params": {"room_id": "general", "typing": 8}}
@@ -193,7 +192,7 @@ act.
 ### 1.2 Retries and deduplication
 
 A retry SHOULD keep the same `id`, `method`, and `params`, also across
-reconnects. A new operation MUST use a new `id`, and changed params make a new
+reconnects. A new operation MUST use a new `id`. Changing the params makes a new
 operation. Deduplication ignores the order of object keys.
 
 Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated
@@ -436,8 +435,8 @@ any later frame on the connection.
 - The server MAY send notifications before `auth`, such as a `~private`
   welcome ([Appendix A.1](#a1-system-identities-and-scoped-notices),
   [Appendix B](#appendix-b--valid-scenarios-informative)).
-- A **sign-in** is an `auth` that signs the connection in as a user that it is
-  not already signed in as.
+- A **sign-in** is an `auth` that gives the connection its first user, or a
+  different one.
 - Every notification that a sign-in causes on its connection comes after the
   `auth` result.
 
@@ -556,12 +555,17 @@ labels such as `"admin"`, `"moderator"`, or `"trusted"`. Suggested convention:
 - Roles are only for display, and give no permissions on the client.
 - A role change is a `user` notification, like any profile change.
 
+```jsonc
+// <- Ada becomes a moderator, to her own connections
+{"method": "user", "params": {"you": {"user_id": "ada", "roles": ["moderator"]}}}
+// <- to others who share a room with her
+{"method": "user", "params": {"new": {"user_id": "ada", "roles": ["moderator"]}}}
+```
+
 ### 3.4 Rooms
 
-Rooms are where messages live. In the core, a room is only a log with an ID. A
-server can have just one, and a client can learn about rooms from the messages
-it receives. Capability `rooms` ([§4.2](#42-rooms)) adds the ways to find,
-join, and create them, and adds threads.
+Rooms are where messages live. Capability `rooms` ([§4.2](#42-rooms)) adds the
+ways to find, join, and create them, and adds threads.
 
 ```ts
 class Room {
@@ -657,16 +661,16 @@ authoritative **snapshot** at one log position.
 
 | field          | set by | meaning                                                                 |
 |----------------|--------|-------------------------------------------------------------------------|
-| `message_id`   | server | permanent ID ([§2.2](#22-message_id))                                     |
-| `log_id`       | server | position of this snapshot in the log ([§2.1](#21-log_id))             |
-| `prev_log_id`  | server | optional; this message's previous snapshot ([§4.3.1](#431-a-rooms-log))        |
+| `message_id`   | server | permanent ID ([§2.2](#22-message_id))                                   |
+| `log_id`       | server | position of this snapshot in the log ([§2.1](#21-log_id))               |
+| `prev_log_id`  | server | optional; this message's previous snapshot ([§4.3.1](#431-a-rooms-log)) |
 | `prev_room_id` | server | the previous snapshot's room, when it differs ([§4.4](#44-edit))        |
 | `from`         | server | author identity ([§3.3](#33-identity)), preserved across changes        |
 | `room_id`      | client | the room the message is in; omitted, the default room                   |
 | `body`         | client | `text`, `format`, `embeds`, `mentions`                                  |
 | `reply_to`     | client | optional message object referring to the message replied to             |
 | `deleted`      | client | tombstone marker, default false ([§4.4](#44-edit))                      |
-| `ext`          | client | optional extension data; merges by key ([§4.12](#412-ext))               |
+| `ext`          | client | optional extension data; merges by key ([§4.12](#412-ext))              |
 
 #### 3.5.1 Creating
 
@@ -755,10 +759,6 @@ Every server:
    `message_id` when capability `edit` is absent; ignores unknown notifications.
 6. Follows [§1](#1-transport--framing) for framing and retries and
    [§2](#2-identifiers) for identifiers.
-
-The opening example is a complete session with a server that has capability
-`rooms`. A minimal server skips `room_list`. Its client posts without
-`room_id`, and learns the room from the broadcast.
 
 A minimal client (informative):
 
@@ -969,24 +969,24 @@ A **room record** describes one room, as `room_list`, `room_update`, and
 
 In the "set by" column, `server` fields are read-only
 ([§2.3](#23-records-and-replay)), and `room_set` replaces `client` fields
-([§4.2.4](#424-creating-and-editing)). `delivery` fields are the view of this
-client. They are not logged. Clients always use the latest value, even if
-`log_id` did not change.
+([§4.2.4](#424-creating-and-editing)). `delivery` fields describe the room as
+this client sees it. They are not logged. Clients always use the latest value,
+even if `log_id` did not change.
 
-| field                     | set by   | meaning                                                                           |
-|---------------------------|----------|-----------------------------------------------------------------------------------|
-| `room_id`                 | server   | required                                                                          |
-| `log_id`                  | server   | position of this room record ([§2.1](#21-log_id))                               |
-| `prev_log_id`             | server   | optional; this room's previous record ([§4.3.1](#431-a-rooms-log))                       |
-| `parent_room_id`          | client   | optional; fixed at creation; marks a thread ([§4.2.4](#424-creating-and-editing)) |
-| `private`                 | client   | optional; visible only to members ([§4.2.4](#424-creating-and-editing))           |
-| `title`                   | client   | optional plain string; absent falls back to `room_id`                             |
-| `description`             | client   | optional string, CommonMark by convention: what the room is about                 |
-| `ext`                     | client   | optional extension data; merges by key ([§4.12](#412-ext))                         |
-| `latest_log_id`           | delivery | greatest `log_id` in the room's log, memberships included                         |
-| `history_log_id`          | delivery | inclusive lower bound of retrievable history, or `null` if none                   |
-| `members`                 | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.2.1](#421-listing)) |
-| `member_count`            | delivery | optional; how many users have joined, when `members` is truncated ([§4.2.1](#421-listing)) |
+| field            | set by   | meaning                                                                                    |
+|------------------|----------|--------------------------------------------------------------------------------------------|
+| `room_id`        | server   | required                                                                                   |
+| `log_id`         | server   | position of this room record ([§2.1](#21-log_id))                                          |
+| `prev_log_id`    | server   | optional; this room's previous record ([§4.3.1](#431-a-rooms-log))                         |
+| `parent_room_id` | client   | optional; fixed at creation; marks a thread ([§4.2.4](#424-creating-and-editing))          |
+| `private`        | client   | optional; visible only to members ([§4.2.4](#424-creating-and-editing))                    |
+| `title`          | client   | optional plain string; absent falls back to `room_id`                                      |
+| `description`    | client   | optional string, CommonMark by convention: what the room is about                          |
+| `ext`            | client   | optional extension data; merges by key ([§4.12](#412-ext))                                 |
+| `latest_log_id`  | delivery | greatest `log_id` in the room's log, memberships included                                  |
+| `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none                            |
+| `members`        | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.2.1](#421-listing))          |
+| `member_count`   | delivery | optional; how many users have joined, when `members` is truncated ([§4.2.1](#421-listing)) |
 
 A room record is complete ([§2.3](#23-records-and-replay)). A field that it
 omits is cleared. `members` and `member_count` are exceptions, because only some
@@ -1152,8 +1152,9 @@ has the user as a recorded object ([§3.3.1](#331-user-objects)), and `joined`.
   one entry. Compacted history records MAY carry more
   ([§4.3.4](#434-compaction)), and each entry replaces the membership of that
   user.
-- The server delivers a membership record to the members of the room before
-  and after the change. The record advances the `latest_log_id` of the room.
+- The server delivers a membership record to everyone who is a member of the
+  room before or after the change. The record advances the `latest_log_id` of
+  the room.
 - Clients start the member list of a room from its `members` in `room_list` or
   in `room_update` `joined`. They update it from the memberships that they
   receive, live and in history.
@@ -1200,10 +1201,7 @@ the full list:
 
 `room_set` without `room_id` creates a room, and joins the creator to it.
 `room_set` with `room_id` replaces the client fields of that room
-([§4.2](#42-rooms)). Fields that end in `_id` are fixed at creation. `private`
-is also fixed if the server fixes it. If an edit omits `private`, the room
-keeps its value. `ext` merges ([§4.12](#412-ext)). Other omitted fields are
-cleared. Both forms return `{"room_id": "..."}`.
+([§4.2](#42-rooms)). Both forms return `{"room_id": "..."}`.
 
 ```jsonc
 // -> start a thread in general
@@ -1256,6 +1254,9 @@ cleared. Both forms return `{"room_id": "..."}`.
 {"id": "s9", "result": {"room_id": "1724803312001"}}
 ```
 
+- Fields that end in `_id` are fixed at creation.
+- A server MAY also fix `private`. An edit that omits `private` keeps its value.
+- `ext` merges ([§4.12](#412-ext)). Other omitted fields are cleared.
 - `parent_room_id` MUST refer to an existing visible room.
 - `private: true` makes the room visible only to its members. A thread that is
   created without `private` takes the value of its parent. Members add other
@@ -1359,12 +1360,14 @@ A record can point to the previous record for its key:
 
 #### 4.3.3 Availability and retention
 
-With this capability, room records MUST carry `log_id`, `latest_log_id`, and
-`history_log_id` ([§4.2](#42-rooms)). Every result also includes `latest_log_id`
-and `history_log_id`. The server reads them at the same time as the page. They
-describe the room, not the page. Retention can advance between requests, so
-clients check each response before they apply it. If the server rejects a
-request for lack of resources, it returns an error, not an empty result.
+- With this capability, room records MUST carry `log_id`, `latest_log_id`, and
+  `history_log_id` ([§4.2](#42-rooms)).
+- Every result also includes `latest_log_id` and `history_log_id`. The server
+  reads them at the same time as the page. They describe the room, not the page.
+- Retention can advance between requests, so clients check each response before
+  they apply it.
+- If the server rejects a request for lack of resources, it returns an error,
+  not an empty result.
 
 Over time, servers compact or discard old history:
 
@@ -1566,12 +1569,14 @@ user.
 
 - `status` is only in current user objects ([§3.3.1](#331-user-objects)). A
   change is a `user` notification. Servers MAY delay it.
-- Clients take the user's own `status` only from `you`. Other objects about
-  the user carry what others see. A complete object about the user, other than
-  `you`, does not replace the user's own `status`.
+- Clients take the user's own `status` only from `you`. Every other object about
+  the user carries what others see. Even a complete one does not replace the
+  user's own `status`.
 - Complete user objects carry `status` also when it is `offline` or `""`.
 - A user without a `status` has no known status.
 - Clients show an unknown `status` value as unknown, with the value.
+
+#### 4.5.3 The `status` request
 
 ```jsonc
 // -> nobody has attended this connection for the last five minutes
@@ -1597,8 +1602,6 @@ user.
 {"method": "status", "params": {"room_id": "random", "mute": true}}
 {"method": "status", "params": {"mute": 1800}}
 ```
-
-#### 4.5.3 The `status` request
 
 - Clients send `status` as a request. The server replies `{}` when it applies
   the change.
@@ -1639,9 +1642,9 @@ At each sign-in ([§3.2.2](#322-order)), clients drop the statuses and mutes tha
 they kept, and apply the ones that arrive. After the `auth` result, the server
 sends:
 
-- One `user` notification for each user who shares a room with the user,
-  carrying in `new` the `status` that others see, except `offline` and `""`.
-  Servers MAY limit these to the users that they would list in `members`
+- One `user` notification for each user who shares a room with them, with the
+  `status` that others see in `new`, unless it is `offline` or `""`. Servers MAY
+  limit these to the users that they would list in `members`
   ([§4.2.1](#421-listing)).
 - One `status` notification for each mute in effect, with the seconds left or
   `true`.
@@ -1753,11 +1756,10 @@ Clients render an unknown kind from `og`, or else as the fallback card
 ```
 
 - `iframe`: render with `sandbox="allow-scripts"`, and **never** with
-  `allow-same-origin` too (together, they let the embed remove its own
-  sandbox). Allow no top navigation and no popups. Use a
-  restrictive Permissions-Policy. Clamp the dimensions, because `height` is
-  only a suggestion. Load lazily, and limit the number of live iframes at one
-  time.
+  `allow-same-origin` too (together, they let the embed remove its own sandbox).
+  Allow no top navigation and no popups. Use a restrictive Permissions-Policy.
+  Clamp the dimensions, because `height` is only a suggestion. Load lazily, and
+  limit the number of live iframes at one time.
 - `html`: sanitize it with an allowlist sanitizer, such as DOMPurify, before
   insertion. Do this for every source.
 - `upload` is [§4.8.4](#484-embedupload), and `stream` is
@@ -2012,7 +2014,7 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   such as messages after the read cursors of the user ([§4.6](#46-activity)).
   It is the same for all registrations of the user. Clients MAY show it as an
   app badge.
-    - Servers whose `server.push.wake` lists `badge` send `unread`.
+  - Servers whose `server.push.wake` lists `badge` send `unread`.
   - Servers MAY leave messages that a room `mute` silences out of `unread`. A
     `mute` without `room_id` does not change `unread`.
 - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients
@@ -2083,7 +2085,7 @@ creates a credential, and `action: "login"` signs in. Both steps use the same
 | Step     | Additional request fields                      | Successful result                                        |
 |----------|------------------------------------------------|----------------------------------------------------------|
 | `begin`  | `step: "begin"`                                | `challenge_id` (opaque), `public_key` (WebAuthn options) |
-| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` ([§3.3](#33-identity))                                             |
+| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` ([§3.3](#33-identity))                             |
 
 `public_key` holds creation options for a registration, or request options for a
 login. It uses standard
@@ -2126,11 +2128,10 @@ device that gets mail. External sign-in sends the user to a web page of the
 server. The page can put any sign-in portal in front of Apron, such as OAuth,
 OpenID Connect, SAML, SSO, or a password check against a SASL backend.
 
-Servers that list `email` or `external` in `server.auth` use this exchange,
-and also list `token`. An `auth` request without `token` proposes a sign-in or
-an addition. The server
-delivers a temporary token outside the connection. An `auth` request with that
-`token` approves the proposal:
+Servers that list `email` or `external` in `server.auth` use this exchange, and
+also list `token`. An `auth` request without `token` proposes a sign-in or an
+addition. The server delivers a temporary token outside the connection. An
+`auth` request with that `token` approves the proposal:
 
 ```jsonc
 // -> propose signing in with this address
@@ -2352,14 +2353,14 @@ server.
 
 - Display names are free text, and users can change them. Clients show
   `Name (@user_id)` when two known `user_id`s share a name
-  ([§3.3](#33-identity)).
+  ([§3.3.1](#331-user-objects)).
 - Clients never merge recorded user objects into current ones
-  ([§3.3](#33-identity)). So an old history page cannot overwrite a current
-  profile.
+  ([§3.3.1](#331-user-objects)). So an old history page cannot overwrite a
+  current profile.
 - Servers do not give a retired `user_id` to another user
-  ([§3.3](#33-identity)). Logged messages and mentions refer to it, and the
+  ([§3.3.3](#333-changes)). Logged messages and mentions refer to it, and the
   new owner would inherit them.
-- `roles` are labels for display only ([§3.3](#33-identity)). The server
+- `roles` are labels for display only ([§3.3.4](#334-roles)). The server
   enforces all permissions.
 - `user_id`s that start with `~` are reserved for system identities, and the
   suggested convention keeps `@` and `:` out of the IDs that users choose
@@ -2439,22 +2440,23 @@ system messages.
 
 Three system identities tell the receiver who else got the message:
 
-| `from.user_id` | received by                   | logged | for example                                  |
-|----------------|-------------------------------|--------|---------------------------------------------|
-| `~server`      | every user on the server      | yes    | maintenance notices, announcements           |
-| `~room`        | every member of the room      | yes    | removals with a reason, poll results         |
-| `~private`     | only this connection          | no     | welcomes, command replies, errors, reminders |
+| `from.user_id` | received by              | logged | for example                                  |
+|----------------|--------------------------|--------|----------------------------------------------|
+| `~server`      | every user on the server | yes    | maintenance notices, announcements           |
+| `~room`        | every member of the room | yes    | removals with a reason, poll results         |
+| `~private`     | only this connection     | no     | welcomes, command replies, errors, reminders |
 
 - `room_id` is where the message is shown, as for any message.
 - A server-wide notice also refers to a room, usually the default room
-  ([§3.5](#35-messages)). It reaches every user whether or not they joined it.
+  ([§3.5.1](#351-creating)). It reaches every user whether or not they joined
+  it.
 - These are sender identities that state a scope, not rooms.
 - Joins and leaves are memberships ([§4.2.2](#422-membership)), not `~room`
   messages.
 - `~private` messages are transient notices ([§3.5.3](#353-delivery)). A private
   notice that should last belongs in a room of its own.
 - A `~private` notice MAY omit `room_id`, like any message
-  ([§3.5](#35-messages)). A client shows it even when it has no room to show
+  ([§3.5.1](#351-creating)). A client shows it even when it has no room to show
   it in yet, such as while it signs in.
 
 ```jsonc
@@ -2495,11 +2497,11 @@ name. Extensions and future methods should follow the same pattern.
 
 A prefix says what kind of ID follows:
 
-| prefix | refers to         | in `body.text`                                              |
-|--------|-------------------|-------------------------------------------------------------|
-| `@`    | a user            | a mention ([§3.5.5](#355-mentions)), listed in `body.mentions` too |
-| `#`    | a room            | a reference to the room; it mentions no one                 |
-| `~`    | a system identity | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices))     |
+| prefix | refers to         | in `body.text`                                                                       |
+|--------|-------------------|--------------------------------------------------------------------------------------|
+| `@`    | a user            | a mention ([§3.5.5](#355-mentions)), listed in `body.mentions` too                   |
+| `#`    | a room            | a reference to the room; it mentions no one                                          |
+| `~`    | a system identity | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices)) |
 
 - After `@` or `#`, the ID is the longest run of `[A-Za-z0-9_.+@:-]` that
   starts and ends with a letter, a digit, or `_`.
