@@ -42,6 +42,7 @@ Do you need a custom self-hosted group chat? Consider using the Apron Chat Proto
 
 - [PROTOCOL.md](PROTOCOL.md): the authoritative Apron Chat Protocol definition.
 - [HISTORY.md](HISTORY.md): changes by protocol version.
+- [RECIPES.md](RECIPES.md): how to build common things on Apron, such as trusted federation, without changing the protocol.
 - [`schema/apron.schema.json`](schema/apron.schema.json): an informative JSON Schema of the frames, for validation and editor completion.
 - [`tests/fixtures`](tests/fixtures): conformance fixtures that implementations can test against. The [wire fixture README](tests/fixtures/wire/README.md) describes the wire fixtures, and [DEVELOPMENT.md](DEVELOPMENT.md) says where each fixture runs.
 

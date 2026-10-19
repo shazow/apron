@@ -5,7 +5,7 @@
 """Validate the fixtures and PROTOCOL.md examples against schema/apron.schema.json.
 
 Besides the schema, it checks rules the schema cannot express: every server
-frame speaks protocol 8, names that PROTOCOL.md does not define start with
+frame speaks protocol 9, names that PROTOCOL.md does not define start with
 ext:, no session fixture delivers a frame between an auth request and its
 result, a client writes each ext key only to a server with capability ext or
 the capability of the extension that defines the key (ext:<key>), no fixture
@@ -57,14 +57,14 @@ INVALID = {
     ("history-recovery-failure.json", "invalid-page", 15): "a page without metadata",
 }
 
-VERSION = 8
+VERSION = 9
 
 # Names that PROTOCOL.md defines, by the list that an extension can add to (§4).
 # Any other name starts with "ext:".
 KNOWN = {
     "method": set(SCHEMA["$defs"]["UnknownMethod"]["not"]["enum"]),
     "capability": {"command", "history", "rooms", "edit", "status", "activity", "reactions", "embed:upload", "embed:stream", "ext"},
-    "auth scheme": {"guest", "token", "webauthn", "email"},
+    "auth scheme": {"guest", "token", "webauthn", "email", "external"},
     "embed kind": {"upload", "stream", "iframe", "html"},
     "push kind": {"relay", "webpush"},
     "wake scope": {"mentions", "private", "replies", "joined", "badge"},

@@ -16,6 +16,16 @@
       "description": "A request id (§1.1, §2).",
       "type": "string"
     },
+    "UserId": {
+      "description": "A user_id: not empty, with no whitespace or control characters (§2). Suggested convention: letters, digits, _ . - (Appendix A.3).",
+      "type": "string",
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "RoomId": {
+      "description": "A room_id: not empty, with no whitespace or control characters (§2). Suggested convention: letters, digits, _ . - (Appendix A.3).",
+      "type": "string",
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
     "LogId": {
       "description": "A position in the server's log: decimal Unix epoch milliseconds (§2).",
       "type": "string",
@@ -35,7 +45,7 @@
       "type": "object",
       "properties": {
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         },
         "name": {
           "type": "string"
@@ -177,7 +187,7 @@
           "description": "The user_ids the message mentions.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/UserId"
           }
         },
         "embeds": {
@@ -208,7 +218,7 @@
           "$ref": "#/$defs/Body"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reply_to": {
           "anyOf": [
@@ -234,7 +244,7 @@
           "$ref": "#/$defs/LogId"
         },
         "prev_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "deleted": {
           "type": "boolean",
@@ -271,10 +281,10 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "parent_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "private": {
           "type": "boolean",
@@ -328,7 +338,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         }
       },
       "required": [
@@ -343,7 +353,7 @@
           "$ref": "#/$defs/LogId"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "members": {
           "type": "array",
@@ -381,7 +391,7 @@
           "type": "string"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reactions": {
           "type": "array",
@@ -525,7 +535,7 @@
           "type": "string"
         },
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         },
         "agent": {
           "type": "string"
@@ -534,6 +544,15 @@
           "type": "string"
         },
         "email": {
+          "type": "string"
+        },
+        "state": {
+          "description": "email and external proposals: an unguessable value the client chooses, returned unchanged in each link (§4.11).",
+          "type": "string",
+          "maxLength": 256
+        },
+        "return_url": {
+          "description": "external proposals: where the sign-in page redirects with the link fragment; only on an origin the server trusts (§4.11).",
           "type": "string"
         },
         "action": {
@@ -586,7 +605,7 @@
           "$ref": "#/$defs/Body"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reply_to": {
           "$ref": "#/$defs/MessageRef"
@@ -611,7 +630,7 @@
           "$ref": "#/$defs/Body"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "reply_to": {
           "$ref": "#/$defs/MessageRef"
@@ -628,7 +647,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "after": {
           "$ref": "#/$defs/LogId"
@@ -655,10 +674,10 @@
           "default": "all"
         },
         "parent_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "members": {
           "type": "boolean"
@@ -673,10 +692,10 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         }
       },
       "required": [
@@ -688,10 +707,10 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "user_id": {
-          "type": "string"
+          "$ref": "#/$defs/UserId"
         }
       },
       "required": [
@@ -703,10 +722,10 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "parent_room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "private": {
           "type": "boolean"
@@ -819,7 +838,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "typing": {
           "type": "number",
@@ -845,6 +864,11 @@
         },
         "public_key": {
           "type": "object"
+        },
+        "url": {
+          "description": "external proposals: the sign-in page to open, an absolute https URL (http only on a loopback host) (§4.11).",
+          "type": "string",
+          "pattern": "^(https://|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])([:/]|$))"
         }
       }
     },
@@ -1014,7 +1038,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         }
       },
       "required": [
@@ -1115,7 +1139,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "from": {
           "$ref": "#/$defs/User"
@@ -1838,7 +1862,7 @@
       },
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "idle": {
           "description": "false, or the seconds since nobody attended the connection (§4.5)",
@@ -1871,7 +1895,7 @@
       "type": "object",
       "properties": {
         "room_id": {
-          "type": "string"
+          "$ref": "#/$defs/RoomId"
         },
         "mute": {
           "description": "true, false, or a positive number of seconds (§4.5)",
