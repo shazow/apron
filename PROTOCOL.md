@@ -2076,6 +2076,14 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
 Passkeys let users sign in without passwords or shared tokens, with a
 credential that their device keeps.
 
+A passkey is bound to its RP ID, the domain of the web client that registered
+it. Browsers offer it only on that domain, so a phishing site cannot use it.
+This also means that a third-party client cannot sign in with another client's
+passkey. To add such a client or device, the user signs in with another
+scheme, such as `token` ([§3.2.1](#321-bearer-tokens)) or email
+([§4.11](#411-email-and-external-sign-in)). A server can also offer a command
+([§4.1](#41-command)) that issues more bearer tokens.
+
 Servers that list `webauthn` in `server.auth` MUST use this exchange. No
 separate capability is necessary.
 
