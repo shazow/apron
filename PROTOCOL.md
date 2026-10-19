@@ -275,10 +275,9 @@ other records, each with its own key:
 
 ## 3. Core
 
-The core is what every client can count on: a greeting, a way to sign in,
-identities, rooms as logs, and messages. Every server implements this section,
-and a minimal server implements only this section. That is enough for a plain
-but complete chat. Capabilities add the rest ([§4](#4-capabilities)).
+The core alone is a basic but complete chat. Every server implements it, so
+every client can count on it. It covers the greeting, sign-in, identity, rooms,
+and messages. Capabilities add the rest ([§4](#4-capabilities)).
 
 ### 3.1 `server` frame
 
