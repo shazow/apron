@@ -836,8 +836,7 @@ Six frame patterns cover everything that is logged or announced:
 - **Records** (room records, `message`): the complete state at a `log_id`
   ([§2.3](#23-records-and-replay)).
 - **Per-user state** (`reactions`, memberships): the user and their complete
-  state for a scope. The newest wins for each user. Logged
-  ([§2.3](#23-records-and-replay)).
+  state for a scope. The newest wins for each user. Logged.
 - **Activity** (`activity`): `from` and changes to the transient state of the
   user. Absent fields do not change it. Not logged.
 - **Announcements** (`server`): not logged, and sent again in full. Each one
@@ -993,9 +992,8 @@ omits is cleared. `members` and `member_count` are exceptions, because only some
 frames carry them.
 
 `description` is the summary of the room, such as its purpose or the state of
-its conversation. Users who can edit the room can change it with `room_set`
-([§4.2.4](#424-creating-and-editing)). It is CommonMark
-([§3.5.2](#352-rendering)).
+its conversation. Users who can edit the room can change it with `room_set`. It
+is CommonMark ([§3.5.2](#352-rendering)).
 
 A **thread** is a room with a `parent_room_id`. A client that ignores this
 field shows threads as ordinary rooms. A client that uses it groups threads
@@ -1463,10 +1461,9 @@ Lets a `message` request with an existing `message_id` **save** that message:
 A save with a different `room_id` **moves** the message. The destination MUST
 exist, and the caller MUST be able to see it. The server delivers the snapshot
 to both rooms ([§4.3.1](#431-a-rooms-log)). Clients move the message, and do not
-treat it as deleted. The snapshot carries `prev_room_id`, the source room
-([§4.3.1](#431-a-rooms-log)). If the message has reactions, the server then logs
-one reactions record ([§4.7](#47-reactions)) in the destination, with every set
-that is not empty.
+treat it as deleted. The snapshot carries `prev_room_id`, the source room. If
+the message has reactions, the server then logs one reactions record
+([§4.7](#47-reactions)) in the destination, with every set that is not empty.
 
 ```jsonc
 // -> move Bob's reply into thread room 1724803312001
@@ -1877,8 +1874,8 @@ it grow. Stream embeds follow the rules for embed identity
   text as is, with its line breaks. Clients MAY support other formats natively,
   such as `"markdown"` (CommonMark, [§3.5.2](#352-rendering)) or `"terminal"`.
   They render unknown formats as plain.
-- Write: the sender sends UTF-8 text as a streaming `PUT` body to
-  `write_url` ([§4.8.3](#483-writes)). The end of the body ends the stream.
+- Write: the sender sends UTF-8 text as a streaming `PUT` body to `write_url`.
+  The end of the body ends the stream.
 - Read: `GET url` returns the text that the server kept. It continues as more
   text arrives, and ends when the stream ends. A reader that reconnects
   replaces the text that it showed with the new response.
@@ -2052,8 +2049,7 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
     that the user joined, and in their threads.
   - `replies`: messages whose `reply_to` refers to a message of the user
     ([§3.5.4](#354-references)).
-  - `joined`: messages in rooms that the user joined
-    ([§4.2.2](#422-membership)).
+  - `joined`: messages in rooms that the user joined.
   - `badge`: every change to `unread`. A push for a change that no other scope
     selects has no `message`. Servers ignore `badge` for `webpush`. Servers
     MAY skip intermediate values of `unread`, and send only the latest.
