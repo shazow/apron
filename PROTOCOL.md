@@ -1,6 +1,7 @@
 ---
 version: 9
 updated: 2026-10-19
+license: CC0-1.0
 ---
 
 # Apron Chat Protocol
@@ -2824,3 +2825,11 @@ class Embed {   // "actions" kind, besides the fields of §4.8
 - Clients ignore groups they do not know ([§1](#1-transport--framing)).
 - Clients without `actions` support render the fallback card
   ([§3.5.2](#352-rendering)). Its `og` can spell out the commands to type.
+
+---
+
+## License
+
+This specification is dedicated to the public domain under
+[CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/).
+Anyone can copy, change, and implement it without permission.

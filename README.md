@@ -61,4 +61,4 @@ AI usage:
 
 ## License
 
-MIT
+[PROTOCOL.md](PROTOCOL.md) and its associated documents are dedicated to the public domain under [CC0 1.0 Universal](LICENSE-CC0). The reference implementations are [MIT](LICENSE).
