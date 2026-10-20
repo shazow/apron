@@ -33,7 +33,7 @@ Do you need a custom self-hosted group chat? Consider using the Apron Chat Proto
 
 The Apron protocol is optimized for making correct clients and servers as easy as possible.
 
-<img width="797.5" height="573" alt="image" src="https://github.com/user-attachments/assets/a7871775-a79b-4787-9165-2d19b42111cb" />
+<img width="763" height="549" alt="image" src="https://github.com/user-attachments/assets/9c4bc870-db7c-4bb3-86c1-6de3f519dc33" />
 
 - Instead of minimizing payload sizes through tight packing and avoiding full state updates, we have a fairly readable JSON messages that may include excessive details which make it much easier to implement clients that are immediately useful with every response. For example, messages may include the full user object so that the client doesn't need to pull a lookup table of users before being able to display messages. Because we're targeting small self-hosted servers rather than massive federated rooms with millions of users, this is a reasonable tradeoff.
 - Instead of federating across untrusted servers and having a composite network of users, Apron is designed for small independent communities with their own trust assumptions. Designing safe and reliable federation and global auth is very sensitive and complex, and many protocols already attempt it to various degrees of compromise, so Apron explicitly excludes this problem from the scope. The downside is that naively a client may need to connect to multiple transports (such as one websocket per server) which can be battery-inefficient past some size. We include a design for websocket multiplexing to help with this, but there may be other opportunities for worthwhile improvements here.
