@@ -61,10 +61,4 @@ AI usage:
 
 ## License
 
-The protocol and its documents are dedicated to the public domain under [CC0 1.0 Universal](LICENSE-CC0):
-- [PROTOCOL.md](PROTOCOL.md), the specification.
-- [HISTORY.md](HISTORY.md), [RECIPES.md](RECIPES.md), and [FAQ.md](FAQ.md).
-- The JSON Schema in [`schema`](schema).
-- The test fixtures in [`tests/fixtures`](tests/fixtures).
-
-Everything else, including the reference implementations, is [MIT](LICENSE).
+[PROTOCOL.md](PROTOCOL.md) and its associated documents are dedicated to the public domain under [CC0 1.0 Universal](LICENSE-CC0). The reference implementations are [MIT](LICENSE).
