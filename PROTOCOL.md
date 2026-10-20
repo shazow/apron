@@ -1,6 +1,7 @@
 ---
 version: 9
 updated: 2026-10-19
+license: CC0-1.0
 ---
 
 # Apron Chat Protocol
@@ -68,6 +69,10 @@ Example of a valid session:
 This example uses capability `rooms` ([§4.2](#42-rooms)) to list rooms.
 Without it, the client skips `room_list` and learns the room from the
 broadcast.
+
+This specification is dedicated to the public domain under
+[CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/).
+Anyone can copy, change, and implement it without permission.
 
 ---
 
