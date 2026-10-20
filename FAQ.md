@@ -22,7 +22,7 @@ If you trust the server and use an encrypted connection like `wss://` then it's 
 
 ## Why not XMPP/Matrix/IRCv3/etc?
 
-Apron makes important tradeoffs on a different axis than other chat protocols, which allows for a simpler protocol. It's not intended for large public federated chat networks, but rather for small self-hosted group chats (for families, friends, teams, agents, commercial services, etc).
+Apron is much simpler because it makes important tradeoffs. It's not intended for large public federated chat networks, but rather for small self-hosted group chats (for families, friends, teams, agents, commercial services, etc).
 
 ## Why not Slack/Discord/Zulip/etc?
 
@@ -44,3 +44,10 @@ Overall, AI was used quite heavily but not uniformly: PROTOCOL.md was scrutinize
 
 No, it's a permissively licensed protocol (CC0) and reference implementations (MIT). You can make a business on it if you want! I have no plans for it right now, but I'd like to use it more and more in various projects over the coming years, so who knows. It's intended to be an evergreen public good that anyone can use when it makes sense.
 
+## Why is it named Apron?
+
+Ok buckle up, this is a whole thing. I believe we need more "backless" ecosystems (like "headless" but agnostic to backends). Our one big backless ecosystem is HTTP: Browsers are backless because they're not coupled to any specific HTTP backend. An Apron is backless (it covers your front but not the back), and it aspires to the the HTTP of chat.
+
+## Ok fine, how can I try it?
+
+Check out [apron.chat](https://apron.chat) for more about the protocol, a live demo, and a list of implementations.
