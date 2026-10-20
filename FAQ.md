@@ -20,6 +20,8 @@ Apron aspires to be more like HTTP, which has similar tradeoffs. There will be m
 
 If you trust the server and use an encrypted connection like `wss://` then it's safe. There's no encryption between users, see the previous question for why.
 
+If you're self-hosting, that means it's more secure than third-party hosted community chats like Slack and Discord. If you can't trust the server, then you want an end-to-end encrypted protocol like Signal.
+
 ## Why not XMPP/Matrix/IRCv3/etc?
 
 Apron is much simpler because it makes important tradeoffs. It's not intended for large public federated chat networks, but rather for small self-hosted group chats (for families, friends, teams, agents, commercial services, etc).
