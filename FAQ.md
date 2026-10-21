@@ -12,7 +12,7 @@ This allows getting rid of some of the most complex parts of chat protocols:
 - No end-to-end encryption between users (use TLS to connect to the server, like `wss://`)
 - No identity federation (each server is authoritative over the accounts on it)
 - No message signing
-- No cross-server sync, etc.
+- No cross-server sync, avoid stateful and multi-step queries, etc.
 
 Apron aspires to be more like HTTP, which has similar tradeoffs. There will be many Apron clients who can connect to any Apron server. It should be easy to make a custom server with personalized behaviour.
 
