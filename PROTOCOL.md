@@ -2641,6 +2641,10 @@ members, and a public thread's parent members, through `room_list` and
 the ring. To reach a member who is offline, a caller's client also posts an
 ordinary message that mentions them ([§4.9](#49-push)).
 
+At each sign-in, clients drop every `rtc` that they kept. After the `auth`
+result, the server sends each room that has a session, and whose `rtc` reaches
+the user, in `room_update` `updated`.
+
 Room membership is per user; a session is per device. Each connection in a
 session holds a **seat**. The server assigns each seat a `peer_id` that is
 unguessable and unique within the session. User objects in `rtc_*` frames are
