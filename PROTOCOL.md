@@ -1364,8 +1364,10 @@ A record can point to the previous record for its key:
 
 #### 4.3.3 Availability and retention
 
-- With this capability, room records MUST carry `log_id`, `latest_log_id`, and
-  `history_log_id` ([§4.2](#42-rooms)).
+- With this capability, room records in `room_list` and `room_update` MUST
+  carry `log_id`, `latest_log_id`, and `history_log_id` ([§4.2](#42-rooms)).
+- Room records in a history result are logged records. They MUST NOT carry
+  delivery fields.
 - Every result also includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the room, not the page.
 - Retention can advance between requests, so clients check each response before

@@ -263,7 +263,7 @@ class Run:
                     self.violate("ids", f"{key} {value!r} is not a positive decimal below 2^53")
 
     def check_room_records(self, frame):
-        """Room records with delivery fields (§4.2), in room_list and room_update."""
+        """Delivery fields (§4.2) are on room_list and room_update records, and not on history records."""
         result, params = frame.get("result", {}), frame.get("params", {})
         rooms = []
         if isinstance(result, dict):
@@ -274,6 +274,11 @@ class Run:
             missing = [k for k in ("log_id", "latest_log_id", "history_log_id") if k not in room]
             if isinstance(room, dict) and missing:
                 self.violate("history-rooms", f"room {room.get('room_id')} lacks {', '.join(missing)}")
+        logged = result.get("rooms", []) if isinstance(result, dict) and "more" in result else []
+        for room in logged:
+            extra = [k for k in ("latest_log_id", "history_log_id", "members", "member_count") if k in room]
+            if isinstance(room, dict) and extra:
+                self.violate("history-rooms", f"history room {room.get('room_id')} carries {', '.join(extra)}")
 
     async def open(self, auth=True, name="Conformance"):
         """Open a connection, wait for its server frame, and sign in."""
@@ -874,7 +879,7 @@ check("1", "every frame matches schema/apron.schema.json")(seen("schema"))
 check("1.1", "every request gets exactly one reply")(seen("replies"))
 check("2", "IDs are well formed")(seen("ids"))
 check("3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order"))
-check("4.3.3", "listed room records carry log_id, latest_log_id, and history_log_id", needs="history")(seen("history-rooms"))
+check("4.3.3", "only listed room records carry delivery fields", needs="history")(seen("history-rooms"))
 
 
 async def main():

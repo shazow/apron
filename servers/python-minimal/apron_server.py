@@ -67,7 +67,7 @@ class ApronServer:
         after, before = int(p.get("after", "0")), int(p.get("before", self.last_id))
         matches = [r for r in self.log if after <= int(r["log_id"]) <= before]
         page = matches[:limit] if "after" in p else matches[-limit:]
-        result = {"rooms": [{**r, **self.availability()} for r in page if "message_id" not in r],
+        result = {"rooms": [r for r in page if "message_id" not in r],
                   "messages": [r for r in page if "message_id" in r],
                   "more": len(matches) > limit, **self.availability()}
         if page:
