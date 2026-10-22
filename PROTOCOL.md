@@ -1176,9 +1176,10 @@ has the user as a recorded object ([§3.3.1](#331-user-objects)), and `joined`.
 `room_update` tells the connections of the user what changed. It never carries
 the full list:
 
-- `joined`: the room records of rooms that the user joined, by any means. Each
-  has its `members`, as in `room_list` ([§4.2.1](#421-listing)). `users` MAY
-  come with them.
+- `joined`: the room records of rooms that the user joined, by any means. This
+  includes a join at sign-in ([§3.2.2](#322-order)), also when a `room_list`
+  result lists the room. Each has its `members`, as in `room_list`
+  ([§4.2.1](#421-listing)). `users` MAY come with them.
 - `left`: `[{room_id}]` for each room that the user is no longer in, for any
   reason.
 - `memberships`: membership records ([§4.2.2](#422-membership)), to the
