@@ -2625,7 +2625,7 @@ clients and servers.
 ```ts
 class Room {    // besides the fields of §3.4
   // "rtc" capability
-  rtc?: { members: User[] };    // delivery; present while a session is in progress
+  rtc?: { members: User[] } | null;  // delivery; present during a session, null when it ends
 }
 
 class User {    // in rtc_* frames, besides the fields of §3.3
@@ -2634,12 +2634,12 @@ class User {    // in rtc_* frames, besides the fields of §3.3
 ```
 
 A room's **`rtc`** lists who is in a session. It is a delivery field
-([§4.2](#42-rooms)). It is present while the room has a session, lists each user
-in it once, and is absent otherwise. It reaches the room's members, and a public
-thread's parent members, through `room_list` and `room_update` `updated`. It
-lists users, not seats. Its appearance on a room is the ring. To reach a member
-who is offline, a caller's client also posts an ordinary message that mentions
-them ([§4.9](#49-push)).
+([§4.2](#42-rooms)). It is present while the room has a session, and lists each
+user in it once. It is `null` when the session ends. It reaches the room's
+members, and a public thread's parent members, through `room_list` and
+`room_update` `updated`. It lists users, not seats. Its appearance on a room is
+the ring. To reach a member who is offline, a caller's client also posts an
+ordinary message that mentions them ([§4.9](#49-push)).
 
 Room membership is per user; a session is per device. Each connection in a
 session holds a **seat**. The server assigns each seat a `peer_id` that is
