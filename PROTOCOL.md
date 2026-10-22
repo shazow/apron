@@ -1366,7 +1366,7 @@ A record can point to the previous record for its key:
 
 - With this capability, room records in `room_list` and `room_update` MUST
   carry `log_id`, `latest_log_id`, and `history_log_id` ([§4.2](#42-rooms)).
-- Room records in a history result are logged records. They MUST NOT carry
+- Room records in a history result are logged records. Clients ignore their
   delivery fields.
 - Every result includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the room, not the page.
@@ -2641,9 +2641,9 @@ members, and a public thread's parent members, through `room_list` and
 the ring. To reach a member who is offline, a caller's client also posts an
 ordinary message that mentions them ([§4.9](#49-push)).
 
-At each sign-in, clients drop every `rtc` that they kept. After the `auth`
-result, the server sends each room that has a session, and whose `rtc` reaches
-the user, in `room_update` `updated`.
+At each sign-in, clients drop every `rtc` that they kept. `room_list` lists each
+room that has a session, also when its `latest_log_id` filter would leave it
+out.
 
 Room membership is per user; a session is per device. Each connection in a
 session holds a **seat**. The server assigns each seat a `peer_id` that is
