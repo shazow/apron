@@ -1176,9 +1176,9 @@ has the user as a recorded object ([§3.3.1](#331-user-objects)), and `joined`.
 `room_update` tells the connections of the user what changed. It never carries
 the full list:
 
-- `joined`: the room records of rooms that the user joined, by any means, a
-  join at sign-in included ([§3.2.2](#322-order)). Each has its `members`, as
-  in `room_list` ([§4.2.1](#421-listing)). `users` MAY come with them.
+- `joined`: the room records of rooms that the user joined after signing in,
+  by any means. Each has its `members`, as in `room_list`
+  ([§4.2.1](#421-listing)). `users` MAY come with them.
 - `left`: `[{room_id}]` for each room that the user is no longer in, for any
   reason.
 - `memberships`: membership records ([§4.2.2](#422-membership)), to the
@@ -1366,7 +1366,7 @@ A record can point to the previous record for its key:
 
 - With this capability, room records in `room_list` and `room_update` MUST
   carry `log_id`, `latest_log_id`, and `history_log_id` ([§4.2](#42-rooms)).
-- Room records in a history result are logged records. They MUST NOT carry
+- Room records in a history result are logged records. Clients ignore their
   delivery fields.
 - Every result includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the room, not the page.
@@ -2641,9 +2641,9 @@ members, and a public thread's parent members, through `room_list` and
 the ring. To reach a member who is offline, a caller's client also posts an
 ordinary message that mentions them ([§4.9](#49-push)).
 
-At each sign-in, clients drop every `rtc` that they kept. After the `auth`
-result, the server sends each room that has a session, and whose `rtc` reaches
-the user, in `room_update` `updated`.
+At each sign-in, clients drop every `rtc` that they kept. `room_list` lists each
+room that has a session, even when the request's `latest_log_id` filter would
+leave the room out.
 
 Room membership is per user; a session is per device. Each connection in a
 session holds a **seat**. The server assigns each seat a `peer_id` that is
