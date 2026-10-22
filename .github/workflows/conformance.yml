@@ -1,0 +1,29 @@
+name: conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    name: ${{ matrix.server }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - server: python-minimal
+            start: python servers/python-minimal/apron_server.py --port 8765
+          - server: js-minimal
+            start: PORT=8765 bun servers/js-minimal/apron-server.js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.server == 'js-minimal'
+      - run: pip install "websockets>=14,<17" "jsonschema>=4.18"
+      - run: ${{ matrix.start }} &
+      - run: python tests/conformance/conform.py ws://127.0.0.1:8765

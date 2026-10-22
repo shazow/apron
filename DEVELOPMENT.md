@@ -30,6 +30,21 @@ there:
 - `tests/fixtures/push.json` holds push payloads and registrations that only
   `tests/schema/validate.py` checks.
 
+## Conformance
+
+`tests/conformance/conform.py` checks a running server against PROTOCOL.md:
+the core checklist (§3.6), each capability that the server advertises, and the
+schema for every frame it sends. It prints one line per check, and fails on a
+broken rule but only warns on a SHOULD. CI runs it against the minimal servers:
+
+```sh
+uv run servers/python-minimal/apron_server.py &
+uv run tests/conformance/conform.py ws://127.0.0.1:8765
+```
+
+It signs in as a guest, or with `--token`, and posts messages, so point it at
+a test server.
+
 ## Schema
 
 `schema/apron.schema.json` describes every frame in PROTOCOL.md. A protocol
