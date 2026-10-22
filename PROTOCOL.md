@@ -2642,8 +2642,8 @@ the ring. To reach a member who is offline, a caller's client also posts an
 ordinary message that mentions them ([§4.9](#49-push)).
 
 At each sign-in, clients drop every `rtc` that they kept. `room_list` lists each
-room that has a session, also when its `latest_log_id` filter would leave it
-out.
+room that has a session, even when the request's `latest_log_id` filter would
+leave the room out.
 
 Room membership is per user; a session is per device. Each connection in a
 session holds a **seat**. The server assigns each seat a `peer_id` that is
