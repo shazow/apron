@@ -1176,9 +1176,9 @@ has the user as a recorded object ([§3.3.1](#331-user-objects)), and `joined`.
 `room_update` tells the connections of the user what changed. It never carries
 the full list:
 
-- `joined`: the room records of rooms that the user joined, by any means,
-  sign-in included ([§3.2.2](#322-order)). Each has its `members`, as in
-  `room_list` ([§4.2.1](#421-listing)). `users` MAY come with them.
+- `joined`: the room records of rooms that the user joined, by any means, a
+  join at sign-in included ([§3.2.2](#322-order)). Each has its `members`, as
+  in `room_list` ([§4.2.1](#421-listing)). `users` MAY come with them.
 - `left`: `[{room_id}]` for each room that the user is no longer in, for any
   reason.
 - `memberships`: membership records ([§4.2.2](#422-membership)), to the
@@ -1368,7 +1368,7 @@ A record can point to the previous record for its key:
   carry `log_id`, `latest_log_id`, and `history_log_id` ([§4.2](#42-rooms)).
 - Room records in a history result are logged records. They MUST NOT carry
   delivery fields.
-- Every result also includes `latest_log_id` and `history_log_id`. The server
+- Every result includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the room, not the page.
 - Retention can advance between requests, so clients check each response before
   they apply it.
