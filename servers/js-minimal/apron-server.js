@@ -48,7 +48,7 @@ function readHistory(params) {
   });
   const slice = "after" in params ? matches.slice(0, limit) : matches.slice(-limit);
   const result = {
-    rooms: slice.filter(record => !record.message_id).map(room => ({ ...room, ...availability() })),
+    rooms: slice.filter(record => !record.message_id),
     messages: slice.filter(record => record.message_id),
     more: matches.length > limit,
     ...availability(),

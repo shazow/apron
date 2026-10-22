@@ -976,7 +976,8 @@ In the "set by" column, `server` fields are read-only
 ([§2.3](#23-records-and-replay)), and `room_set` replaces `client` fields
 ([§4.2.4](#424-creating-and-editing)). `delivery` fields describe the room as
 this client sees it. They are not logged. Clients always use the latest value,
-even if `log_id` did not change.
+even if `log_id` did not change. A frame that omits a delivery field does not
+change it.
 
 | field            | set by   | meaning                                                                                    |
 |------------------|----------|--------------------------------------------------------------------------------------------|
@@ -993,9 +994,8 @@ even if `log_id` did not change.
 | `members`        | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.2.1](#421-listing))          |
 | `member_count`   | delivery | optional; how many users have joined, when `members` is truncated ([§4.2.1](#421-listing)) |
 
-A room record is complete ([§2.3](#23-records-and-replay)). A field that it
-omits is cleared. `members` and `member_count` are exceptions, because only some
-frames carry them.
+A room record is complete ([§2.3](#23-records-and-replay)). A `server` or
+`client` field that it omits is cleared.
 
 `description` is the summary of the room, such as its purpose or the state of
 its conversation. Users who can edit the room can change it with `room_set`. It
@@ -1176,9 +1176,9 @@ has the user as a recorded object ([§3.3.1](#331-user-objects)), and `joined`.
 `room_update` tells the connections of the user what changed. It never carries
 the full list:
 
-- `joined`: the room records of rooms that the user joined, by any means. Each
-  has its `members`, as in `room_list` ([§4.2.1](#421-listing)). `users` MAY
-  come with them.
+- `joined`: the room records of rooms that the user joined, by any means, a
+  join at sign-in included ([§3.2.2](#322-order)). Each has its `members`, as
+  in `room_list` ([§4.2.1](#421-listing)). `users` MAY come with them.
 - `left`: `[{room_id}]` for each room that the user is no longer in, for any
   reason.
 - `memberships`: membership records ([§4.2.2](#422-membership)), to the
@@ -1364,9 +1364,11 @@ A record can point to the previous record for its key:
 
 #### 4.3.3 Availability and retention
 
-- With this capability, room records MUST carry `log_id`, `latest_log_id`, and
-  `history_log_id` ([§4.2](#42-rooms)).
-- Every result also includes `latest_log_id` and `history_log_id`. The server
+- With this capability, room records in `room_list` and `room_update` MUST
+  carry `log_id`, `latest_log_id`, and `history_log_id` ([§4.2](#42-rooms)).
+- Room records in a history result are logged records. They MUST NOT carry
+  delivery fields.
+- Every result includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the room, not the page.
 - Retention can advance between requests, so clients check each response before
   they apply it.
@@ -2623,7 +2625,7 @@ clients and servers.
 ```ts
 class Room {    // besides the fields of §3.4
   // "rtc" capability
-  rtc?: { members: User[] };    // delivery; present while a session is in progress
+  rtc?: { members: User[] } | null;  // delivery; present during a session, null when it ends
 }
 
 class User {    // in rtc_* frames, besides the fields of §3.3
@@ -2632,12 +2634,16 @@ class User {    // in rtc_* frames, besides the fields of §3.3
 ```
 
 A room's **`rtc`** lists who is in a session. It is a delivery field
-([§4.2](#42-rooms)). It is present while the room has a session, lists each user
-in it once, and is absent otherwise. It reaches the room's members, and a public
-thread's parent members, through `room_list` and `room_update` `updated`. It
-lists users, not seats. Its appearance on a room is the ring. To reach a member
-who is offline, a caller's client also posts an ordinary message that mentions
-them ([§4.9](#49-push)).
+([§4.2](#42-rooms)). It is present while the room has a session, and lists each
+user in it once. It is `null` when the session ends. It reaches the room's
+members, and a public thread's parent members, through `room_list` and
+`room_update` `updated`. It lists users, not seats. Its appearance on a room is
+the ring. To reach a member who is offline, a caller's client also posts an
+ordinary message that mentions them ([§4.9](#49-push)).
+
+At each sign-in, clients drop every `rtc` that they kept. After the `auth`
+result, the server sends each room that has a session, and whose `rtc` reaches
+the user, in `room_update` `updated`.
 
 Room membership is per user; a session is per device. Each connection in a
 session holds a **seat**. The server assigns each seat a `peer_id` that is

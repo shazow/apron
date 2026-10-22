@@ -946,9 +946,34 @@
       "type": "object",
       "properties": {
         "rooms": {
+          "description": "Logged room records, without delivery fields (§4.3.3).",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Room"
+            "$ref": "#/$defs/Room",
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "latest_log_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "history_log_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "members"
+                  ]
+                },
+                {
+                  "required": [
+                    "member_count"
+                  ]
+                }
+              ]
+            }
           }
         },
         "messages": {
