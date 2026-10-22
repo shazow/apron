@@ -976,7 +976,8 @@ In the "set by" column, `server` fields are read-only
 ([§2.3](#23-records-and-replay)), and `room_set` replaces `client` fields
 ([§4.2.4](#424-creating-and-editing)). `delivery` fields describe the room as
 this client sees it. They are not logged. Clients always use the latest value,
-even if `log_id` did not change.
+even if `log_id` did not change. A frame that omits a delivery field does not
+change it.
 
 | field            | set by   | meaning                                                                                    |
 |------------------|----------|--------------------------------------------------------------------------------------------|
@@ -993,9 +994,8 @@ even if `log_id` did not change.
 | `members`        | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.2.1](#421-listing))          |
 | `member_count`   | delivery | optional; how many users have joined, when `members` is truncated ([§4.2.1](#421-listing)) |
 
-A room record is complete ([§2.3](#23-records-and-replay)). A field that it
-omits is cleared. `members` and `member_count` are exceptions, because only some
-frames carry them.
+A room record is complete ([§2.3](#23-records-and-replay)). A `server` or
+`client` field that it omits is cleared.
 
 `description` is the summary of the room, such as its purpose or the state of
 its conversation. Users who can edit the room can change it with `room_set`. It
