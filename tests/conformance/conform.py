@@ -690,20 +690,19 @@ async def _(run):
     must(update and j < i, "no room_update left before the result")
 
 
-@check("4.2.3", "a room that a sign-in joins arrives in room_update joined, after the auth result", needs="rooms")
+@check("4.2.1", "a room that a sign-in joins is in room_list joined", needs="rooms")
 async def _(run):
     conn = await run.open()
     you = conn.you["user_id"]
+    listing = await conn.call("room_list", {"filter": "joined"})
     await conn.sync()
-    after = next(i for i, f in enumerate(conn.frames) if isinstance(f, dict) and "result" in f and "you" in f["result"])
     updates = conn.since(0, lambda f: f.get("method") == "room_update")
     rooms = {m["room_id"] for f in updates for m in f["params"].get("memberships", [])
              if any(e.get("user", {}).get("user_id") == you and e.get("joined") for e in m.get("members", []))}
     if not rooms:
-        raise Skip("the sign-in joined no room")
-    listed = {r["room_id"] for f in conn.since(after + 1, lambda f: f.get("method") == "room_update")
-              for r in f["params"].get("joined", [])}
-    must(rooms <= listed, f"no joined after the auth result for {', '.join(sorted(rooms - listed))}")
+        raise Skip("the sign-in joined no room, or kept its memberships outside the log")
+    listed = {r.get("room_id") for r in listing.get("joined", [])}
+    must(rooms <= listed, f"room_list joined lacks {', '.join(sorted(rooms - listed))}")
 
 
 @check("4.2.2", "joining an unknown room is error/invalid_params", needs="rooms")

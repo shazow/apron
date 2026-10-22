@@ -10,7 +10,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - `idle` is `false`, or the seconds since nobody attended the connection, so servers can treat the connection as idle from then.
 - §4.2 is now `rooms` and §4.3 `history`, which renumbers both. Room records are defined in §4.2, and extension names in the §4 intro.
 - §1.1 lists the core request and notification methods, and the §4 intro the rest.
-- A join at sign-in is in `room_update` `joined`, like any other join.
+- `room_update` `joined` lists the rooms that the user joined after signing in, so a join at sign-in need not be in it.
 - Room records in a `history` result carry no delivery fields, and a frame that omits a delivery field does not change it. The result's own `latest_log_id` and `history_log_id` describe the room.
 - A `room_id` or `user_id` is never empty, and contains no whitespace or control characters. A mention in text (Appendix A.3) is the longest run of `[A-Za-z0-9_.+@:-]` that starts and ends with a letter, a digit, or `_`, so `@ada@example.com` and `@carol:b.example` are mentions. A suggested convention keeps ordinary and user-chosen IDs to letters, digits, `_`, `.`, and `-`.
 
