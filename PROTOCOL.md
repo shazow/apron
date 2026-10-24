@@ -2402,6 +2402,9 @@ server.
 - Clients open only an `https` `url` for external sign-in
   ([§4.11.5](#4115-external)). So a server cannot run script in the client with
   a `javascript:` URL.
+- Clients send, join, or sign in only on an action of the user, not because of
+  a link ([A.4](#a4-links)). So a link cannot make a local server, such as a
+  coding agent with guest sign-in, run a command with one click.
 
 ### 5.5 Network privacy and server requests
 
@@ -2425,6 +2428,9 @@ server.
 - Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
   So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
+- Clients ask the user before they connect to a server that the user has not
+  used ([A.4](#a4-links)). So a posted link cannot make its readers' clients
+  reveal their IP addresses to any host, or reach services on their networks.
 
 ### 5.6 Resource limits
 
@@ -2534,6 +2540,43 @@ A prefix says what kind of ID follows:
   display name ([§3.3.1](#331-user-objects)), such as a chip. They MAY show a
   `#id` that refers to a known room as a link with its title. Unknown IDs render
   as written.
+
+### A.4 Links
+
+A link refers to a server, or to a room, thread, or message on one, so that
+any client can open it. A link carries the server's WebSocket URL, and the
+rest of the link is relative to that server:
+
+```text
+https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042
+apron:?server=wss://chat.example/ws&room=general&message=1724803200042
+```
+
+| key       | value                                                                                                                  |
+|-----------|------------------------------------------------------------------------------------------------------------------------|
+| `server`  | the server's WebSocket URL                                                                                             |
+| `room`    | a `room_id`                                                                                                            |
+| `thread`  | the `room_id` of a thread in `room`                                                                                    |
+| `message` | a `message_id` in that room or thread                                                                                  |
+| `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
+
+- A link is a list of `application/x-www-form-urlencoded` keys after
+  `https://link.apron.chat/#`, `apron:?`, or `web+apron:?`.
+- Clients read all three forms.
+- Clients write the `https` form when the user shares a link.
+- A link in `body.text` without `server`, such as `apron:?room=ops`, refers to
+  the server that sent the message.
+- Clients add `server` to such a link before the link leaves that server.
+- Clients ask the user before they connect to a server that the user has not
+  used.
+- Clients MUST NOT send, join, or sign in because of a link without an action
+  of the user.
+
+This link carries an invite:
+
+```text
+https://link.apron.chat/#server=wss://chat.example/ws&token=inv_Qm7x…
+```
 
 ---
 
