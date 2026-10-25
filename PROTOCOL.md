@@ -2322,10 +2322,9 @@ server.
 - A client can connect to any server. So a client does not run a server's
   markup or scripts, or open its URLs unchecked.
 - Apron is transport agnostic. It leaves encryption and authentication of the
-  connection to the transport, such as `wss:`.
-- A link's `server` can use any transport, an unencrypted one included
-  ([A.4](#a4-links)). So a link can lead a client to an unencrypted
-  connection, unless the client checks the transport first.
+  connection to the transport, such as `wss:`. So a link's `server`
+  ([A.4](#a4-links)) can lead a client to an unencrypted connection, unless
+  the client checks the transport.
 - Spam, sybil attacks, and public federation are out of scope.
 
 ### 5.2 Authentication
