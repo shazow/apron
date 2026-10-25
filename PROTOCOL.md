@@ -2605,8 +2605,6 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 
 Links of each kind, in the `https` form:
 
-- A server:
-  `https://link.apron.chat/#server=wss://chat.example/ws`
 - A room:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=general`
 - A message in a room:
