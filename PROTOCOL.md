@@ -2574,11 +2574,19 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 - Clients MUST NOT send, join, or sign in because of a link without an action
   of the user.
 
-This link carries an invite:
+Links of each kind, in the `https` form:
 
-```text
-https://link.apron.chat/#server=wss://chat.example/ws&token=inv_Qm7x…
-```
+- A room:
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=general`
+- A message in a room:
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042`
+- A thread:
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=general&thread=t-123`
+- An email sign-in, with the `state` of its proposal
+  ([§4.11.2](#4112-temporary-tokens)):
+  `https://link.apron.chat/#server=wss://chat.example/ws&token=Hk41x9…&state=q8Rz…`
+- An invite ([B.3](#b3-an-invite-token-signs-up-several-people)):
+  `https://link.apron.chat/#server=wss://chat.example/ws&token=inv_Qm7x…`
 
 ---
 
