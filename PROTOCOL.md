@@ -750,6 +750,17 @@ A message lists the users that it mentions in `body.mentions`. Usually its
   `mentions`, and writes the mention in `text`.
 - Mentions that notify a whole room are not defined.
 
+#### 3.5.6 Links
+
+A link refers to a server, or to a room, message, or user on one
+([A.4](#a4-links)). It can arrive in a message, or from outside the client.
+
+- Interactive clients MUST NOT send, join, or sign in because of a link
+  without an action of the user (otherwise a link could make a local server,
+  such as a coding agent with guest sign-in, run a command with one click).
+- Interactive clients ask the user before they connect to a server that the
+  user has not used.
+
 ### 3.6 Core conformance checklist
 
 Every server:
@@ -2412,9 +2423,10 @@ server.
 - Clients open only an `https` `url` for external sign-in
   ([§4.11.5](#4115-external)). So a server cannot run script in the client with
   a `javascript:` URL.
-- Clients send, join, or sign in only on an action of the user, not because of
-  a link ([A.4](#a4-links)). So a link cannot make a local server, such as a
-  coding agent with guest sign-in, run a command with one click.
+- Interactive clients send, join, or sign in only on an action of the user,
+  not because of a link ([§3.5.6](#356-links)). So a link cannot make a local
+  server, such as a coding agent with guest sign-in, run a command with one
+  click.
 
 ### 5.5 Network privacy and server requests
 
@@ -2438,9 +2450,10 @@ server.
 - Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
   So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
-- Clients ask the user before they connect to a server that the user has not
-  used ([A.4](#a4-links)). So a posted link cannot make its readers' clients
-  reveal their IP addresses to any host, or reach services on their networks.
+- Interactive clients ask the user before they connect to a server that the
+  user has not used ([§3.5.6](#356-links)). So a posted link cannot make its
+  readers' clients reveal their IP addresses to any host, or reach services on
+  their networks.
 
 ### 5.6 Resource limits
 
@@ -2574,7 +2587,6 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 - A link is a list of `application/x-www-form-urlencoded` keys after
   `https://link.apron.chat/#`, `apron:?`, or `web+apron:?`.
 - Clients read all three forms.
-- A link has each key at most once. Clients refuse a link that repeats a key.
 - Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
 - Only servers write links with `token`, such as in an email or a command's
@@ -2585,10 +2597,7 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 - Clients add `server` to such a link before the link leaves that server, such
   as when the user copies or forwards it. Bridges do the same in the messages
   that they relay.
-- Clients ask the user before they connect to a server that the user has not
-  used.
-- Clients MUST NOT send, join, or sign in because of a link without an action
-  of the user.
+- Clients open links as [§3.5.6](#356-links) defines.
 
 Links of each kind, in the `https` form:
 
