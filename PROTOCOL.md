@@ -2545,9 +2545,9 @@ A prefix says what kind of ID follows:
 
 ### A.4 Links
 
-A link refers to a server, or to a room, thread, or message on one, so that
-any client can open it. A link carries the server's WebSocket URL, and the
-rest of the link is relative to that server:
+A link refers to a server, or to a room or message on one, so that any client
+can open it. A link carries the server's WebSocket URL, and the rest of the
+link is relative to that server:
 
 ```text
 https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042
@@ -2557,9 +2557,8 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 | key       | value                                                                                                                  |
 |-----------|------------------------------------------------------------------------------------------------------------------------|
 | `server`  | the server's WebSocket URL                                                                                             |
-| `room`    | a `room_id`                                                                                                            |
-| `thread`  | the `room_id` of a thread in `room`                                                                                    |
-| `message` | a `message_id` in that room or thread                                                                                  |
+| `room`    | a `room_id`, also of a thread                                                                                          |
+| `message` | a `message_id` in that room                                                                                            |
 | `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
 
 - A link is a list of `application/x-www-form-urlencoded` keys after
@@ -2580,8 +2579,8 @@ Links of each kind, in the `https` form:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=general`
 - A message in a room:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042`
-- A thread:
-  `https://link.apron.chat/#server=wss://chat.example/ws&room=general&thread=t-123`
+- A thread, which is a room ([§4.2](#42-rooms)):
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=t-123`
 - An email sign-in, with the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)):
   `https://link.apron.chat/#server=wss://chat.example/ws&token=Hk41x9…&state=q8Rz…`
