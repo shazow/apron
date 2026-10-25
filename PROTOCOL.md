@@ -2201,7 +2201,7 @@ addition. The server delivers a temporary token outside the connection. An
   that works on other connections MUST be unguessable.
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
-  WebSocket URL when the link opens a client that is not tied to one server
+  address when the link opens a client that is not tied to one server
   ([A.4](#a4-links)).
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made. It then presents the link's token with
@@ -2353,8 +2353,8 @@ server.
 - Only servers write links with a token, and never as `apron:` links
   ([A.4](#a4-links)). So a client does not share a token when the user shares
   a place, and an app that claims the scheme gets no token.
-- A link's `server` uses `ws` only on a loopback host ([A.4](#a4-links)). So a
-  link's token does not cross a network unencrypted.
+- A link's `server` uses an unencrypted transport only on a loopback host
+  ([A.4](#a4-links)). So a link's token does not cross a network unencrypted.
 - A link carries the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
   else's link into that person's account (login cross-site request forgery).
@@ -2555,8 +2555,8 @@ A prefix says what kind of ID follows:
 ### A.4 Links
 
 A link refers to a server, or to a room, message, or user on one, so that any
-client can open it. A link carries the server's WebSocket URL, and the rest of
-the link is relative to that server:
+client can open it. A link carries the server's address, and the rest of the
+link is relative to that server:
 
 ```text
 https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042
@@ -2565,7 +2565,7 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 
 | key       | value                                                                                                                  |
 |-----------|------------------------------------------------------------------------------------------------------------------------|
-| `server`  | the server's WebSocket URL: `wss`, or `ws` on a loopback host                                                          |
+| `server`  | the server's address, a URI whose scheme is the transport, such as `wss://chat.example/ws`                             |
 | `room`    | a `room_id`, also of a thread                                                                                          |
 | `message` | a `message_id` in that room                                                                                            |
 | `user`    | a `user_id`; with `room`, of a member of that room                                                                     |
@@ -2574,7 +2574,8 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 
 - A link is a list of `application/x-www-form-urlencoded` keys after
   `https://link.apron.chat/#` or `apron:?`.
-- Clients read both forms.
+- `server` uses an unencrypted transport, such as `ws`, only on a loopback
+  host.
 - Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
 - Only servers write links with `token`, such as in an email or a command's
