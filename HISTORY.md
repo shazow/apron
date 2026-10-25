@@ -7,6 +7,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - Scheme `external` (§4.11): a proposal returns `url`, a page of the server that signs the user in by any method. The page redirects to the client's `return_url` with a temporary token in the fragment, or shows a code to type. Servers accept only a `return_url` on an origin they trust.
 - `email` and `external` share §4.11, "Email and external sign-in". A proposal may carry `state`, which links return. Approval takes either scheme, and an addition approves only on a connection of the proposing account. A disconnect keeps a proposal, and temporary tokens expire within minutes of delivery. Servers that offer either scheme also offer `token`.
 - Approval also takes `scheme: "token"`, which a client uses for the token of a link without the `state` of its own proposal, as for an invite (Appendix B.3). Appendix A.4 defines links that any client opens.
+- `room_list` takes an optional `user_id` filter, which lists only that user in `members` and `users`.
 - At an equal `log_id`, a tombstone wins. Recovery without a checkpoint may start at the newest page.
 - `idle` is `false`, or the seconds since nobody attended the connection, so servers can treat the connection as idle from then.
 - §4.2 is now `rooms` and §4.3 `history`, which renumbers both. Room records are defined in §4.2, and extension names in the §4 intro.

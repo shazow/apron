@@ -682,6 +682,9 @@
         "members": {
           "type": "boolean"
         },
+        "user_id": {
+          "$ref": "#/$defs/UserId"
+        },
         "latest_log_id": {
           "$ref": "#/$defs/LogId"
         }

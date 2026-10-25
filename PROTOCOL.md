@@ -1066,6 +1066,8 @@ Every filter is optional:
   overrides `parent_room_id`. Servers SHOULD support this filter.
 - `members: true` adds each room's `members` and the result's `users`
   (below); without it, a result carries neither.
+- `user_id`, with `members: true`, lists only that user in `members` and
+  `users`. A server MAY ignore this filter.
 - `latest_log_id` lists only the rooms whose `latest_log_id` is greater. A
   server MAY ignore this filter. Its result is then a full listing without
   `left`.
@@ -2559,7 +2561,7 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 | `server`  | the server's WebSocket URL                                                                                             |
 | `room`    | a `room_id`, also of a thread                                                                                          |
 | `message` | a `message_id` in that room                                                                                            |
-| `user`    | a `user_id`, in a link without `room`                                                                                  |
+| `user`    | a `user_id`; with `room`, of a member of that room                                                                     |
 | `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
 
 - A link is a list of `application/x-www-form-urlencoded` keys after
@@ -2582,8 +2584,8 @@ Links of each kind, in the `https` form:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042`
 - A thread, which is a room ([§4.2](#42-rooms)):
   `https://link.apron.chat/#server=wss://chat.example/ws&room=t-123`
-- A user:
-  `https://link.apron.chat/#server=wss://chat.example/ws&user=ada`
+- A user, as a member of a room:
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=general&user=ada`
 - A room on a server on the user's own computer, such as a coding agent, over
   `ws`:
   `https://link.apron.chat/#server=ws://localhost:8080/ws&room=agent`
