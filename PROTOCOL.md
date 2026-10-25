@@ -2199,16 +2199,18 @@ addition. The server delivers a temporary token outside the connection. An
   that works on other connections MUST be unguessable.
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
-  WebSocket URL when the link opens a client that is not tied to one server.
+  WebSocket URL when the link opens a client that is not tied to one server
+  ([A.4](#a4-links)).
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made.
+- A client presents the token of such a link with `scheme: "token"`.
 - For a link with the `state` of its own proposal, a client uses the server
   that it proposed to, and ignores `server`.
 
 #### 4.11.3 Approval
 
-- Approval is an `auth` request with `token` and either scheme that the server
-  offers.
+- Approval is an `auth` request with `token`, and `token` or either scheme
+  that the server offers.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and a
   bearer `token` for later connections ([§3.2.1](#321-bearer-tokens)).
