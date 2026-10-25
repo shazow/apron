@@ -2168,7 +2168,7 @@ addition. The server delivers a temporary token outside the connection. An
 {"id": "c1", "result": {"url": "https://chat.example/sso?p=Qm7x…"}}
 
 // the page signs the user in, then redirects to
-// https://web.apron.chat/#token=Hk41x9…&state=q8Rz…&server=wss%3A%2F%2Fchat.example%2F
+// https://web.apron.chat/#token=Hk41x9…&state=q8Rz…&server=wss://chat.example/ws
 
 // -> on a connection from https://web.apron.chat
 {"method": "auth", "id": "c2", "params": {"scheme": "external", "token": "Hk41x9…"}}
@@ -2204,8 +2204,8 @@ addition. The server delivers a temporary token outside the connection. An
   WebSocket URL when the link opens a client that is not tied to one server
   ([A.4](#a4-links)).
 - A client asks its user before it uses a link without the `state` of a
-  proposal that the client made.
-- A client presents the token of such a link with `scheme: "token"`.
+  proposal that the client made. It then presents the link's token with
+  `scheme: "token"`.
 - For a link with the `state` of its own proposal, a client uses the server
   that it proposed to, and ignores `server`.
 
@@ -2350,6 +2350,12 @@ server.
 - Link tokens travel in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
   Browsers do not send fragments in request lines or `Referer` headers, so
   tokens stay out of server logs.
+- Only servers write links with a token, and never as `apron:` or
+  `web+apron:` links ([A.4](#a4-links)). So a client does not share a token
+  when the user shares a place, and an app that claims the scheme gets no
+  token.
+- A link's `server` uses `ws` only on a loopback host ([A.4](#a4-links)). So a
+  link's token does not cross a network unencrypted.
 - A link carries the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
   else's link into that person's account (login cross-site request forgery).
@@ -2558,19 +2564,27 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 
 | key       | value                                                                                                                  |
 |-----------|------------------------------------------------------------------------------------------------------------------------|
-| `server`  | the server's WebSocket URL                                                                                             |
+| `server`  | the server's WebSocket URL: `wss`, or `ws` on a loopback host                                                          |
 | `room`    | a `room_id`, also of a thread                                                                                          |
 | `message` | a `message_id` in that room                                                                                            |
 | `user`    | a `user_id`; with `room`, of a member of that room                                                                     |
 | `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
+| `state`   | with a sign-in token, the `state` of its proposal ([§4.11.1](#4111-proposals))                                         |
 
 - A link is a list of `application/x-www-form-urlencoded` keys after
   `https://link.apron.chat/#`, `apron:?`, or `web+apron:?`.
 - Clients read all three forms.
+- A link has each key at most once. Clients refuse a link that repeats a key.
+- Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
+- Only servers write links with `token`, such as in an email or a command's
+  reply. Such a link is never in the `apron:` or `web+apron:` form (any app or
+  site can claim those schemes).
 - A link in `body.text` without `server`, such as `apron:?room=ops`, refers to
   the server that sent the message.
-- Clients add `server` to such a link before the link leaves that server.
+- Clients add `server` to such a link before the link leaves that server, such
+  as when the user copies or forwards it. Bridges do the same in the messages
+  that they relay.
 - Clients ask the user before they connect to a server that the user has not
   used.
 - Clients MUST NOT send, join, or sign in because of a link without an action
