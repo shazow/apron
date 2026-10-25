@@ -2350,10 +2350,9 @@ server.
 - Link tokens travel in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
   Browsers do not send fragments in request lines or `Referer` headers, so
   tokens stay out of server logs.
-- Only servers write links with a token, and never as `apron:` or
-  `web+apron:` links ([A.4](#a4-links)). So a client does not share a token
-  when the user shares a place, and an app that claims the scheme gets no
-  token.
+- Only servers write links with a token, and never as `apron:` links
+  ([A.4](#a4-links)). So a client does not share a token when the user shares
+  a place, and an app that claims the scheme gets no token.
 - A link's `server` uses `ws` only on a loopback host ([A.4](#a4-links)). So a
   link's token does not cross a network unencrypted.
 - A link carries the `state` of its proposal
@@ -2574,13 +2573,13 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 | `state`   | with a sign-in token, the `state` of its proposal ([§4.11.1](#4111-proposals))                                         |
 
 - A link is a list of `application/x-www-form-urlencoded` keys after
-  `https://link.apron.chat/#`, `apron:?`, or `web+apron:?`.
-- Clients read all three forms.
+  `https://link.apron.chat/#` or `apron:?`.
+- Clients read both forms.
 - Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
 - Only servers write links with `token`, such as in an email or a command's
-  reply. Such a link is never in the `apron:` or `web+apron:` form (any app or
-  site can claim those schemes).
+  reply. Such a link is never in the `apron:` form (any app can claim the
+  scheme).
 - A link in `body.text` without `server`, such as `apron:?room=ops`, refers to
   the server that sent the message.
 - Clients add `server` to such a link before the link leaves that server, such
