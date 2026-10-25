@@ -2321,9 +2321,13 @@ server.
   code.
 - A client can connect to any server. So a client does not run a server's
   markup or scripts, or open its URLs unchecked.
-- Apron does not encrypt frames itself. Over an untrusted network, it relies
-  on an encrypted and authenticated transport, such as WebSocket over TLS
-  (`wss:`).
+- Apron is mostly transport agnostic, and does not encrypt frames itself.
+  Messages and tokens are only as private as the transport that carries them.
+  Users who need that privacy, such as over an untrusted network, use an
+  encrypted and authenticated transport, such as WebSocket over TLS (`wss:`).
+- A link's `server` can name any transport, an unencrypted one included
+  ([A.4](#a4-links)). Clients whose users need encryption can show the
+  transport before they connect, or refuse an unencrypted one.
 - Spam, sybil attacks, and public federation are out of scope.
 
 ### 5.2 Authentication
