@@ -1066,6 +1066,8 @@ Every filter is optional:
   overrides `parent_room_id`. Servers SHOULD support this filter.
 - `members: true` adds each room's `members` and the result's `users`
   (below); without it, a result carries neither.
+- `user_id`, with `members: true`, lists only that user in `members` and
+  `users`. A server MAY ignore this filter.
 - `latest_log_id` lists only the rooms whose `latest_log_id` is greater. A
   server MAY ignore this filter. Its result is then a full listing without
   `left`.
@@ -2199,16 +2201,18 @@ addition. The server delivers a temporary token outside the connection. An
   that works on other connections MUST be unguessable.
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
-  WebSocket URL when the link opens a client that is not tied to one server.
+  WebSocket URL when the link opens a client that is not tied to one server
+  ([A.4](#a4-links)).
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made.
+- A client presents the token of such a link with `scheme: "token"`.
 - For a link with the `state` of its own proposal, a client uses the server
   that it proposed to, and ignores `server`.
 
 #### 4.11.3 Approval
 
-- Approval is an `auth` request with `token` and either scheme that the server
-  offers.
+- Approval is an `auth` request with `token`, and `token` or either scheme
+  that the server offers.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and a
   bearer `token` for later connections ([§3.2.1](#321-bearer-tokens)).
@@ -2402,6 +2406,9 @@ server.
 - Clients open only an `https` `url` for external sign-in
   ([§4.11.5](#4115-external)). So a server cannot run script in the client with
   a `javascript:` URL.
+- Clients send, join, or sign in only on an action of the user, not because of
+  a link ([A.4](#a4-links)). So a link cannot make a local server, such as a
+  coding agent with guest sign-in, run a command with one click.
 
 ### 5.5 Network privacy and server requests
 
@@ -2425,6 +2432,9 @@ server.
 - Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
   So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
+- Clients ask the user before they connect to a server that the user has not
+  used ([A.4](#a4-links)). So a posted link cannot make its readers' clients
+  reveal their IP addresses to any host, or reach services on their networks.
 
 ### 5.6 Resource limits
 
@@ -2534,6 +2544,56 @@ A prefix says what kind of ID follows:
   display name ([§3.3.1](#331-user-objects)), such as a chip. They MAY show a
   `#id` that refers to a known room as a link with its title. Unknown IDs render
   as written.
+
+### A.4 Links
+
+A link refers to a server, or to a room, message, or user on one, so that any
+client can open it. A link carries the server's WebSocket URL, and the rest of
+the link is relative to that server:
+
+```text
+https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042
+apron:?server=wss://chat.example/ws&room=general&message=1724803200042
+```
+
+| key       | value                                                                                                                  |
+|-----------|------------------------------------------------------------------------------------------------------------------------|
+| `server`  | the server's WebSocket URL                                                                                             |
+| `room`    | a `room_id`, also of a thread                                                                                          |
+| `message` | a `message_id` in that room                                                                                            |
+| `user`    | a `user_id`; with `room`, of a member of that room                                                                     |
+| `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
+
+- A link is a list of `application/x-www-form-urlencoded` keys after
+  `https://link.apron.chat/#`, `apron:?`, or `web+apron:?`.
+- Clients read all three forms.
+- Clients write the `https` form when the user shares a link.
+- A link in `body.text` without `server`, such as `apron:?room=ops`, refers to
+  the server that sent the message.
+- Clients add `server` to such a link before the link leaves that server.
+- Clients ask the user before they connect to a server that the user has not
+  used.
+- Clients MUST NOT send, join, or sign in because of a link without an action
+  of the user.
+
+Links of each kind, in the `https` form:
+
+- A room:
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=general`
+- A message in a room:
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042`
+- A thread, which is a room ([§4.2](#42-rooms)):
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=t-123`
+- A user, as a member of a room:
+  `https://link.apron.chat/#server=wss://chat.example/ws&room=general&user=ada`
+- A room on a server on the user's own computer, such as a coding agent, over
+  `ws`:
+  `https://link.apron.chat/#server=ws://localhost:8080/ws&room=agent`
+- An email sign-in, with the `state` of its proposal
+  ([§4.11.2](#4112-temporary-tokens)):
+  `https://link.apron.chat/#server=wss://chat.example/ws&token=Hk41x9…&state=q8Rz…`
+- An invite ([B.3](#b3-an-invite-token-signs-up-several-people)):
+  `https://link.apron.chat/#server=wss://chat.example/ws&token=inv_Qm7x…`
 
 ---
 
