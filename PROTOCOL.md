@@ -2579,7 +2579,7 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 - Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
 - Only servers write links with `token`, such as in an email or a command's
-  reply. Such a link is never in the `apron:` form (any app can claim the
+  reply. Servers never write them in the `apron:` form (any app can claim the
   scheme).
 - A link in `body.text` without `server`, such as `apron:?room=ops`, refers to
   the server that sent the message.
@@ -2594,6 +2594,8 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 
 Links of each kind, in the `https` form:
 
+- A server:
+  `https://link.apron.chat/#server=wss://chat.example/ws`
 - A room:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=general`
 - A message in a room:
