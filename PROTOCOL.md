@@ -2584,6 +2584,9 @@ Links of each kind, in the `https` form:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=t-123`
 - A user:
   `https://link.apron.chat/#server=wss://chat.example/ws&user=ada`
+- A room on a server on the user's own computer, such as a coding agent, over
+  `ws`:
+  `https://link.apron.chat/#server=ws://localhost:8080/ws&room=agent`
 - An email sign-in, with the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)):
   `https://link.apron.chat/#server=wss://chat.example/ws&token=Hk41x9…&state=q8Rz…`
