@@ -2323,11 +2323,12 @@ server.
   markup or scripts, or open its URLs unchecked.
 - Apron is mostly transport agnostic, and does not encrypt frames itself.
   Messages and tokens are only as private as the transport that carries them.
-  Users who need that privacy, such as over an untrusted network, use an
-  encrypted and authenticated transport, such as WebSocket over TLS (`wss:`).
-- A link's `server` can name any transport, an unencrypted one included
-  ([A.4](#a4-links)). Clients whose users need encryption can show the
-  transport before they connect, or refuse an unencrypted one.
+  Over an unencrypted transport, anyone on the network path can read them.
+  An encrypted and authenticated transport, such as WebSocket over TLS
+  (`wss:`), prevents this.
+- A link's `server` can use any transport, an unencrypted one included
+  ([A.4](#a4-links)). So a link can lead a client to an unencrypted
+  connection, unless the client checks the transport first.
 - Spam, sybil attacks, and public federation are out of scope.
 
 ### 5.2 Authentication
@@ -2581,18 +2582,18 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 
 - The keys follow `https://link.apron.chat/#` or `apron:?` as
   `application/x-www-form-urlencoded` pairs, with `:` and `/` left as they are.
-- Clients use the first value of a repeated key, and ignore keys that they do
-  not know.
+- Clients use the first value of a repeated key.
+- Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
 - Clients reach `server` only over a transport that they implement. They never
   hand it to a browser or the operating system to open.
-- Only servers write links with `token`, and never in the `apron:` form (any
-  app can claim the scheme).
+- Only servers write links with `token`.
+- Servers never write a link with `token` in the `apron:` form (any app can
+  claim the scheme).
 - A link without `server` in content from a server, such as `apron:?room=ops`
   in `body.text`, refers to that server.
-- Clients add `server` to such a link before the link leaves that server, such
-  as when the user copies or forwards it. Bridges do the same in the messages
-  that they relay.
+- Clients and bridges add `server` to such a link before the link leaves that
+  server, such as when the user copies or forwards it, or a bridge relays it.
 - Interactive clients ask the user before they connect to a server that the
   user has not used.
 - Interactive clients do not send or join because of a link without an action
