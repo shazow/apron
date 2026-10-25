@@ -2168,7 +2168,7 @@ addition. The server delivers a temporary token outside the connection. An
 {"id": "c1", "result": {"url": "https://chat.example/sso?p=Qm7x…"}}
 
 // the page signs the user in, then redirects to
-// https://web.apron.chat/#token=Hk41x9…&state=q8Rz…&server=wss%3A%2F%2Fchat.example%2F
+// https://web.apron.chat/#token=Hk41x9…&state=q8Rz…&server=wss://chat.example/ws
 
 // -> on a connection from https://web.apron.chat
 {"method": "auth", "id": "c2", "params": {"scheme": "external", "token": "Hk41x9…"}}
@@ -2201,11 +2201,11 @@ addition. The server delivers a temporary token outside the connection. An
   that works on other connections MUST be unguessable.
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
-  WebSocket URL when the link opens a client that is not tied to one server
+  address when the link opens a client that is not tied to one server
   ([A.4](#a4-links)).
 - A client asks its user before it uses a link without the `state` of a
-  proposal that the client made.
-- A client presents the token of such a link with `scheme: "token"`.
+  proposal that the client made. It then presents the link's token with
+  `scheme: "token"`.
 - For a link with the `state` of its own proposal, a client uses the server
   that it proposed to, and ignores `server`.
 
@@ -2350,6 +2350,11 @@ server.
 - Link tokens travel in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
   Browsers do not send fragments in request lines or `Referer` headers, so
   tokens stay out of server logs.
+- Only servers write links with a token, and never as `apron:` links
+  ([A.4](#a4-links)). So a client does not share a token when the user shares
+  a place, and an app that claims the scheme gets no token.
+- A link's `server` uses an unencrypted transport only on a loopback host
+  ([A.4](#a4-links)). So a link's token does not cross a network unencrypted.
 - A link carries the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
   else's link into that person's account (login cross-site request forgery).
@@ -2406,9 +2411,16 @@ server.
 - Clients open only an `https` `url` for external sign-in
   ([§4.11.5](#4115-external)). So a server cannot run script in the client with
   a `javascript:` URL.
-- Clients send, join, or sign in only on an action of the user, not because of
-  a link ([A.4](#a4-links)). So a link cannot make a local server, such as a
-  coding agent with guest sign-in, run a command with one click.
+- Interactive clients send, join, or sign in only on an action of the user,
+  not because of a link ([A.4](#a4-links)). So a link cannot make a local
+  server, such as a coding agent with guest sign-in, run a command with one
+  click.
+- A link's keys are serialized as `application/x-www-form-urlencoded`, and
+  readers use the first of a repeated key ([A.4](#a4-links)). So an ID cannot add keys to a link, such as
+  a second `server` or a `token`.
+- Clients reach a link's `server` only over a transport that they implement
+  ([A.4](#a4-links)). So a link cannot make a client open a `file:` or
+  `javascript:` URL, or start another app through the operating system.
 
 ### 5.5 Network privacy and server requests
 
@@ -2432,9 +2444,10 @@ server.
 - Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
   So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
-- Clients ask the user before they connect to a server that the user has not
-  used ([A.4](#a4-links)). So a posted link cannot make its readers' clients
-  reveal their IP addresses to any host, or reach services on their networks.
+- Interactive clients ask the user before they connect to a server that the
+  user has not used ([A.4](#a4-links)). So a posted link cannot make its
+  readers' clients reveal their IP addresses to any host, or reach services on
+  their networks.
 
 ### 5.6 Resource limits
 
@@ -2548,8 +2561,8 @@ A prefix says what kind of ID follows:
 ### A.4 Links
 
 A link refers to a server, or to a room, message, or user on one, so that any
-client can open it. A link carries the server's WebSocket URL, and the rest of
-the link is relative to that server:
+client can open it. A link carries the server's address, and the rest of the
+link is relative to that server:
 
 ```text
 https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042
@@ -2558,23 +2571,36 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 
 | key       | value                                                                                                                  |
 |-----------|------------------------------------------------------------------------------------------------------------------------|
-| `server`  | the server's WebSocket URL                                                                                             |
+| `server`  | the server's address, a URI whose scheme is the transport, such as `wss://chat.example/ws`                             |
 | `room`    | a `room_id`, also of a thread                                                                                          |
 | `message` | a `message_id` in that room                                                                                            |
 | `user`    | a `user_id`; with `room`, of a member of that room                                                                     |
 | `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
+| `state`   | with a sign-in token, the `state` of its proposal ([§4.11.1](#4111-proposals))                                         |
 
-- A link is a list of `application/x-www-form-urlencoded` keys after
-  `https://link.apron.chat/#`, `apron:?`, or `web+apron:?`.
-- Clients read all three forms.
+- A link is a list of keys after `https://link.apron.chat/#` or `apron:?`,
+  serialized as `application/x-www-form-urlencoded`, with `:` and `/` left as
+  they are.
+- Readers use the first value of a repeated key.
+- Clients reach `server` only over a transport that they implement. They never
+  hand it to a browser or the operating system to open.
+- `server` uses an unencrypted transport, such as `ws`, only on a loopback
+  host.
+- Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
+- Only servers write links with `token`, such as in an email or a command's
+  reply. Servers never write them in the `apron:` form (any app can claim the
+  scheme).
 - A link in `body.text` without `server`, such as `apron:?room=ops`, refers to
   the server that sent the message.
-- Clients add `server` to such a link before the link leaves that server.
-- Clients ask the user before they connect to a server that the user has not
-  used.
-- Clients MUST NOT send, join, or sign in because of a link without an action
-  of the user.
+- Clients add `server` to such a link before the link leaves that server, such
+  as when the user copies or forwards it. Bridges do the same in the messages
+  that they relay.
+- Interactive clients ask the user before they connect to a server that the
+  user has not used.
+- Interactive clients MUST NOT send, join, or sign in because of a link
+  without an action of the user (otherwise a link could make a local server,
+  such as a coding agent with guest sign-in, run a command with one click).
 
 Links of each kind, in the `https` form:
 
