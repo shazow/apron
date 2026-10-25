@@ -554,6 +554,23 @@ async def _(run):
              "the newest page lacks a recent message")
 
 
+@check("4.3", "history without room_id covers more than one of the user's rooms",
+       needs=lambda s: {"history", "rooms"} <= set(s.get("capabilities", [])))
+async def _(run):
+    conn = await run.joined()
+    _, reply = await conn.request("room_set", {"title": "Conformance history"})
+    other = reply.get("result", {}).get("room_id")
+    if not isinstance(other, str):
+        raise Skip(f"no second room: room_set got {describe(reply)}")
+    _, first = await run.post(conn, "conformance: history, default room")
+    _, reply = await conn.request("message", {"room_id": other, "body": {"text": "conformance: history, other room"}})
+    must(isinstance(reply.get("result", {}).get("message_id"), str), f"posting: {describe(reply)}")
+    page = await conn.call("history", {"after": first})
+    posted = {first, reply["result"]["message_id"]}
+    rooms = {m.get("room_id") for m in page.get("messages", []) if m.get("message_id") in posted}
+    should(rooms == {run.room, other}, f"history without room_id returned only {', '.join(sorted(map(str, rooms))) or 'neither room'}")
+
+
 @check("4.3.2", "after and before are inclusive bounds", needs="history")
 async def _(run):
     if not run.message:
