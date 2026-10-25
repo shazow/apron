@@ -2201,8 +2201,7 @@ addition. The server delivers a temporary token outside the connection. An
   that works on other connections MUST be unguessable.
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
-  address when the link opens a client that is not tied to one server
-  ([A.4](#a4-links)).
+  address ([A.4](#a4-links)).
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made. It then presents the link's token with
   `scheme: "token"`.
@@ -2322,9 +2321,10 @@ server.
   code.
 - A client can connect to any server. So a client does not run a server's
   markup or scripts, or open its URLs unchecked.
-- Apron does not encrypt frames itself. Over an untrusted network, it relies
-  on an encrypted and authenticated transport, such as WebSocket over TLS
-  (`wss:`).
+- Apron is transport agnostic. It leaves encryption and authentication of the
+  connection to the transport, such as `wss:`. So a link's `server`
+  ([A.4](#a4-links)) can lead a client to an unencrypted connection, unless
+  the client checks the transport.
 - Spam, sybil attacks, and public federation are out of scope.
 
 ### 5.2 Authentication
@@ -2353,8 +2353,6 @@ server.
 - Only servers write links with a token, and never as `apron:` links
   ([A.4](#a4-links)). So a client does not share a token when the user shares
   a place, and an app that claims the scheme gets no token.
-- A link's `server` uses an unencrypted transport only on a loopback host
-  ([A.4](#a4-links)). So a link's token does not cross a network unencrypted.
 - A link carries the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
   else's link into that person's account (login cross-site request forgery).
@@ -2411,16 +2409,17 @@ server.
 - Clients open only an `https` `url` for external sign-in
   ([§4.11.5](#4115-external)). So a server cannot run script in the client with
   a `javascript:` URL.
-- Interactive clients send, join, or sign in only on an action of the user,
-  not because of a link ([A.4](#a4-links)). So a link cannot make a local
+- Interactive clients send or join only on an action of the user, not
+  because of a link ([A.4](#a4-links)). So a link cannot make a local
   server, such as a coding agent with guest sign-in, run a command with one
   click.
 - A link's keys are serialized as `application/x-www-form-urlencoded`, and
-  readers use the first of a repeated key ([A.4](#a4-links)). So an ID cannot add keys to a link, such as
-  a second `server` or a `token`.
-- Clients reach a link's `server` only over a transport that they implement
-  ([A.4](#a4-links)). So a link cannot make a client open a `file:` or
-  `javascript:` URL, or start another app through the operating system.
+  clients use the first value of a repeated key ([A.4](#a4-links)). So an ID
+  cannot add keys to a link, and a key appended to a link cannot replace one
+  before it, such as `server`.
+- Clients only connect to a link's `server`, and never open it as a web page
+  or in another app ([A.4](#a4-links)). So a link cannot make a client open a
+  `file:` or `javascript:` URL, or start another app.
 
 ### 5.5 Network privacy and server requests
 
@@ -2561,8 +2560,7 @@ A prefix says what kind of ID follows:
 ### A.4 Links
 
 A link refers to a server, or to a room, message, or user on one, so that any
-client can open it. A link carries the server's address, and the rest of the
-link is relative to that server:
+client can open it. Its keys are relative to the server in `server`:
 
 ```text
 https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042
@@ -2578,38 +2576,28 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 | `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
 | `state`   | with a sign-in token, the `state` of its proposal ([§4.11.1](#4111-proposals))                                         |
 
-- A link is a list of keys after `https://link.apron.chat/#` or `apron:?`,
-  serialized as `application/x-www-form-urlencoded`, with `:` and `/` left as
-  they are.
-- Readers use the first value of a repeated key.
-- Clients reach `server` only over a transport that they implement. They never
-  hand it to a browser or the operating system to open.
-- `server` uses an unencrypted transport, such as `ws`, only on a loopback
-  host.
+- The keys follow `https://link.apron.chat/#` or `apron:?` as
+  `application/x-www-form-urlencoded` pairs, with `:` and `/` left as they are.
+- Clients use the first value of a repeated key.
 - Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
-- Only servers write links with `token`, such as in an email or a command's
-  reply. Servers never write them in the `apron:` form (any app can claim the
-  scheme).
-- A link in `body.text` without `server`, such as `apron:?room=ops`, refers to
-  the server that sent the message.
-- Clients add `server` to such a link before the link leaves that server, such
-  as when the user copies or forwards it. Bridges do the same in the messages
-  that they relay.
+- Clients only connect to `server`, and never open it as a web page or in
+  another app.
+- Only servers write links with `token`.
+- Servers never write a link with `token` in the `apron:` form (any app can
+  claim the scheme).
+- A link without `server` in content from a server, such as `apron:?room=ops`
+  in `body.text`, refers to that server.
 - Interactive clients ask the user before they connect to a server that the
   user has not used.
-- Interactive clients MUST NOT send, join, or sign in because of a link
-  without an action of the user (otherwise a link could make a local server,
-  such as a coding agent with guest sign-in, run a command with one click).
+- Interactive clients do not send or join because of a link without an action
+  of the user (otherwise a link could make a local server, such as a coding
+  agent with guest sign-in, run a command with one click).
 
 Links of each kind, in the `https` form:
 
 - A room:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=general`
-- A message in a room:
-  `https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=1724803200042`
-- A thread, which is a room ([§4.2](#42-rooms)):
-  `https://link.apron.chat/#server=wss://chat.example/ws&room=t-123`
 - A user, as a member of a room:
   `https://link.apron.chat/#server=wss://chat.example/ws&room=general&user=ada`
 - A room on a server on the user's own computer, such as a coding agent, over
