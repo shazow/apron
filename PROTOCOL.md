@@ -2415,8 +2415,8 @@ server.
   not because of a link ([A.4](#a4-links)). So a link cannot make a local
   server, such as a coding agent with guest sign-in, run a command with one
   click.
-- Writers percent-encode a link's values, and readers use the first of a
-  repeated key ([A.4](#a4-links)). So an ID cannot add keys to a link, such as
+- A link's keys are serialized as `application/x-www-form-urlencoded`, and
+  readers use the first of a repeated key ([A.4](#a4-links)). So an ID cannot add keys to a link, such as
   a second `server` or a `token`.
 - Clients reach a link's `server` only over a transport that they implement
   ([A.4](#a4-links)). So a link cannot make a client open a `file:` or
@@ -2578,10 +2578,9 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 | `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
 | `state`   | with a sign-in token, the `state` of its proposal ([§4.11.1](#4111-proposals))                                         |
 
-- A link is a list of `application/x-www-form-urlencoded` keys after
-  `https://link.apron.chat/#` or `apron:?`.
-- Writers percent-encode each key and value, except ASCII letters, digits, and
-  `-._~:/`.
+- A link is a list of keys after `https://link.apron.chat/#` or `apron:?`,
+  serialized as `application/x-www-form-urlencoded`, with `:` and `/` left as
+  they are.
 - Readers use the first value of a repeated key.
 - Clients reach `server` only over a transport that they implement. They never
   hand it to a browser or the operating system to open.
