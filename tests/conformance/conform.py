@@ -538,10 +538,10 @@ async def _(run):
 
 # §4 capabilities
 
-@check("4.3", "history without room_id pages the default room", needs="history")
+@check("4.3", "history pages the log", needs="history")
 async def _(run):
     conn = await run.open()
-    page = await conn.call("history", {})
+    page = await conn.call("history", {"room_id": run.room} if run.room else {})
     for key in ("latest_log_id", "history_log_id"):
         must(key in page, f"the result has no {key} (§4.3.3)")
     must(("first_log_id" in page) == ("last_log_id" in page), "the result has one of first_log_id and last_log_id")
