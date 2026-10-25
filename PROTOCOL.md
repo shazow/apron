@@ -750,17 +750,6 @@ A message lists the users that it mentions in `body.mentions`. Usually its
   `mentions`, and writes the mention in `text`.
 - Mentions that notify a whole room are not defined.
 
-#### 3.5.6 Links
-
-A link refers to a server, or to a room, message, or user on one
-([A.4](#a4-links)). It can arrive in a message, or from outside the client.
-
-- Interactive clients MUST NOT send, join, or sign in because of a link
-  without an action of the user (otherwise a link could make a local server,
-  such as a coding agent with guest sign-in, run a command with one click).
-- Interactive clients ask the user before they connect to a server that the
-  user has not used.
-
 ### 3.6 Core conformance checklist
 
 Every server:
@@ -2424,7 +2413,7 @@ server.
   ([§4.11.5](#4115-external)). So a server cannot run script in the client with
   a `javascript:` URL.
 - Interactive clients send, join, or sign in only on an action of the user,
-  not because of a link ([§3.5.6](#356-links)). So a link cannot make a local
+  not because of a link ([A.4](#a4-links)). So a link cannot make a local
   server, such as a coding agent with guest sign-in, run a command with one
   click.
 
@@ -2451,7 +2440,7 @@ server.
   So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
 - Interactive clients ask the user before they connect to a server that the
-  user has not used ([§3.5.6](#356-links)). So a posted link cannot make its
+  user has not used ([A.4](#a4-links)). So a posted link cannot make its
   readers' clients reveal their IP addresses to any host, or reach services on
   their networks.
 
@@ -2597,7 +2586,11 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 - Clients add `server` to such a link before the link leaves that server, such
   as when the user copies or forwards it. Bridges do the same in the messages
   that they relay.
-- Clients open links as [§3.5.6](#356-links) defines.
+- Interactive clients ask the user before they connect to a server that the
+  user has not used.
+- Interactive clients MUST NOT send, join, or sign in because of a link
+  without an action of the user (otherwise a link could make a local server,
+  such as a coding agent with guest sign-in, run a command with one click).
 
 Links of each kind, in the `https` form:
 
