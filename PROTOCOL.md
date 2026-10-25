@@ -2412,9 +2412,10 @@ server.
   because of a link ([A.4](#a4-links)). So a link cannot make a local
   server, such as a coding agent with guest sign-in, run a command with one
   click.
-- A link's keys are form-encoded, and clients use the first value of a
-  repeated key ([A.4](#a4-links)). So an ID cannot add keys to a link, and a
-  key appended to a link cannot replace one before it, such as `server`.
+- A link's keys are serialized as `application/x-www-form-urlencoded`, and
+  clients use the first value of a repeated key ([A.4](#a4-links)). So an ID
+  cannot add keys to a link, and a key appended to a link cannot replace one
+  before it, such as `server`.
 - Clients reach a link's `server` only over a transport that they implement
   ([A.4](#a4-links)). So a link cannot make a client open a `file:` or
   `javascript:` URL, or start another app through the operating system.
