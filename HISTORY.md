@@ -2,7 +2,7 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first.
 
-## v9 (2026-10-19)
+## v9 (2026-10-25)
 
 - Scheme `external` (§4.11): a proposal returns `url`, a page of the server that signs the user in by any method. The page redirects to the client's `return_url` with a temporary token in the fragment, or shows a code to type. Servers accept only a `return_url` on an origin they trust.
 - `email` and `external` share §4.11, "Email and external sign-in". A proposal may carry `state`, which links return. Approval takes either scheme, and an addition approves only on a connection of the proposing account. A disconnect keeps a proposal, and temporary tokens expire within minutes of delivery. Servers that offer either scheme also offer `token`.
