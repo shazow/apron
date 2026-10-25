@@ -2321,11 +2321,8 @@ server.
   code.
 - A client can connect to any server. So a client does not run a server's
   markup or scripts, or open its URLs unchecked.
-- Apron is mostly transport agnostic, and does not encrypt frames itself.
-  Messages and tokens are only as private as the transport that carries them.
-  Over an unencrypted transport, anyone on the network path can read them.
-  An encrypted and authenticated transport, such as WebSocket over TLS
-  (`wss:`), prevents this.
+- Apron is transport agnostic. It relies on an encrypted transport, such as
+  `wss:`, where messages and tokens need privacy.
 - A link's `server` can use any transport, an unencrypted one included
   ([A.4](#a4-links)). So a link can lead a client to an unencrypted
   connection, unless the client checks the transport first.
@@ -2421,9 +2418,9 @@ server.
   clients use the first value of a repeated key ([A.4](#a4-links)). So an ID
   cannot add keys to a link, and a key appended to a link cannot replace one
   before it, such as `server`.
-- Clients reach a link's `server` only over a transport that they implement
-  ([A.4](#a4-links)). So a link cannot make a client open a `file:` or
-  `javascript:` URL, or start another app through the operating system.
+- Clients only connect to a link's `server`, and never open it as a web page
+  or in another app ([A.4](#a4-links)). So a link cannot make a client open a
+  `file:` or `javascript:` URL, or start another app.
 
 ### 5.5 Network privacy and server requests
 
@@ -2585,15 +2582,13 @@ apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 - Clients use the first value of a repeated key.
 - Clients ignore keys that they do not know.
 - Clients write the `https` form when the user shares a link.
-- Clients reach `server` only over a transport that they implement. They never
-  hand it to a browser or the operating system to open.
+- Clients only connect to `server`, and never open it as a web page or in
+  another app.
 - Only servers write links with `token`.
 - Servers never write a link with `token` in the `apron:` form (any app can
   claim the scheme).
 - A link without `server` in content from a server, such as `apron:?room=ops`
   in `body.text`, refers to that server.
-- Clients and bridges add `server` to such a link before the link leaves that
-  server, such as when the user copies or forwards it, or a bridge relays it.
 - Interactive clients ask the user before they connect to a server that the
   user has not used.
 - Interactive clients do not send or join because of a link without an action
