@@ -538,10 +538,10 @@ async def _(run):
 
 # §4 capabilities
 
-@check("4.3", "history without room_id pages the default room", needs="history")
+@check("4.3", "history pages the log", needs="history")
 async def _(run):
     conn = await run.open()
-    page = await conn.call("history", {})
+    page = await conn.call("history", {"room_id": run.room} if run.room else {})
     for key in ("latest_log_id", "history_log_id"):
         must(key in page, f"the result has no {key} (§4.3.3)")
     must(("first_log_id" in page) == ("last_log_id" in page), "the result has one of first_log_id and last_log_id")
@@ -552,6 +552,23 @@ async def _(run):
     if run.message:
         must(any(m.get("message_id") == run.message["message_id"] for m in page.get("messages", [])),
              "the newest page lacks a recent message")
+
+
+@check("4.3", "history without room_id covers more than one of the user's rooms",
+       needs=lambda s: {"history", "rooms"} <= set(s.get("capabilities", [])))
+async def _(run):
+    conn = await run.joined()
+    _, reply = await conn.request("room_set", {"title": "Conformance history"})
+    other = reply.get("result", {}).get("room_id")
+    if not isinstance(other, str):
+        raise Skip(f"no second room: room_set got {describe(reply)}")
+    _, first = await run.post(conn, "conformance: history, default room")
+    _, reply = await conn.request("message", {"room_id": other, "body": {"text": "conformance: history, other room"}})
+    must(isinstance(reply.get("result", {}).get("message_id"), str), f"posting: {describe(reply)}")
+    page = await conn.call("history", {"after": first})
+    posted = {first, reply["result"]["message_id"]}
+    rooms = {m.get("room_id") for m in page.get("messages", []) if m.get("message_id") in posted}
+    should(rooms == {run.room, other}, f"history without room_id returned only {', '.join(sorted(map(str, rooms))) or 'neither room'}")
 
 
 @check("4.3.2", "after and before are inclusive bounds", needs="history")

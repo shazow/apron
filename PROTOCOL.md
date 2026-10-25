@@ -1277,12 +1277,12 @@ the full list:
 ### 4.3 `history`
 
 Live delivery covers only the time that a client is connected. `history` fills
-the gaps. It pages through the log of a room, so that a client can show older
-messages and recover what it missed while it was away.
+the gaps. It pages through the log, so that a client can show older messages
+and recover what it missed while it was away.
 
-Adds the `history` request, a stateless query for a window of the **log** of a
-room. Without `room_id`, it queries the default room ([§3.5.1](#351-creating)).
-The result splits the records by kind:
+Adds the `history` request, a stateless query for a window of the **log**. With
+`room_id`, it queries that room's log ([§4.3.1](#431-a-rooms-log)). The result
+splits the records by kind:
 
 - `rooms`: room records ([§4.2](#42-rooms)).
 - `messages`: message snapshots ([§3.5](#35-messages)).
@@ -1369,7 +1369,7 @@ A record can point to the previous record for its key:
 - Room records in a history result are logged records. Clients ignore their
   delivery fields.
 - Every result includes `latest_log_id` and `history_log_id`. The server
-  reads them at the same time as the page. They describe the room, not the page.
+  reads them at the same time as the page. They describe the log, not the page.
 - Retention can advance between requests, so clients check each response before
   they apply it.
 - If the server rejects a request for lack of resources, it returns an error,
