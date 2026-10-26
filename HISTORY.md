@@ -2,8 +2,12 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first.
 
-## v9 (2026-10-25)
+## v9 (2026-10-26)
 
+- A user's status has three views (§4.5.1): the chosen status, set with `me` and carried in `you`; the presence, the server's view of the user's connections (`online`, `idle`, or `offline`); and the shown status, which the server derives from the two and which is all that others see.
+- User objects may carry `seen`, the time when the shown status last became `offline`, in the format of a `log_id`. It changes only when the shown status changes to `offline`, so it never shows when a user with a chosen `invisible` connects or disconnects. A user object carries `seen` only with a shown `offline`, so `you` never carries it. Other timestamps use the format of a `log_id` (§2.1).
+- A scheme that the server does not offer fails, so a client can try another: `unsupported` for a scheme that PROTOCOL.md defines, and `invalid_params` for any other. Which credentials an offered scheme accepts is server policy, such as any token under a guest-access policy that offers `token`.
+- Under consideration: `rtc_join` may carry `refresh_after`, the seconds after which the client refreshes `ice` or `transport`, in place of `ice_expires`.
 - Scheme `external` (§4.11): a proposal returns `url`, a page of the server that signs the user in by any method. The page redirects to the client's `return_url` with a temporary token in the fragment, or shows a code to type. Servers accept only a `return_url` on an origin they trust.
 - `email` and `external` share §4.11, "Email and external sign-in". A proposal may carry `state`, which links return. Approval takes either scheme, and an addition approves only on a connection of the proposing account. A disconnect keeps a proposal, and temporary tokens expire within minutes of delivery. Servers that offer either scheme also offer `token`.
 - Appendix A.4 defines links that any client opens, as a convention: the `https://link.apron.chat/#` and `apron:?` forms, with the keys `server` (a URI of any transport), `room` (also of a thread), `message`, `user`, `token` and `state`. Links are serialized as `application/x-www-form-urlencoded`, and clients use the first value of a repeated key. Clients only connect to `server`, and never open it as a web page or in another app. Only servers write links with `token`, never as `apron:`, and a sign-in link always carries `server`. A link without `server` in a server's content refers to that server. Interactive clients ask before they connect to a server the user has not used, and never send or join because of a link.
