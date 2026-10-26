@@ -234,7 +234,8 @@ A `log_id` is the position of one change in the server's append-only log.
 - One strictly increasing sequence per server, covering every record.
 - Its value is the commit time. If the clock has not passed the previous
   `log_id`, the value is the previous `log_id + 1`.
-- It is the only timestamp in the protocol. Clients MAY show it as a time.
+- Clients MAY show it as a time. Other timestamps, such as `seen`
+  ([§4.5.2](#452-delivery)), use the same format.
 - It is positive and below `2^53`. Compare values as numbers. Clients MAY
   parse them as integers.
 - Unique within one server only.
@@ -462,6 +463,7 @@ class User {
 
   // "status" capability
   status?: string;              // current objects only (§4.5)
+  seen?: string;                // log_id format; with a derived "offline" (§4.5.2)
 
   // "ext" capability
   ext?: object;                 // §4.12
@@ -1553,35 +1555,54 @@ user.
 
 #### 4.5.1 Values
 
-- A user sets one of these values:
-  - `online`: the default. Others see the derived status below.
-  - `""`: no status. Users set it to opt out. Servers set it when they do not
-    accept a value.
-  - `dnd` (optional): others see `dnd` while the user has a connection, and
-    `offline` when the user has none. It silences the notifications of the
-    user, as `mute` does.
-  - `invisible` (optional): others see `offline`.
-- When the status of a user is `online`, others see one of these derived
-  values:
-  - `online`: a connection is attended.
-  - `idle`: the user is connected, but no connection is attended.
-  - `offline`: the user has no connections.
+A user has two statuses:
+
+- The **set status** is the value that the user sets with `me`.
+- The **derived status** is what others see. The server derives it from the
+  set status and the user's connections.
+
+| set status             | derived status                                                                                           |
+|------------------------|----------------------------------------------------------------------------------------------------------|
+| `online` (default)     | `online` if a connection is attended, `idle` if no connection is attended, `offline` with no connections |
+| `dnd` (optional)       | `dnd` with a connection, `offline` with no connections                                                   |
+| `invisible` (optional) | `offline`                                                                                                |
+| `""`                   | `""`                                                                                                     |
+
+- `""` is no status. Users set it to opt out. Servers set it when they do not
+  accept a value.
+- `dnd` silences the notifications of the user, as `mute` does.
 - `server.status` ([§3.1](#31-server-frame)) lists the optional values that
   the server accepts. Only servers with capability `status` send it. Servers
   always accept `online` and `""`, and do not list them.
 - Clients offer only the listed optional values.
-- A server without `idle` shows `online` for a connected user.
+- A server without `idle` derives `online` for a connected user.
 
 #### 4.5.2 Delivery
 
 - `status` is only in current user objects ([§3.3.1](#331-user-objects)). A
   change is a `user` notification. Servers MAY delay it.
-- Clients take the user's own `status` only from `you`. Every other object about
-  the user carries what others see. Even a complete one does not replace the
-  user's own `status`.
+- `you` carries the set status. Every other user object carries the derived
+  status.
+- Clients take the user's own set status only from `you`. Another object
+  about the user, even a complete one, does not replace it.
 - Complete user objects carry `status` also when it is `offline` or `""`.
 - A user without a `status` has no known status.
 - Clients show an unknown `status` value as unknown, with the value.
+
+```jsonc
+// <- Alice's last connection closed
+{"method": "user", "params": {"new": {"user_id": "alice", "status": "offline", "seen": "1724803600000"}}}
+```
+
+- `seen` is the time when the derived status last became `offline`, in the
+  format of a `log_id` ([§2.1](#21-log_id)).
+- `seen` changes only when the derived status changes to `offline`
+  (otherwise it would show when an `invisible` user connects).
+- Servers MAY send `seen` with a derived status of `offline`, and send it with
+  no other status.
+- A `user` notification that changes the derived status to `offline` carries
+  `seen`, if the server sends `seen`.
+- Clients show `seen` only while the derived status is `offline`.
 
 #### 4.5.3 The `status` request
 
@@ -1650,7 +1671,7 @@ they kept, and apply the ones that arrive. After the `auth` result, the server
 sends:
 
 - One `user` notification for each user who shares a room with them, with the
-  `status` that others see in `new`, unless it is `offline` or `""`. Servers MAY
+  derived status in `new`, unless it is `offline` or `""`. Servers MAY
   limit these to the users that they would list in `members`
   ([§4.2.1](#421-listing)).
 - One `status` notification for each mute in effect, with the seconds left or
@@ -2393,6 +2414,9 @@ server.
   would have created a public room.
 - The destination of a move is a room that the caller can see
   ([§4.4](#44-edit)). So a move cannot post into a hidden room.
+- Others see only the derived status of a user, and `seen` changes only when
+  the derived status changes to `offline` ([§4.5.2](#452-delivery)). So an
+  `invisible` user's connections stay hidden.
 - Mutes are private to their user ([§4.5.3](#453-the-status-request)).
 
 ### 5.4 Untrusted content
