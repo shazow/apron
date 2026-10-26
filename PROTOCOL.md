@@ -2757,8 +2757,10 @@ recorded objects ([§3.3.1](#331-user-objects)), never merged. Each carries the
 #### C.1.1 Joining
 
 `rtc_join` takes a seat, starting the session if there is none. The result
-carries the joiner's `peer_id`, its ICE configuration with the time it expires,
-and `peers`, the seats already in the session, oldest first. The server handles
+carries the joiner's `peer_id`, its ICE configuration in `ice`, and `peers`, the
+seats already in the session, oldest first. It MAY carry `refresh_after`, the
+seconds after which the client refreshes the result
+([C.1.2](#c12-reclaiming-and-leaving)). The server handles
 one join per session at a time, so of two joins the later one's `peers` includes
 the earlier. The joiner offers to each peer, and they learn of it from its
 offer. Clients SHOULD NOT answer offers until their user has joined the session.
@@ -2772,7 +2774,7 @@ Clients MAY use relay-only ICE, so servers SHOULD include TURN in `ice`.
   "id": "c41", "result": {
     "peer_id": "p3",
     "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}],
-    "ice_expires": 1724807500,
+    "refresh_after": 3600,
     "peers": [{"user_id": "alice", "name": "Alice", "peer_id": "p1"}]
   }
 }
@@ -2781,8 +2783,8 @@ Clients MAY use relay-only ICE, so servers SHOULD include TURN in `ice`.
 #### C.1.2 Reclaiming and leaving
 
 A session outlives a dropped chat connection. `rtc_join` with a `peer_id`
-reclaims that seat for the same user after a reconnect, or refreshes `ice`
-before it expires (with a new request `id`,
+reclaims that seat for the same user after a reconnect, or refreshes `ice` or
+`transport` after `refresh_after` (with a new request `id`,
 [§1.2](#12-retries-and-deduplication)); the other peers see no change. After
 reclaiming, a client restarts ICE with every peer not connected, using the fresh
 `ice`. Only a client that still holds its peer connections reclaims; otherwise
