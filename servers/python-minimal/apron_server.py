@@ -99,9 +99,8 @@ class ApronServer:
         # with respect to other connections on this event loop.
         if method == "auth":
             scheme = p.get("scheme")
-            require(scheme not in ("webauthn", "email", "external"), "Unsupported scheme", -32601)
-            require(isinstance(scheme, str), "Missing scheme")
-            # Guest-access policy: any other scheme signs in, ignoring credentials.
+            require(scheme not in ("token", "webauthn", "email", "external"), "Unsupported scheme", -32601)
+            require(scheme == "guest", "Unknown scheme")
             self.clients.setdefault(ws, {"user_id": "guest_" + uuid4().hex})
 
         require(ws in self.clients, "Authenticate first", -32001)
