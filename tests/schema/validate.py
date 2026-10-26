@@ -10,8 +10,10 @@ the newest entry of HISTORY.md, names that PROTOCOL.md does not define start
 with ext:, no session fixture delivers a frame between an auth request and its
 result, a client writes each ext key only to a server with capability ext or
 the capability of the extension that defines the key (ext:<key>), no fixture
-repeats a variant, and the cases of tests/fixtures/push.json are valid, or
-break a rule, as they say (including the 2048-byte payload limit).
+repeats a variant, seen stays the same while a user's shown status stays
+offline and arrives with each user notification that changes it to offline,
+and the cases of tests/fixtures/push.json are valid, or break a rule, as they
+say (including the 2048-byte payload limit).
 
 Run from the repository root: uv run tests/schema/validate.py
 """
@@ -134,13 +136,49 @@ def check_result(method, reply, where):
         check(reply["result"], camel(method) + "Result", where)
 
 
+def shown_users(step):
+    """Yield (object, is_user_notification) for each shown user object a step delivers."""
+    frame = step.get("receive") or {}
+    params = frame.get("params", {})
+    if frame.get("method") == "user" and "new" in params:
+        yield params["new"], True
+    result = (step.get("reply") or frame).get("result")
+    containers = [result] if isinstance(result, dict) else []
+    if frame.get("method") == "room_update":
+        containers.append(params)
+    for container in containers:
+        for user in container.get("users", []):
+            yield user, False
+
+
+def check_seen(state, step, at, sends_seen):
+    """seen changes only when the shown status changes to offline (§4.5.2)."""
+    if step.get("disconnect"):
+        state.clear()  # what happened while the client was away is unknown
+    for user, notification in shown_users(step):
+        if "status" not in user:
+            continue
+        before = state.get(user["user_id"])
+        status, seen = user["status"], user.get("seen")
+        if status == "offline" and before and before[0] == "offline":
+            if seen is not None and before[1] is not None and seen != before[1]:
+                errors.append(f"{at}: seen of {user['user_id']} changes from {before[1]} to {seen} while the shown status stays offline (§4.5.2)")
+            seen = seen or before[1]
+        elif status == "offline" and notification and sends_seen and seen is None:
+            errors.append(f"{at}: the user notification that changes the shown status of {user['user_id']} to offline carries no seen (§4.5.2)")
+        state[user["user_id"]] = (status, seen)
+
+
 def check_steps(steps, where, file, variant):
+    sends_seen = '"seen"' in json.dumps(steps)
+    shown = {}  # user_id: (shown status, seen), as the server last sent them
     requests = {}
     signing_in = set()  # auth requests captured and not yet answered
     capabilities = []  # of the latest server frame
     for i, step in enumerate(steps):
         at = f"{where} step {i}"
         check_names(step, at, file)
+        check_seen(shown, step, at, sends_seen)
         frame = step.get("receive", {})
         if frame.get("method") == "server":
             capabilities = frame.get("params", {}).get("capabilities", [])

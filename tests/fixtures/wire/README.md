@@ -437,10 +437,15 @@ The normalized session state has these keys:
   - `ext` merges one level down ([PROTOCOL.md §4.12](../../../PROTOCOL.md#412-ext)): each key that a merged
     object's `ext` carries replaces the kept key, and other keys stay. As at
     the top level, a key with an empty value is kept with that value.
+  - The user's own `status` is the chosen status, and comes only from `you`.
+    Every other object about the user, even a complete one, leaves it as it
+    is ([PROTOCOL.md §4.5.2](../../../PROTOCOL.md#452-delivery)).
+  - `seen` is kept and merges like any other field, but the kept objects
+    here leave it out (see `seen` below).
   - At each sign-in ([PROTOCOL.md §3.2](../../../PROTOCOL.md#32-authentication)), such as the first successful `auth`
-    on a new connection, the kept `status` of every other user is dropped
-    ([PROTOCOL.md §4.5](../../../PROTOCOL.md#45-status)); the objects that
-    arrive after it set it again.
+    on a new connection, the kept `status` and `seen` of every other user are
+    dropped ([PROTOCOL.md §4.5.4](../../../PROTOCOL.md#454-sign-in)); the
+    objects that arrive after it set them again.
   - Recorded objects (a message's or reaction's `from`, a membership's
     `user`) and `activity` senders never merge.
   - `old` with `new` makes the old `user_id` stand for the new one; it merges
@@ -453,6 +458,10 @@ The normalized session state has these keys:
   `user_id` (or the identity that replaced it), else the `from` itself. A
   field the kept object holds as an empty value is omitted, not taken from
   the `from`.
+- `seen`: for each kept user whose `status` is `offline` and who has a kept
+  `seen`, keyed by `user_id`, that `seen`. A user whose kept `status` is
+  anything else has none, even if a `seen` is kept
+  ([PROTOCOL.md §4.5.2](../../../PROTOCOL.md#452-delivery)).
 - `notices`: the transient notices received this session, in arrival order,
   each `{room_id, from, body?}` (`room_id` as sent).
 - `directory`: the `room_id`s of the latest `listRooms` result without
@@ -495,7 +504,8 @@ no sleeps, timers, or DOM selectors.
 | `ext-without-capability.json` | a server without capability `ext` whose extension (`ext:irc`) keeps its data in `ext`: an edit, a `room_set`, and a delete built from records with `ext` send none, and the tombstone carries none |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
 | `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
-| `sign-in.json` | the automatic join, the statuses that others see, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object; the mutes in effect replace the kept ones |
+| `sign-in.json` | the automatic join, the shown statuses, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object; the mutes in effect replace the kept ones |
+| `status-seen.json` | a disconnect and a change to a chosen `invisible` send the same shown `offline` with `seen`; while the shown status stays `offline`, `seen` stays, through a `user` notification for another field, a reconnect, and a later listing; a kept `seen` is not shown once the shown status leaves `offline`; a `dnd` user who disconnects; a shown `""`; the user's own chosen status from `you` survives a complete listing object with a shown `offline` and `seen` |
 | `status.json` | `idle` sent at once on a connection that starts unattended, as seconds, then `idle: false`, and again on a new connection; a `mute` applies by its `{}` result at the latest, and an error changes nothing; another connection's `mute: false` ends a room's mute; a sign-in replaces the kept mutes |
 | `users.json` | field-by-field merges of current objects from `you`, `members`, and `user`; complete `users` replace the kept object; `from` and membership users never merge; senders render from the kept object, else their `from`, and a cleared field never falls back until a complete object replaces it; memberships change member lists, not users; `old` and `new` make the old `user_id` stand for the new one |
 | `reactions.json` | react, change, clear, move re-log in the destination, `invalid_params`, tombstone hiding |
@@ -571,8 +581,10 @@ that a later protocol version defines. `tests/schema/validate.py` checks
 this, `apron: 9` in every `server` frame, that no frame arrives between an
 `auth` request and its result, that a client writes each `ext` key only to a
 server with capability `ext` or the capability of the extension that defines
-the key (such as `irc` to a server with `ext:irc`), and that no file repeats a
-variant.
+the key (such as `irc` to a server with `ext:irc`), that no file repeats a
+variant, and that `seen` stays the same while a user's shown status stays
+`offline` and arrives with each `user` notification that changes it to
+`offline`.
 
 Not covered:
 
