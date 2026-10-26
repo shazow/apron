@@ -299,7 +299,7 @@ class Server {
   ping?: number;                // seconds between client pings (§1)
 
   // "status" capability
-  status?: string[];            // optional set status values accepted (§4.5.1)
+  status?: string[];            // optional chosen status values accepted (§4.5.1)
 
   // push, without a capability
   push?: object;                // push kinds and wake scopes; enables push (§4.9)
@@ -462,8 +462,8 @@ class User {
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
 
   // "status" capability
-  status?: string;              // current objects only; set in `you`, derived in others (§4.5.2)
-  seen?: string;                // log_id format; with a derived "offline" (§4.5.2)
+  status?: string;              // current objects only; chosen in `you`, shown in others (§4.5.2)
+  seen?: string;                // log_id format; with a shown "offline" (§4.5.2)
 
   // "ext" capability
   ext?: object;                 // §4.12
@@ -1533,7 +1533,7 @@ question: is now a good time to reach this user? A status tells others whether
 the user is around. Idle reports and mutes tell the server when to hold back
 notifications.
 
-Lets users set a presence `status` with `me` ([§3.3.2](#332-profile)). Clients
+Lets users choose a `status` with `me` ([§3.3.2](#332-profile)). Clients
 use the `status` request to report idle connections, and to set the mutes of the
 user.
 
@@ -1555,35 +1555,42 @@ user.
 
 #### 4.5.1 Values
 
-A user has two statuses:
+A user's status has three views:
 
-- The **set status** is the value that the user sets with `me`.
-- The **derived status** is what others see. The server derives it from the
-  set status and the user's connections.
+- The **chosen status** is the value that the user sets with `me`.
+- The **presence** is the server's view of the user's connections. It is
+  `online` if a connection is attended
+  ([§4.5.3](#453-the-status-request)), `idle` if no connection is attended,
+  and `offline` if the user has no connections.
+- The **shown status** is what others see. The server derives it from the
+  chosen status and the presence:
 
-| set status             | derived status                                                                                           |
-|------------------------|----------------------------------------------------------------------------------------------------------|
-| `online` (default)     | `online` if a connection is attended, `idle` if no connection is attended, `offline` with no connections |
-| `dnd` (optional)       | `dnd` with a connection, `offline` with no connections                                                   |
-| `invisible` (optional) | `offline`                                                                                                |
-| `""`                   | `""`                                                                                                     |
+| chosen status          | presence `online` | presence `idle` | presence `offline` |
+|------------------------|-------------------|-----------------|--------------------|
+| `online` (default)     | `online`          | `idle`          | `offline`          |
+| `dnd` (optional)       | `dnd`             | `dnd`           | `offline`          |
+| `invisible` (optional) | `offline`         | `offline`       | `offline`          |
+| `""`                   | `""`              | `""`            | `""`               |
 
-- `""` is no status. Users set it to opt out. Servers set it when they do not
-  accept a value.
-- `dnd` silences the notifications of the user, as `mute` does.
+- A chosen `""` is no status. Users choose it to opt out. Servers set it when
+  they do not accept a value.
+- A chosen `dnd` silences the notifications of the user, as `mute` does.
 - `server.status` ([§3.1](#31-server-frame)) lists the optional values that
-  the server accepts. Only servers with capability `status` send it. Servers
-  always accept `online` and `""`, and do not list them.
+  the server accepts as a chosen status. Only servers with capability `status`
+  send it. Servers always accept `online` and `""`, and do not list them.
 - Clients offer only the listed optional values.
-- A server without `idle` derives `online` for a connected user.
+- A server without `idle` treats the presence of a connected user as
+  `online`.
 
 #### 4.5.2 Delivery
 
 - `status` is only in current user objects ([§3.3.1](#331-user-objects)). A
   change is a `user` notification. Servers MAY delay it.
-- `you` carries the set status. Every other user object carries the derived
+- `you` carries the chosen status. Every other user object carries the shown
   status.
-- Clients take the user's own set status only from `you`. Another object
+- Others see only the shown status. They never see the chosen status or the
+  presence.
+- Clients take the user's own chosen status only from `you`. Another object
   about the user, even a complete one, does not replace it.
 - Complete user objects carry `status` also when it is `offline` or `""`.
 - A user without a `status` has no known status.
@@ -1594,15 +1601,16 @@ A user has two statuses:
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "offline", "seen": "1724803600000"}}}
 ```
 
-- `seen` is the time when the derived status last became `offline`, in the
+- `seen` is the time when the shown status last became `offline`, in the
   format of a `log_id` ([§2.1](#21-log_id)).
-- `seen` changes only when the derived status changes to `offline`
-  (otherwise it would show when an `invisible` user connects).
-- Servers MAY send `seen` with a derived status of `offline`, and send it with
-  no other status.
-- A `user` notification that changes the derived status to `offline` carries
+- `seen` changes only when the shown status changes to `offline`, not with
+  the presence (otherwise it would show when a user with a chosen `invisible`
+  connects).
+- Servers MAY send `seen` with a shown `offline`, and send it with no other
+  status.
+- A `user` notification that changes the shown status to `offline` carries
   `seen`, if the server sends `seen`.
-- Clients show `seen` only while the derived status is `offline`.
+- Clients show `seen` only while the shown status is `offline`.
 
 #### 4.5.3 The `status` request
 
@@ -1611,7 +1619,7 @@ A user has two statuses:
 {"method": "status", "id": "c41", "params": {"idle": 300}}
 // <-
 {"id": "c41", "result": {}}
-// <- to others who share a room, if Alice has no attended connection
+// <- to others who share a room, if Alice's presence becomes idle
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "idle"}}}
 // -> mute #random until unmuted, and everything for an hour
 {"method": "status", "id": "c42", "params": {"room_id": "random", "mute": true}}
@@ -1671,7 +1679,7 @@ they kept, and apply the ones that arrive. After the `auth` result, the server
 sends:
 
 - One `user` notification for each user who shares a room with them, with the
-  derived status in `new`, unless it is `offline` or `""`. Servers MAY
+  shown status in `new`, unless it is `offline` or `""`. Servers MAY
   limit these to the users that they would list in `members`
   ([§4.2.1](#421-listing)).
 - One `status` notification for each mute in effect, with the seconds left or
@@ -2088,15 +2096,13 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   scopes in `wake`. An empty `wake` wakes for nothing. Without `wake`, the
   server uses its default scopes. These SHOULD be `mentions` and `replies`,
   where advertised.
-- A push that `mute` or a set status of `dnd` ([§4.5.1](#451-values))
-  silences has no `message`. It goes only to registrations that wake for
-  `badge`.
+- A push that `mute` or a chosen `dnd` ([§4.5.1](#451-values)) silences has
+  no `message`. It goes only to registrations that wake for `badge`.
 - Servers do not wake a user for the user's own messages. Server policy
   decides other wake rules, such as rate limits.
-- Suggested convention: wake a user only when every connection of the user is
-  idle ([§4.5.3](#453-the-status-request)) or closed. Servers MAY wait a short
-  time first, and skip the push if the `read_message_id` of the user is past the
-  message.
+- Suggested convention: wake a user only when the user's presence is `idle`
+  or `offline` ([§4.5.1](#451-values)). Servers MAY wait a short time first,
+  and skip the push if the `read_message_id` of the user is past the message.
 
 ### 4.10 WebAuthn authentication
 
@@ -2415,9 +2421,9 @@ server.
   would have created a public room.
 - The destination of a move is a room that the caller can see
   ([§4.4](#44-edit)). So a move cannot post into a hidden room.
-- Others see only the derived status of a user, and `seen` changes only when
-  the derived status changes to `offline` ([§4.5.2](#452-delivery)). So an
-  `invisible` user's connections stay hidden.
+- Others see only the shown status of a user, and `seen` changes only when
+  the shown status changes to `offline` ([§4.5.2](#452-delivery)). So the
+  connections of a user with a chosen `invisible` stay hidden.
 - Mutes are private to their user ([§4.5.3](#453-the-status-request)).
 
 ### 5.4 Untrusted content
