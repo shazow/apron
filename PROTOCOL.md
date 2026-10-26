@@ -1603,11 +1603,9 @@ A user's status has three views:
 
 - `seen` is the time when the shown status last became `offline`, in the
   format of a `log_id` ([§2.1](#21-log_id)).
-- `seen` changes only when the shown status changes to `offline`, not with
-  the presence (otherwise it would show when a user with a chosen `invisible`
-  connects).
-- Servers MAY send `seen` with a shown `offline`, and send it with no other
-  status.
+- `seen` changes only when the shown status changes to `offline` (otherwise
+  it would show when a user with a chosen `invisible` connects).
+- A user object MAY carry `seen` only when it carries a shown `offline`.
 - A `user` notification that changes the shown status to `offline` carries
   `seen`, if the server sends `seen`.
 - Clients show `seen` only while the shown status is `offline`.
