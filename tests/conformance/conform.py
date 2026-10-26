@@ -268,6 +268,8 @@ class Run:
                 seen = seen or before[1]
             elif status == "offline" and notification and seen is None and any(v[1] for v in conn.shown.values()):
                 self.violate("shown-seen", f"the user notification that changed {user['user_id']} to offline carries no seen")
+            if status == "offline" and not notification and "seen" not in user and any(v[1] for v in conn.shown.values()):
+                self.violate("shown-seen", f"the complete user object of {user['user_id']} has a shown offline and no seen")
             conn.shown[user["user_id"]] = (status, seen)
 
     def check_ids(self, value, key=None):
@@ -950,7 +952,7 @@ check("1.1", "every request gets exactly one reply")(seen("replies"))
 check("2", "IDs are well formed")(seen("ids"))
 check("3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order"))
 check("4.3.3", "listed room records carry log_id, latest_log_id, and history_log_id", needs="history")(seen("listed-rooms"))
-check("4.5.2", "seen stays the same while the shown status stays offline", needs="status")(seen("shown-seen"))
+check("4.5.2", "seen stays the same while the shown status stays offline, and arrives where it must", needs="status")(seen("shown-seen"))
 
 
 async def main():

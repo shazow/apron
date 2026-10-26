@@ -583,8 +583,8 @@ this, `apron: 9` in every `server` frame, that no frame arrives between an
 server with capability `ext` or the capability of the extension that defines
 the key (such as `irc` to a server with `ext:irc`), that no file repeats a
 variant, and that `seen` stays the same while a user's shown status stays
-`offline` and arrives with each `user` notification that changes it to
-`offline`.
+`offline` and arrives with each complete user object with a shown `offline`
+and each `user` notification that changes it to `offline`.
 
 Not covered:
 

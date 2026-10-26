@@ -1606,8 +1606,10 @@ A user's status has three views:
 - `seen` changes only when the shown status changes to `offline` (otherwise
   it would show when a user with a chosen `invisible` connects).
 - A user object MAY carry `seen` only when it carries a shown `offline`.
-- A `user` notification that changes the shown status to `offline` carries
-  `seen`, if the server sends `seen`.
+- A server that sends `seen` includes it in:
+  - each complete user object with a shown `offline`, such as in `room_list`
+    `users`.
+  - each `user` notification that changes the shown status to `offline`.
 - Clients show `seen` only while the shown status is `offline`.
 
 #### 4.5.3 The `status` request
