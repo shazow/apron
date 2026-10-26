@@ -299,7 +299,7 @@ class Server {
   ping?: number;                // seconds between client pings (§1)
 
   // "status" capability
-  status?: string[];            // optional status values accepted (§4.5)
+  status?: string[];            // optional set status values accepted (§4.5.1)
 
   // push, without a capability
   push?: object;                // push kinds and wake scopes; enables push (§4.9)
@@ -462,7 +462,7 @@ class User {
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
 
   // "status" capability
-  status?: string;              // current objects only (§4.5)
+  status?: string;              // current objects only; set in `you`, derived in others (§4.5.2)
   seen?: string;                // log_id format; with a derived "offline" (§4.5.2)
 
   // "ext" capability
@@ -1602,6 +1602,7 @@ A user has two statuses:
   no other status.
 - A `user` notification that changes the derived status to `offline` carries
   `seen`, if the server sends `seen`.
+- Clients show `seen` only while the derived status is `offline`.
 
 #### 4.5.3 The `status` request
 
@@ -2087,8 +2088,9 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   scopes in `wake`. An empty `wake` wakes for nothing. Without `wake`, the
   server uses its default scopes. These SHOULD be `mentions` and `replies`,
   where advertised.
-- A push that `mute` or a `dnd` status ([§4.5](#45-status)) silences has no
-  `message`. It goes only to registrations that wake for `badge`.
+- A push that `mute` or a set status of `dnd` ([§4.5.1](#451-values))
+  silences has no `message`. It goes only to registrations that wake for
+  `badge`.
 - Servers do not wake a user for the user's own messages. Server policy
   decides other wake rules, such as rate limits.
 - Suggested convention: wake a user only when every connection of the user is
