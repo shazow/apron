@@ -104,6 +104,7 @@ class Conn:
     def __init__(self, run, ws):
         self.run, self.ws = run, ws
         self.frames, self.closed, self.you = [], False, None
+        self.shown = {}  # user_id -> (shown status, seen), as this connection last received them
         self.methods = {}  # request id -> method
         self.asked, self.answered = {}, {}
         self.changed = asyncio.Condition()
@@ -245,6 +246,31 @@ class Run:
             self.order[key] = max(self.order.get(key, 0), int(params["log_id"]))
         if self.server and self.has("history"):
             self.check_room_records(frame)
+        self.check_seen(conn, frame)
+
+    def check_seen(self, conn, frame):
+        """seen changes only when the shown status changes to offline (§4.5.2)."""
+        params, result = frame.get("params"), frame.get("result")
+        users = []
+        if frame.get("method") == "user" and isinstance(params, dict) and isinstance(params.get("new"), dict):
+            users.append((params["new"], True))
+        for container in (result, params if frame.get("method") == "room_update" else None):
+            if isinstance(container, dict) and isinstance(container.get("users"), list):
+                users += [(u, False) for u in container["users"] if isinstance(u, dict)]
+        for user, notification in users:
+            if "status" not in user or "user_id" not in user:
+                continue
+            before = conn.shown.get(user["user_id"])
+            status, seen = user["status"], user.get("seen")
+            if status == "offline" and before and before[0] == "offline":
+                if seen is not None and before[1] is not None and seen != before[1]:
+                    self.violate("shown-seen", f"seen of {user['user_id']} changed from {before[1]} to {seen} while the shown status stayed offline")
+                seen = seen or before[1]
+            elif status == "offline" and notification and seen is None and any(v[1] for v in conn.shown.values()):
+                self.violate("shown-seen", f"the user notification that changed {user['user_id']} to offline carries no seen")
+            if status == "offline" and not notification and "seen" not in user and any(v[1] for v in conn.shown.values()):
+                self.violate("shown-seen", f"the complete user object of {user['user_id']} has a shown offline and no seen")
+            conn.shown[user["user_id"]] = (status, seen)
 
     def check_ids(self, value, key=None):
         if isinstance(value, list):
@@ -376,23 +402,23 @@ async def _(run):
          "me ran as a different user than auth")
 
 
-@check("1", "an unknown auth scheme is error/invalid_params, or accepted as a guest")
+@check("1", "an unknown auth scheme is error/invalid_params")
 async def _(run):
     conn = await run.open(auth=False)
-    reply = (await conn.request("auth", {"scheme": "ext:conformance-unknown"}))[1]
-    must("result" in reply or code(reply) == CODES["invalid_params"], f"got {describe(reply)}")
+    expect_error((await conn.request("auth", {"scheme": "ext:conformance-unknown"}))[1], "invalid_params", "auth with an unknown scheme")
 
 
 @check("3.2", "a defined scheme the server does not offer is error/unsupported")
 async def _(run):
     offered = run.server.get("auth", []) + run.server.get("signup", [])
-    params = {"webauthn": {"action": "login", "step": "begin"}, "email": {"email": "conformance@example.invalid"},
-              "external": {"return_url": "https://example.invalid/"}}
-    scheme = next((s for s in params if s not in offered), None)
-    if not scheme:
-        raise Skip("the server offers webauthn, email, and external")
-    conn = await run.open(auth=False)
-    expect_error((await conn.request("auth", {"scheme": scheme, **params[scheme]}))[1], "unsupported", f"auth {scheme}")
+    params = {"guest": {}, "token": {"token": "conformance"}, "webauthn": {"action": "login", "step": "begin"},
+              "email": {"email": "conformance@example.invalid"}, "external": {"return_url": "https://example.invalid/"}}
+    missing = [s for s in params if s not in offered]
+    if not missing:
+        raise Skip("the server offers every scheme that PROTOCOL.md defines")
+    for scheme in missing:
+        conn = await run.open(auth=False)
+        expect_error((await conn.request("auth", {"scheme": scheme, **params[scheme]}))[1], "unsupported", f"auth {scheme}")
 
 
 @check("3.6.3", "accepts message without room_id into its default room")
@@ -790,6 +816,41 @@ async def _(run):
     await conn.call("me", {"status": "online"})
 
 
+@check("4.5.2", "a chosen invisible is shown offline, and its connections leave seen as it is",
+       needs=lambda s: "status" in s.get("capabilities", []) and "invisible" in s.get("status", []))
+async def _(run):
+    if run.args.token:
+        raise Skip("needs two users; runs with guest sign-in")
+    watcher = await run.joined("Watcher")
+    subject = await run.open(auth=False)
+    signed_in = await subject.call("auth", run.auth("Subject"))
+    you, token = signed_in["you"], signed_in.get("token")
+    if run.has("rooms"):
+        await subject.call("room_join", {"room_id": run.room})
+    about = lambda f: (f.get("method") == "user" and f["params"].get("new", {}).get("user_id") == you["user_id"]
+                       and "status" in f["params"]["new"])
+    await watcher.sync()  # the subject's sign-in has been announced
+    start = len(watcher.frames)
+    mine = (await subject.call("me", {"status": "invisible"})).get("you", {})
+    must(mine.get("status") == "invisible", f"you.status is {mine.get('status')!r}, not 'invisible'")
+    must("seen" not in mine, "you carries seen")
+    _, hidden = await watcher.wait(about, start)
+    if hidden:
+        must(hidden["params"]["new"]["status"] == "offline", f"a chosen invisible is shown as {hidden['params']['new']['status']!r}")
+    first = (hidden or {}).get("params", {}).get("new", {}).get("seen")
+    start = len(watcher.frames)
+    if token:  # a second connection of the same user comes and goes
+        again = await run.open(auth=False)
+        await again.call("auth", {"scheme": "token", "token": token})
+        await again.ws.close()
+    await subject.sync()
+    await watcher.sync()
+    leaks = [f["params"]["new"] for f in watcher.since(start, about)
+             if f["params"]["new"]["status"] != "offline" or f["params"]["new"].get("seen", first) != first]
+    must(not leaks, f"the watcher got {json.dumps(leaks[0]) if leaks else ''} while the subject stayed invisible")
+    should(hidden, "no user notification when the subject chose invisible")
+
+
 @check("4.1", "/help replies with a ~private notice", needs="command")
 async def _(run):
     conn = await run.joined()
@@ -891,6 +952,7 @@ check("1.1", "every request gets exactly one reply")(seen("replies"))
 check("2", "IDs are well formed")(seen("ids"))
 check("3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order"))
 check("4.3.3", "listed room records carry log_id, latest_log_id, and history_log_id", needs="history")(seen("listed-rooms"))
+check("4.5.2", "seen stays the same while the shown status stays offline, and arrives where it must", needs="status")(seen("shown-seen"))
 
 
 async def main():

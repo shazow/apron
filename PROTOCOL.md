@@ -1,6 +1,6 @@
 ---
 version: 9
-updated: 2026-10-25
+updated: 2026-10-26
 license: CC0-1.0
 ---
 
@@ -234,7 +234,8 @@ A `log_id` is the position of one change in the server's append-only log.
 - One strictly increasing sequence per server, covering every record.
 - Its value is the commit time. If the clock has not passed the previous
   `log_id`, the value is the previous `log_id + 1`.
-- It is the only timestamp in the protocol. Clients MAY show it as a time.
+- Clients MAY show it as a time. Other timestamps, such as `seen`
+  ([§4.5.2](#452-delivery)), use the same format.
 - It is positive and below `2^53`. Compare values as numbers. Clients MAY
   parse them as integers.
 - Unique within one server only.
@@ -298,7 +299,7 @@ class Server {
   ping?: number;                // seconds between client pings (§1)
 
   // "status" capability
-  status?: string[];            // optional status values accepted (§4.5)
+  status?: string[];            // optional chosen status values accepted (§4.5.1)
 
   // push, without a capability
   push?: object;                // push kinds and wake scopes; enables push (§4.9)
@@ -396,8 +397,8 @@ class AuthResult {
     ([§4.11](#411-email-and-external-sign-in)).
 - A scheme that this document defines but the server does not offer is
   `unsupported`.
-- Under a guest-access policy, a server MAY accept `auth` with `token` or a
-  scheme that this document does not define, and ignore the credentials.
+- Which credentials an offered scheme accepts is server policy. For example,
+  a guest-access server that offers `token` MAY accept any token.
 - With `server.signup`, `server.auth` lists the schemes that sign in, and
   `signup` lists the schemes that create an account. For example, `"auth":
   ["token"], "signup": ["guest"]` means: join as a guest, then sign in with
@@ -461,7 +462,8 @@ class User {
   roles?: string[];             // server-defined labels, such as "admin" or "bot"
 
   // "status" capability
-  status?: string;              // current objects only (§4.5)
+  status?: string;              // current objects only; chosen in `you`, shown in others (§4.5.2)
+  seen?: string;                // log_id format; with a shown "offline" (§4.5.2)
 
   // "ext" capability
   ext?: object;                 // §4.12
@@ -1531,7 +1533,7 @@ question: is now a good time to reach this user? A status tells others whether
 the user is around. Idle reports and mutes tell the server when to hold back
 notifications.
 
-Lets users set a presence `status` with `me` ([§3.3.2](#332-profile)). Clients
+Lets users choose a `status` with `me` ([§3.3.2](#332-profile)). Clients
 use the `status` request to report idle connections, and to set the mutes of the
 user.
 
@@ -1553,35 +1555,62 @@ user.
 
 #### 4.5.1 Values
 
-- A user sets one of these values:
-  - `online`: the default. Others see the derived status below.
-  - `""`: no status. Users set it to opt out. Servers set it when they do not
-    accept a value.
-  - `dnd` (optional): others see `dnd` while the user has a connection, and
-    `offline` when the user has none. It silences the notifications of the
-    user, as `mute` does.
-  - `invisible` (optional): others see `offline`.
-- When the status of a user is `online`, others see one of these derived
-  values:
-  - `online`: a connection is attended.
-  - `idle`: the user is connected, but no connection is attended.
-  - `offline`: the user has no connections.
+A user's status has three views:
+
+- The **chosen status** is the value that the user sets with `me`.
+- The **presence** is the server's view of the user's connections. It is
+  `online` if a connection is attended
+  ([§4.5.3](#453-the-status-request)), `idle` if no connection is attended,
+  and `offline` if the user has no connections.
+- The **shown status** is what others see. The server derives it from the
+  chosen status and the presence:
+
+| chosen status          | presence `online` | presence `idle` | presence `offline` |
+|------------------------|-------------------|-----------------|--------------------|
+| `online` (default)     | `online`          | `idle`          | `offline`          |
+| `dnd` (optional)       | `dnd`             | `dnd`           | `offline`          |
+| `invisible` (optional) | `offline`         | `offline`       | `offline`          |
+| `""`                   | `""`              | `""`            | `""`               |
+
+- A chosen `""` is no status. Users choose it to opt out. Servers set it when
+  they do not accept a value.
+- A chosen `dnd` silences the notifications of the user, as `mute` does.
 - `server.status` ([§3.1](#31-server-frame)) lists the optional values that
-  the server accepts. Only servers with capability `status` send it. Servers
-  always accept `online` and `""`, and do not list them.
+  the server accepts as a chosen status. Only servers with capability `status`
+  send it. Servers always accept `online` and `""`, and do not list them.
 - Clients offer only the listed optional values.
-- A server without `idle` shows `online` for a connected user.
+- A server without `idle` treats the presence of a connected user as
+  `online`.
 
 #### 4.5.2 Delivery
 
 - `status` is only in current user objects ([§3.3.1](#331-user-objects)). A
   change is a `user` notification. Servers MAY delay it.
-- Clients take the user's own `status` only from `you`. Every other object about
-  the user carries what others see. Even a complete one does not replace the
-  user's own `status`.
+- `you` carries the chosen status. Every other user object carries the shown
+  status.
+- Others see only the shown status. They never see the chosen status or the
+  presence.
+- Clients take the user's own chosen status only from `you`. Another object
+  about the user, even a complete one, does not replace it.
 - Complete user objects carry `status` also when it is `offline` or `""`.
 - A user without a `status` has no known status.
 - Clients show an unknown `status` value as unknown, with the value.
+
+```jsonc
+// <- Alice's last connection closed
+{"method": "user", "params": {"new": {"user_id": "alice", "status": "offline", "seen": "1724803600000"}}}
+```
+
+- `seen` is the time when the shown status last became `offline`, in the
+  format of a `log_id` ([§2.1](#21-log_id)).
+- `seen` changes only when the shown status changes to `offline` (otherwise
+  it would show when a user with a chosen `invisible` connects).
+- A user object MAY carry `seen` only when it carries a shown `offline`.
+- A server that sends `seen` includes it in:
+  - each complete user object with a shown `offline`, such as in `room_list`
+    `users`.
+  - each `user` notification that changes the shown status to `offline`.
+- Clients show `seen` only while the shown status is `offline`.
 
 #### 4.5.3 The `status` request
 
@@ -1590,7 +1619,7 @@ user.
 {"method": "status", "id": "c41", "params": {"idle": 300}}
 // <-
 {"id": "c41", "result": {}}
-// <- to others who share a room, if Alice has no attended connection
+// <- to others who share a room, if Alice's presence becomes idle
 {"method": "user", "params": {"new": {"user_id": "alice", "status": "idle"}}}
 // -> mute #random until unmuted, and everything for an hour
 {"method": "status", "id": "c42", "params": {"room_id": "random", "mute": true}}
@@ -1650,7 +1679,7 @@ they kept, and apply the ones that arrive. After the `auth` result, the server
 sends:
 
 - One `user` notification for each user who shares a room with them, with the
-  `status` that others see in `new`, unless it is `offline` or `""`. Servers MAY
+  shown status in `new`, unless it is `offline` or `""`. Servers MAY
   limit these to the users that they would list in `members`
   ([§4.2.1](#421-listing)).
 - One `status` notification for each mute in effect, with the seconds left or
@@ -2067,14 +2096,13 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   scopes in `wake`. An empty `wake` wakes for nothing. Without `wake`, the
   server uses its default scopes. These SHOULD be `mentions` and `replies`,
   where advertised.
-- A push that `mute` or a `dnd` status ([§4.5](#45-status)) silences has no
-  `message`. It goes only to registrations that wake for `badge`.
+- A push that `mute` or a chosen `dnd` ([§4.5.1](#451-values)) silences has
+  no `message`. It goes only to registrations that wake for `badge`.
 - Servers do not wake a user for the user's own messages. Server policy
   decides other wake rules, such as rate limits.
-- Suggested convention: wake a user only when every connection of the user is
-  idle ([§4.5.3](#453-the-status-request)) or closed. Servers MAY wait a short
-  time first, and skip the push if the `read_message_id` of the user is past the
-  message.
+- Suggested convention: wake a user only when the user's presence is `idle`
+  or `offline` ([§4.5.1](#451-values)). Servers MAY wait a short time first,
+  and skip the push if the `read_message_id` of the user is past the message.
 
 ### 4.10 WebAuthn authentication
 
@@ -2393,6 +2421,9 @@ server.
   would have created a public room.
 - The destination of a move is a room that the caller can see
   ([§4.4](#44-edit)). So a move cannot post into a hidden room.
+- Others see only the shown status of a user, and `seen` changes only when
+  the shown status changes to `offline` ([§4.5.2](#452-delivery)). So the
+  connections of a user with a chosen `invisible` stay hidden.
 - Mutes are private to their user ([§4.5.3](#453-the-status-request)).
 
 ### 5.4 Untrusted content
@@ -2728,8 +2759,10 @@ recorded objects ([§3.3.1](#331-user-objects)), never merged. Each carries the
 #### C.1.1 Joining
 
 `rtc_join` takes a seat, starting the session if there is none. The result
-carries the joiner's `peer_id`, its ICE configuration with the time it expires,
-and `peers`, the seats already in the session, oldest first. The server handles
+carries the joiner's `peer_id`, its ICE configuration in `ice`, and `peers`, the
+seats already in the session, oldest first. It MAY carry `refresh_after`, the
+seconds after which the client refreshes the result
+([C.1.2](#c12-reclaiming-and-leaving)). The server handles
 one join per session at a time, so of two joins the later one's `peers` includes
 the earlier. The joiner offers to each peer, and they learn of it from its
 offer. Clients SHOULD NOT answer offers until their user has joined the session.
@@ -2743,7 +2776,7 @@ Clients MAY use relay-only ICE, so servers SHOULD include TURN in `ice`.
   "id": "c41", "result": {
     "peer_id": "p3",
     "ice": [{"urls": "stun:stun.example:3478"}, {"urls": "turn:turn.example", "username": "u", "credential": "c"}],
-    "ice_expires": 1724807500,
+    "refresh_after": 3600,
     "peers": [{"user_id": "alice", "name": "Alice", "peer_id": "p1"}]
   }
 }
@@ -2752,8 +2785,8 @@ Clients MAY use relay-only ICE, so servers SHOULD include TURN in `ice`.
 #### C.1.2 Reclaiming and leaving
 
 A session outlives a dropped chat connection. `rtc_join` with a `peer_id`
-reclaims that seat for the same user after a reconnect, or refreshes `ice`
-before it expires (with a new request `id`,
+reclaims that seat for the same user after a reconnect, or refreshes `ice` or
+`transport` after `refresh_after` (with a new request `id`,
 [§1.2](#12-retries-and-deduplication)); the other peers see no change. After
 reclaiming, a client restarts ICE with every peer not connected, using the fresh
 `ice`. Only a client that still holds its peer connections reclaims; otherwise

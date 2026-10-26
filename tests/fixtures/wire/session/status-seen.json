@@ -1,0 +1,99 @@
+{
+  "format": 4,
+  "kind": "session",
+  "name": "Shown status and seen",
+  "description": "Others see only the shown status, and seen is the time when it last became offline (capability status). A disconnect and a change to a chosen invisible send the same frame: a shown offline with seen. While the shown status stays offline, seen stays: connections that come and go send nothing, a user notification for another field carries neither status nor seen, and a later listing carries the same seen. When the shown status leaves offline, the kept seen is no longer shown, and the next change to offline brings a new one. A dnd user who disconnects is shown offline with seen. A sign-in drops the kept statuses and seen, and the listing sets them again. The user's own status is the chosen status from you: a complete listing object that carries the shown offline and seen does not replace it, and the user's own seen is never shown.",
+  "references": [
+    "PROTOCOL.md#21-log_id",
+    "PROTOCOL.md#331-user-objects",
+    "PROTOCOL.md#451-values",
+    "PROTOCOL.md#452-delivery",
+    "PROTOCOL.md#454-sign-in"
+  ],
+  "variants": [
+    {
+      "name": "disconnect",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"online"}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"bob"},{"user_id":"carol"},{"user_id":"guest_1"}]}],"users":[{"user_id":"bob","name":"Bob","status":"online"},{"user_id":"carol","name":"Carol","status":"offline","seen":"40"},{"user_id":"guest_1","name":"Ada","status":"online"}]}}},
+        {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","status":"online"},"carol":{"user_id":"carol","name":"Carol","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"carol":"40"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"offline","seen":"120"}}}},
+        {"expect":{"seen":{"bob":"120","carol":"40"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"online"}}}},
+        {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","status":"online"},"carol":{"user_id":"carol","name":"Carol","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"carol":"40"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"idle"}}}},
+        {"expect":{"seen":{"carol":"40"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"offline","seen":"180"}}}},
+        {"expect":{"users":{"bob":{"user_id":"bob","name":"Bob","status":"offline"},"carol":{"user_id":"carol","name":"Carol","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"bob":"180","carol":"40"}}}
+      ]
+    },
+    {
+      "name": "invisible",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"carol","status":"online"}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"carol"},{"user_id":"guest_1"}]}],"users":[{"user_id":"carol","name":"Carol","status":"online"},{"user_id":"guest_1","name":"Ada","status":"online"}]}}},
+        {"expect":{"seen":{}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"carol","status":"offline","seen":"120"}}}},
+        {"expect":{"users":{"carol":{"user_id":"carol","name":"Carol","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"carol":"120"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"carol","name":"Caz"}}}},
+        {"expect":{"users":{"carol":{"user_id":"carol","name":"Caz","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"carol":"120"}}},
+        {"disconnect":true},
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
+        {"request":{"as":"rooms-again","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"}}}},
+        {"expect":{"users":{"carol":{"user_id":"carol","name":"Caz"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{}}},
+        {"reply":{"to":"rooms-again","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"carol"},{"user_id":"guest_1"}]}],"users":[{"user_id":"carol","name":"Caz","status":"offline","seen":"120"},{"user_id":"guest_1","name":"Ada","status":"online"}]}}},
+        {"expect":{"users":{"carol":{"user_id":"carol","name":"Caz","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"carol":"120"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"carol","status":"online"}}}},
+        {"expect":{"users":{"carol":{"user_id":"carol","name":"Caz","status":"online"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"carol","status":"offline","seen":"300"}}}},
+        {"expect":{"users":{"carol":{"user_id":"carol","name":"Caz","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"carol":"300"}}}
+      ]
+    },
+    {
+      "name": "dnd",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"dana","status":"dnd"}}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"dana"},{"user_id":"erin"},{"user_id":"guest_1"}]}],"users":[{"user_id":"dana","name":"Dana","status":"dnd"},{"user_id":"erin","name":"Erin","status":""},{"user_id":"guest_1","name":"Ada","status":"online"}]}}},
+        {"expect":{"users":{"dana":{"user_id":"dana","name":"Dana","status":"dnd"},"erin":{"user_id":"erin","name":"Erin","status":""},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"dana","status":"offline","seen":"120"}}}},
+        {"expect":{"seen":{"dana":"120"}}},
+        {"receive":{"method":"user","params":{"new":{"user_id":"dana","status":"dnd"}}}},
+        {"expect":{"users":{"dana":{"user_id":"dana","name":"Dana","status":"dnd"},"erin":{"user_id":"erin","name":"Erin","status":""},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{}}}
+      ]
+    },
+    {
+      "name": "own-status",
+      "steps": [
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
+        {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
+        {"reply":{"to":"rooms","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"erin"},{"user_id":"guest_1"}]}],"users":[{"user_id":"erin","name":"Erin","status":""},{"user_id":"guest_1","name":"Ada","status":"online"}]}}},
+        {"receive":{"method":"user","params":{"you":{"user_id":"guest_1","status":"invisible"}}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada","status":"invisible"},"users":{"erin":{"user_id":"erin","name":"Erin","status":""},"guest_1":{"user_id":"guest_1","name":"Ada","status":"invisible"}},"seen":{}}},
+        {"disconnect":true},
+        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
+        {"request":{"as":"rooms-again","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
+        {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada","status":"invisible"}}}},
+        {"reply":{"to":"rooms-again","result":{"joined":[{"room_id":"general","log_id":"90","title":"General","members":[{"user_id":"erin"},{"user_id":"guest_1"}]}],"users":[{"user_id":"erin","name":"Erin","status":""},{"user_id":"guest_1","name":"Ada","status":"offline","seen":"130"}]}}},
+        {"expect":{"you":{"user_id":"guest_1","name":"Ada","status":"invisible"},"users":{"erin":{"user_id":"erin","name":"Erin","status":""},"guest_1":{"user_id":"guest_1","name":"Ada","status":"invisible"}},"seen":{}}}
+      ]
+    }
+  ],
+  "expected": {}
+}
