@@ -97,8 +97,9 @@ its request, and every other frame is a one-way notification.
 - Server announcements and broadcasts are notifications.
 - Servers reply `error/unsupported` to requests with unknown methods.
 - Notifications with unknown methods are ignored.
-- A request that depends on an unknown name, such as an auth scheme or a
-  kind, fails with `invalid_params`.
+- A server MAY accept a request that depends on a name that it does not
+  know, such as an auth scheme or a kind. Otherwise, the request fails with
+  `invalid_params`.
 - Receivers ignore an unknown name in any other frame, or show the fallback of
   its section.
 - Implementations SHOULD accept frames up to 256 KiB. They MAY reject a larger
@@ -394,8 +395,10 @@ class AuthResult {
     ([§4.11](#411-email-and-external-sign-in)).
   - `external`: optional sign-in on a web page of the server
     ([§4.11](#411-email-and-external-sign-in)).
-- A scheme that this document defines but the server does not offer is
-  `unsupported`.
+- A server MAY accept `auth` with any scheme, also one that it does not offer,
+  and MAY ignore the credentials. An example is a guest-access policy.
+- Otherwise, a scheme that this document defines but the server does not
+  offer is `unsupported`.
 - With `server.signup`, `server.auth` lists the schemes that sign in, and
   `signup` lists the schemes that create an account. For example, `"auth":
   ["token"], "signup": ["guest"]` means: join as a guest, then sign in with
