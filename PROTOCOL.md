@@ -1602,7 +1602,6 @@ A user has two statuses:
   no other status.
 - A `user` notification that changes the derived status to `offline` carries
   `seen`, if the server sends `seen`.
-- Clients show `seen` only while the derived status is `offline`.
 
 #### 4.5.3 The `status` request
 
