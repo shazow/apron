@@ -1,0 +1,17 @@
+# Rebuilds apron.chat, which renders these files from main
+# (apron-chat/apron.chat's scripts/build-protocol.mjs).
+name: deploy-site
+
+on:
+  push:
+    branches: [main]
+    paths: [PROTOCOL.md, HISTORY.md, FAQ.md]
+  workflow_dispatch:
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS -X POST "$DEPLOY_HOOK"
+        env:
+          DEPLOY_HOOK: ${{ secrets.APRON_CHAT_DEPLOY_HOOK }}
