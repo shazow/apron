@@ -396,8 +396,6 @@ class AuthResult {
     ([§4.11](#411-email-and-external-sign-in)).
 - A scheme that this document defines but the server does not offer is
   `unsupported`.
-- Under a guest-access policy, a server MAY accept `auth` with `token` or a
-  scheme that this document does not define, and ignore the credentials.
 - With `server.signup`, `server.auth` lists the schemes that sign in, and
   `signup` lists the schemes that create an account. For example, `"auth":
   ["token"], "signup": ["guest"]` means: join as a guest, then sign in with
