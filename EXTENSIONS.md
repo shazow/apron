@@ -75,7 +75,10 @@ class Emoji {                   // server.ext.emoji[":name:"]
   and in the fields that PROTOCOL.md calls CommonMark
   ([§3.5.2](PROTOCOL.md#352-rendering)), such as a room's `description` and
   `server.welcome`. Other text stays as written.
-- A key in text has no letter, digit, or `:` directly before or after it.
+- Clients find keys from left to right. Keys can be adjacent, such as
+  `:party-left::party-right:`.
+- When the catalog does not have a key, its closing `:` can open the next
+  key, such as `:partyparrot:` in `12:30:partyparrot:`.
 - Keys in CommonMark code spans and code blocks stay text.
 - A mention ([Appendix A.3](PROTOCOL.md#a3-prefixes-in-text)) can continue
   into a `:` that directly follows it. So composers put a space between a
