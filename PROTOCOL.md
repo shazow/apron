@@ -80,6 +80,12 @@ its request, and every other frame is a one-way notification.
 
 - WebSocket is the reference transport. Other transports work if they deliver
   whole frames.
+- A server's **address** is the URI that clients connect to, such as
+  `wss://chat.example/ws`. Clients SHOULD identify a server by its address,
+  compared after normalization
+  ([RFC 3986 §6.2.2](https://www.rfc-editor.org/rfc/rfc3986#section-6.2.2)
+  and [§6.2.3](https://www.rfc-editor.org/rfc/rfc3986#section-6.2.3)), and
+  never by its `title` or `avatar` ([§3.1](#31-server-frame)).
 - A **frame** is one JSON object: one WebSocket text message, or one line on
   a byte-stream transport such as TCP or stdio (newline-delimited JSON).
 - Frames use the shape of [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
@@ -2640,14 +2646,14 @@ https://link.apron.chat/#server=wss://chat.example/ws&room=general&message=17248
 apron:?server=wss://chat.example/ws&room=general&message=1724803200042
 ```
 
-| key       | value                                                                                                                  |
-|-----------|------------------------------------------------------------------------------------------------------------------------|
-| `server`  | the server's address, a URI whose scheme is the transport, such as `wss://chat.example/ws`                             |
-| `room`    | a `room_id`, also of a thread                                                                                          |
-| `message` | a `message_id` in that room                                                                                            |
-| `user`    | a `user_id`; with `room`, of a member of that room                                                                     |
-| `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens)) |
-| `state`   | with a sign-in token, the `state` of its proposal ([§4.11.1](#4111-proposals))                                         |
+| key       | value                                                                                                                    |
+|-----------|--------------------------------------------------------------------------------------------------------------------------|
+| `server`  | the server's address ([§1](#1-transport--framing)), a URI whose scheme is the transport, such as `wss://chat.example/ws` |
+| `room`    | a `room_id`, also of a thread                                                                                            |
+| `message` | a `message_id` in that room                                                                                              |
+| `user`    | a `user_id`; with `room`, of a member of that room                                                                       |
+| `token`   | an invite ([B.3](#b3-an-invite-token-signs-up-several-people)), or a sign-in token ([§4.11.2](#4112-temporary-tokens))   |
+| `state`   | with a sign-in token, the `state` of its proposal ([§4.11.1](#4111-proposals))                                           |
 
 - The keys follow `https://link.apron.chat/#` or `apron:?` as
   `application/x-www-form-urlencoded` pairs, with `:` and `/` left as they are.
