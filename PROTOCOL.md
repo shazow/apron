@@ -1356,8 +1356,8 @@ A record can point to the previous record for its key:
   contiguous slice of the changes in the log, of any kind.
 - `limit` is a positive count of changes, applied before compaction. Servers
   MAY supply a default.
-- With `after`, the server selects the oldest matches. Otherwise it selects
-  the newest.
+- With `after`, the slice starts at the oldest change within the bounds and
+  runs forward. Without `after`, it ends at the newest and runs back.
 - `first_log_id` and `last_log_id` are the first and last `log_id`s of the
   slice before compaction. The result has both or neither.
 - `more` shows that more changes match in the selected direction. An empty
