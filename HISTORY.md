@@ -2,8 +2,9 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first.
 
-## v9 (2026-10-26)
+## v9 (2026-10-27)
 
+- `history` without `room_id` queries every room the connection receives as one log, instead of the default room, with the server's effective lower bound. Servers should support it, or reply `unsupported`.
 - A user's status has three views (§4.5.1): the chosen status, set with `me` and carried in `you`; the presence, the server's view of the user's connections (`online`, `idle`, or `offline`); and the shown status, which the server derives from the two and which is all that others see.
 - User objects may carry `seen`, the time when the shown status last became `offline`, in the format of a `log_id`. It changes only when the shown status changes to `offline`, so it never shows when a user with a chosen `invisible` connects or disconnects. A user object carries `seen` only with a shown `offline`, so `you` never carries it. A server that sends `seen` includes it in each complete user object with a shown `offline`, such as in `room_list` `users`, and in each `user` notification that changes the shown status to `offline`. Other timestamps use the format of a `log_id` (§2.1).
 - A scheme that the server does not offer fails, so a client can try another: `unsupported` for a scheme that PROTOCOL.md defines, and `invalid_params` for any other. Which credentials an offered scheme accepts is server policy, such as any token under a guest-access policy that offers `token`.
