@@ -163,8 +163,9 @@ what the user works on.
 
 Adds custom emoji: images that the server defines, and that users write as
 `:name:` in reactions and text. The `server` frame carries them in
-`ext.emoji`, keyed by that string. Without the extension, clients show the
-string as text.
+`ext.emoji`, keyed by that string. Without the extension, clients show a key
+in text as written, and in reactions as a placeholder
+([§4.7](PROTOCOL.md#47-reactions)).
 
 ```jsonc
 // <- the catalog
@@ -221,8 +222,6 @@ class Emoji {                   // server.ext.emoji[":name:"]
   that custom emoji.
 - Clients show a key that the catalog has as its image, with `alt` or the key
   as its hover text.
-- Clients show a key that the catalog does not have as a placeholder shape,
-  with the key as its hover text.
 
 ### Text
 

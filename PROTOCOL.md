@@ -1763,7 +1763,8 @@ result is `{}`.
 - An entry MAY instead be a key for another kind of reaction, such as
   `:partyparrot:` for a custom emoji. Which keys a server accepts is server
   policy.
-- Clients show a key that they do not know as written.
+- Clients show a key that they do not support as a placeholder, with the key
+  as its hover text.
 - Entries that differ only in U+FE0F are the same entry. Clients compare
   entries without U+FE0F.
 - Servers SHOULD store each emoji sequence in its fully-qualified form
