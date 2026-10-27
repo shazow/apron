@@ -98,8 +98,10 @@ class Emoji {                   // server.ext.emoji[":name:"]
 
 ### 2.3 Text
 
-- Clients render a key in `body.text` as its image when the catalog has it.
-  Other text stays as written.
+- Clients render a key as its image when the catalog has it, in `body.text`
+  and in the fields that PROTOCOL.md calls CommonMark
+  ([§3.5.2](PROTOCOL.md#352-rendering)), such as a room's `description` and
+  `server.welcome`. Other text stays as written.
 - A key in text has no letter, digit, or `:` directly before or after it.
 - Keys in CommonMark code spans and code blocks stay text.
 - A mention ([Appendix A.3](PROTOCOL.md#a3-prefixes-in-text)) can continue
