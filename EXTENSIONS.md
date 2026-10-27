@@ -15,34 +15,27 @@ disagree.
 
 ## `ext:settings`
 
-Adds server settings to the `server` frame, so that clients offer only the
-controls that work. A server can let users do less than its capabilities
-allow, such as a server whose guests only read.
+Adds server-wide settings to the `server` frame, so that clients offer only the
+controls that work. What each user may do is in
+[`ext:permissions`](#extpermissions).
 
 ```json
-"ext": {"settings": {"guest_posting": false, "read_cursors": false, "private_rooms": 10}}
+"ext": {"settings": {"read_cursors": false, "private_rooms": 10}}
 ```
 
 ```ts
 class Settings {                  // server.ext.settings
-  guest_posting?: boolean = true; // guests may post, react, join, leave, and create threads
-  read_cursors?: boolean = true;  // the server keeps or relays read_message_id
-  add_members?: boolean = true;   // users may add other users to rooms
-  private_rooms?: number;         // the most private rooms one user may be a member of
+  read_cursors?: boolean = true;  // the server keeps read_message_id
+  private_rooms?: number;         // the most private rooms a user may be a member of
 }
 ```
 
-- A boolean that is absent, or not `false`, is `true`. Without the extension,
-  every setting is `true`.
-- A guest is a user who signed in with scheme `guest`
-  ([§3.2](PROTOCOL.md#32-authentication)).
-- `read_cursors` refers to `read_message_id` ([§4.6](PROTOCOL.md#46-activity)).
-- `add_members` refers to `room_join` with a `user_id`
-  ([§4.2.2](PROTOCOL.md#422-membership)). It does not apply to the members of
-  a private room ([§4.2.4](PROTOCOL.md#424-creating-and-editing)).
-- `private_rooms` counts private rooms without a `parent_room_id`. Absent, it
-  states no limit.
-- Clients ignore a `private_rooms` that is not a non-negative integer.
+- `read_cursors: false` means that the server ignores `read_message_id`
+  ([§4.6](PROTOCOL.md#46-activity)). Clients then send none.
+- `private_rooms` counts the private rooms
+  ([§4.2.4](PROTOCOL.md#424-creating-and-editing)) without a
+  `parent_room_id`. Absent, there is no limit.
+- Clients do not offer to create or join a private room past the limit.
 
 ## `ext:limits`
 
@@ -117,26 +110,37 @@ class Limits {
 
 ## `ext:permissions`
 
-Adds what the user may do beyond their own messages to `you`
-([§3.3](PROTOCOL.md#33-identity)), so that clients offer those controls. Roles
-are labels only, so clients cannot tell this from them.
+Adds the user's permissions to `you` ([§3.3](PROTOCOL.md#33-identity)), so
+that clients offer only the controls that the user may use. Roles
+([§3.3.4](PROTOCOL.md#334-roles)) are labels only, so clients cannot learn
+permissions from them.
 
-```json
-"you": {"user_id": "ada", "name": "Ada", "roles": ["admin"], "ext": {"permissions": ["move_any", "add_members"]}}
+```jsonc
+// a guest who only reads
+"you": {"user_id": "guest_1234", "name": "Guest", "ext": {"permissions": {"write": false}}}
+// an admin
+"you": {"user_id": "ada", "name": "Ada", "roles": ["admin"], "ext": {"permissions": {"add_members": true, "move_any": true}}}
 ```
 
-| permission    | the user may                                                                     |
-|---------------|----------------------------------------------------------------------------------|
-| `move_any`    | move other users' messages ([§4.4](PROTOCOL.md#44-edit))                         |
-| `add_members` | add other users to rooms, also when `ext:settings` sets `add_members` to `false` |
+```ts
+class Permissions {               // you.ext.permissions
+  write?: boolean = true;         // may send the requests of the write row of ext:limits
+  add_members?: boolean = false;  // may send room_join with a user_id, in any room
+  move_any?: boolean = false;     // may move other users' messages
+}
+```
 
-- The server sends `permissions` in `you`. `[]` means none.
-- A change is a `user` notification with `you`
-  ([§3.3.3](PROTOCOL.md#333-changes)).
-- Clients read `permissions` only from `you`.
-- Clients ignore permissions that they do not know.
-- Servers ignore `ext.permissions` in a `me` request.
-- Without the extension, clients offer to move only the user's own messages.
+- An absent key takes its default. Without the extension, every key takes its
+  default.
+- `write` refers to the requests that the `write` row of
+  [`ext:limits`](#extlimits) lists.
+- `add_members` refers to `room_join` with a `user_id`
+  ([§4.2.2](PROTOCOL.md#422-membership)). Without it, clients offer to add
+  users only to the private rooms that the user is a member of
+  ([§4.2.4](PROTOCOL.md#424-creating-and-editing)).
+- `move_any` refers to moves ([§4.4](PROTOCOL.md#44-edit)). Without it,
+  clients offer to move only the user's own messages.
+- The server ignores `ext.permissions` in a `me` request.
 
 ## `ext:bio`
 
@@ -151,10 +155,7 @@ what the user works on.
 - A server with capability `ext` keeps `bio` like any other key, so clients
   also use the extension with `ext`.
 - Clients send at most 250 Unicode code points. `\n` is a line break.
-- Clients send no control characters other than `\n`, and no bidirectional
-  overrides or isolates (U+202A to U+202E, U+2066 to U+2069).
-- Clients drop those characters when they show a bio (a bio could otherwise
-  disguise the text around it).
+- Clients send no control characters other than `\n`.
 - Clients show a bio as plain text, never as CommonMark or HTML.
 - Without the extension or capability `ext`, clients send no `bio`.
 

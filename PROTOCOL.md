@@ -702,6 +702,10 @@ authoritative **snapshot** at one log position.
   Clients MAY show them as plain text.
 - Clients MUST disable raw HTML in CommonMark, or sanitize it with the same
   allowlist as HTML embeds ([§4.8](#48-embeds-and-avatars)).
+- Clients isolate the text direction of each string that users write, such
+  as a name, a title, or a message, from the text around it.
+- Clients ignore the bidirectional embeddings and overrides U+202A to U+202E
+  in those strings.
 - Clients MUST render an embed of unknown `kind` from its `og`, if it has one.
   Otherwise they render a labeled fallback card: the kind name, plus `url` or
   plain `text` if present.
@@ -2441,6 +2445,10 @@ server.
   its own sandbox.
 - Clients load avatars only as images, never as documents
   ([§4.8.6](#486-avatars)). So an uploaded SVG cannot run script.
+- Clients isolate the text direction of user-written strings, and ignore
+  bidirectional overrides in them ([§3.5.2](#352-rendering)). So a name or a
+  file title cannot reorder the text around it, or show its own characters
+  out of order, such as a file name that hides its real extension.
 - Clients open only an `https` `url` for external sign-in
   ([§4.11.5](#4115-external)). So a server cannot run script in the client with
   a `javascript:` URL.
