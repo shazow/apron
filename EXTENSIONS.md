@@ -231,6 +231,10 @@ class Emoji {                   // catalog[":name:"]
 
 - A `reactions` entry ([§4.7](PROTOCOL.md#47-reactions)) that is a key refers to
   that custom emoji.
+- The server MAY refuse a key that the catalog does not have. It accepts such
+  a key when the user's current set on that message already has it (a request
+  carries the whole set, so a removed emoji would otherwise stop the user from
+  changing their other reactions).
 - Clients show a key that the catalog has as its image, with `alt` or the key
   as its hover text.
 
