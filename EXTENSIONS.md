@@ -5,7 +5,7 @@ document collects extensions in common use, so that clients and servers that
 do not know each other can agree on them. PROTOCOL.md wins where the two
 disagree.
 
-- A section headed by an `ext:` name defines that capability.
+- A section's heading is the capability that the server advertises.
 - Clients use an extension only while the latest `server` frame lists its
   capability, unless its section says otherwise.
 - An extension `ext:foo` keeps its data under `ext.foo`
@@ -134,39 +134,6 @@ are labels only, so clients cannot tell this from them.
 - Clients ignore permissions that they do not know.
 - Servers ignore `ext.permissions` in a `me` request.
 - Without the extension, clients offer to move only the user's own messages.
-
-## Connection status
-
-A browser hides why a WebSocket handshake failed. A server that refuses
-connections, such as one at capacity, can say why over HTTP. This happens
-before any `server` frame, so it has no capability.
-
-```http
-GET /ws?apron_connection_status=1 HTTP/1.1
-```
-
-```http
-HTTP/1.1 503 Service Unavailable
-Apron-Connection-Status: 1
-Retry-After: 3600
-Access-Control-Allow-Origin: *
-Access-Control-Expose-Headers: Apron-Connection-Status, Retry-After
-Content-Type: application/json
-
-{"error": "Daily capacity reached"}
-```
-
-- After a failed handshake, a client MAY send an HTTP `GET` to the WebSocket
-  URL (`https:` for `wss:`, `http:` for `ws:`), with the query parameter
-  `apron_connection_status=1` and no credentials.
-- A server that refuses connections replies with status 403, 429, or 503, the
-  header `Apron-Connection-Status: 1`, and a JSON body `{"error": string}`.
-- `error` says why, for people.
-- The reply MAY carry `Retry-After`.
-- The server allows the client's origin, and exposes `Apron-Connection-Status`
-  and `Retry-After` to it with CORS.
-- Clients ignore a reply without `Apron-Connection-Status: 1` (it can come from
-  a proxy in front of the server).
 
 ## `ext:bio`
 
