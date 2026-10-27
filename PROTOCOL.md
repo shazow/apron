@@ -1756,7 +1756,18 @@ result is `{}`.
 - Clients keep state for each `(message_id, user_id)`, and calculate the
   totals. They accept reactions for messages that they have not loaded.
 - `emojis` entries are strings. Duplicates collapse, and the order does not
-  matter. One emoji sequence in each entry is the interoperable baseline.
+  matter.
+- An entry is one emoji sequence
+  ([UTS #51](https://www.unicode.org/reports/tr51/)), such as 👍, 👍🏽, 🏳️‍🌈,
+  or 👨‍👩‍👧.
+- An entry MAY instead be a key for another kind of reaction, such as
+  `:partyparrot:` for a custom emoji. Which keys a server accepts is server
+  policy.
+- Clients show a key that they do not know as written.
+- Entries that differ only in U+FE0F are the same entry. Clients compare
+  entries without U+FE0F.
+- Servers SHOULD store each emoji sequence in its fully-qualified form
+  ([emoji-test.txt](https://unicode.org/Public/emoji/latest/emoji-test.txt)).
 - Servers MAY limit the number of distinct emoji on each message or from each
   user.
 - The server MAY log nothing for a request that does not change the state.
