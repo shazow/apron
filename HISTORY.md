@@ -4,6 +4,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 
 ## v9 (2026-10-27)
 
+- The `server` frame may carry `title`, `description`, and `avatar` (§3.1), so that clients can show which server is which, such as in a list of servers. `avatar` follows the rules for user avatars (§4.8.6). `description` says what the server is about, and `welcome` stays for the sign-in screen. Clients show the server's address with `title` where the user signs in or picks a server.
 - A `reactions` entry is one emoji sequence (UTS #51), such as a ZWJ sequence or a skin tone, or a key for another kind of reaction, such as a custom emoji, as server policy allows. Clients show a key they do not support as a placeholder, with the key as its hover text. Entries that differ only in U+FE0F are the same entry, and servers should store emoji sequences fully qualified.
 - Clients isolate the text direction of each user-written string, such as a name, a title, or a message, from the text around it, and ignore the bidirectional embeddings and overrides U+202A to U+202E in it (§3.5.2).
 - `history` without `room_id` queries every room the connection receives as one log, instead of the default room, with the server's effective lower bound. Servers should support it, or reply `unsupported`.

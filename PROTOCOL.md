@@ -298,6 +298,10 @@ class Server {
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
   ping?: number;                // seconds between client pings (§1)
 
+  title?: string;               // plain display name; absent: the server's address
+  description?: string;         // CommonMark: what the server is about
+  avatar?: string;              // the server's icon: square, at least 256 pixels wide (§4.8.6)
+
   // "status" capability
   status?: string[];            // optional chosen status values accepted (§4.5.1)
 
@@ -326,6 +330,16 @@ immediately. The client does not send a hello first.
 The server MAY send a new `server` frame at any time. Each one **fully
 replaces** the previous one. Clients update their feature UI, but MUST NOT
 remove content that they already show.
+
+`title`, `description`, and `avatar` show people which server this is, such
+as in a list of servers:
+
+- `title` is a plain string. Without it, clients show the server's address.
+- `description` is CommonMark ([§3.5.2](#352-rendering)). It says in a few
+  words what the server is about. `welcome` is for the sign-in screen.
+- `avatar` follows the rules for user avatars ([§4.8.6](#486-avatars)).
+- Clients show the server's address with `title` where the user signs in or
+  picks a server.
 
 ### 3.2 Authentication
 
@@ -1951,7 +1965,8 @@ it grow. Stream embeds follow the rules for embed identity
 #### 4.8.6 Avatars
 
 A user object ([§3.3](#33-identity)) MAY carry `avatar`, an image to show next
-to the name of the user.
+to the name of the user. The `server` frame ([§3.1](#31-server-frame)) MAY
+carry one for the server.
 
 - Servers SHOULD send only `https:` URLs, or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs.
@@ -2427,6 +2442,9 @@ server.
 - Servers do not give a retired `user_id` to another user
   ([§3.3.3](#333-changes)). Logged messages and mentions refer to it, and the
   new owner would inherit them.
+- Clients show the server's address with its `title` where the user signs in
+  or picks a server ([§3.1](#31-server-frame)). So a server cannot pass as
+  another server by copying its title and avatar.
 - `roles` are labels for display only ([§3.3.4](#334-roles)). The server
   enforces all permissions.
 - `user_id`s that start with `~` are reserved for system identities, and the

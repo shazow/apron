@@ -480,6 +480,15 @@
         "welcome": {
           "type": "string"
         },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "avatar": {
+          "type": "string"
+        },
         "signup": {
           "type": "array",
           "items": {
