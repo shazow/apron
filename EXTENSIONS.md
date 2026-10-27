@@ -9,34 +9,7 @@ on them. PROTOCOL.md wins where the two disagree.
   ([§4.12](PROTOCOL.md#412-ext)). It does not need capability `ext`.
 - Each section says what clients do without the extension.
 
-## 1. `ext:profile`
-
-Adds a title and an avatar to the server, so that a client that connects to
-several servers can tell them apart. The `server` frame carries them in
-`ext.profile`:
-
-```json
-{
-  "method": "server", "params": {
-    "apron": 9, "auth": ["token"], "capabilities": ["ext:profile"],
-    "ext": {"profile": {"title": "Example Team", "avatar": "https://chat.example/a/Hk41…"}}
-  }
-}
-```
-
-```ts
-class Profile {                 // server.ext.profile
-  title?: string;               // plain string
-  avatar?: string;              // image
-}
-```
-
-- `avatar` follows the rules for user avatars
-  ([§4.8.6](PROTOCOL.md#486-avatars)).
-- Without a `title`, clients show the server's address.
-- Without an `avatar`, clients draw a placeholder, such as an initial.
-
-## 2. `ext:emoji`
+## `ext:emoji`
 
 Adds custom emoji: images that the server defines, and that users write as
 `:name:` in reactions and text. The `server` frame carries them in
@@ -72,7 +45,7 @@ class Emoji {                   // server.ext.emoji[":name:"]
 }
 ```
 
-### 2.1 Catalog
+### Catalog
 
 - A key is `:`, a name, and `:`. A name is one or more of `[A-Za-z0-9_+-]`.
 - Keys are case-sensitive.
@@ -87,7 +60,7 @@ class Emoji {                   // server.ext.emoji[":name:"]
 - Clients MAY show `static_url` in place of `url`, such as when the user
   prefers reduced motion.
 
-### 2.2 Reactions
+### Reactions
 
 - A `reactions` entry ([§4.7](PROTOCOL.md#47-reactions)) that is a key refers to
   that custom emoji.
@@ -96,7 +69,7 @@ class Emoji {                   // server.ext.emoji[":name:"]
 - Clients show a key that the catalog does not have as a placeholder shape,
   with the key as its hover text.
 
-### 2.3 Text
+### Text
 
 - Clients render a key as its image when the catalog has it, in `body.text`
   and in the fields that PROTOCOL.md calls CommonMark
@@ -108,7 +81,7 @@ class Emoji {                   // server.ext.emoji[":name:"]
   into a `:` that directly follows it. So composers put a space between a
   mention and a key.
 
-### 2.4 Managing
+### Managing
 
 Suggested convention, with capabilities `command` and `embed:upload`
 ([§4.1](PROTOCOL.md#41-command), [§4.8.3](PROTOCOL.md#483-writes)):
