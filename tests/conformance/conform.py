@@ -431,9 +431,6 @@ async def _(run):
     if snapshot:
         must(isinstance(snapshot["params"].get("room_id"), str), "the snapshot has no room_id")
         run.room = snapshot["params"]["room_id"]
-    elif run.has("history"):
-        page = await conn.call("history", {"after": message_id, "before": message_id})
-        run.room = next((m.get("room_id") for m in page.get("messages", []) if m.get("message_id") == message_id), None)
     must(run.room or run.has("rooms"), "no broadcast to the poster")
     if not run.room:
         raise Warn("the poster got no broadcast and the room is unknown; later checks skip")
@@ -580,7 +577,7 @@ async def _(run):
              "the newest page lacks a recent message")
 
 
-@check("4.3", "history without room_id covers more than one of the user's rooms",
+@check("4.3", "history without room_id pages every room the connection receives, or is error/unsupported",
        needs=lambda s: {"history", "rooms"} <= set(s.get("capabilities", [])))
 async def _(run):
     conn = await run.joined()
@@ -591,10 +588,13 @@ async def _(run):
     _, first = await run.post(conn, "conformance: history, default room")
     _, reply = await conn.request("message", {"room_id": other, "body": {"text": "conformance: history, other room"}})
     must(isinstance(reply.get("result", {}).get("message_id"), str), f"posting: {describe(reply)}")
-    page = await conn.call("history", {"after": first})
-    posted = {first, reply["result"]["message_id"]}
-    rooms = {m.get("room_id") for m in page.get("messages", []) if m.get("message_id") in posted}
-    should(rooms == {run.room, other}, f"history without room_id returned only {', '.join(sorted(map(str, rooms))) or 'neither room'}")
+    second = reply["result"]["message_id"]
+    _, reply = await conn.request("history", {"after": first, "before": second})
+    if code(reply) == CODES["unsupported"]:
+        raise Warn("history without room_id is error/unsupported")
+    must("result" in reply, f"history without room_id: {describe(reply)}")
+    rooms = {m.get("room_id") for m in reply["result"].get("messages", []) if m.get("message_id") in (first, second)}
+    must(rooms == {run.room, other}, f"history without room_id returned only {', '.join(sorted(map(str, rooms))) or 'neither room'}")
 
 
 @check("4.3.2", "after and before are inclusive bounds", needs="history")
@@ -625,7 +625,7 @@ async def _(run):
 @check("4.3.2", "an empty slice has more: false and no bounds", needs="history")
 async def _(run):
     conn = await run.open()
-    page = await conn.call("history", {"after": MISSING})
+    page = await conn.call("history", {"after": MISSING, **({"room_id": run.room} if run.room else {})})
     must(page.get("more") is False, "more is not false")
     must("first_log_id" not in page and "last_log_id" not in page, "the result has bounds")
 

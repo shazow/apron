@@ -1,6 +1,6 @@
 ---
 version: 9
-updated: 2026-10-26
+updated: 2026-10-27
 license: CC0-1.0
 ---
 
@@ -1285,8 +1285,11 @@ the gaps. It pages through the log, so that a client can show older messages
 and recover what it missed while it was away.
 
 Adds the `history` request, a stateless query for a window of the **log**. With
-`room_id`, it queries that room's log ([§4.3.1](#431-a-rooms-log)). The result
-splits the records by kind:
+`room_id`, it queries that room's log ([§4.3.1](#431-a-rooms-log)). Without
+`room_id`, it queries the log of every room whose deliveries the connection
+receives ([§3.4](#34-rooms)), as one log. Servers SHOULD support this. A server
+that does not support it replies `unsupported`. The result splits the records
+by kind:
 
 - `rooms`: room records ([§4.2](#42-rooms)).
 - `messages`: message snapshots ([§3.5](#35-messages)).
@@ -1350,7 +1353,7 @@ A record can point to the previous record for its key:
 - `after` and `before` are inclusive `log_id` bounds. Either one MAY be
   omitted.
 - The server limits the bounds to the available history. Then it selects a
-  contiguous slice of the changes in the room, of any kind.
+  contiguous slice of the changes in the log, of any kind.
 - `limit` is a positive count of changes, applied before compaction. Servers
   MAY supply a default.
 - With `after`, the server selects the oldest matches. Otherwise it selects
@@ -1374,6 +1377,8 @@ A record can point to the previous record for its key:
   delivery fields.
 - Every result includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the log, not the page.
+- Without `room_id`, `history_log_id` MUST NOT depend on which rooms the
+  connection receives.
 - Retention can advance between requests, so clients check each response before
   they apply it.
 - If the server rejects a request for lack of resources, it returns an error,
@@ -1401,7 +1406,7 @@ After the server selects the slice, it MAY compact it:
 - It MAY fold the reaction sets of each message into one record. That record
   carries the last set of each user in the slice, at the greatest folded
   `log_id`.
-- It MAY fold the memberships of the room into one record in the same way.
+- It MAY fold the memberships of each room into one record in the same way.
   That record carries the last membership of each user.
 - It keeps empty sets and leaves.
 - Kept records keep their original `log_id`s and contents. They never include
