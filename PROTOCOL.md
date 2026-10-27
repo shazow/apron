@@ -1377,8 +1377,6 @@ A record can point to the previous record for its key:
   delivery fields.
 - Every result includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the log, not the page.
-- Without `room_id`, `history_log_id` MUST NOT depend on which rooms the
-  connection receives.
 - Retention can advance between requests, so clients check each response before
   they apply it.
 - If the server rejects a request for lack of resources, it returns an error,
@@ -1393,6 +1391,7 @@ Over time, servers compact or discard old history:
 - The effective lower bound is `history_log_id`. If `history_log_id` is
   `null`, it is `latest_log_id + 1`. The effective lower bound MUST NOT
   decrease.
+- Without `room_id`, the effective lower bound is that of the server's log.
 - Before a server discards a part that holds memberships, it appends one
   membership record. This record lists every current member, with `joined:
   true` only.
