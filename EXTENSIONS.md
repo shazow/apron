@@ -162,21 +162,23 @@ what the user works on.
 ## `ext:emoji`
 
 Adds custom emoji: images that the server defines, and that users write as
-`:name:` in reactions and text. The `server` frame carries them in
-`ext.emoji`, keyed by that string. Without the extension, clients show a key
-in text as written, and in reactions as a placeholder
-([§4.7](PROTOCOL.md#47-reactions)).
+`:name:` in reactions and text. The `server` frame carries the URL of the
+catalog, a JSON object keyed by that string, so that clients fetch it only
+when they need it. Without the extension, clients show a key in text as
+written, and in reactions as a placeholder ([§4.7](PROTOCOL.md#47-reactions)).
 
 ```jsonc
-// <- the catalog
+// <- the server frame
 {
   "method": "server", "params": {
     "apron": 9, "auth": ["token"], "capabilities": ["reactions", "ext:emoji"],
-    "ext": {"emoji": {
-      ":partyparrot:": {"url": "https://chat.example/e/Qm7x…", "static_url": "https://chat.example/e/Qm7x…/still", "category": "Parrots", "tags": ["party", "celebrate"]},
-      ":shipit:": {"url": "https://chat.example/e/Zr8T…", "width": 64, "height": 32, "alt": "Squirrel in a hat"}
-    }}
+    "ext": {"emoji": {"catalog_url": "https://chat.example/e/catalog-7f3a9c.json"}}
   }
+}
+// GET https://chat.example/e/catalog-7f3a9c.json returns the catalog
+{
+  ":partyparrot:": {"url": "https://chat.example/e/Qm7x…", "static_url": "https://chat.example/e/Qm7x…/still", "category": "Parrots", "tags": ["party", "celebrate"]},
+  ":shipit:": {"url": "https://chat.example/e/Zr8T…", "width": 64, "height": 32, "alt": "Squirrel in a hat"}
 }
 // -> a reaction
 {"method": "reactions", "id": "c17", "params": {"message_id": "1724803200043", "emojis": ["👍", ":partyparrot:"]}}
@@ -185,7 +187,11 @@ in text as written, and in reactions as a placeholder
 ```
 
 ```ts
-class Emoji {                   // server.ext.emoji[":name:"]
+class EmojiExt {                // server.ext.emoji
+  catalog_url: string;          // the catalog: an object that maps each key to an Emoji
+}
+
+class Emoji {                   // catalog[":name:"]
   url: string;                  // the image
   alt?: string;                 // hover and screen reader text; absent: the key
   width?: number;               // with height, the aspect ratio
@@ -201,11 +207,16 @@ class Emoji {                   // server.ext.emoji[":name:"]
 
 - A key is `:`, a name, and `:`. A name is one or more of `[A-Za-z0-9_+-]`.
 - Keys are case-sensitive.
-- When the catalog changes, the server sends a new `server` frame
-  ([§3.1](PROTOCOL.md#31-server-frame)).
-- A server that keeps its emoji private sends `ext.emoji` only after sign-in.
-- The server keeps the catalog small enough that the `server` frame stays
-  within 256 KiB ([§1](PROTOCOL.md#1-transport--framing)).
+- `catalog_url` is an `https:` URL, an `http:` URL on a loopback host, or a
+  `data:application/json` URL.
+- The server changes `catalog_url` when the catalog changes, and sends a new
+  `server` frame ([§3.1](PROTOCOL.md#31-server-frame)).
+- Clients MAY keep a catalog for as long as `catalog_url` stays the same.
+- Clients fetch the catalog when they first need it, such as to show a picker
+  or a key. Until they have it, they show keys as without the extension.
+- A server that keeps its emoji private sends `ext.emoji` only after sign-in,
+  with an unguessable `catalog_url`
+  ([§4.8.2](PROTOCOL.md#482-embed-identity)).
 - Clients use `width` and `height` together as the aspect ratio. When either
   is absent, the emoji is square.
 - A server MAY keep a removed or renamed key as `hidden`, so that earlier
