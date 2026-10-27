@@ -22,7 +22,7 @@ string as text.
   "method": "server", "params": {
     "apron": 9, "auth": ["token"], "capabilities": ["reactions", "ext:emoji"],
     "ext": {"emoji": {
-      ":partyparrot:": {"url": "https://chat.example/e/Qm7x…", "static_url": "https://chat.example/e/Qm7x…/still", "category": "Parrots"},
+      ":partyparrot:": {"url": "https://chat.example/e/Qm7x…", "static_url": "https://chat.example/e/Qm7x…/still", "category": "Parrots", "tags": ["party", "celebrate"]},
       ":shipit:": {"url": "https://chat.example/e/Zr8T…", "width": 64, "height": 32, "alt": "Squirrel in a hat"}
     }}
   }
@@ -41,6 +41,7 @@ class Emoji {                   // server.ext.emoji[":name:"]
   height?: number;
   static_url?: string;          // a still copy of an animated image
   category?: string;            // groups the picker
+  tags?: string[];              // more words to search by, in any language
   hidden?: boolean = false;     // not offered in the picker
 }
 ```
@@ -51,6 +52,7 @@ class Emoji {                   // server.ext.emoji[":name:"]
 - Keys are case-sensitive.
 - A server that keeps its emoji private sends `ext.emoji` only in a `server`
   frame after sign-in ([§3.1](PROTOCOL.md#31-server-frame)).
+- Clients match a search against the key, `alt`, and `tags`.
 - Clients render `hidden` emoji, but do not offer them in a picker.
 - A server MAY keep a removed or renamed key as `hidden`, so that earlier
   reactions and text keep their image.
