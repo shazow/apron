@@ -8,8 +8,9 @@ disagree.
 - A section's heading is the capability that the server advertises.
 - Clients use an extension only while the latest `server` frame lists its
   capability, unless its section says otherwise.
-- An extension `ext:foo` keeps its data under `ext.foo`
-  ([§4.12](PROTOCOL.md#412-ext)). It does not need capability `ext`.
+- An extension keeps its data under its name in `ext`
+  ([§4.12](PROTOCOL.md#412-ext)).
+- Clients ignore a field whose value has the wrong type, and use its default.
 - Each section says what clients do without the extension.
 
 ## `ext:settings`
@@ -45,7 +46,7 @@ class Settings {                  // server.ext.settings
 
 ## `ext:limits`
 
-Adds a category to `retry_after` errors
+Adds a category, `data.ext.limits`, to `retry_after` errors
 ([§1.1](PROTOCOL.md#11-envelope-and-replies)), so that clients hold back every
 request that the same limit counts, rather than send each one to be refused.
 
@@ -59,14 +60,11 @@ request that the same limit counts, rather than send each one to be refused.
 | `write`  | `message`, `reactions`, `room_join`, `room_leave`, and `room_set`                      | every request that `write` counts  |
 | `upload` | `message` and `command` requests with a new `upload` embed ([§4.8.2](PROTOCOL.md#482-embed-identity)) | every request that `upload` counts |
 
-- A `retry_after` error MAY carry `data.ext.limits`.
-- The server sends a category only on a request in its row.
+- The server sends a category only on a request that its row counts.
 - The server sends `write` or `upload` only for a limit that counts every
   request in its row.
-- A limit MAY leave out a request that changes nothing, such as a
-  deduplicated retry ([§1.2](PROTOCOL.md#12-retries-and-deduplication)).
-- Until the delay ends, clients hold back the requests in the row of the
-  category, and no others.
+- `write` does not count `command`, because a command can do anything.
+- Until the delay ends, clients hold back what the last column lists.
 - Without a category that they know and that counts the refused request,
   clients handle the error as PROTOCOL.md does.
 
@@ -92,25 +90,30 @@ class Media {                     // server.ext.media
 
 class Limits {
   max_bytes?: number;             // the largest file, in bytes
-  max_side?: number;              // the longest image side, in pixels, that the server keeps
+  max_side?: number;              // the longest image side, in pixels, after the server scales it down
 }
 ```
 
 - An origin is `scheme://host[:port]`. It is `https:`, or `http:` on a
   loopback host. Clients ignore other entries.
-- Clients MAY load `og` media ([§4.8.1](PROTOCOL.md#481-opengraph-metadata-og))
-  from `origins`, for content from that server.
-- A pattern is a MIME type, `type/*`, or `*/*`, in any case.
-- A file takes the limits of its most specific pattern.
-- The server takes only the types that match a pattern of the category. `{}`
-  takes a type with no stated limit.
+- Clients MAY load the `og` media
+  ([§4.8.1](PROTOCOL.md#481-opengraph-metadata-og)) of the server's content
+  from `origins`.
+- A pattern is a MIME type, `type/*`, or `*/*`. Patterns and types match
+  without regard to case.
+- A file takes only the `Limits` of its most specific pattern. Limits do not
+  combine across patterns.
+- The server accepts only the types that match a pattern. A pattern whose
+  `Limits` is `{}` accepts its types without a limit.
 - A file's type is the `Content-Type` of its write
   ([§4.8.3](PROTOCOL.md#483-writes)).
-- The server refuses a write over a limit with HTTP 413, and a type that it
-  does not take with HTTP 415.
-- Clients need not send an image larger than `max_side`.
-- Clients ignore each field that has the wrong type on its own.
-- Without a category, clients know nothing about it.
+- The server refuses a write over `max_bytes` with HTTP 413, and a type that
+  it does not accept with HTTP 415.
+- The server scales a larger image down to `max_side`. Clients MAY scale it
+  down before they upload it.
+- Without `upload` or `avatar`, clients apply no limits to those files.
+- Without the extension, clients load media only from the server's origin,
+  and apply no limits.
 
 ## `ext:permissions`
 
@@ -144,15 +147,16 @@ what the user works on.
 {"method": "me", "id": "c60", "params": {"ext": {"bio": "Counts things.\nMostly engines."}}}
 ```
 
-- Users set their own `bio` with `me`.
+- Clients set the user's `bio` with `me` ([§3.3.2](PROTOCOL.md#332-profile)).
 - A server with capability `ext` keeps `bio` like any other key, so clients
   also use the extension with `ext`.
-- `bio` is plain text of at most 250 Unicode code points. `\n` is a line
-  break.
+- Clients send at most 250 Unicode code points. `\n` is a line break.
+- Clients send no control characters other than `\n`, and no bidirectional
+  overrides or isolates (U+202A to U+202E, U+2066 to U+2069).
+- Clients drop those characters when they show a bio (a bio could otherwise
+  disguise the text around it).
 - Clients show a bio as plain text, never as CommonMark or HTML.
-- Clients leave out, and drop when they show a bio, control characters other
-  than `\n`, and bidirectional overrides and isolates (U+202A to U+202E,
-  U+2066 to U+2069). (A bio could otherwise disguise the text around it.)
+- Without the extension or capability `ext`, clients send no `bio`.
 
 ## `ext:emoji`
 
@@ -182,12 +186,12 @@ string as text.
 class Emoji {                   // server.ext.emoji[":name:"]
   url: string;                  // the image
   alt?: string;                 // hover and screen reader text; absent: the key
-  width?: number;               // with height, the aspect ratio; absent: square
+  width?: number;               // with height, the aspect ratio
   height?: number;
   static_url?: string;          // a still copy of an animated image
   category?: string;            // groups the picker
   tags?: string[];              // more words to search by, in any language
-  hidden?: boolean = false;     // not offered in the picker
+  hidden?: boolean = false;     // rendered, but not offered in the picker
 }
 ```
 
@@ -195,10 +199,13 @@ class Emoji {                   // server.ext.emoji[":name:"]
 
 - A key is `:`, a name, and `:`. A name is one or more of `[A-Za-z0-9_+-]`.
 - Keys are case-sensitive.
-- A server that keeps its emoji private sends `ext.emoji` only in a `server`
-  frame after sign-in ([§3.1](PROTOCOL.md#31-server-frame)).
-- Clients match a search against the key, `alt`, and `tags`.
-- Clients render `hidden` emoji, but do not offer them in a picker.
+- When the catalog changes, the server sends a new `server` frame
+  ([§3.1](PROTOCOL.md#31-server-frame)).
+- A server that keeps its emoji private sends `ext.emoji` only after sign-in.
+- The server keeps the catalog small enough that the `server` frame stays
+  within 256 KiB ([§1](PROTOCOL.md#1-transport--framing)).
+- Clients use `width` and `height` together as the aspect ratio. When either
+  is absent, the emoji is square.
 - A server MAY keep a removed or renamed key as `hidden`, so that earlier
   reactions and text keep their image.
 - `url` and `static_url` follow the rules for user avatars
@@ -222,14 +229,14 @@ class Emoji {                   // server.ext.emoji[":name:"]
   and in the fields that PROTOCOL.md calls CommonMark
   ([§3.5.2](PROTOCOL.md#352-rendering)), such as a room's `description` and
   `server.welcome`. Other text stays as written.
-- Clients find keys from left to right. Keys can be adjacent, such as
-  `:party-left::party-right:`.
-- When the catalog does not have a key, its closing `:` can open the next
-  key, such as `:partyparrot:` in `12:30:partyparrot:`.
+- Clients scan from left to right. At each `:`, if the text up to the next
+  `:` forms a key that the catalog has, clients render it and continue after
+  it. Otherwise they continue at that next `:`. So keys can be adjacent, such
+  as `:party-left::party-right:`, and `12:30:partyparrot:` renders
+  `:partyparrot:`.
 - Keys in CommonMark code spans and code blocks stay text.
-- A mention ([Appendix A.3](PROTOCOL.md#a3-prefixes-in-text)) can continue
-  into a `:` that directly follows it. So composers put a space between a
-  mention and a key.
+- Composers put a space between a mention and a key (a mention can contain
+  `:`, [Appendix A.3](PROTOCOL.md#a3-prefixes-in-text)).
 
 ### Managing
 
@@ -239,4 +246,3 @@ Suggested convention, with capabilities `command` and `embed:upload`
 - `/emoji add :name:` with one `upload` embed adds the file as that key, or
   replaces its image.
 - `/emoji remove :name:` removes the key.
-- The server sends a new `server` frame with the changed catalog.
