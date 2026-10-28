@@ -333,8 +333,9 @@ immediately. The client does not send a hello first.
 }
 ```
 
-The server MAY send a new `server` frame at any time. Each one **fully
-replaces** the previous one. Clients update their feature UI, but MUST NOT
+The server MAY send a new `server` frame on a connection at any time, such as
+after a sign-in. Each one **fully replaces** the previous one on that
+connection. Clients update their feature UI, but MUST NOT
 remove content that they already show.
 
 `title`, `description`, and `avatar` show people which server this is, such
@@ -906,6 +907,10 @@ different:
   policy.
 - Suggested convention: commands list and remove the sign-in methods of an
   account ([§3.2](#32-authentication)).
+- Suggested convention: `/server title <text>`, `/server description <text>`,
+  and `/server avatar` with one `upload` embed set the server's `title`,
+  `description`, and `avatar` ([§3.1](#31-server-frame)). Without the value,
+  each clears it.
 - Servers that support commands SHOULD provide `/help`. It replies with a
   `~private` notice. The notice lists the commands that the sender can use,
   with their arguments and what they do.
