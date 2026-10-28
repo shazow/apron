@@ -133,16 +133,17 @@ class Permissions {               // you.ext.permissions
 }
 ```
 
-- An absent key takes its default. Without the extension, every key takes its
-  default.
+- An absent key takes its default.
+- Without the extension, clients offer what PROTOCOL.md allows, and handle
+  `denied`. They offer to move only the user's own messages.
 - `write` refers to the requests that the `write` row of
   [`ext:limits`](#extlimits) lists.
 - `add_members` refers to `room_join` with a `user_id`
-  ([§4.2.2](PROTOCOL.md#422-membership)). Without it, clients offer to add
-  users only to the private rooms that the user is a member of
+  ([§4.2.2](PROTOCOL.md#422-membership)). When it is `false`, clients offer
+  to add users only to the private rooms that the user is a member of
   ([§4.2.4](PROTOCOL.md#424-creating-and-editing)).
-- `move_any` refers to moves ([§4.4](PROTOCOL.md#44-edit)). Without it,
-  clients offer to move only the user's own messages.
+- `move_any` refers to moves ([§4.4](PROTOCOL.md#44-edit)). When it is
+  `false`, clients offer to move only the user's own messages.
 - The server ignores `ext.permissions` in a `me` request.
 
 ## `ext:bio`
@@ -234,10 +235,10 @@ class Emoji {                   // catalog[":name:"]
 
 - A `reactions` entry ([§4.7](PROTOCOL.md#47-reactions)) that is a key refers to
   that custom emoji.
-- The server MAY refuse a key that the catalog does not have. It accepts such
-  a key when the user's current set on that message already has it (a request
-  carries the whole set, so a removed emoji would otherwise stop the user from
-  changing their other reactions).
+- The server MAY refuse a key that the catalog does not have. It MUST accept
+  such a key when the user's current set on that message already has it (a
+  request carries the whole set, so a removed emoji would otherwise stop the
+  user from changing their other reactions).
 - Clients show a key that the catalog has as its image, with `alt` or the key
   as its hover text.
 

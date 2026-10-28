@@ -306,7 +306,7 @@ class Server {
 
   title?: string;               // plain display name; absent: the server's address
   description?: string;         // CommonMark: what the server is about
-  avatar?: string;              // the server's icon: square, at least 256 pixels wide (§4.8.6)
+  avatar?: string;              // the server's icon (§4.8.6)
 
   // "status" capability
   status?: string[];            // optional chosen status values accepted (§4.5.1)
@@ -344,8 +344,8 @@ as in a list of servers:
 - `description` is CommonMark ([§3.5.2](#352-rendering)). It says in a few
   words what the server is about. `welcome` is for the sign-in screen.
 - `avatar` follows the rules for user avatars ([§4.8.6](#486-avatars)).
-- Clients show the server's address with `title` where the user signs in or
-  picks a server.
+- Clients SHOULD show the server's address with `title` where the user signs
+  in or picks a server.
 
 ### 3.2 Authentication
 
@@ -722,10 +722,10 @@ authoritative **snapshot** at one log position.
   Clients MAY show them as plain text.
 - Clients MUST disable raw HTML in CommonMark, or sanitize it with the same
   allowlist as HTML embeds ([§4.8](#48-embeds-and-avatars)).
-- Clients isolate the text direction of each string that users write, such
-  as a name, a title, or a message, from the text around it.
-- Clients ignore the bidirectional embeddings and overrides U+202A to U+202E
-  in those strings.
+- Clients SHOULD isolate the text direction of each string that users write,
+  such as a name, a title, or a message, from the text around it.
+- Clients SHOULD ignore the bidirectional embeddings and overrides U+202A to
+  U+202E in those strings.
 - Clients MUST render an embed of unknown `kind` from its `og`, if it has one.
   Otherwise they render a labeled fallback card: the kind name, plus `url` or
   plain `text` if present.
@@ -1780,7 +1780,7 @@ result is `{}`.
 - An entry is one emoji sequence
   ([UTS #51](https://www.unicode.org/reports/tr51/)), such as 👍, 👍🏽, 🏳️‍🌈,
   or 👨‍👩‍👧.
-- An entry MAY instead be a key for another kind of reaction, such as
+- Any other entry is a key for another kind of reaction, such as
   `:partyparrot:` for a custom emoji. Which keys a server accepts is server
   policy.
 - Clients show a key that they do not support as a placeholder, with the key
@@ -1976,6 +1976,7 @@ carry one for the server.
 
 - Servers SHOULD send only `https:` URLs, or small
   `data:image/{png,jpeg,gif,webp};base64,` URLs.
+- Servers SHOULD send a square image at least 256 pixels wide.
 - A larger image goes through an upload, with capabilities `command` and
   `embed:upload`. A `/avatar` command ([§4.1](#41-command)) with one `upload`
   embed asks the server to use that file as the avatar of the sender. When the
