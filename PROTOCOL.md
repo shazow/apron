@@ -1969,9 +1969,9 @@ receives it:
 - Server policy sets how much output the server keeps, the size and time
   limits, and the grace period after a writer disconnects. At a limit, the
   server ends the output, and keeps the last part.
-- When the server keeps only the last part, that part starts just after its
-  first line feed or carriage return, or at its first ESC, whichever comes
-  first. If it has none of these, it starts at its first whole character.
+- When the server keeps only the last part, that part starts at its first
+  control character (U+0000 to U+001F). If it has none, it starts at its first
+  whole character.
 - The chat server serves `url`. Clients SHOULD NOT connect to terminal URLs on
   other origins.
 - The server MUST serve `url` as `text/plain; charset=utf-8`, with
