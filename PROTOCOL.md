@@ -1,6 +1,6 @@
 ---
-version: 9
-updated: 2026-10-27
+version: 10
+updated: 2026-10-29
 license: CC0-1.0
 ---
 
@@ -26,7 +26,7 @@ Example of a valid session:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"apron": 10, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -325,7 +325,7 @@ immediately. The client does not send a hello first.
 ```json
 {
   "method": "server", "params": {
-    "apron": 9,
+    "apron": 10,
     "agent": "impl-name/1.0",
     "capabilities": ["history", "edit"],
     "auth": ["token"]
@@ -827,22 +827,22 @@ request. Nothing is negotiated. Clients ignore capabilities that they do not
 know ([§1](#1-transport--framing)). If the server does not have a capability,
 the client uses the fallback in this table:
 
-| capability     | adds                                                        | fallback                     | spec                       |
-|----------------|-------------------------------------------------------------|------------------------------|----------------------------|
-| `command`      | commands from client to server, such as `/kick`             | no commands                  | [§4.1](#41-command)        |
-| `rooms`        | `room_list`, `room_join`, `room_leave`, `room_set`, updates | one default room, no threads | [§4.2](#42-rooms)          |
-| `history`      | page and recover a room's log                               | session-only scrollback      | [§4.3](#43-history)        |
-| `edit`         | `message` saves: edit, move, delete                         | no edit/move/delete UI       | [§4.4](#44-edit)           |
-| `status`       | user `status`, idle connections, and mutes                  | no online indicators         | [§4.5](#45-status)         |
-| `activity`     | typing and read markers                                     | no typing or read indicators | [§4.6](#46-activity)       |
-| `reactions`    | emoji reactions on messages                                 | reaction controls hidden     | [§4.7](#47-reactions)      |
-| `embed:upload` | `upload` embeds: files the sender writes over HTTP          | no attachments               | [§4.8.4](#484-embedupload) |
-| `embed:stream` | live-streamed text in a message                             | post the finished text       | [§4.8.5](#485-embedstream) |
-| `ext`          | extension data kept on users, messages, and rooms           | servers may drop `ext`       | [§4.12](#412-ext)          |
+| capability       | adds                                                        | fallback                     | spec                         |
+|------------------|-------------------------------------------------------------|------------------------------|------------------------------|
+| `command`        | commands from client to server, such as `/kick`             | no commands                  | [§4.1](#41-command)          |
+| `rooms`          | `room_list`, `room_join`, `room_leave`, `room_set`, updates | one default room, no threads | [§4.2](#42-rooms)            |
+| `history`        | page and recover a room's log                               | session-only scrollback      | [§4.3](#43-history)          |
+| `edit`           | `message` saves: edit, move, delete                         | no edit/move/delete UI       | [§4.4](#44-edit)             |
+| `status`         | user `status`, idle connections, and mutes                  | no online indicators         | [§4.5](#45-status)           |
+| `activity`       | typing and read markers                                     | no typing or read indicators | [§4.6](#46-activity)         |
+| `reactions`      | emoji reactions on messages                                 | reaction controls hidden     | [§4.7](#47-reactions)        |
+| `embed:upload`   | `upload` embeds: files the sender writes over HTTP          | no attachments               | [§4.8.4](#484-embedupload)   |
+| `embed:terminal` | live terminal output in a message                           | post the output when it ends | [§4.8.5](#485-embedterminal) |
+| `ext`            | extension data kept on users, messages, and rooms           | servers may drop `ext`       | [§4.12](#412-ext)            |
 
 Some features have no capability:
 
-- Embeds other than `upload` and `stream` are body content
+- Embeds other than `upload` and `terminal` are body content
   ([§4.8](#48-embeds-and-avatars)).
 - `server.push` enables push ([§4.9](#49-push)).
 - `server.auth` enables passkeys, and email and external sign-in
@@ -1574,7 +1574,7 @@ user.
 // <- the server frame accepts dnd and invisible
 {
   "method": "server", "params": {
-    "apron": 9, "capabilities": ["status"], "auth": ["token"],
+    "apron": 10, "capabilities": ["status"], "auth": ["token"],
     "status": ["dnd", "invisible"]
   }
 }
@@ -1807,11 +1807,11 @@ here because they use the same uploads.
 
 ```ts
 class Embed {
-  kind: string;                 // "upload", "stream", "iframe", "html", or another
+  kind: string;                 // "upload", "terminal", "iframe", "html", or another
 
   embed_id?: string;            // set by servers with any embed:* capability (§4.8.2)
   title?: string;
-  url?: string;                 // where a click goes; the server's own for upload and stream
+  url?: string;                 // where a click goes; the server's own for upload and terminal
   og?: object;                  // OpenGraph description (§4.8.1)
 
   // "iframe" kind
@@ -1820,9 +1820,8 @@ class Embed {
   // "html" kind
   html?: string;
 
-  // "stream" kind (§4.8.5)
-  format?: string = "plain";
-  text?: string;                // the kept text, once the stream ends
+  // "terminal" kind (§4.8.5)
+  output?: string;              // the kept output, once the output ends
 }
 ```
 
@@ -1843,8 +1842,8 @@ Clients render an unknown kind from `og`, or else as the fallback card
   limit the number of live iframes at one time.
 - `html`: sanitize it with an allowlist sanitizer, such as DOMPurify, before
   insertion. Do this for every source.
-- `upload` is [§4.8.4](#484-embedupload), and `stream` is
-  [§4.8.5](#485-embedstream).
+- `upload` is [§4.8.4](#484-embedupload), and `terminal` is
+  [§4.8.5](#485-embedterminal).
 
 #### 4.8.1 OpenGraph metadata (`og`)
 
@@ -1877,9 +1876,9 @@ each embed. Other servers MAY store embeds as they receive them.
 - A save keeps an embed when it sends the embed back with its `embed_id`. An
   embed without an `embed_id` is new. A save that leaves out an `embed_id`
   removes that embed.
-- The server owns `embed_id`, the `url` of an upload, and the `url` and `text`
-  of a stream. It ignores them in requests, and restores them from its records
-  on a save.
+- The server owns `embed_id`, the `url` of an upload, and the `url` and
+  `output` of a terminal. It ignores them in requests, and restores them from its
+  records on a save.
 - Servers SHOULD delete the content that they host for an embed when the embed
   is removed, or when its message is deleted or redacted.
 - Servers SHOULD make the URLs they host unguessable, such as with a random
@@ -1887,7 +1886,7 @@ each embed. Other servers MAY store embeds as they receive them.
 
 #### 4.8.3 Writes
 
-New `upload` and `stream` embeds get their content over HTTP. The result of
+New `upload` and `terminal` embeds get their content over HTTP. The result of
 the `message` or `command` ([§4.1](#41-command)) lists them, in request order:
 
 ```jsonc
@@ -1939,39 +1938,55 @@ the file that it hosts.
   gave, such as `og.image.alt`.
 - Without `og`, clients show a file card: `title`, with a link to `url`.
 
-#### 4.8.5 `embed:stream`
+#### 4.8.5 `embed:terminal`
 
-Lets a message carry live text. The sender writes it over HTTP, and readers see
-it grow. Stream embeds follow the rules for embed identity
+Adds `terminal` embeds, live output from a program, such as a build or a test
+run. The sender writes the output over HTTP, and readers see it grow as a
+terminal would show it. Terminal embeds follow the rules for embed identity
 ([§4.8.2](#482-embed-identity)) and writes ([§4.8.3](#483-writes)).
 
 ```jsonc
 // -> the embed in a message request; the result and write follow §4.8.3
-{"kind": "stream", "format": "terminal"}
-// sender: foo 2>&1 | curl -T - <write_url>
-// <- the embed as broadcast: live at its url, then finished with the kept text
-{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "url": "https://chat.example/s/p3Wn9d…"}
-{"embed_id": "embed_1234", "kind": "stream", "format": "terminal", "text": "…"}
+{"kind": "terminal", "title": "make test"}
+// sender: make test 2>&1 | curl -T - <write_url>
+// <- the embed as broadcast: live at its url, then finished with the kept output
+{"embed_id": "embed_1234", "kind": "terminal", "title": "make test", "url": "https://chat.example/t/p3Wn9d…"}
+{"embed_id": "embed_1234", "kind": "terminal", "title": "make test", "output": "…"}
 ```
 
-- `format` defines how to render the text. The default, `"plain"`, shows the
-  text as is, with its line breaks. Clients MAY support other formats natively,
-  such as `"markdown"` (CommonMark, [§3.5.2](#352-rendering)) or `"terminal"`.
-  They render unknown formats as plain.
-- Write: the sender sends UTF-8 text as a streaming `PUT` body to `write_url`.
-  The end of the body ends the stream.
-- Read: `GET url` returns the text that the server kept. It continues as more
-  text arrives, and ends when the stream ends. A reader that reconnects
-  replaces the text that it showed with the new response.
-- Finish: when the stream ends, the server publishes a snapshot whose embed
-  carries the kept text as `text`, in place of `url`. Both URLs then stop
-  working. If the server has capability `edit`, the sender MAY save the
-  message without the embed before that. This ends the stream.
-- Server policy sets how much text the server keeps, the size and time limits,
-  and the grace period after a writer disconnects. At a limit, the server ends
-  the stream, and keeps the last part of the text.
-- The chat server serves `url`. Clients SHOULD NOT connect to stream URLs on
+The output is UTF-8 text with ECMA-48 control functions, as a terminal
+receives it:
+
+- Write: the sender sends the output as a streaming `PUT` body to
+  `write_url`. The end of the body ends the output.
+- Read: `GET url` returns the output that the server kept. It continues as
+  more output arrives, and ends when the output ends. A reader that
+  reconnects replaces what it showed with the new response.
+- Finish: when the output ends, the server publishes a snapshot whose embed
+  carries the kept `output`. The output is live while the embed has no
+  `output`. If the server has capability `edit`, the sender MAY save the
+  message without the embed before that. This ends the output.
+- Server policy sets how much output the server keeps, the size and time
+  limits, and the grace period after a writer disconnects. At a limit, the
+  server ends the output, and keeps the last part.
+- When the server keeps only the last part, that part starts just after its
+  first line feed or carriage return, or at its first ESC, whichever comes
+  first. If it has none of these, it starts at its first whole character.
+- The chat server serves `url`. Clients SHOULD NOT connect to terminal URLs on
   other origins.
+- The server MUST serve `url` as `text/plain; charset=utf-8`, with
+  `X-Content-Type-Options: nosniff`.
+
+Clients render the output as a terminal would show it:
+
+- Clients render each response of `url`, and `output`, from the initial state
+  of a terminal, with default colors and attributes.
+- Clients SHOULD support line feed, carriage return, backspace, tab, erase in
+  line, and Select Graphic Rendition (colors and attributes).
+- Clients ignore the control functions that they do not support, and never
+  show them as text.
+- Clients MUST NOT perform a control function that acts outside the embed,
+  such as one that sets a window title or writes to the clipboard.
 
 #### 4.8.6 Avatars
 
@@ -2009,7 +2024,7 @@ supports. If `server.push` is present, the server accepts `push_register` and
 // <- the server frame offers relay and webpush
 {
   "method": "server", "params": {
-    "apron": 9, "capabilities": ["status"], "auth": ["webauthn", "token"],
+    "apron": 10, "capabilities": ["status"], "auth": ["webauthn", "token"],
     "push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
   }
 }
@@ -2485,6 +2500,13 @@ server.
   `allow-same-origin` too ([§4.8](#48-embeds-and-avatars)). Together, they
   would let the embed read the client's storage and bearer token, or remove
   its own sandbox.
+- Clients never perform a terminal control function that acts outside its
+  embed ([§4.8.5](#485-embedterminal)). So a program's output cannot write to
+  the reader's clipboard, or change the client's window title.
+- The server serves terminal output as plain text, and forbids content
+  sniffing ([§4.8.5](#485-embedterminal)). So output that looks like HTML
+  cannot run as a page on the server's origin, such as when a reader opens
+  `url` in a browser.
 - Clients load avatars only as images, never as documents
   ([§4.8.6](#486-avatars)). So an uploaded SVG cannot run script.
 - Clients isolate the text direction of user-written strings, and ignore
@@ -2508,11 +2530,12 @@ server.
 
 ### 5.5 Network privacy and server requests
 
-- Servers host or proxy `og` media and serve streams themselves, and clients
-  load neither from other origins ([§4.8.1](#481-opengraph-metadata-og),
-  [§4.8.5](#485-embedstream)). Otherwise a message could act as a tracking
-  beacon that reveals the IP addresses of its readers.
-- Hosted upload and stream URLs are unguessable
+- Servers host or proxy `og` media and serve terminal output themselves, and
+  clients load neither from other origins
+  ([§4.8.1](#481-opengraph-metadata-og), [§4.8.5](#485-embedterminal)).
+  Otherwise a message could act as a tracking beacon that reveals the IP
+  addresses of its readers.
+- Hosted upload and terminal URLs are unguessable
   ([§4.8.2](#482-embed-identity)). So nobody can enumerate files across rooms.
 - Servers delete hosted content when its embed is removed, or when its
   message is deleted or redacted ([§4.8.2](#482-embed-identity)). So deleted
@@ -2713,7 +2736,7 @@ the previous one rather than show both.
 
 ```jsonc
 // <-
-{"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+{"method": "server", "params": {"apron": 10, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
 // <- before any auth
 {
   "method": "message", "params": {
@@ -2743,7 +2766,7 @@ connection, and the server returns the original result rather than posting twice
 {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
 {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
 // <-
-{"method": "server", "params": {"apron": 9, "capabilities": ["rooms"], "auth": ["token"]}}
+{"method": "server", "params": {"apron": 10, "capabilities": ["rooms"], "auth": ["token"]}}
 // <-
 {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
 // <- then the bot closes the connection
