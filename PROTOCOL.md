@@ -1970,8 +1970,20 @@ receives it:
   limits, and the grace period after a writer disconnects. At a limit, the
   server ends the output, and keeps the last part.
 - When the server keeps only the last part, that part starts at its first
-  control character (U+0000 to U+001F). If it has none, it starts at its first
-  whole character.
+  byte below 0x20. If it has none, it starts at its first byte outside
+  0x80–0xBF:
+
+  ```python
+  def keep_last(output: bytes, limit: int) -> bytes:
+      if len(output) <= limit:
+          return output
+      tail = output[-limit:]
+      for i, b in enumerate(tail):
+          if b < 0x20:  # a control character
+              return tail[i:]
+      return tail.lstrip(bytes(range(0x80, 0xC0)))  # skip a partial character
+  ```
+
 - The chat server serves `url`. Clients SHOULD NOT connect to terminal URLs on
   other origins.
 - The server MUST serve `url` as `text/plain; charset=utf-8`, with
