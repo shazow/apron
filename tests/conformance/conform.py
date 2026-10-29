@@ -22,6 +22,7 @@ Run from the repository root:
 
 import argparse
 import asyncio
+import base64
 import itertools
 import json
 import re
@@ -711,16 +712,20 @@ async def _(run):
     room_id = getattr(run, "new_room", None)
     if not room_id:
         raise Skip("no room was created")
+    # With --token every connection is the same user, so there is no other member to tell.
+    two_users = not run.args.token
     a = await run.open()
-    await a.call("room_join", {"room_id": room_id})
+    if two_users:
+        await a.call("room_join", {"room_id": room_id})
     b = await run.open()
     a_start, b_start = len(a.frames), len(b.frames)
     i, reply = await b.request("room_join", {"room_id": room_id})
     must(reply.get("result") == {}, f"room_join got {describe(reply)}")
     j, update = await b.wait(room_update("joined", room_id), b_start)
     must(update and j < i, "no room_update joined before the result")
-    _, membership = await a.wait(room_update("memberships", room_id), a_start)
-    should(membership, "another member got no membership record")
+    if two_users:
+        _, membership = await a.wait(room_update("memberships", room_id), a_start)
+        should(membership, "another member got no membership record")
     b_start = len(b.frames)
     i, reply = await b.request("room_leave", {"room_id": room_id})
     must(reply.get("result") == {}, f"room_leave got {describe(reply)}")
@@ -895,7 +900,7 @@ async def _(run):
         must(saved and saved["params"].get("ext") == {"conformance": {"a": 1}, "conformance2": 1}, "the save did not merge ext")
 
 
-async def write(conn, run, embed, body):
+async def write(conn, run, embed, body, content_type=None):
     """Post one embed, PUT body to its write_url, and return (embed as broadcast, embed when done)."""
     i, reply = await conn.request("message", {"room_id": run.room, "body": {"text": "conformance: embed", "embeds": [embed]}})
     result = reply.get("result", {})
@@ -906,6 +911,8 @@ async def write(conn, run, embed, body):
     must(first, "no broadcast")
     start = len(conn.frames)
     put = urllib.request.Request(written["write_url"], data=body, method="PUT")
+    if content_type:
+        put.add_header("Content-Type", content_type)
     await asyncio.to_thread(lambda: urllib.request.urlopen(put, timeout=WAIT * 5).read())
     done = lambda f: snapshot_of(result["message_id"])(f) and not [
         e for e in f["params"]["body"].get("embeds", []) if e.get("embed_id") == written["embed_id"] and "url" not in e
@@ -916,10 +923,28 @@ async def write(conn, run, embed, body):
     return pick(first), pick(last)
 
 
+# A 1x1 PNG, for servers that take only images.
+PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+
+
+def upload_file(run):
+    """A file the server takes: plain text, unless ext:media's upload patterns (EXTENSIONS.md) say otherwise."""
+    files = [("conformance.txt", "text/plain", b"conformance\n"), ("conformance.png", "image/png", PNG)]
+    patterns = run.server.get("ext", {}).get("media", {}).get("upload") if run.has("ext:media") else None
+    if not isinstance(patterns, dict):
+        return files[0]
+    takes = lambda pattern, kind: pattern.lower() in (kind, "*/*", kind.split("/")[0] + "/*")
+    for file in files:
+        if any(takes(pattern, file[1]) for pattern in patterns):
+            return file
+    raise Skip("ext.media.upload takes neither text/plain nor image/png")
+
+
 @check("4.8.4", "an upload gets a write_url and completes after the PUT", needs="embed:upload")
 async def _(run):
     conn = await run.joined()
-    pending, done = await write(conn, run, {"kind": "upload", "title": "conformance.txt"}, b"conformance\n")
+    title, kind, body = upload_file(run)
+    pending, done = await write(conn, run, {"kind": "upload", "title": title}, body, kind)
     must(pending.get("embed_id") and "url" not in pending, "the first broadcast is not pending")
     must(done.get("url"), "the completed upload has no url")
 
