@@ -15,6 +15,8 @@ fixtures, or implementations from it.
   added.
 - A section MAY open with a short paragraph of context and motivation. Write
   it as prose; the rules follow as bullets.
+- A short code block MAY show an algorithm that is easier to follow as steps,
+  right after the rule that it shows.
 - Give a numbered subheading to each topic that readers look up or link to.
   A follow-on within one flow stays in its section, such as move and delete
   after edit. Headings go no deeper than x.y.z.
