@@ -1888,8 +1888,9 @@ each embed. Other servers MAY store embeds as they receive them.
 
 #### 4.8.3 Writes
 
-New `upload`, `append`, and `terminal` embeds get their content over HTTP. The result of
-the `message` or `command` ([§4.1](#41-command)) lists them, in request order:
+New `upload`, `append`, and `terminal` embeds get their content over HTTP. The
+result of the `message` or `command` ([§4.1](#41-command)) lists them, in
+request order:
 
 ```jsonc
 // -> the sender attaches a file
