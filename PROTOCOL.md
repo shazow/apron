@@ -1966,9 +1966,11 @@ carries its `url`. Live text also follows these rules:
   `X-Content-Type-Options: nosniff`.
 - Server policy sets the size and time limits, and the grace period after a
   writer disconnects. At a limit, the server ends the text.
-- A writer that disconnects ends the text, unless it returns within the grace
-  period. A server MAY let it return with another `PUT` to `write_url`, whose
-  body continues the text.
+- A writer that disconnects ends the text, keeping what arrived, once the grace
+  period passes. A grace period of 0 ends it at once.
+- A server MAY let the writer continue within the grace period, by means that
+  this document does not define, such as an extension
+  ([§4](#4-capabilities)).
 - If the server has capability `edit`, the sender MAY end the text early with a
   save that removes the embed.
 
