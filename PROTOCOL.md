@@ -2024,6 +2024,8 @@ terminal receives it.
 {"embed_id": "embed_1234", "kind": "terminal", "title": "make test", "output": "…"}
 ```
 
+- The terminal is 80 columns wide and 40 rows high. A sender that runs the
+  program in a pseudo-terminal SHOULD give it this size.
 - When the output ends, the server publishes a snapshot whose embed carries
   the kept `output`. The output is live while the embed has no `output`.
 - At a size limit, the server keeps the last part. That part starts at its
@@ -2045,6 +2047,8 @@ Clients render the output as a terminal would show it:
 
 - Clients render each response of `url`, and `output`, from the initial state
   of a terminal, with default colors and attributes.
+- Clients SHOULD render the output on a screen of 80 columns and 40 rows. They
+  MAY scale the screen to fit, and MAY hide rows that nothing was written to.
 - Clients SHOULD support line feed, carriage return, backspace, tab, erase in
   line, and Select Graphic Rendition (colors and attributes).
 - Clients ignore the control functions that they do not support, and never
