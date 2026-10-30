@@ -1831,9 +1831,11 @@ Clients render an unknown kind from `og`, or else as the fallback card
 ([§3.5.2](#352-rendering)).
 
 ```json
-{"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/Qm7xk2…"}
-{"embed_id": "embed_1241", "kind": "iframe", "url": "https://backend:8443/term/abc", "height": 300}
-{"embed_id": "embed_1242", "kind": "html", "html": "<table>…</table>"}
+"embeds": [
+  {"embed_id": "embed_1240", "kind": "upload", "title": "report.pdf", "url": "https://chat.example/f/Qm7xk2…"},
+  {"embed_id": "embed_1241", "kind": "iframe", "url": "https://backend:8443/term/abc", "height": 300},
+  {"embed_id": "embed_1242", "kind": "html", "html": "<table>…</table>"}
+]
 ```
 
 - `iframe`: render with `sandbox="allow-scripts"`, and **never** with
@@ -1901,7 +1903,13 @@ request order:
   }
 }
 // <- the broadcast first, with the embed pending
-{"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}
+{
+  "method": "message", "params": {
+    "message_id": "1724803500000", "log_id": "1724803500000", "room_id": "general",
+    "from": {"user_id": "ada", "name": "Ada"},
+    "body": {"text": "Before the fix:", "embeds": [{"embed_id": "embed_1235", "kind": "upload", "title": "before.png"}]}
+  }
+}
 // <- then the result, with the write URL for the sender only
 {
   "id": "c8", "result": {
@@ -1910,13 +1918,23 @@ request order:
   }
 }
 // sender: curl -T before.png https://chat.example/w/4c7a…
-// <- the embed as broadcast in a later snapshot, completed
+// <- a later snapshot, with the embed completed
 {
-  "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
-  "url": "https://chat.example/f/Zr8Tq1…",
-  "og": {
-    "title": "before.png",
-    "image": {"url": "https://chat.example/f/Zr8Tq1…/thumb", "type": "image/webp", "width": 320, "height": 180}
+  "method": "message", "params": {
+    "message_id": "1724803500000", "log_id": "1724803502000", "room_id": "general",
+    "prev_log_id": "1724803500000",
+    "from": {"user_id": "ada", "name": "Ada"},
+    "body": {
+      "text": "Before the fix:",
+      "embeds": [{
+        "embed_id": "embed_1235", "kind": "upload", "title": "before.png",
+        "url": "https://chat.example/f/Zr8Tq1…",
+        "og": {
+          "title": "before.png",
+          "image": {"url": "https://chat.example/f/Zr8Tq1…/thumb", "type": "image/webp", "width": 320, "height": 180}
+        }
+      }]
+    }
   }
 }
 ```
@@ -1935,8 +1953,12 @@ carries its `url`. Live text also follows these rules:
 
 - The sender sends UTF-8 text as a streaming `PUT` body to `write_url`. The end
   of the body ends the text.
+- The server decodes the text that it keeps as the
+  [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode)
+  decodes UTF-8, which replaces invalid bytes with U+FFFD.
 - `GET url` returns the text that the server kept. It continues as more text
   arrives, and ends when the text ends.
+- Before the write starts, `GET url` waits for it.
 - A reader that reconnects replaces what it showed with the new response.
 - The chat server serves `url`. Clients SHOULD NOT connect to live text URLs on
   other origins.
@@ -1944,6 +1966,9 @@ carries its `url`. Live text also follows these rules:
   `X-Content-Type-Options: nosniff`.
 - Server policy sets the size and time limits, and the grace period after a
   writer disconnects. At a limit, the server ends the text.
+- A writer that disconnects ends the text, unless it returns within the grace
+  period. A server MAY let it return with another `PUT` to `write_url`, whose
+  body continues the text.
 - If the server has capability `edit`, the sender MAY end the text early with a
   save that removes the embed.
 
@@ -2006,6 +2031,8 @@ into the body, and the message is an ordinary message.
   that appends the kept text to `body.text`, and removes the embed.
 - The appended text does not change `body.mentions`.
 - At a size limit, the server keeps the first part, up to a whole character.
+- The appended text and `body.text` together stay within the server's limits
+  for a message.
 - Servers MAY wait for the text to end before they push the message
   ([§4.9](#49-push)).
 
@@ -2017,12 +2044,44 @@ text ([§4.8.3](#483-writes)): UTF-8 with ECMA-48 control functions, as a
 terminal receives it.
 
 ```jsonc
-// -> the embed in a message request; the result and write follow §4.8.3
-{"kind": "terminal", "title": "make test"}
-// sender: make test 2>&1 | curl -T - <write_url>
-// <- the embed as broadcast: live at its url, then finished with the kept output
-{"embed_id": "embed_1234", "kind": "terminal", "title": "make test", "url": "https://chat.example/t/p3Wn9d…"}
-{"embed_id": "embed_1234", "kind": "terminal", "title": "make test", "output": "…"}
+// -> a message with a terminal embed
+{
+  "method": "message", "id": "c61", "params": {
+    "room_id": "general",
+    "body": {"text": "Running the tests:", "embeds": [{"kind": "terminal", "title": "make test"}]}
+  }
+}
+// <- the broadcast: the output is live at its url
+{
+  "method": "message", "params": {
+    "message_id": "1724803700000", "log_id": "1724803700000", "room_id": "general",
+    "from": {"user_id": "ada", "name": "Ada"},
+    "body": {
+      "text": "Running the tests:",
+      "embeds": [{"embed_id": "embed_1234", "kind": "terminal", "title": "make test", "url": "https://chat.example/t/p3Wn9d…"}]
+    }
+  }
+}
+// <- the result, with the write URL for the sender only (§4.8.3)
+{
+  "id": "c61", "result": {
+    "message_id": "1724803700000",
+    "embeds": [{"embed_id": "embed_1234", "kind": "terminal", "write_url": "https://chat.example/w/8e1d…"}]
+  }
+}
+// sender: make test 2>&1 | curl -T - https://chat.example/w/8e1d…
+// <- when the output ends: the kept output, in place of the url
+{
+  "method": "message", "params": {
+    "message_id": "1724803700000", "log_id": "1724803760000", "room_id": "general",
+    "prev_log_id": "1724803700000",
+    "from": {"user_id": "ada", "name": "Ada"},
+    "body": {
+      "text": "Running the tests:",
+      "embeds": [{"embed_id": "embed_1234", "kind": "terminal", "title": "make test", "output": "\u001b[32mok\u001b[0m  42 tests  0.41s\r\n"}]
+    }
+  }
+}
 ```
 
 - The terminal is 80 columns wide and 40 rows high. A sender that runs the
