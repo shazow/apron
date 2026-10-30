@@ -970,6 +970,8 @@ async def write_live(run, url, write_url, chunks):
              f"GET url has Content-Type {kind!r}, not text/plain; charset=utf-8")
         must(headers.get("X-Content-Type-Options", "").strip().lower() == "nosniff",
              "GET url lacks X-Content-Type-Options: nosniff")
+        directives = {d.strip().lower() for d in headers.get("Cache-Control", "").split(",")}
+        must("no-transform" in directives, "GET url lacks Cache-Control: no-transform")
         must(first == chunks[0], f"GET url while the text is live returned {first!r}, not the text written so far")
     finally:
         release.set()

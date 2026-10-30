@@ -1964,7 +1964,8 @@ carries its `url`. Live text also follows these rules:
 - The chat server serves `url`. Clients SHOULD NOT connect to live text URLs on
   other origins.
 - The server MUST serve `url` as `text/plain; charset=utf-8`, with
-  `X-Content-Type-Options: nosniff`.
+  `X-Content-Type-Options: nosniff` and `Cache-Control: no-transform`
+  (a proxy that compresses it holds the stream back until it ends).
 - Server policy sets the size and time limits, and the grace period after a
   writer disconnects. At a limit, the server ends the text.
 - A writer that disconnects ends the text, keeping what arrived, once the grace
