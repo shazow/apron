@@ -27,8 +27,10 @@ import itertools
 import json
 import re
 import sys
+import threading
 import time
 import traceback
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -36,7 +38,7 @@ from jsonschema import Draft202012Validator
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-VERSION = 9
+VERSION = 10
 WAIT = 2.0  # seconds to wait for an expected frame
 QUIET = 0.5  # seconds to wait for a frame that should not come
 MISSING = "9007199254740991"  # a log_id no test server has reached (2^53 - 1)
@@ -45,7 +47,7 @@ CODES = {"parse_error": -32700, "invalid_request": -32600, "unsupported": -32601
          "retry_after": -32002, "too_large": -32003}
 KNOWN = {
     "capability": {"command", "history", "rooms", "edit", "status", "activity", "reactions",
-                   "embed:upload", "embed:stream", "ext"},
+                   "embed:upload", "embed:append", "embed:terminal", "ext"},
     "auth scheme": {"guest", "token", "webauthn", "email", "external"},
 }
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema/apron.schema.json"
@@ -900,27 +902,81 @@ async def _(run):
         must(saved and saved["params"].get("ext") == {"conformance": {"a": 1}, "conformance2": 1}, "the save did not merge ext")
 
 
-async def write(conn, run, embed, body, content_type=None):
-    """Post one embed, PUT body to its write_url, and return (embed as broadcast, embed when done)."""
-    i, reply = await conn.request("message", {"room_id": run.room, "body": {"text": "conformance: embed", "embeds": [embed]}})
+async def post_embed(conn, run, embed, **body):
+    """Post a message with one new embed, and return (message_id, result embed, embed as first broadcast)."""
+    body = {"text": "conformance: embed", **body, "embeds": [embed]}
+    _, reply = await conn.request("message", {"room_id": run.room, "body": body})
     result = reply.get("result", {})
     must(result.get("message_id") and len(result.get("embeds", [])) == 1, f"got {describe(reply)}")
     written = result["embeds"][0]
     must(written.get("embed_id") and written.get("write_url"), "the result embed lacks embed_id or write_url")
     _, first = await conn.wait(snapshot_of(result["message_id"]))
     must(first, "no broadcast")
-    start = len(conn.frames)
-    put = urllib.request.Request(written["write_url"], data=body, method="PUT")
+    return result["message_id"], written, embed_in(first, written["embed_id"]) or {}
+
+
+def embed_in(snapshot, embed_id):
+    """The embed with embed_id in a message snapshot frame, or None."""
+    return next((e for e in snapshot["params"].get("body", {}).get("embeds", []) if e.get("embed_id") == embed_id), None)
+
+
+async def finished(conn, message_id, embed_id, done, start, why):
+    """Return the first snapshot of message_id from start whose embed, or None without it, passes done."""
+    _, last = await conn.wait(lambda f: snapshot_of(message_id)(f) and done(embed_in(f, embed_id)), start, WAIT * 5)
+    must(last, why)
+    return last
+
+
+def http_url(run, url):
+    """url resolved against the server's address, with ws and wss as http and https."""
+    base = re.sub(r"^ws", "http", run.args.url)
+    return urllib.parse.urljoin(base, url)
+
+
+def put(url, body, content_type=None):
+    """PUT body, bytes or an iterable of byte chunks sent as they come, and return the response body."""
+    request = urllib.request.Request(url, data=body, method="PUT")
     if content_type:
-        put.add_header("Content-Type", content_type)
-    await asyncio.to_thread(lambda: urllib.request.urlopen(put, timeout=WAIT * 5).read())
-    done = lambda f: snapshot_of(result["message_id"])(f) and not [
-        e for e in f["params"]["body"].get("embeds", []) if e.get("embed_id") == written["embed_id"] and "url" not in e
-        and "text" not in e]
-    _, last = await conn.wait(done, start, timeout=WAIT * 5)
-    must(last, "no snapshot completed the embed after the write")
-    pick = lambda s: next((e for e in s["params"]["body"].get("embeds", []) if e.get("embed_id") == written["embed_id"]), {})
-    return pick(first), pick(last)
+        request.add_header("Content-Type", content_type)
+    with urllib.request.urlopen(request, timeout=WAIT * 5) as response:
+        return response.read()
+
+
+def get_live(url, size):
+    """GET url, and return (its headers, its first size bytes)."""
+    with urllib.request.urlopen(url, timeout=WAIT * 5) as response:
+        return response.headers, response.read(size)
+
+
+async def write_live(run, url, write_url, chunks):
+    """PUT the chunks as one body, and check GET url while the body is held open after the first chunk (§4.8.3)."""
+    sent, release = threading.Event(), threading.Event()
+
+    def body():
+        yield chunks[0]
+        sent.set()
+        release.wait(WAIT * 5)
+        yield from chunks[1:]
+
+    writing = asyncio.create_task(asyncio.to_thread(put, http_url(run, write_url), body()))
+    try:
+        must(await asyncio.to_thread(sent.wait, WAIT * 5), "the PUT did not send its first chunk")
+        try:
+            headers, first = await asyncio.to_thread(get_live, http_url(run, url), len(chunks[0]))
+        except OSError as error:
+            raise Fail(f"GET url while the text is live: {error}") from None
+        kind = headers.get("Content-Type")
+        must(kind and headers.get_content_type() == "text/plain" and headers.get_content_charset() == "utf-8",
+             f"GET url has Content-Type {kind!r}, not text/plain; charset=utf-8")
+        must(headers.get("X-Content-Type-Options", "").strip().lower() == "nosniff",
+             "GET url lacks X-Content-Type-Options: nosniff")
+        must(first == chunks[0], f"GET url while the text is live returned {first!r}, not the text written so far")
+    finally:
+        release.set()
+        try:
+            await writing
+        except OSError as error:
+            raise Fail(f"PUT write_url: {error}") from None
 
 
 # A 1x1 PNG, for servers that take only images.
@@ -944,17 +1000,55 @@ def upload_file(run):
 async def _(run):
     conn = await run.joined()
     title, kind, body = upload_file(run)
-    pending, done = await write(conn, run, {"kind": "upload", "title": title}, body, kind)
+    message_id, written, pending = await post_embed(conn, run, {"kind": "upload", "title": title})
     must(pending.get("embed_id") and "url" not in pending, "the first broadcast is not pending")
-    must(done.get("url"), "the completed upload has no url")
+    start = len(conn.frames)
+    await asyncio.to_thread(put, http_url(run, written["write_url"]), body, kind)
+    done = await finished(conn, message_id, written["embed_id"], lambda e: e is None or "url" in e, start,
+                          "no snapshot completed the embed after the write")
+    must((embed_in(done, written["embed_id"]) or {}).get("url"), "the upload failed: the snapshot has no embed")
 
 
-@check("4.8.5", "a stream keeps its text when the write ends", needs="embed:stream")
+@check("4.8.5", "append text is live at its url, then moves into body.text", needs="embed:append")
 async def _(run):
     conn = await run.joined()
-    live, done = await write(conn, run, {"kind": "stream"}, b"conformance\n")
-    must(live.get("url"), "the first broadcast has no url")
-    must(done.get("text") == "conformance\n" and "url" not in done, f"the finished stream is {json.dumps(done)}")
+    opening, chunks = "conformance: append\n\n", [b"live ", "*text* \u00e9\n".encode()]
+    message_id, written, live = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
+    must(live.get("url"), "the broadcast that creates the embed has no url")
+    start = len(conn.frames)
+    await write_live(run, live["url"], written["write_url"], chunks)
+    done = await finished(conn, message_id, written["embed_id"], lambda e: e is None, start,
+                          "no snapshot removed the embed after the write")
+    body = done["params"].get("body", {})
+    text = opening + b"".join(chunks).decode()
+    must(body.get("text") == text, f"body.text is {body.get('text')!r}, not {text!r}")
+    must(body.get("format") == "markdown", f"body.format is {body.get('format')!r}, not markdown")
+
+
+@check("4.8.6", "terminal output is live at its url, then kept as output", needs="embed:terminal")
+async def _(run):
+    conn = await run.joined()
+    chunks = [b"conformance \x1b[1;31mred\x1b[0m\r\n", "caf\u00e9\x1b[K done\n".encode()]
+    embed = {"kind": "terminal", "title": "conformance", "output": "forged"}
+    message_id, written, live = await post_embed(conn, run, embed, text="conformance: terminal")
+    must(live.get("url"), "the broadcast that creates the embed has no url")
+    must("output" not in live, "the live embed has the output from the request (§4.8.2)")
+    start = len(conn.frames)
+    await write_live(run, live["url"], written["write_url"], chunks)
+    done = await finished(conn, message_id, written["embed_id"], lambda e: e is None or "output" in e, start,
+                          "no snapshot finished the embed after the write")
+    output = b"".join(chunks).decode()
+    kept = embed_in(done, written["embed_id"])
+    must(kept, "the write failed: the snapshot has no embed")
+    must(kept.get("output") == output, f"output is {kept.get('output')!r}, not {output!r}")
+    must(kept.get("title") == "conformance", f"the finished embed is {json.dumps(kept)}")
+    if run.has("edit"):
+        start = len(conn.frames)
+        await conn.call("message", {"message_id": message_id, "room_id": run.room, "body": {
+            "text": "conformance: saved", "embeds": [{**kept, "output": "forged"}]}})
+        _, saved = await conn.expect(snapshot_of(message_id), "no snapshot after the save", start)
+        must((embed_in(saved, written["embed_id"]) or {}).get("output") == output,
+             "a save that sends output changed the server's output (§4.8.2)")
 
 
 @check("4.9.1", "unregistering an unknown push url succeeds", needs=lambda s: "push" in s)
