@@ -1953,9 +1953,10 @@ carries its `url`. Live text also follows these rules:
 
 - The sender sends UTF-8 text as a streaming `PUT` body to `write_url`. The end
   of the body ends the text.
-- The server decodes the text that it keeps as the
-  [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode)
-  decodes UTF-8, which replaces invalid bytes with U+FFFD.
+- The server converts the bytes that it keeps to text with the
+  [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode-without-bom)'s
+  UTF-8 decode without BOM. Each invalid sequence becomes one U+FFFD, and so
+  does an incomplete sequence at the end. Valid UTF-8 is kept unchanged.
 - `GET url` returns the text that the server kept. It continues as more text
   arrives, and ends when the text ends.
 - Before the write starts, `GET url` waits for it.
