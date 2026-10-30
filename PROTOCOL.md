@@ -1925,7 +1925,6 @@ the `message` or `command` ([§4.1](#41-command)) lists them, in request order:
 - The server finishes each write exactly one time. It then publishes a
   snapshot with the result that the kind of the embed defines. If the write
   fails or does not start in time, that snapshot has no embed.
-- The server responds to the `PUT` after it publishes that snapshot.
 - For a command, the server uses the finished write instead, such as to set an
   avatar ([§4.8.7](#487-avatars)).
 
@@ -2004,8 +2003,7 @@ into the body, and the message is an ordinary message.
   without the embed arrives.
 - When the text ends, other than by a save, the server publishes a snapshot
   that appends the kept text to `body.text`, and removes the embed.
-- To mention users in the appended text, the sender saves the message after
-  the text ends ([§4.4](#44-edit)).
+- The appended text does not change `body.mentions`.
 - At a size limit, the server keeps the first part, up to a whole character.
 - Servers MAY wait for the text to end before they push the message
   ([§4.9](#49-push)).
