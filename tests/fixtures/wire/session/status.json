@@ -12,7 +12,7 @@
     {
       "name": "idle",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["status"]}}},
         {"idle":120},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"},"token":"st_Hk41x9"}}},
@@ -26,7 +26,7 @@
         {"reply":{"to":"unattended","result":{}}},
         {"expect":{"you":{"user_id":"guest_1","name":"Ada"},"mutes":{}}},
         {"disconnect":true},
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["status"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
         {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},
         {"request":{"as":"idle-again","match":{"method":"status","params":{"idle":300}}}},
@@ -37,7 +37,7 @@
     {
       "name": "mute",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["status"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada"},"token":"st_Hk41x9"}}},
         {"receive":{"method":"status","params":{"room_id":"random","mute":true}}},
@@ -54,7 +54,7 @@
         {"receive":{"method":"status","params":{"room_id":"random","mute":false}}},
         {"expect":{"mutes":{"":"timed"}}},
         {"disconnect":true},
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["status"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["status"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
         {"expect":{"you":null,"mutes":{"":"timed"}}},
         {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada"}}}},

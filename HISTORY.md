@@ -2,6 +2,15 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first.
 
+## v10 (2026-10-30)
+
+- Capability `embed:stream` and embed kind `stream` are removed, with the embed fields `format` and `text`. Capabilities `embed:append` and `embed:terminal` replace them.
+- `append` and `terminal` embeds carry live text (§4.8.3), which keeps the write and read rules of streams. The broadcast that creates the embed carries its `url`. The server serves `url` as `text/plain; charset=utf-8`, with `X-Content-Type-Options: nosniff`. At a size or time limit, the server ends the text. With capability `edit`, a save that removes the embed ends the text early.
+- A finished write publishes a snapshot with the result that the kind of the embed defines (§4.8.3). The server owns the `url` of an upload or of live text, and the `output` of a terminal (§4.8.2).
+- Capability `embed:append` (§4.8.5) adds `append` embeds, text that the sender appends to the body of its message, such as the reply of an LLM. A message has at most one. Clients show `body.text` followed by the text from `url`, as one text in the format of the body, with no card, and keep what they show until a snapshot without the embed arrives. When the text ends, other than by a save, the server publishes a snapshot that appends the kept text to `body.text` and removes the embed. The appended text does not change `body.mentions`. At a size limit, the server keeps the first part, up to a whole character. Servers may wait for the text to end before they push the message. Without the capability, senders post the finished text.
+- Capability `embed:terminal` (§4.8.6) adds `terminal` embeds, live output from a program: UTF-8 with ECMA-48 control functions. When the output ends, the server publishes a snapshot whose embed carries the kept `output`, and the output is live while the embed has no `output`. At a size limit, the server keeps the last part, which starts at its first byte below 0x20, or else at its first byte outside 0x80–0xBF. The terminal is 80 columns by 40 rows, and a sender that runs the program in a pseudo-terminal should give it this size. Clients render each response of `url`, and `output`, from the initial state of a terminal, should support line feed, carriage return, backspace, tab, erase in line, and SGR, ignore other control functions without showing them as text, and must not perform a control function that acts outside the embed, such as setting a window title or writing to the clipboard.
+- §4.8.5 is now `embed:append` and §4.8.6 `embed:terminal`, so Avatars move from §4.8.6 to §4.8.7.
+
 ## v9 (2026-10-27)
 
 - A server's address is the URI that clients connect to (§1). Clients should identify a server by its address, compared after RFC 3986 normalization, and never by its `title` or `avatar`.

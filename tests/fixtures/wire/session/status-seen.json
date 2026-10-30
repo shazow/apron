@@ -14,7 +14,7 @@
     {
       "name": "disconnect",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
@@ -34,7 +34,7 @@
     {
       "name": "invisible",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
@@ -46,7 +46,7 @@
         {"receive":{"method":"user","params":{"new":{"user_id":"carol","name":"Caz"}}}},
         {"expect":{"users":{"carol":{"user_id":"carol","name":"Caz","status":"offline"},"guest_1":{"user_id":"guest_1","name":"Ada","status":"online"}},"seen":{"carol":"120"}}},
         {"disconnect":true},
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
         {"request":{"as":"rooms-again","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"}}}},
@@ -62,7 +62,7 @@
     {
       "name": "dnd",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
@@ -78,7 +78,7 @@
     {
       "name": "own-status",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"},"token":"st_Hk41x9"}}},
@@ -86,7 +86,7 @@
         {"receive":{"method":"user","params":{"you":{"user_id":"guest_1","status":"invisible"}}}},
         {"expect":{"you":{"user_id":"guest_1","name":"Ada","status":"invisible"},"users":{"erin":{"user_id":"erin","name":"Erin","status":""},"guest_1":{"user_id":"guest_1","name":"Ada","status":"invisible"}},"seen":{}}},
         {"disconnect":true},
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd","invisible"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
         {"request":{"as":"rooms-again","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada","status":"invisible"}}}},
