@@ -728,8 +728,8 @@ authoritative **snapshot** at one log position.
 - Clients SHOULD ignore the bidirectional embeddings and overrides U+202A to
   U+202E in those strings.
 - Clients MUST render an embed of unknown `kind` from its `og`, if it has one.
-  Otherwise they render a labeled fallback card: the kind name, plus `url` or
-  plain `text` if present.
+  Otherwise they render a labeled fallback card: the kind name, plus its
+  `title` and a link to its `url` if present.
 
 #### 3.5.3 Delivery
 
@@ -895,8 +895,8 @@ different:
   command with `message_id` or `deleted` is `invalid_params`.
 - `mentions`, `reply_to`, `embeds`, and `ext` are arguments. Mentioned users
   are not notified, and `ext` is not kept.
-- The result is `{}`, or `{"embeds": [...]}` with write URLs for new `upload`
-  embeds ([§4.8.3](#483-writes)). A failure is an ordinary error, and the
+- The result is `{}`, or `{"embeds": [...]}` with write URLs for new embeds
+  ([§4.8.3](#483-writes)). A failure is an ordinary error, and the
   client shows its `message`.
 - The server replies as needed with system notices
   ([Appendix A.1](#a1-system-identities-and-scoped-notices)). It sends
@@ -1812,7 +1812,7 @@ class Embed {
 
   embed_id?: string;            // set by servers with any embed:* capability (§4.8.2)
   title?: string;
-  url?: string;                 // where a click goes; the server's own for upload and live text
+  url?: string;                 // where a click goes, or the live text (§4.8.3); the server's own for upload and live text
   og?: object;                  // OpenGraph description (§4.8.1)
 
   // "iframe" kind
@@ -1880,9 +1880,12 @@ each embed. Other servers MAY store embeds as they receive them.
 - A save keeps an embed when it sends the embed back with its `embed_id`. An
   embed without an `embed_id` is new. A save that leaves out an `embed_id`
   removes that embed.
-- The server owns `embed_id`, the `url` of an upload or of live text, and the
-  `output` of a terminal. It ignores them in requests, and restores them from
-  its records on a save.
+- A save that sends back an `embed_id` that the message no longer has is
+  `invalid_params` (otherwise a save made just before live text ended would
+  overwrite the text appended to the body).
+- The server owns `embed_id` and the `url` of an upload or of live text, and,
+  with capability `embed:terminal`, the `output` of a terminal. It ignores
+  them in requests, and restores them from its records on a save.
 - Servers SHOULD delete the content that they host for an embed when the embed
   is removed, or when its message is deleted or redacted.
 - Servers SHOULD make the URLs they host unguessable, such as with a random
@@ -1942,8 +1945,9 @@ request order:
 - The sender sends the content as the body of an HTTP `PUT` to `write_url`.
   `write_url` is a credential. It expires if it is not used.
 - The server finishes each write exactly one time. It then publishes a
-  snapshot with the result that the kind of the embed defines. If the write
-  fails or does not start in time, that snapshot has no embed.
+  snapshot with the result that the kind of the embed defines.
+- If a write does not start in time, or the write of an upload fails, that
+  snapshot has no embed.
 - For a command, the server uses the finished write instead, such as to set an
   avatar ([§4.8.7](#487-avatars)).
 
@@ -1953,28 +1957,33 @@ carries its `url`. Live text also follows these rules:
 
 - The sender sends UTF-8 text as a streaming `PUT` body to `write_url`. The end
   of the body ends the text.
-- The server converts the bytes that it keeps to text with the
-  [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode-without-bom)'s
-  UTF-8 decode without BOM. Each invalid sequence becomes one U+FFFD, and so
-  does an incomplete sequence at the end. Valid UTF-8 is kept unchanged.
-- `GET url` returns the text that the server kept. It continues as more text
-  arrives, and ends when the text ends.
-- Before the write starts, `GET url` waits for it.
+- `GET url` returns the bytes that the server kept, from the start of the text.
+  It continues as more arrive, and ends when the text ends.
+- Before the write starts, `GET url` waits for it. After the text ends,
+  `GET url` MAY fail.
 - A reader that reconnects replaces what it showed with the new response.
-- The chat server serves `url`. Clients SHOULD NOT connect to live text URLs on
-  other origins.
-- The server MUST serve `url` as `text/plain; charset=utf-8`, with
-  `X-Content-Type-Options: nosniff` and `Cache-Control: no-transform`
-  (a proxy that compresses it holds the stream back until it ends).
-- Server policy sets the size and time limits, and the grace period after a
-  writer disconnects. At a limit, the server ends the text.
+- When `GET url` ends or fails, clients keep what they show until the snapshot
+  that ends the text arrives.
 - A writer that disconnects ends the text, keeping what arrived, once the grace
-  period passes. A grace period of 0 ends it at once.
+  period passes.
 - A server MAY let the writer continue within the grace period, by means that
   this document does not define, such as an extension
   ([§4](#4-capabilities)).
+- Server policy sets how much text the server keeps, and the limits on how much
+  and how long the writer sends. Each kind defines which part it keeps. At a
+  limit on the writer, the server ends the text.
 - If the server has capability `edit`, the sender MAY end the text early with a
   save that removes the embed.
+- The server MUST serve `url` as `text/plain; charset=utf-8`, with
+  `X-Content-Type-Options: nosniff`, `Cache-Control: no-transform`, and
+  `Access-Control-Allow-Origin: *` (a proxy that compresses it holds the
+  stream back until it ends, and web clients read it from other origins).
+- The server converts the bytes that it keeps to text with the
+  [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode-without-bom)'s
+  UTF-8 decode without BOM, for the snapshot that ends the text. Clients decode
+  `GET url` the same way, as a stream, so that what they show matches it.
+- The chat server serves `url`. Clients SHOULD NOT connect to live text URLs on
+  other origins.
 
 #### 4.8.4 `embed:upload`
 
@@ -1996,14 +2005,13 @@ Readers see the body grow in place. When the text ends, the server moves it
 into the body, and the message is an ordinary message.
 
 ```jsonc
-// -> a reply that continues over HTTP; the result and write follow §4.8.3
+// -> a reply that continues over HTTP; the result and the write follow §4.8.3
 {
   "method": "message", "id": "c60", "params": {
     "room_id": "general",
     "body": {"text": "Here is the plan:\n\n", "format": "markdown", "embeds": [{"kind": "append"}]}
   }
 }
-// sender: llm "plan the rollback" | curl -T - <write_url>
 // <- the broadcast: clients show body.text, then the text from url
 {
   "method": "message", "params": {
@@ -2015,6 +2023,7 @@ into the body, and the message is an ordinary message.
     }
   }
 }
+// sender, with write_url from the result: llm "plan the rollback" | curl -T - <write_url>
 // <- when the text ends: the text in the body, and no embed
 {
   "method": "message", "params": {
@@ -2026,17 +2035,14 @@ into the body, and the message is an ordinary message.
 }
 ```
 
-- A message has at most one `append` embed.
 - Clients show `body.text` followed by the text from `url`, as one text in the
   format of the body. They show no card for the embed.
-- When `GET url` ends or fails, clients keep what they show until a snapshot
-  without the embed arrives.
 - When the text ends, other than by a save, the server publishes a snapshot
   that appends the kept text to `body.text`, and removes the embed.
-- The appended text does not change `body.mentions`.
-- At a size limit, the server keeps the first part, up to a whole character.
-- The appended text and `body.text` together stay within the server's limits
-  for a message.
+- A message has at most one `append` embed.
+- The server keeps the first part of the text, up to a whole character, so
+  that `body.text` with it stays within the server's limits for a message.
+  When that part is full, the text ends.
 - Servers MAY wait for the text to end before they push the message
   ([§4.9](#49-push)).
 
@@ -2088,13 +2094,15 @@ terminal receives it.
 }
 ```
 
-- The terminal is 80 columns wide and 40 rows high. A sender that runs the
-  program in a pseudo-terminal SHOULD give it this size.
 - When the output ends, the server publishes a snapshot whose embed carries
   the kept `output`. The output is live while the embed has no `output`.
-- At a size limit, the server keeps the last part. That part starts at its
-  first byte below 0x20. If it has none, it starts at its first byte outside
-  0x80–0xBF:
+- The terminal is 80 columns wide and 40 rows high. A sender that runs the
+  program in a pseudo-terminal SHOULD give it this size.
+- Without the capability, senders post the finished output as text, such as
+  in a code block.
+- Past the size that it keeps, the server keeps the last part of the output.
+  That part starts at its first byte below 0x20. If it has none, it starts at
+  its first byte outside 0x80–0xBF:
 
   ```python
   def keep_last(output: bytes, limit: int) -> bytes:
@@ -2109,16 +2117,18 @@ terminal receives it.
 
 Clients render the output as a terminal would show it:
 
-- Clients render each response of `url`, and `output`, from the initial state
-  of a terminal, with default colors and attributes.
-- Clients SHOULD render the output on a screen of 80 columns and 40 rows. They
-  MAY scale the screen to fit, and MAY hide rows that nothing was written to.
-- Clients SHOULD support line feed, carriage return, backspace, tab, erase in
-  line, and Select Graphic Rendition (colors and attributes).
+- Clients render `output`, and each response to `GET url`, from the initial
+  state of a terminal, with default colors and attributes.
+- Clients treat a line feed as a new line: it also returns to the first
+  column.
+- Clients SHOULD support carriage return, backspace, tab, erase in line, and
+  Select Graphic Rendition (colors and attributes).
 - Clients ignore the control functions that they do not support, and never
   show them as text.
 - Clients MUST NOT perform a control function that acts outside the embed,
   such as one that sets a window title or writes to the clipboard.
+- Clients MAY scale the screen to fit, and MAY hide rows that nothing was
+  written to. They MAY keep the lines that scroll off the top as scrollback.
 
 #### 4.8.7 Avatars
 
@@ -2693,6 +2703,9 @@ server.
   merges cannot grow a record without bound.
 - Receivers can reject frames larger than 256 KiB
   ([§1](#1-transport--framing)).
+- Server policy limits how much and how long a live text's writer sends, and
+  how much text the server keeps ([§4.8.3](#483-writes)). So a writer cannot
+  hold a connection open, or fill storage, without bound.
 - Servers deduplicate by `(user_id, id)`, not by `id` alone
   ([§1.2](#12-retries-and-deduplication)). So the request IDs of one user or
   connection never collide with another's.

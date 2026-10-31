@@ -972,6 +972,7 @@ async def write_live(run, url, write_url, chunks):
              "GET url lacks X-Content-Type-Options: nosniff")
         directives = {d.strip().lower() for d in headers.get("Cache-Control", "").split(",")}
         must("no-transform" in directives, "GET url lacks Cache-Control: no-transform")
+        must(headers.get("Access-Control-Allow-Origin", "").strip() == "*", "GET url lacks Access-Control-Allow-Origin: *")
         must(first == chunks[0], f"GET url while the text is live returned {first!r}, not the text written so far")
     finally:
         release.set()
@@ -1025,6 +1026,11 @@ async def _(run):
     text = opening + b"".join(chunks).decode()
     must(body.get("text") == text, f"body.text is {body.get('text')!r}, not {text!r}")
     must(body.get("format") == "markdown", f"body.format is {body.get('format')!r}, not markdown")
+    if run.has("edit"):
+        # A save made before the text ended still sends its embed back (§4.8.2).
+        stale = {"message_id": message_id, "room_id": run.room,
+                 "body": {"text": opening, "format": "markdown", "embeds": [{"embed_id": written["embed_id"], "kind": "append"}]}}
+        expect_error((await conn.request("message", stale))[1], "invalid_params", "a save with the embed_id of ended live text")
 
 
 @check("4.8.6", "terminal output is live at its url, then kept as output", needs="embed:terminal")
