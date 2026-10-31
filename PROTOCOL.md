@@ -2005,7 +2005,8 @@ message is an ordinary message.
   format of the body. They show no card for the embed.
 - When the text ends, other than by a save, the server publishes a snapshot
   that appends the kept text to `body.text`, and removes the embed.
-- A message has at most one `append` embed.
+- A message has at most one `append` embed. A message with more is
+  `invalid_params`.
 - The server keeps the first part of the text, up to a whole character, so
   that `body.text` with it stays within the server's limits for a message.
   When that part is full, the text ends.
@@ -2030,9 +2031,9 @@ too ([§4.8.6](#486-embedterminal)):
 - A server MAY let the writer continue within the grace period, by means that
   this document does not define, such as an extension
   ([§4](#4-capabilities)).
-- Server policy sets how much text the server keeps, and the limits on how much
-  and how long the writer sends. Each kind defines which part it keeps. At a
-  limit on the writer, the server ends the text.
+- Server policy sets how much text the server keeps, the limits on how much
+  and how long the writer sends, and the grace period. Each kind defines which
+  part it keeps. At a limit on the writer, the server ends the text.
 - If the server has capability `edit`, the sender MAY end the text early with a
   save that removes the embed.
 - The server MUST serve `url` as `text/plain; charset=utf-8`, with

@@ -949,7 +949,7 @@ def get_live(url, size):
 
 
 async def write_live(run, url, write_url, chunks):
-    """PUT the chunks as one body, and check GET url while the body is held open after the first chunk (§4.8.5)."""
+    """GET url before the write starts, then PUT the chunks as one body, holding it open after the first chunk (§4.8.5)."""
     sent, release = threading.Event(), threading.Event()
 
     def body():
@@ -958,11 +958,15 @@ async def write_live(run, url, write_url, chunks):
         release.wait(WAIT * 5)
         yield from chunks[1:]
 
+    # Before the write starts, GET url waits for it.
+    reading = asyncio.create_task(asyncio.to_thread(get_live, http_url(run, url), len(chunks[0])))
+    await asyncio.sleep(0.3)
+    must(not reading.done(), "GET url before the write starts returned instead of waiting for it")
     writing = asyncio.create_task(asyncio.to_thread(put, http_url(run, write_url), body()))
     try:
         must(await asyncio.to_thread(sent.wait, WAIT * 5), "the PUT did not send its first chunk")
         try:
-            headers, first = await asyncio.to_thread(get_live, http_url(run, url), len(chunks[0]))
+            headers, first = await reading
         except OSError as error:
             raise Fail(f"GET url while the text is live: {error}") from None
         kind = headers.get("Content-Type")
@@ -1018,6 +1022,8 @@ async def _(run):
     opening, chunks = "conformance: append\n\n", [b"live ", "*text* \u00e9\n".encode()]
     message_id, written, live = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
     must(live.get("url"), "the broadcast that creates the embed has no url")
+    two = {"room_id": run.room, "body": {"text": "conformance: two appends", "embeds": [{"kind": "append"}, {"kind": "append"}]}}
+    expect_error((await conn.request("message", two))[1], "invalid_params", "a message with two append embeds")
     start = len(conn.frames)
     await write_live(run, live["url"], written["write_url"], chunks)
     done = await finished(conn, message_id, written["embed_id"], lambda e: e is None, start,
