@@ -20,18 +20,29 @@ controls that work. What each user may do is in
 [`ext:permissions`](#extpermissions).
 
 ```json
-"ext": {"settings": {"read_cursors": false, "private_rooms": 10}}
+"ext": {"settings": {"read_cursors": true, "read_receipts": "private", "private_rooms": 10}}
 ```
 
 ```ts
-class Settings {                  // server.ext.settings
-  read_cursors?: boolean = true;  // the server keeps read_message_id
-  private_rooms?: number;         // the most private rooms a user may be a member of
+class Settings {                                // server.ext.settings
+  read_cursors?: boolean = true;                // the server keeps read_message_id
+  read_receipts?: "private" | false = false;    // where members see each other's read_message_id
+  private_rooms?: number;                       // the most private rooms a user may be a member of
 }
 ```
 
 - `read_cursors: false` means that the server ignores `read_message_id`
   ([§4.6](PROTOCOL.md#46-activity)). Clients then send none.
+- `read_receipts: "private"` means that the server sends the
+  `read_message_id` of a member of a private room to the other members of
+  that room.
+- With `"private"`, the server also sends the kept `read_message_id` of the
+  other members after a connection lists a private room
+  ([§4.2.1](PROTOCOL.md#421-listing)).
+- With `"private"`, the server sends a cursor in any other room only to the
+  connections of its user.
+- Clients MAY show the cursors of other members as read receipts. Without
+  `"private"`, clients show none.
 - `private_rooms` counts the private rooms
   ([§4.2.4](PROTOCOL.md#424-creating-and-editing)) without a
   `parent_room_id`. Absent, there is no limit.
