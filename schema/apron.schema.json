@@ -51,7 +51,7 @@
           "type": "string"
         },
         "avatar": {
-          "description": "Image URL (§4.8.6).",
+          "description": "Image URL (§4.8.7).",
           "type": "string"
         },
         "roles": {
@@ -162,7 +162,7 @@
       "type": "object",
       "properties": {
         "kind": {
-          "description": "\"upload\", \"stream\", \"iframe\", \"html\", or another kind.",
+          "description": "\"upload\", \"append\", \"terminal\", \"iframe\", \"html\", or another kind.",
           "type": "string"
         },
         "embed_id": {
@@ -183,12 +183,8 @@
         "html": {
           "type": "string"
         },
-        "format": {
-          "description": "Stream text format (§4.8.5).",
-          "type": "string",
-          "default": "plain"
-        },
-        "text": {
+        "output": {
+          "description": "The kept output of a terminal embed, once the output ends; set by the server (§4.8.6).",
           "type": "string"
         }
       },
@@ -219,10 +215,23 @@
           }
         },
         "embeds": {
+          "description": "At most one embed of kind append (§4.8.5).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Embed"
-          }
+          },
+          "contains": {
+            "properties": {
+              "kind": {
+                "const": "append"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "minContains": 0,
+          "maxContains": 1
         }
       }
     },

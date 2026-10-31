@@ -15,6 +15,12 @@ fixtures, or implementations from it.
   added.
 - A section MAY open with a short paragraph of context and motivation. Write
   it as prose; the rules follow as bullets.
+- A short code block MAY show an algorithm that is easier to follow as steps,
+  right after the rule that it shows.
+- Examples show whole objects: a frame, a record, or a push payload, such as a
+  full `message` notification rather than only the embed in it. A fragment that
+  shows one field starts with its key, such as `"og": {…}`. Any other partial
+  example says why in its comment.
 - Give a numbered subheading to each topic that readers look up or link to.
   A follow-on within one flow stays in its section, such as move and delete
   after edit. Headings go no deeper than x.y.z.

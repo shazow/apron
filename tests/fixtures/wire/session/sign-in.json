@@ -14,7 +14,7 @@
     {
       "name": "reconnect",
       "steps": [
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd"]}}},
         {"request":{"as":"auth","match":{"method":"auth","params":{"scheme":"guest"}}}},
         {"request":{"as":"rooms","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"expect":{"you":null,"rooms":[],"users":{}}},
@@ -30,7 +30,7 @@
         {"receive":{"method":"user","params":{"new":{"user_id":"bob","status":"online"}}}},
         {"expect":{"you":{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online","roles":["admin"]},"rooms":[{"room_id":"general","log_id":"90","title":"General","messages":[]}],"users":{"bob":{"user_id":"bob","name":"Bob","status":"online"},"carol":{"user_id":"carol","name":"Carol","status":"dnd"},"guest_1":{"user_id":"guest_1","name":"Ada","avatar":"https://chat.example/f/Qm7xk2/ada.png","status":"online","roles":["admin"]}}}},
         {"disconnect":true},
-        {"receive":{"method":"server","params":{"apron":9,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd"]}}},
+        {"receive":{"method":"server","params":{"apron":10,"auth":["guest","token"],"capabilities":["rooms","status"],"status":["dnd"]}}},
         {"request":{"as":"auth-again","match":{"method":"auth","params":{"scheme":"token","token":"st_Hk41x9"}}}},
         {"request":{"as":"rooms-again","match":{"method":"room_list","params":{"filter":"joined","members":true}}}},
         {"reply":{"to":"auth-again","result":{"you":{"user_id":"guest_1","name":"Ada","status":"online"}}}},
