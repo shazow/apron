@@ -41,6 +41,9 @@ class Settings {                                // server.ext.settings
   ([§4.2.1](PROTOCOL.md#421-listing)).
 - With `"private"`, the server sends a cursor in any other room only to the
   connections of its user.
+- With `"private"`, the server does not send the cursor of a user whose
+  chosen status is `invisible` ([§4.5.1](PROTOCOL.md#451-values)) to other
+  users.
 - Clients MAY show the cursors of other members as read receipts. Without
   `"private"`, clients show none.
 - `private_rooms` counts the private rooms
