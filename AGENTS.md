@@ -71,7 +71,9 @@ fixtures, or implementations from it.
 ### Changes
 
 - Every change to the wire goes in HISTORY.md under the current protocol
-  version. Editorial changes don't, unless they renumber sections.
+  version, briefly: enough for a reader to decide whether to read the change
+  in PROTOCOL.md. Editorial changes don't, including moved or renumbered
+  sections.
 - PROTOCOL.md's front matter (`version`, `updated`) matches the newest
   HISTORY.md entry (`## vN (YYYY-MM-DD)`); the schema check enforces it.
 - When sections are renumbered, update every link, the schema, and the

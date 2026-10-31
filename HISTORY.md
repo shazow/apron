@@ -11,7 +11,6 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - A save that sends back an `embed_id` the message no longer has is `invalid_params` (§4.8.2).
 - The fallback card for an unknown embed kind shows its `title` and a link to its `url` (§3.5.2).
 - Appendix A.3 adds the prefix `@&` to mention everyone in the room with a role.
-- Avatars move from §4.8.6 to §4.8.7.
 
 ## v9 (2026-10-27)
 
@@ -32,7 +31,6 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - `room_update` `joined` lists only the rooms joined after sign-in.
 - IDs are never empty and contain no whitespace or control characters. Appendix A.3 defines which characters a mention's ID takes.
 - Under consideration: `rtc_join` may carry `refresh_after` in place of `ice_expires`.
-- §4.2 is now `rooms` and §4.3 `history`, which renumbers both. §1.1 and the §4 intro list the methods.
 
 ## v8 (2026-10-06)
 
@@ -42,9 +40,8 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - `you` and listing `users` are complete user objects. `user` notifications carry what changed.
 - `ext` moves into capability `ext` (§4.12), and extension names start with `ext:`.
 - Notifications that a sign-in causes follow the `auth` result. A sign-in to an existing account is announced as a departure.
-- §1.1 lists the methods and the general errors (`invalid_params`, `too_large`, `denied`).
+- General errors: unknown or hidden IDs are `invalid_params`, size limits `too_large`, and policy and count limits `denied` (§1.1).
 - `markdown` means CommonMark.
-- §4 is reordered by how commonly each capability is implemented, which renumbers it.
 
 Entries for v7 and earlier use the previous section numbers, as in [PROTOCOL.md at v7](https://github.com/shazow/apron/blob/d44564a1e4da7087321ff566fa0d5624c9718566/PROTOCOL.md).
 
