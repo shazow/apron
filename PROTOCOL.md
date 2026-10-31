@@ -2316,9 +2316,10 @@ credential that their device keeps.
 A passkey is bound to its RP ID, a domain of the server. Browsers offer it
 only on that domain, or on origins that the domain lists as
 [related](https://www.w3.org/TR/webauthn-3/#sctn-related-origins), so a
-phishing site cannot use it. A client on another domain cannot sign in with
-the server's passkeys. To add such a client or device, the user signs in with
-another scheme, such as `external` or email
+phishing site cannot use it. A server can let a client on another domain use
+its passkeys, such as a web client that many servers share, by listing the
+client's origin as related and accepting it as an allowed origin. On other
+clients, the user signs in with another scheme, such as `external` or email
 ([§4.11](#411-email-and-external-sign-in)), or `token`
 ([§3.2.1](#321-bearer-tokens)). A server can also offer a command
 ([§4.1](#41-command)) that issues more bearer tokens.
