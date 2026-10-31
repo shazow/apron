@@ -949,7 +949,7 @@ def get_live(url, size):
 
 
 async def write_live(run, url, write_url, chunks):
-    """PUT the chunks as one body, and check GET url while the body is held open after the first chunk (§4.8.3)."""
+    """PUT the chunks as one body, and check GET url while the body is held open after the first chunk (§4.8.5)."""
     sent, release = threading.Event(), threading.Event()
 
     def body():

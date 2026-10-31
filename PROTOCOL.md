@@ -1812,7 +1812,7 @@ class Embed {
 
   embed_id?: string;            // set by servers with any embed:* capability (§4.8.2)
   title?: string;
-  url?: string;                 // where a click goes, or the live text (§4.8.3); the server's own for upload and live text
+  url?: string;                 // where a click goes, or the live text (§4.8.5); the server's own for upload and live text
   og?: object;                  // OpenGraph description (§4.8.1)
 
   // "iframe" kind
@@ -1951,40 +1951,6 @@ request order:
 - For a command, the server uses the finished write instead, such as to set an
   avatar ([§4.8.7](#487-avatars)).
 
-`append` and `terminal` embeds carry **live text**, which the sender writes as
-it goes, and readers see as it grows. The broadcast that creates the embed
-carries its `url`. Live text also follows these rules:
-
-- The sender sends UTF-8 text as a streaming `PUT` body to `write_url`. The end
-  of the body ends the text.
-- `GET url` returns the bytes that the server kept, from the start of the text.
-  It continues as more arrive, and ends when the text ends.
-- Before the write starts, `GET url` waits for it. After the text ends,
-  `GET url` MAY fail.
-- A reader that reconnects replaces what it showed with the new response.
-- When `GET url` ends or fails, clients keep what they show until the snapshot
-  that ends the text arrives.
-- A writer that disconnects ends the text, keeping what arrived, once the grace
-  period passes.
-- A server MAY let the writer continue within the grace period, by means that
-  this document does not define, such as an extension
-  ([§4](#4-capabilities)).
-- Server policy sets how much text the server keeps, and the limits on how much
-  and how long the writer sends. Each kind defines which part it keeps. At a
-  limit on the writer, the server ends the text.
-- If the server has capability `edit`, the sender MAY end the text early with a
-  save that removes the embed.
-- The server MUST serve `url` as `text/plain; charset=utf-8`, with
-  `X-Content-Type-Options: nosniff`, `Cache-Control: no-transform`, and
-  `Access-Control-Allow-Origin: *` (a proxy that compresses it holds the
-  stream back until it ends, and web clients read it from other origins).
-- The server converts the bytes that it keeps to text with the
-  [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode-without-bom)'s
-  UTF-8 decode without BOM, for the snapshot that ends the text. Clients decode
-  `GET url` the same way, as a stream, so that what they show matches it.
-- The chat server serves `url`. Clients SHOULD NOT connect to live text URLs on
-  other origins.
-
 #### 4.8.4 `embed:upload`
 
 Adds `upload` embeds, files that the sender writes over HTTP. The sender gives
@@ -1999,10 +1965,10 @@ the file that it hosts.
 
 #### 4.8.5 `embed:append`
 
-Adds `append` embeds, live text ([§4.8.3](#483-writes)) that the sender appends
-to the body of its message, such as the reply of an LLM as it generates.
-Readers see the body grow in place. When the text ends, the server moves it
-into the body, and the message is an ordinary message.
+Adds `append` embeds, text that the sender appends to the body of its message
+as it goes, such as the reply of an LLM as it generates. Readers see the body
+grow in place. When the text ends, the server moves it into the body, and the
+message is an ordinary message.
 
 ```jsonc
 // -> a reply that continues over HTTP; the result and the write follow §4.8.3
@@ -2046,12 +2012,46 @@ into the body, and the message is an ordinary message.
 - Servers MAY wait for the text to end before they push the message
   ([§4.9](#49-push)).
 
+The text of an `append` embed is **live text**. The broadcast that creates the
+embed carries its `url`. Live text follows these rules, for `terminal` embeds
+too ([§4.8.6](#486-embedterminal)):
+
+- The sender sends UTF-8 text as a streaming `PUT` body to `write_url`. The end
+  of the body ends the text.
+- `GET url` returns the bytes that the server kept, from the start of the text.
+  It continues as more arrive, and ends when the text ends.
+- Before the write starts, `GET url` waits for it. After the text ends,
+  `GET url` MAY fail.
+- A reader that reconnects replaces what it showed with the new response.
+- When `GET url` ends or fails, clients keep what they show until the snapshot
+  that ends the text arrives.
+- A writer that disconnects ends the text, keeping what arrived, once the grace
+  period passes.
+- A server MAY let the writer continue within the grace period, by means that
+  this document does not define, such as an extension
+  ([§4](#4-capabilities)).
+- Server policy sets how much text the server keeps, and the limits on how much
+  and how long the writer sends. Each kind defines which part it keeps. At a
+  limit on the writer, the server ends the text.
+- If the server has capability `edit`, the sender MAY end the text early with a
+  save that removes the embed.
+- The server MUST serve `url` as `text/plain; charset=utf-8`, with
+  `X-Content-Type-Options: nosniff`, `Cache-Control: no-transform`, and
+  `Access-Control-Allow-Origin: *` (a proxy that compresses it holds the
+  stream back until it ends, and web clients read it from other origins).
+- The server converts the bytes that it keeps to text with the
+  [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode-without-bom)'s
+  UTF-8 decode without BOM, for the snapshot that ends the text. Clients decode
+  `GET url` the same way, as a stream, so that what they show matches it.
+- The chat server serves `url`. Clients SHOULD NOT connect to live text URLs on
+  other origins.
+
 #### 4.8.6 `embed:terminal`
 
 Adds `terminal` embeds, live output from a program, such as a build or a test
 run. Readers see the output as a terminal would show it. The output is live
-text ([§4.8.3](#483-writes)): UTF-8 with ECMA-48 control functions, as a
-terminal receives it.
+text, as for `append` ([§4.8.5](#485-embedappend)): UTF-8 with ECMA-48 control
+functions, as a terminal receives it.
 
 ```jsonc
 // -> a message with a terminal embed
@@ -2646,7 +2646,7 @@ server.
   embed ([§4.8.6](#486-embedterminal)). So a program's output cannot write to
   the reader's clipboard, or change the client's window title.
 - The server serves live text as plain text, and forbids content sniffing
-  ([§4.8.3](#483-writes)). So text that looks like HTML cannot run as a page on
+  ([§4.8.5](#485-embedappend)). So text that looks like HTML cannot run as a page on
   the server's origin, such as when a reader opens `url` in a browser.
 - Clients load avatars only as images, never as documents
   ([§4.8.7](#487-avatars)). So an uploaded SVG cannot run script.
@@ -2673,7 +2673,7 @@ server.
 
 - Servers host or proxy `og` media and serve live text themselves, and clients
   load neither from other origins ([§4.8.1](#481-opengraph-metadata-og),
-  [§4.8.3](#483-writes)).
+  [§4.8.5](#485-embedappend)).
   Otherwise a message could act as a tracking beacon that reveals the IP
   addresses of its readers.
 - Hosted URLs are unguessable
@@ -2704,7 +2704,7 @@ server.
 - Receivers can reject frames larger than 256 KiB
   ([§1](#1-transport--framing)).
 - Server policy limits how much and how long a live text's writer sends, and
-  how much text the server keeps ([§4.8.3](#483-writes)). So a writer cannot
+  how much text the server keeps ([§4.8.5](#485-embedappend)). So a writer cannot
   hold a connection open, or fill storage, without bound.
 - Servers deduplicate by `(user_id, id)`, not by `id` alone
   ([§1.2](#12-retries-and-deduplication)). So the request IDs of one user or

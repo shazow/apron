@@ -5,7 +5,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 ## v10 (2026-10-30)
 
 - `embed:stream` is removed, with the embed fields `format` and `text`. Capabilities `embed:append` and `embed:terminal` replace it.
-- Live text (§4.8.3): rules that both new kinds share for writing with `PUT` to `write_url` and reading `GET url`, limits, disconnects, how `url` is served, and UTF-8 decoding.
+- Live text (§4.8.5): rules that both new kinds share for writing with `PUT` to `write_url` and reading `GET url`, limits, disconnects, how `url` is served, and UTF-8 decoding.
 - `embed:append` (§4.8.5): text streamed onto the end of a message's body, such as an LLM reply. The server merges it into `body.text` when it ends.
 - `embed:terminal` (§4.8.6): live program output for an 80×40 terminal, kept as `output` when it ends.
 - A save that sends back an `embed_id` the message no longer has is `invalid_params` (§4.8.2).
