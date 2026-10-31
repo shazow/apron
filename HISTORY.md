@@ -10,6 +10,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - `embed:terminal` (§4.8.6): live program output for an 80×40 terminal, kept as `output` when it ends.
 - A save that sends back an `embed_id` the message no longer has is `invalid_params` (§4.8.2).
 - The fallback card for an unknown embed kind shows its `title` and a link to its `url` (§3.5.2).
+- Clients check that a passkey ceremony's RP ID is the host of the server's address, or a domain above it (§4.10).
 - Appendix A.3 adds the prefix `@&` to mention everyone in the room with a role.
 
 ## v9 (2026-10-27)

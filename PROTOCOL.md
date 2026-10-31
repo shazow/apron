@@ -2313,18 +2313,22 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
 Passkeys let users sign in without passwords or shared tokens, with a
 credential that their device keeps.
 
-A passkey is bound to its RP ID, the domain of the web client that registered
-it. Browsers offer it only on that domain, so a phishing site cannot use it.
-This also means that a third-party client cannot sign in with another client's
-passkey. To add such a client or device, the user signs in with another
-scheme, such as `token` ([§3.2.1](#321-bearer-tokens)) or email
-([§4.11](#411-email-and-external-sign-in)). A server can also offer a command
+A passkey is bound to its RP ID, a domain of the server. Browsers offer it
+only on that domain, or on origins that the domain lists as
+[related](https://www.w3.org/TR/webauthn-3/#sctn-related-origins), so a
+phishing site cannot use it. A client on another domain cannot sign in with
+the server's passkeys. To add such a client or device, the user signs in with
+another scheme, such as `external` or email
+([§4.11](#411-email-and-external-sign-in)), or `token`
+([§3.2.1](#321-bearer-tokens)). A server can also offer a command
 ([§4.1](#41-command)) that issues more bearer tokens.
 
 Servers that list `webauthn` in `server.auth` MUST use this exchange. No
 separate capability is necessary.
 
-Both steps are `auth` requests with `scheme: "webauthn"`. `action: "register"`
+Both steps are `auth` requests with `scheme: "webauthn"`. With the browser's
+call between them, they make one WebAuthn
+[ceremony](https://www.w3.org/TR/webauthn-3/#ceremony). `action: "register"`
 creates a credential, and `action: "login"` signs in. Both steps use the same
 `action`.
 
@@ -2339,6 +2343,10 @@ login. It uses standard
 with binary fields as unpadded base64url. Clients pass it to
 `navigator.credentials.create` or `.get`, and return the credential in `finish`.
 
+- Before they pass `public_key` on, clients MUST check that its RP ID is the
+  host of the server's address ([§1](#1-transport--framing)), or a domain that
+  the host is under. The RP ID is `rp.id` or `rpId`, or the client's own domain
+  if `public_key` has none.
 - Registration MUST require discoverable credentials.
 - Login omits `allowCredentials`, or sends an empty array.
 - Both actions require user verification.
@@ -2570,6 +2578,11 @@ server.
   and registration identity ([§4.10](#410-webauthn-authentication)). So one
   ceremony cannot complete another, and a login cannot pass as a
   registration.
+- Clients check that the RP ID of a ceremony belongs to the server
+  ([§4.10](#410-webauthn-authentication)). Otherwise one server could pass
+  another server's challenge through a client that both use, and sign in as the
+  user with the response. A server on a domain under the RP ID can still do
+  this, so servers that share an RP ID trust each other.
 - A bearer `token` from WebAuthn is bound to the origin of its ceremony
   ([§4.10](#410-webauthn-authentication)). So a stolen token does not work from
   another web origin.
