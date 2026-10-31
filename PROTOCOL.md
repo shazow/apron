@@ -583,6 +583,9 @@ labels such as `"admin"`, `"moderator"`, or `"trusted"`. Suggested convention:
   unknown roles as written.
 - Roles are only for display, and give no permissions on the client.
 - A role change is a `user` notification, like any profile change.
+- Suggested convention: roles use the characters of IDs
+  ([Appendix A.3](#a3-prefixes-in-text)), so that a message can mention
+  everyone in a room with a role, as `@&moderator`.
 
 ```jsonc
 // <- Ada becomes a moderator, to her own connections
@@ -775,6 +778,9 @@ A message lists the users that it mentions in `body.mentions`. Usually its
 - Servers never parse `text` to find mentions.
 - When the user picks someone to mention, the composer adds that user to
   `mentions`, and writes the mention in `text`.
+- A client MAY let the user mention a group, such as everyone in the room
+  with a role ([Appendix A.3](#a3-prefixes-in-text)), by adding each of them
+  to `mentions`.
 - Mentions that notify a whole room are not defined.
 
 ### 3.6 Core conformance checklist
@@ -2783,14 +2789,16 @@ name. Extensions and future methods should follow the same pattern.
 
 A prefix says what kind of ID follows:
 
-| prefix | refers to         | in `body.text`                                                                       |
-|--------|-------------------|--------------------------------------------------------------------------------------|
-| `@`    | a user            | a mention ([§3.5.5](#355-mentions)), listed in `body.mentions` too                   |
-| `#`    | a room            | a reference to the room; it mentions no one                                          |
-| `~`    | a system identity | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices)) |
+| prefix | refers to                     | in `body.text`                                                                       |
+|--------|-------------------------------|--------------------------------------------------------------------------------------|
+| `@`    | a user                        | a mention ([§3.5.5](#355-mentions)), listed in `body.mentions` too                   |
+| `@&`   | a role ([§3.3.4](#334-roles)) | a mention of each user in the room with the role, listed in `body.mentions` too      |
+| `#`    | a room                        | a reference to the room; it mentions no one                                          |
+| `~`    | a system identity             | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices)) |
 
-- After `@` or `#`, the ID is the longest run of `[A-Za-z0-9_.+@:-]` that
-  starts and ends with a letter, a digit, or `_`.
+- After `@`, `@&`, or `#`, the ID or role is the longest run of
+  `[A-Za-z0-9_.+@:-]` that starts and ends with a letter, a digit, or `_`. So
+  `@&moderator` never mentions a user.
 - The prefix is not preceded by a letter or digit, so `foo@bar.com` and
   `tag#ops` contain neither.
 - Suggested convention: servers assign ordinary `user_id`s and `room_id`s
@@ -2808,6 +2816,21 @@ A prefix says what kind of ID follows:
   display name ([§3.3.1](#331-user-objects)), such as a chip. They MAY show a
   `#id` that refers to a known room as a link with its title. Unknown IDs render
   as written.
+
+A sender that mentions a role adds to `body.mentions` each user in the room
+with that role, other than the sender, as far as the client knows the room's
+members when it sends, such as from `room_list` with `members: true`
+([§4.2.1](#421-listing)). The text alone notifies no one.
+
+```jsonc
+// -> Ada asks the moderators in the room, who are Grace and Lin
+{"method": "message", "id": "c40", "params": {"room_id": "general", "body": {"text": "@&moderator can someone look at this?", "mentions": ["grace", "lin"]}}}
+```
+
+- Clients offer to mention only a role that the rule above reads whole, so
+  not a role with a space.
+- Clients MAY show `@&role` as a chip for the role. Otherwise, they show it as
+  written.
 
 ### A.4 Links
 
