@@ -2003,10 +2003,13 @@ moves it into the body, and the message is an ordinary message.
 
 - Clients show `body.text` followed by the text from `url`, as one text in the
   format of the body. They show no card for the embed.
-- After decoding, U+0008 (backspace) removes the code point before it, and
-  U+000C (form feed) removes all the text before it. Neither reaches into
-  `body.text`.
-- Clients show the text after these edits, and the server keeps that text.
+- After decoding, two control characters edit the text from `url`:
+  - U+0008 (backspace) removes the code point before it.
+  - U+000C (form feed) removes all the text before it.
+- These edits never remove text from `body.text`.
+- Clients show the text after these edits.
+- The server applies the edits to the text that it keeps for `GET url` and for
+  the snapshot that ends the text.
 - When the text ends, other than by a save, the server publishes a snapshot
   that appends the kept text to `body.text`, and removes the embed.
 - A message has at most one `append` embed. A message with more is
