@@ -1039,6 +1039,24 @@ async def _(run):
         expect_error((await conn.request("message", stale))[1], "invalid_params", "a save with the embed_id of ended live text")
 
 
+@check("4.8.5", "backspace and form feed revise append text before it moves into body.text", needs="embed:append")
+async def _(run):
+    conn = await run.joined()
+    opening = "conformance: revised\n\n"
+    message_id, written, _ = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
+    start = len(conn.frames)
+    body = "draft\x0cHello wrold\x08\x08\x08\x08orld, caf\u00e9\x08e".encode()
+    try:
+        await asyncio.to_thread(put, http_url(run, written["write_url"]), body)
+    except OSError as error:
+        raise Fail(f"PUT write_url: {error}") from None
+    done = await finished(conn, message_id, written["embed_id"], lambda e: e is None, start,
+                          "no snapshot removed the embed after the write")
+    text = opening + "Hello world, cafe"
+    got = done["params"].get("body", {}).get("text")
+    must(got == text, f"body.text is {got!r}, not {text!r}")
+
+
 @check("4.8.6", "terminal output is live at its url, then kept as output", needs="embed:terminal")
 async def _(run):
     conn = await run.joined()
