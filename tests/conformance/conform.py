@@ -904,8 +904,8 @@ async def _(run):
         must(saved and saved["params"].get("ext") == {"conformance": {"a": 1}, "conformance2": 1}, "the save did not merge ext")
 
 
-async def post_embed(conn, run, embed, policy_skips=False, **body):
-    """Post a message with one new embed, and return (message_id, result embed, embed as first broadcast).
+async def post_new_embed(conn, run, embed, policy_skips=False, **body):
+    """Post a message with one new embed, and return (message_id, result embed).
 
     With policy_skips, a refusal by server policy (retry_after or denied), such as a limit on live texts, skips the check.
     """
@@ -917,9 +917,35 @@ async def post_embed(conn, run, embed, policy_skips=False, **body):
     must(result.get("message_id") and len(result.get("embeds", [])) == 1, f"got {describe(reply)}")
     written = result["embeds"][0]
     must(written.get("embed_id") and written.get("write_url"), "the result embed lacks embed_id or write_url")
-    _, first = await conn.wait(snapshot_of(result["message_id"]))
+    return result["message_id"], written
+
+
+async def post_embed(conn, run, embed, **body):
+    """Post a message with one new upload, and return (message_id, result embed, embed as first broadcast)."""
+    message_id, written = await post_new_embed(conn, run, embed, **body)
+    _, first = await conn.wait(snapshot_of(message_id))
     must(first, "no broadcast")
-    return result["message_id"], written, embed_in(first, written["embed_id"]) or {}
+    return message_id, written, embed_in(first, written["embed_id"]) or {}
+
+
+async def post_live(conn, run, embed, policy_skips=False, **body):
+    """Post a message with one new live embed, and return (message_id, result embed).
+
+    The server publishes the message only when its write starts (§4.8.5), so no snapshot of it comes before.
+    """
+    start = len(conn.frames)
+    message_id, written = await post_new_embed(conn, run, embed, policy_skips, **body)
+    _, early = await conn.wait(snapshot_of(message_id), start, QUIET)
+    must(not early, "the server published the message before its write started")
+    return message_id, written
+
+
+async def published(conn, message_id, written, start):
+    """The live embed as the broadcast that its write's start causes carries it, from start on."""
+    _, first = await conn.expect(snapshot_of(message_id), "no broadcast after the write started", start, WAIT * 2)
+    live = embed_in(first, written["embed_id"]) or {}
+    must(live.get("url"), "the broadcast that publishes the embed has no url")
+    return live
 
 
 def embed_in(snapshot, embed_id):
@@ -982,8 +1008,11 @@ def read_until(url, done, seconds):
     return append_edits(text)
 
 
-async def write_live(run, url, write_url, chunks):
-    """GET url before the write starts, then PUT the chunks as one body, holding it open after the first chunk (§4.8.5)."""
+async def write_live(conn, run, message_id, written, chunks):
+    """PUT the chunks as one body, holding it open after the first chunk, and GET url meanwhile (§4.8.5).
+
+    Return the live embed from the broadcast that the write's start causes.
+    """
     sent, release = threading.Event(), threading.Event()
 
     def body():
@@ -992,15 +1021,13 @@ async def write_live(run, url, write_url, chunks):
         release.wait(WAIT * 5)
         yield from chunks[1:]
 
-    # Before the write starts, GET url waits for it.
-    reading = asyncio.create_task(asyncio.to_thread(get_live, http_url(run, url), len(chunks[0])))
-    await asyncio.sleep(0.3)
-    must(not reading.done(), "GET url before the write starts returned instead of waiting for it")
-    writing = asyncio.create_task(asyncio.to_thread(put, http_url(run, write_url), body()))
+    start = len(conn.frames)
+    writing = asyncio.create_task(asyncio.to_thread(put, http_url(run, written["write_url"]), body()))
     try:
         must(await asyncio.to_thread(sent.wait, WAIT * 5), "the PUT did not send its first chunk")
+        live = await published(conn, message_id, written, start)
         try:
-            headers, first = await reading
+            headers, first = await asyncio.to_thread(get_live, http_url(run, live["url"]), len(chunks[0]))
         except OSError as error:
             raise Fail(f"GET url while the text is live: {error}") from None
         kind = headers.get("Content-Type")
@@ -1018,6 +1045,7 @@ async def write_live(run, url, write_url, chunks):
             await writing
         except OSError as error:
             raise Fail(f"PUT write_url: {error}") from None
+    return live
 
 
 # A 1x1 PNG, for servers that take only images.
@@ -1054,12 +1082,11 @@ async def _(run):
 async def _(run):
     conn = await run.joined()
     opening, chunks = "conformance: append\n\n", [b"live ", "*text* \u00e9\n".encode()]
-    message_id, written, live = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
-    must(live.get("url"), "the broadcast that creates the embed has no url")
+    message_id, written = await post_live(conn, run, {"kind": "append"}, text=opening, format="markdown")
     two = {"room_id": run.room, "body": {"text": "conformance: two appends", "embeds": [{"kind": "append"}, {"kind": "append"}]}}
     expect_error((await conn.request("message", two))[1], "invalid_params", "a message with two append embeds")
     start = len(conn.frames)
-    await write_live(run, live["url"], written["write_url"], chunks)
+    await write_live(conn, run, message_id, written, chunks)
     done = await finished(conn, message_id, written["embed_id"], lambda e: e is None, start,
                           "no snapshot removed the embed after the write")
     body = done["params"].get("body", {})
@@ -1077,8 +1104,7 @@ async def _(run):
 async def _(run):
     conn = await run.joined()
     opening = "conformance: revised\n\n"
-    message_id, written, live = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
-    must(live.get("url"), "the broadcast that creates the embed has no url")
+    message_id, written = await post_live(conn, run, {"kind": "append"}, text=opening, format="markdown")
     start = len(conn.frames)
     # The leading backspaces have nothing before them in the live text: they never reach body.text.
     first = "\x08\x08draft\x0cHello wrold\x08\x08\x08\x08orld".encode()
@@ -1095,6 +1121,7 @@ async def _(run):
     writing = asyncio.create_task(asyncio.to_thread(put, http_url(run, written["write_url"]), body()))
     try:
         must(await asyncio.to_thread(sent.wait, WAIT * 5), "the PUT did not send its first part")
+        live = await published(conn, message_id, written, start)
         await asyncio.sleep(QUIET)
         # A reader that connects after the edits gets text that, edited, is the text so far.
         try:
@@ -1120,11 +1147,10 @@ async def _(run):
     conn = await run.joined()
     chunks = [b"conformance \x1b[1;31mred\x1b[0m\r\n", "caf\u00e9\x1b[K done\n".encode()]
     embed = {"kind": "terminal", "title": "conformance", "output": "forged"}
-    message_id, written, live = await post_embed(conn, run, embed, text="conformance: terminal")
-    must(live.get("url"), "the broadcast that creates the embed has no url")
-    must("output" not in live, "the live embed has the output from the request (§4.8.2)")
+    message_id, written = await post_live(conn, run, embed, text="conformance: terminal")
     start = len(conn.frames)
-    await write_live(run, live["url"], written["write_url"], chunks)
+    live = await write_live(conn, run, message_id, written, chunks)
+    must("output" not in live, "the live embed has the output from the request (§4.8.2)")
     done = await finished(conn, message_id, written["embed_id"], lambda e: e is None or "output" in e, start,
                           "no snapshot finished the embed after the write")
     output = b"".join(chunks).decode()
@@ -1141,6 +1167,44 @@ async def _(run):
              "a save that sends output changed the server's output (§4.8.2)")
 
 
+@check("4.8.5", "a save that removes an append's embed ends its text, and its PUT gets a 2xx status",
+       needs=lambda s: {"embed:append", "edit"} <= set(s.get("capabilities", [])))
+async def _(run):
+    conn = await run.joined()
+    opening = "conformance: saved to end\n\n"
+    message_id, written = await post_live(conn, run, {"kind": "append"}, policy_skips=True, text=opening, format="markdown")
+    sent, release = threading.Event(), threading.Event()
+
+    def body():
+        yield b"typed so far"
+        sent.set()
+        release.wait(WAIT * 5)
+        yield b" and after the save"
+
+    start = len(conn.frames)
+    writing = asyncio.create_task(asyncio.to_thread(put, http_url(run, written["write_url"]), body()))
+    try:
+        must(await asyncio.to_thread(sent.wait, WAIT * 5), "the PUT did not send its first part")
+        await published(conn, message_id, written, start)
+        text = opening + "the composer's text"
+        start = len(conn.frames)
+        await conn.call("message", {"message_id": message_id, "room_id": run.room, "body": {"text": text, "format": "markdown"}})
+        _, saved = await conn.expect(snapshot_of(message_id), "no snapshot after the save", start)
+        got = saved["params"].get("body", {})
+        must(got.get("text") == text and not got.get("embeds"), f"the save's snapshot has body {json.dumps(got)}")
+    finally:
+        release.set()
+    try:
+        await writing
+    except urllib.error.HTTPError as error:
+        raise Fail(f"the PUT of a text that a save ended got status {error.code}, not 2xx (§4.8.3)") from None
+    except OSError:
+        pass  # the server may close the connection once it answered, before the body ends
+    _, later = await conn.wait(lambda f: snapshot_of(message_id)(f) and f["params"].get("body", {}).get("text") != text,
+                               start, QUIET)
+    must(not later, "a snapshot after the save changed body.text: the text ended twice?")
+
+
 @check("4.8.5", "an append that reaches a limit keeps whole characters", needs="embed:append")
 async def _(run):
     conn = await run.joined()
@@ -1148,7 +1212,7 @@ async def _(run):
     # two-byte characters, so that a byte limit is likely to fall inside one.
     opening = "conformance: limit\n\n"
     opening += "" if len(opening.encode()) % 2 else "."
-    message_id, written, _ = await post_embed(conn, run, {"kind": "append"}, policy_skips=True, text=opening, format="markdown")
+    message_id, written = await post_live(conn, run, {"kind": "append"}, policy_skips=True, text=opening, format="markdown")
     start = len(conn.frames)
     # Erased text first, so that a limit on what the writer sends is reached with room left in the kept text.
     body = ("x\b" * 1500 + "\u00e9" * 40000).encode()
