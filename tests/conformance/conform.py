@@ -23,6 +23,7 @@ Run from the repository root:
 import argparse
 import asyncio
 import base64
+import codecs
 import itertools
 import json
 import re
@@ -30,6 +31,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -902,10 +904,15 @@ async def _(run):
         must(saved and saved["params"].get("ext") == {"conformance": {"a": 1}, "conformance2": 1}, "the save did not merge ext")
 
 
-async def post_embed(conn, run, embed, **body):
-    """Post a message with one new embed, and return (message_id, result embed, embed as first broadcast)."""
+async def post_embed(conn, run, embed, policy_skips=False, **body):
+    """Post a message with one new embed, and return (message_id, result embed, embed as first broadcast).
+
+    With policy_skips, a refusal by server policy (retry_after or denied), such as a limit on live texts, skips the check.
+    """
     body = {"text": "conformance: embed", **body, "embeds": [embed]}
     _, reply = await conn.request("message", {"room_id": run.room, "body": body})
+    if policy_skips and code(reply) in (CODES["retry_after"], CODES["denied"]):
+        raise Skip(f"the server's policy refused another live text: {describe(reply)}")
     result = reply.get("result", {})
     must(result.get("message_id") and len(result.get("embeds", [])) == 1, f"got {describe(reply)}")
     written = result["embeds"][0]
@@ -946,6 +953,33 @@ def get_live(url, size):
     """GET url, and return (its headers, its first size bytes)."""
     with urllib.request.urlopen(url, timeout=WAIT * 5) as response:
         return response.headers, response.read(size)
+
+
+def append_edits(text):
+    """The text after §4.8.5's edits: backspace removes the code point before it, form feed all the text before it."""
+    kept = []
+    for char in text:
+        if char == "\b":
+            if kept:
+                kept.pop()
+        elif char == "\f":
+            kept.clear()
+        else:
+            kept.append(char)
+    return "".join(kept)
+
+
+def read_until(url, done, seconds):
+    """GET url and read what arrives until done(the text so far, edits applied) or seconds pass; return that text."""
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    text, deadline = "", time.monotonic() + seconds
+    with urllib.request.urlopen(url, timeout=seconds) as response:
+        while not done(append_edits(text)) and time.monotonic() < deadline:
+            chunk = response.read1(65536)
+            if not chunk:
+                break
+            text += decoder.decode(chunk)
+    return append_edits(text)
 
 
 async def write_live(run, url, write_url, chunks):
@@ -1039,18 +1073,41 @@ async def _(run):
         expect_error((await conn.request("message", stale))[1], "invalid_params", "a save with the embed_id of ended live text")
 
 
-@check("4.8.5", "backspace and form feed revise append text before it moves into body.text", needs="embed:append")
+@check("4.8.5", "backspace and form feed revise append text, for a late reader and in body.text", needs="embed:append")
 async def _(run):
     conn = await run.joined()
     opening = "conformance: revised\n\n"
-    message_id, written, _ = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
+    message_id, written, live = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
+    must(live.get("url"), "the broadcast that creates the embed has no url")
     start = len(conn.frames)
     # The leading backspaces have nothing before them in the live text: they never reach body.text.
-    body = "\x08\x08draft\x0cHello wrold\x08\x08\x08\x08orld, caf\u00e9\x08e".encode()
+    first = "\x08\x08draft\x0cHello wrold\x08\x08\x08\x08orld".encode()
+    # A backspace removes the U+FFFD that an invalid byte decodes to.
+    rest = ", caf\u00e9\x08e".encode() + b"\xff\x08"
+    sent, release = threading.Event(), threading.Event()
+
+    def body():
+        yield first
+        sent.set()
+        release.wait(WAIT * 5)
+        yield rest
+
+    writing = asyncio.create_task(asyncio.to_thread(put, http_url(run, written["write_url"]), body()))
     try:
-        await asyncio.to_thread(put, http_url(run, written["write_url"]), body)
-    except OSError as error:
-        raise Fail(f"PUT write_url: {error}") from None
+        must(await asyncio.to_thread(sent.wait, WAIT * 5), "the PUT did not send its first part")
+        await asyncio.sleep(QUIET)
+        # A reader that connects after the edits gets text that, edited, is the text so far.
+        try:
+            late = await asyncio.to_thread(read_until, http_url(run, live["url"]), lambda t: t == "Hello world", WAIT * 2)
+        except OSError as error:
+            raise Fail(f"GET url after the edits: {error}") from None
+        must(late == "Hello world", f"a reader that connects after the edits shows {late!r}, not 'Hello world'")
+    finally:
+        release.set()
+        try:
+            await writing
+        except OSError as error:
+            raise Fail(f"PUT write_url: {error}") from None
     done = await finished(conn, message_id, written["embed_id"], lambda e: e is None, start,
                           "no snapshot removed the embed after the write")
     text = opening + "Hello world, cafe"
@@ -1082,6 +1139,31 @@ async def _(run):
         _, saved = await conn.expect(snapshot_of(message_id), "no snapshot after the save", start)
         must((embed_in(saved, written["embed_id"]) or {}).get("output") == output,
              "a save that sends output changed the server's output (§4.8.2)")
+
+
+@check("4.8.5", "an append that reaches a limit keeps whole characters", needs="embed:append")
+async def _(run):
+    conn = await run.joined()
+    # Last of the live text checks, as servers limit how many a user starts. An opening of odd length, and
+    # two-byte characters, so that a byte limit is likely to fall inside one.
+    opening = "conformance: limit\n\n"
+    opening += "" if len(opening.encode()) % 2 else "."
+    message_id, written, _ = await post_embed(conn, run, {"kind": "append"}, policy_skips=True, text=opening, format="markdown")
+    start = len(conn.frames)
+    # Erased text first, so that a limit on what the writer sends is reached with room left in the kept text.
+    body = ("x\b" * 1500 + "\u00e9" * 40000).encode()
+    try:
+        await asyncio.to_thread(put, http_url(run, written["write_url"]), body)
+    except urllib.error.HTTPError:
+        pass  # a limit on the writer may answer with an error; the text still ends
+    except OSError as error:
+        raise Fail(f"PUT write_url: {error}") from None
+    done = await finished(conn, message_id, written["embed_id"], lambda e: e is None, start,
+                          "no snapshot removed the embed after the write")
+    got = done["params"].get("body", {}).get("text") or ""
+    must(got.startswith(opening), f"body.text does not start with the opening text: {got[:60]!r}")
+    extra = set(got[len(opening):]) - {"\u00e9"}
+    must(not extra, f"body.text has {sorted(extra)!r} after the opening text, not only whole é: a cut inside a character?")
 
 
 @check("4.9.1", "unregistering an unknown push url succeeds", needs=lambda s: "push" in s)
