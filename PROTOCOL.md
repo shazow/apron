@@ -714,7 +714,8 @@ authoritative **snapshot** at one log position.
 - A new message with no `text` and no `embeds` SHOULD NOT be logged or
   broadcast. Its result is then `{}`.
 - The result is `{"message_id": "..."}`, the permanent ID. It is the
-  confirmation.
+  confirmation. A message with live text MAY wait for its write
+  ([§4.8.5](#485-embedappend)).
 
 #### 3.5.2 Rendering
 
@@ -1948,13 +1949,13 @@ request order:
   `write_url` is a credential. It expires if it is not used.
 - The server allows a `PUT` to `write_url` from any origin (web clients write
   from other origins).
-- The server finishes each write exactly one time. It then publishes a
-  snapshot with the result that the kind of the embed defines.
 - The server answers the `PUT` when the write finishes.
 - The server answers a write that fails or reaches a limit with an error
   status and a plain-text reason. It answers any other write with a 2xx status.
-- If the write of an upload does not start in time, or fails, that snapshot
-  has no embed.
+- The server finishes each write exactly one time. It then publishes a
+  snapshot with the result that the kind of the embed defines.
+- If a write does not start in time, or the write of an upload fails, that
+  snapshot has no embed.
 - For a command, the server uses the finished write instead, such as to set an
   avatar ([§4.8.7](#487-avatars)).
 
@@ -1978,22 +1979,14 @@ Readers see the body grow and change in place. When the text ends, the server
 moves it into the body, and the message is an ordinary message.
 
 ```jsonc
-// -> a reply that continues over HTTP
+// -> a reply that continues over HTTP; the result and the write follow §4.8.3
 {
   "method": "message", "id": "c60", "params": {
     "room_id": "general",
     "body": {"text": "Here is the plan:\n\n", "format": "markdown", "embeds": [{"kind": "append"}]}
   }
 }
-// <- the result, with the write URL for the sender only (§4.8.3)
-{
-  "id": "c60", "result": {
-    "message_id": "1724803600000",
-    "embeds": [{"embed_id": "embed_1300", "kind": "append", "write_url": "https://chat.example/w/Qx7f…"}]
-  }
-}
-// sender: llm "plan the rollback" | curl -T - https://chat.example/w/Qx7f…
-// <- once the write starts, the broadcast: clients show body.text, then the text from url
+// <- the broadcast: clients show body.text, then the text from url
 {
   "method": "message", "params": {
     "message_id": "1724803600000", "log_id": "1724803600000", "room_id": "general",
@@ -2004,6 +1997,7 @@ moves it into the body, and the message is an ordinary message.
     }
   }
 }
+// sender, with write_url from the result: llm "plan the rollback" | curl -T - <write_url>
 // <- when the text ends: the text in the body, and no embed
 {
   "method": "message", "params": {
@@ -2040,10 +2034,14 @@ too ([§4.8.6](#486-embedterminal)):
 
 - The sender sends UTF-8 text as a streaming `PUT` body to `write_url`. The end
   of the body ends the text.
-- The server publishes a message with live text only when its write starts.
 - `GET url` returns the bytes that the server kept, from the start of the text.
   It continues as more arrive, and ends when the text ends.
-- After the text ends, `GET url` MAY fail.
+- The server MAY publish a message with live text only when its write starts.
+- The result of a message that waits for its write has no `message_id`.
+- If the write of such a message does not start in time, the server publishes
+  nothing.
+- Before the write starts, `GET url` waits for it. After the text ends,
+  `GET url` MAY fail.
 - A reader that reconnects replaces what it showed with the new response.
 - When `GET url` ends or fails, clients keep what they show until the snapshot
   that ends the text arrives.
@@ -2082,15 +2080,7 @@ functions, as a terminal receives it.
     "body": {"text": "Running the tests:", "embeds": [{"kind": "terminal", "title": "make test"}]}
   }
 }
-// <- the result, with the write URL for the sender only (§4.8.3)
-{
-  "id": "c61", "result": {
-    "message_id": "1724803700000",
-    "embeds": [{"embed_id": "embed_1234", "kind": "terminal", "write_url": "https://chat.example/w/8e1d…"}]
-  }
-}
-// sender: make test 2>&1 | curl -T - https://chat.example/w/8e1d…
-// <- once the write starts, the broadcast: the output is live at its url
+// <- the broadcast: the output is live at its url
 {
   "method": "message", "params": {
     "message_id": "1724803700000", "log_id": "1724803700000", "room_id": "general",
@@ -2101,6 +2091,14 @@ functions, as a terminal receives it.
     }
   }
 }
+// <- the result, with the write URL for the sender only (§4.8.3)
+{
+  "id": "c61", "result": {
+    "message_id": "1724803700000",
+    "embeds": [{"embed_id": "embed_1234", "kind": "terminal", "write_url": "https://chat.example/w/8e1d…"}]
+  }
+}
+// sender: make test 2>&1 | curl -T - https://chat.example/w/8e1d…
 // <- when the output ends: the kept output, in place of the url
 {
   "method": "message", "params": {
