@@ -5,7 +5,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 ## v10 (2026-10-30)
 
 - `embed:stream` is removed, with the embed fields `format` and `text`. Capabilities `embed:append` and `embed:terminal` replace it.
-- Live text (§4.8.5): rules that both new kinds share for writing with `PUT` to `write_url` and reading `GET url`, limits, disconnects, how `url` is served, and UTF-8 decoding. A live embed has no `url` until its write starts, when a snapshot adds it. A writer that disconnects ends the text.
+- Live text (§4.8.5): rules that both new kinds share for writing with `PUT` to `write_url` and reading `GET url`, limits, disconnects, how `url` is served, a redirect for browsers to a page that shows the text, and UTF-8 decoding. A live embed has no `url` until its write starts, when a snapshot adds it. A writer that disconnects ends the text.
 - A write's `PUT` (§4.8.3) is allowed from any origin. The server answers it when the write finishes: an error status with a plain-text reason when it fails or reaches a limit, and 2xx otherwise.
 - `embed:append` (§4.8.5): text streamed onto the end of a message's body, such as an LLM reply, which backspace and form feed can revise. The server merges it into `body.text` when it ends, and a sender that edits in place, such as a composer, should end it with a save of its text.
 - `embed:terminal` (§4.8.6): live program output for an 80×40 terminal, kept as `output` when it ends.

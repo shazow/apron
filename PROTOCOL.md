@@ -2073,6 +2073,9 @@ for `terminal` embeds too ([§4.8.6](#486-embedterminal)):
   `X-Content-Type-Options: nosniff`, `Cache-Control: no-transform`, and
   `Access-Control-Allow-Origin: *` (a proxy that compresses it holds the
   stream back until it ends, and web clients read it from other origins).
+- The server MAY redirect a request that opens `url` as a page, such as one
+  with `Sec-Fetch-Mode: navigate`, to a page that shows the text. The redirect
+  SHOULD keep `url` from that page's host, such as in the fragment.
 - The server converts the bytes that it keeps to text with the
   [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode-without-bom)'s
   UTF-8 decode without BOM, for the snapshot that ends the text. Clients decode
@@ -2738,6 +2741,9 @@ server.
   addresses of its readers.
 - Hosted URLs are unguessable
   ([§4.8.2](#482-embed-identity)). So nobody can enumerate files across rooms.
+- A redirect from live text to a page that shows it keeps `url` from that
+  page's host ([§4.8.5](#485-embedappend)). Otherwise the host of a viewer
+  that many servers share would collect URLs that let anyone read their text.
 - Servers delete hosted content when its embed is removed, or when its
   message is deleted or redacted ([§4.8.2](#482-embed-identity)). So deleted
   attachments do not stay available.
