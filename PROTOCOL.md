@@ -1966,9 +1966,9 @@ the file that it hosts.
 #### 4.8.5 `embed:append`
 
 Adds `append` embeds, text that the sender appends to the body of its message
-as it goes, such as the reply of an LLM as it generates. Readers see the body
-grow in place. When the text ends, the server moves it into the body, and the
-message is an ordinary message.
+as it goes, such as the reply of an LLM as it generates, which it can revise.
+Readers see the body grow and change in place. When the text ends, the server
+moves it into the body, and the message is an ordinary message.
 
 ```jsonc
 // -> a reply that continues over HTTP; the result and the write follow §4.8.3
@@ -2003,8 +2003,14 @@ message is an ordinary message.
 
 - Clients show `body.text` followed by the text from `url`, as one text in the
   format of the body. They show no card for the embed.
+- After decoding, two control characters edit the text from `url`:
+  - U+0008 (backspace) removes the code point before it.
+  - U+000C (form feed) removes all the text before it.
+- These edits never remove text from `body.text`.
+- Clients show the text after these edits.
 - When the text ends, other than by a save, the server publishes a snapshot
-  that appends the kept text to `body.text`, and removes the embed.
+  that appends the kept text, after these edits, to `body.text`, and removes
+  the embed.
 - A message has at most one `append` embed. A message with more is
   `invalid_params`.
 - The server keeps the first part of the text, up to a whole character, so
