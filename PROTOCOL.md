@@ -1947,12 +1947,12 @@ request order:
 - The sender sends the content as the body of an HTTP `PUT` to `write_url`.
   `write_url` is a credential. It expires if it is not used.
 - The server allows a `PUT` to `write_url` from any origin (web clients write
-  from their own).
+  from other origins).
 - The server finishes each write exactly one time. It then publishes a
   snapshot with the result that the kind of the embed defines.
-- The server answers the `PUT` when the write finishes: with a 2xx status if
-  the content was taken, and otherwise with an error status and a plain-text
-  reason.
+- The server answers the `PUT` when the write finishes.
+- The server answers a write that fails or reaches a limit with an error
+  status and a plain-text reason. It answers any other write with a 2xx status.
 - If the write of an upload does not start in time, or fails, that snapshot
   has no embed.
 - For a command, the server uses the finished write instead, such as to set an
@@ -2041,14 +2041,13 @@ too ([§4.8.6](#486-embedterminal)):
 - The sender sends UTF-8 text as a streaming `PUT` body to `write_url`. The end
   of the body ends the text.
 - The server publishes a message with live text only when its write starts.
-  If the write does not start in time, the server publishes nothing.
 - `GET url` returns the bytes that the server kept, from the start of the text.
-  It continues as more arrive, and ends when the text ends. After the text
-  ends, `GET url` MAY fail.
+  It continues as more arrive, and ends when the text ends.
+- After the text ends, `GET url` MAY fail.
 - A reader that reconnects replaces what it showed with the new response.
 - When `GET url` ends or fails, clients keep what they show until the snapshot
   that ends the text arrives.
-- A writer that disconnects ends the text. The server keeps what arrived.
+- A writer that disconnects ends the text.
 - Server policy sets how much text the server keeps, and the limits on how
   much and how long the writer sends. Each kind defines which part it keeps.
   At a limit on the writer, the server ends the text.
