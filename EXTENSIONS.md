@@ -33,19 +33,16 @@ class Settings {                                // server.ext.settings
 
 - `read_cursors: false` means that the server ignores `read_message_id`
   ([§4.6](PROTOCOL.md#46-activity)). Clients then send none.
-- `read_receipts: "private"` means that the server sends the
-  `read_message_id` of a member of a private room to the other members of
-  that room.
-- With `"private"`, the server also sends the kept `read_message_id` of the
-  other members after a connection lists a private room
-  ([§4.2.1](PROTOCOL.md#421-listing)).
-- With `"private"`, the server sends a cursor in any other room only to the
-  connections of its user.
-- With `"private"`, the server does not send the cursor of a user whose
-  chosen status is `invisible` ([§4.5.1](PROTOCOL.md#451-values)) to other
-  users.
-- Clients MAY show the cursors of other members as read receipts. Without
-  `"private"`, clients show none.
+- `read_receipts: "private"` means that members of a private room see each
+  other's `read_message_id`:
+  - The server sends the `read_message_id` of a member to the other members
+    of the room.
+  - The server sends the kept `read_message_id` of the other members after a
+    connection lists the room ([§4.2.1](PROTOCOL.md#421-listing)).
+  - In any other room, the server sends a cursor only to the connections of
+    its user.
+- The server does not send the cursor of a user whose chosen status is
+  `invisible` ([§4.5.1](PROTOCOL.md#451-values)) to other users.
 - `private_rooms` counts the private rooms
   ([§4.2.4](PROTOCOL.md#424-creating-and-editing)) without a
   `parent_room_id`. Absent, there is no limit.
