@@ -12,6 +12,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - The fallback card for an unknown embed kind shows its `title` and a link to its `url` (§3.5.2).
 - Clients check that a passkey ceremony's RP ID is the host of the server's address, or a domain above it (§4.10).
 - Appendix A.3 adds the prefix `@&` to mention everyone in the room with a role.
+- Reactions keep the order in which they first appeared on the message (§4.7).
 
 ## v9 (2026-10-27)
 
