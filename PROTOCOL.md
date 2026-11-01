@@ -2013,8 +2013,9 @@ moves it into the body, and the message is an ordinary message.
   the embed.
 - A message has at most one `append` embed. A message with more is
   `invalid_params`.
-- The server keeps the first part of the text, up to a whole character, so
-  that `body.text` with it stays within the server's limits for a message.
+- The server keeps the first part of the text after these edits, up to a
+  whole character, so that `body.text` with it stays within the server's
+  limits for a message.
   When that part is full, the text ends.
 - Servers MAY wait for the text to end before they push the message
   ([§4.9](#49-push)).
@@ -2040,8 +2041,11 @@ too ([§4.8.6](#486-embedterminal)):
 - Server policy sets how much text the server keeps, the limits on how much
   and how long the writer sends, and the grace period. Each kind defines which
   part it keeps. At a limit on the writer, the server ends the text.
-- If the server has capability `edit`, the sender MAY end the text early with a
-  save that removes the embed.
+- If the server has capability `edit`, the sender MAY end the text with a save
+  that removes the embed.
+- If the server has capability `edit`, a sender that edits its text in place,
+  such as a composer, SHOULD end the text with a save that removes the embed
+  and puts its text in `body.text` (its own state is the text it means).
 - The server MUST serve `url` as `text/plain; charset=utf-8`, with
   `X-Content-Type-Options: nosniff`, `Cache-Control: no-transform`, and
   `Access-Control-Allow-Origin: *` (a proxy that compresses it holds the
