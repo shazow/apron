@@ -1783,8 +1783,8 @@ result is `{}`.
   that user on that message.
 - Clients keep state for each `(message_id, user_id)`, and calculate the
   totals. They accept reactions for messages that they have not loaded.
-- `emojis` entries are strings. Duplicates collapse, and the order does not
-  matter.
+- Reactions SHOULD keep the order in which they first appeared on the message.
+- `emojis` entries are strings. Duplicates collapse.
 - An entry is one emoji sequence
   ([UTS #51](https://www.unicode.org/reports/tr51/)), such as 👍, 👍🏽, 🏳️‍🌈,
   or 👨‍👩‍👧.
