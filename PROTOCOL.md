@@ -119,7 +119,7 @@ its request, and every other frame is a one-way notification.
 A request carries a string `id` ([§2.4](#24-opaque-ids)), and gets exactly one
 reply. A frame with a `method` and no `id` is a notification, and gets no reply.
 
-For each sender, a method is either a request or a notification. A method is a request when
+Each method is either a request or a notification. A method is a request when
 its sender needs the reply: data, a confirmation that a change was applied, or
 an error. A method that only reports transient state is a notification. These
 are the core methods, and capabilities add others ([§4](#4-capabilities)):
@@ -1712,7 +1712,7 @@ At each sign-in ([§3.2.2](#322-order)), clients drop the statuses and mutes tha
 they kept, and apply the ones that arrive. After the `auth` result, the server
 sends:
 
-- One `user` notification for each user who shares a room with the user, with the
+- One `user` notification for each user who shares a room with them, with the
   shown status in `new`, unless it is `offline` or `""`. Servers MAY
   limit these to the users that they would list in `members`
   ([§4.2.1](#421-listing)).
@@ -2356,7 +2356,7 @@ with binary fields as unpadded base64url. Clients pass it to
   the host is under. The RP ID is `rp.id` or `rpId`, or the client's own domain
   if `public_key` has none.
 - Registration MUST require discoverable credentials.
-- Login options omit `allowCredentials`, or carry it as an empty array.
+- Login omits `allowCredentials`, or sends an empty array.
 - Both actions require user verification.
 - Servers SHOULD use the `name` ([§3.2](#32-authentication)) of a `register`
   begin step for `user.name` and `user.displayName` in `public_key`.
@@ -2458,8 +2458,8 @@ addition. The server delivers a temporary token outside the connection. An
 
 #### 4.11.3 Approval
 
-- Approval is an `auth` request with `token`. Its `scheme` is `token`, or
-  `email` or `external` if the server offers it.
+- Approval is an `auth` request with `token`, and `token` or either scheme
+  that the server offers.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and a
   bearer `token` for later connections ([§3.2.1](#321-bearer-tokens)).
@@ -3093,8 +3093,8 @@ server drives the room's `rtc` from it.
 
 #### C.1.4 Apron over a data channel
 
-A data channel whose WebRTC `protocol` is `apron/<version>`, such as
-`apron/10`, with the version of [§3.1](#31-server-frame), carries Apron frames, one per ordered, reliable
+A data channel whose WebRTC `protocol` is `apron/<protocol>`, with the version
+of [§3.1](#31-server-frame), carries Apron frames, one per ordered, reliable
 data channel message no larger than the remote peer's SCTP maximum. The oldest
 seat in the session hosts the room and runs the server side of Apron on its own
 device. That is `peers[0]`, or the joiner itself when there are no peers. Each
@@ -3178,8 +3178,7 @@ class Embed {   // "actions" kind, besides the fields of §4.8
 - Choosing one of `commands` sends its `command` as a `command` request, or as
   the request it refers to, such as `/join` ([§4.1](#41-command)). When the
   message has a `message_id`, the request's `reply_to` refers to it.
-- Each group is a key of the embed, such as `commands`. Clients ignore groups
-  that they do not know ([§1](#1-transport--framing)).
+- Clients ignore groups they do not know ([§1](#1-transport--framing)).
 - Clients without `actions` support render the fallback card
   ([§3.5.2](#352-rendering)). Its `og` can spell out the commands to type.
 
