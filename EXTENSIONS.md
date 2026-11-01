@@ -39,13 +39,16 @@ class Settings {                                // server.ext.settings
     of the room.
   - The server sends the kept `read_message_id` of the other members after a
     connection lists the room ([§4.2.1](PROTOCOL.md#421-listing)).
-  - The server MAY do this only in private rooms of up to a number of
-    members that it chooses.
-  - In any other room, the server sends a `read_message_id` only to the
-    connections of the user who sent it.
-- Without `"private"`, server policy decides where a `read_message_id` goes
-  ([§4.6](PROTOCOL.md#46-activity)).
-- Whatever the setting, the server never sends the `read_message_id` of a
+  - The server MAY limit this to private rooms of up to a number of members
+    that it chooses.
+  - In any other room, including a private room past that limit, the server
+    sends a `read_message_id` only to the connections of the user who sent
+    it.
+- A server that sends `"private"` keeps `read_message_id`, so it does not
+  send `read_cursors: false`.
+- Without `"private"`, `false` included, server policy decides where a
+  `read_message_id` goes ([§4.6](PROTOCOL.md#46-activity)).
+- Whatever the setting, the server MUST NOT send the `read_message_id` of a
   user whose chosen status is `invisible`
   ([§4.5.1](PROTOCOL.md#451-values)) to other users.
 - `private_rooms` counts the private rooms
