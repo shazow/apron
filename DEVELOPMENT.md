@@ -16,9 +16,9 @@ repositories, each with its own development guide, tests, and CI:
   the public demo backend at `wss://server.apron.chat/`, a TypeScript Worker
   and SQLite Durable Object.
 
-The Go server and the web client check out this repository as a submodule to
-run the fixtures; after a protocol or fixture change, update the submodule
-there:
+The Go server, the web client and terminal.apron.chat check out this
+repository as a submodule to run the fixtures; after a protocol or fixture
+change, update the submodule there:
 
 - The session fixtures (`tests/fixtures/wire/session`) run in the Go server's
   `make test-wire`, through `tests/interop/wire.spec.ts`. Each fixture plays
@@ -29,6 +29,13 @@ there:
   `src/lib/protocol/protocol-fixtures.test.ts`.
 - `tests/fixtures/push.json` holds push payloads and registrations that only
   `tests/schema/validate.py` checks.
+- `tests/fixtures/terminal.json` holds terminal embed outputs and the screens
+  that clients show for them ([PROTOCOL.md §4.8.6](PROTOCOL.md#486-embedterminal)).
+  They run in
+  [apron-chat/terminal.apron.chat](https://github.com/apron-chat/terminal.apron.chat)'s
+  `npm test`, through `test/fixtures.test.mjs`, in a headless xterm.js. Each
+  case has a `level`, so a client with a smaller renderer can run only the
+  `MUST` and `SHOULD` cases.
 
 ## Conformance
 
