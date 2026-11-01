@@ -2040,8 +2040,10 @@ too ([§4.8.6](#486-embedterminal)):
 - Server policy sets how much text the server keeps, the limits on how much
   and how long the writer sends, and the grace period. Each kind defines which
   part it keeps. At a limit on the writer, the server ends the text.
-- If the server has capability `edit`, the sender MAY end the text early with a
-  save that removes the embed.
+- If the server has capability `edit`, the sender MAY end the text with a save
+  that removes the embed.
+- A sender that streams text it edits in place, such as from a composer, SHOULD
+  end the text that way, with the text it holds.
 - The server MUST serve `url` as `text/plain; charset=utf-8`, with
   `X-Content-Type-Options: nosniff`, `Cache-Control: no-transform`, and
   `Access-Control-Allow-Origin: *` (a proxy that compresses it holds the
