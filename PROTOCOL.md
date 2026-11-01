@@ -2006,8 +2006,6 @@ moves it into the body, and the message is an ordinary message.
 - After decoding, U+0008 (backspace) removes the code point before it, and
   U+000C (form feed) removes all the text before it. Neither reaches into
   `body.text`.
-- Other control characters (Unicode category Cc) are removed, except line feed
-  and tab.
 - Clients show the text after these edits, and the server keeps that text.
 - When the text ends, other than by a save, the server publishes a snapshot
   that appends the kept text to `body.text`, and removes the embed.
