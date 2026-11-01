@@ -2073,6 +2073,10 @@ for `terminal` embeds too ([§4.8.6](#486-embedterminal)):
   `X-Content-Type-Options: nosniff`, `Cache-Control: no-transform`, and
   `Access-Control-Allow-Origin: *` (a proxy that compresses it holds the
   stream back until it ends, and web clients read it from other origins).
+- The server MAY answer a request that opens `url` as a page, such as one with
+  `Sec-Fetch-Mode: navigate`, with a redirect to a page that shows the text.
+  The redirect SHOULD keep `url` from that page's host, such as by giving it
+  in the fragment.
 - The server converts the bytes that it keeps to text with the
   [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decode-without-bom)'s
   UTF-8 decode without BOM, for the snapshot that ends the text. Clients decode
@@ -2146,6 +2150,9 @@ functions, as a terminal receives it.
   program in a pseudo-terminal SHOULD give it this size.
 - Without the capability, senders post the finished output as text, such as
   in a code block.
+- The server's `og` for the embed ([§4.8.1](#481-opengraph-metadata-og))
+  SHOULD describe it as a terminal, such as in `description` (a client that
+  does not render `terminal` embeds shows it as a card that opens `url`).
 - Past the size that it keeps, the server keeps the last part of the output.
   That part starts at its first byte below 0x20. If it has none, it starts at
   its first byte outside 0x80–0xBF:
@@ -2708,6 +2715,10 @@ server.
 - The server serves live text as plain text, and forbids content sniffing
   ([§4.8.5](#485-embedappend)). So text that looks like HTML cannot run as a page on
   the server's origin, such as when a reader opens `url` in a browser.
+- A redirect from live text to a page that shows it keeps `url` from that
+  page's host ([§4.8.5](#485-embedappend)). Anyone who has `url` can read the
+  text, so the host of a viewer that many servers share does not collect the
+  addresses of their output.
 - Clients load avatars only as images, never as documents
   ([§4.8.7](#487-avatars)). So an uploaded SVG cannot run script.
 - Clients isolate the text direction of user-written strings, and ignore
