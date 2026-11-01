@@ -2008,10 +2008,9 @@ moves it into the body, and the message is an ordinary message.
   - U+000C (form feed) removes all the text before it.
 - These edits never remove text from `body.text`.
 - Clients show the text after these edits.
-- The server applies the edits to the text that it keeps for `GET url` and for
-  the snapshot that ends the text.
 - When the text ends, other than by a save, the server publishes a snapshot
-  that appends the kept text to `body.text`, and removes the embed.
+  that appends the kept text, after these edits, to `body.text`, and removes
+  the embed.
 - A message has at most one `append` embed. A message with more is
   `invalid_params`.
 - The server keeps the first part of the text, up to a whole character, so
