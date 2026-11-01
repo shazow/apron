@@ -14,7 +14,9 @@ repeats a variant, seen stays the same while a user's shown status stays
 offline and arrives with each complete user object with a shown offline and
 each user notification that changes it to offline,
 and the cases of tests/fixtures/push.json are valid, or break a rule, as they
-say (including the 2048-byte payload limit).
+say (including the 2048-byte payload limit). The cases of
+tests/fixtures/terminal.json have unique names, a level, and an expected
+screen that fits 80×40 as the file describes it.
 
 Run from the repository root: uv run tests/schema/validate.py
 """
@@ -23,6 +25,7 @@ import glob
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -247,11 +250,72 @@ def check_fixtures():
                     if key in case:
                         check(case[key], "ClientRequest", f"{where} {case['name']} {key}")
                 check(case["begin_result"], "AuthResult", f"{where} {case['name']}")
+        elif kind == "terminal":
+            check_terminal(data, where)
         elif kind == "push":
             for case in data["payloads"]:
                 check_case(case, case["payload"], "PushPayload", f"{where} payload {case['name']}", PUSH_LIMIT)
             for case in data["registrations"]:
                 check_case(case, case["params"], "PushRegisterParams", f"{where} registration {case['name']}")
+
+
+TERMINAL_COLS, TERMINAL_ROWS = 80, 40
+TERMINAL_LEVELS = {"MUST", "SHOULD", "terminal"}
+TERMINAL_FLAGS = {"bold", "dim", "italic", "underline", "inverse", "strikethrough"}
+
+
+def columns(text):
+    """The columns that text takes in a terminal: two for a wide character, none for a combining mark."""
+    return sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
+
+
+def check_terminal(data, where):
+    """Check the shape of the terminal cases: what their description promises."""
+    names = set()
+    for case in data["cases"]:
+        at = f"{where} {case.get('name')}"
+        if set(case) != {"name", "level", "description", "output", "expected"}:
+            errors.append(f"{at}: keys {sorted(case)}")
+            continue
+        if case["name"] in names:
+            errors.append(f"{at}: repeats a case name")
+        names.add(case["name"])
+        if case["level"] not in TERMINAL_LEVELS:
+            errors.append(f"{at}: level {case['level']!r}")
+        if not isinstance(case["output"], str):
+            errors.append(f"{at}: output is not a string")
+        screen = case["expected"].get("screen")
+        if not isinstance(screen, list) or not all(isinstance(row, str) for row in screen):
+            errors.append(f"{at}: screen is not a list of rows")
+            continue
+        if len(screen) > TERMINAL_ROWS:
+            errors.append(f"{at}: {len(screen)} rows, over {TERMINAL_ROWS}")
+        if screen and not screen[-1]:
+            errors.append(f"{at}: screen ends with an empty row")
+        for i, row in enumerate(screen):
+            if row != row.rstrip(" "):
+                errors.append(f"{at}: row {i} has trailing spaces")
+            if row != unicodedata.normalize("NFC", row):
+                errors.append(f"{at}: row {i} is not in NFC")
+            if columns(row) > TERMINAL_COLS:
+                errors.append(f"{at}: row {i} is {columns(row)} columns, over {TERMINAL_COLS}")
+        for cell in case["expected"].get("cells", []):
+            spot = f"{at}: cell {cell.get('row')},{cell.get('col')}"
+            if not (isinstance(cell.get("row"), int) and 0 <= cell["row"] < TERMINAL_ROWS and isinstance(cell.get("col"), int) and 0 <= cell["col"] < TERMINAL_COLS):
+                errors.append(f"{spot}: outside the screen")
+            if not isinstance(cell.get("char"), str) or cell["char"] != unicodedata.normalize("NFC", cell["char"]):
+                errors.append(f"{spot}: char is not a string in NFC")
+            for key, value in cell.items():
+                if key in ("row", "col", "char"):
+                    continue
+                if key in ("fg", "bg"):
+                    if not ((isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255) or (isinstance(value, str) and re.fullmatch(r"#[0-9a-f]{6}", value))):
+                        errors.append(f"{spot}: {key} {value!r}")
+                elif key in TERMINAL_FLAGS:
+                    if value is not True:
+                        errors.append(f"{spot}: {key} is {value!r}, but a flag is left out unless set")
+                else:
+                    errors.append(f"{spot}: unknown key {key}")
 
 
 def check_case(case, instance, name, where, limit=None):
