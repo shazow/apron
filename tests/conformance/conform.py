@@ -1045,7 +1045,8 @@ async def _(run):
     opening = "conformance: revised\n\n"
     message_id, written, _ = await post_embed(conn, run, {"kind": "append"}, text=opening, format="markdown")
     start = len(conn.frames)
-    body = "draft\x0cHello wrold\x08\x08\x08\x08orld, caf\u00e9\x08e".encode()
+    # The leading backspaces have nothing before them in the live text: they never reach body.text.
+    body = "\x08\x08draft\x0cHello wrold\x08\x08\x08\x08orld, caf\u00e9\x08e".encode()
     try:
         await asyncio.to_thread(put, http_url(run, written["write_url"]), body)
     except OSError as error:
