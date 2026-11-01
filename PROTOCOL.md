@@ -320,7 +320,9 @@ class Server {
 ```
 
 When the server accepts a connection, it MUST send a `server` frame
-immediately. The client does not send a hello first.
+immediately. The client does not send a hello first. If `apron` differs from
+the client's version, the client SHOULD warn its user that some features may
+not work, and continue as well as it can.
 
 ```json
 {
