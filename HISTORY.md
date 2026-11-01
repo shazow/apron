@@ -8,7 +8,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - Live text (§4.8.5): rules that both new kinds share for writing with `PUT` to `write_url` and reading `GET url`, limits, disconnects, how `url` is served, a redirect for browsers to a page that shows the text, and UTF-8 decoding. A live embed has no `url` until its write starts, when a snapshot adds it. A writer that disconnects ends the text.
 - A write's `PUT` (§4.8.3) is allowed from any origin. The server answers it when the write finishes: an error status with a plain-text reason when it fails or reaches a limit, and 2xx otherwise.
 - `embed:append` (§4.8.5): text streamed onto the end of a message's body, such as an LLM reply, which backspace and form feed can revise. The server merges it into `body.text` when it ends, and a sender that edits in place, such as a composer, should end it with a save of its text.
-- `embed:terminal` (§4.8.6): live program output for an 80×40 terminal, kept as `output` when it ends. Its `og` should say that it is a terminal, for clients that don't render the kind.
+- `embed:terminal` (§4.8.6): live program output for an 80×40 terminal, kept as `output` when it ends.
 - A save that sends back an `embed_id` the message no longer has is `invalid_params` (§4.8.2).
 - The fallback card for an unknown embed kind shows its `title` and a link to its `url` (§3.5.2).
 - Clients check that a passkey ceremony's RP ID is the host of the server's address, or a domain above it (§4.10).

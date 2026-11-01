@@ -2149,8 +2149,6 @@ functions, as a terminal receives it.
   program in a pseudo-terminal SHOULD give it this size.
 - Without the capability, senders post the finished output as text, such as
   in a code block.
-- The server's `og` for the embed ([§4.8.1](#481-opengraph-metadata-og))
-  SHOULD say that it is a terminal, such as in `description`.
 - Past the size that it keeps, the server keeps the last part of the output.
   That part starts at its first byte below 0x20. If it has none, it starts at
   its first byte outside 0x80–0xBF:
