@@ -27,6 +27,8 @@ import codecs
 import itertools
 import json
 import re
+import socket
+import ssl
 import sys
 import threading
 import time
@@ -38,12 +40,21 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from websockets.asyncio.client import connect
+from websockets.client import ClientProtocol
 from websockets.exceptions import ConnectionClosed
+from websockets.frames import Opcode
+from websockets.http11 import Response
+from websockets.uri import parse_uri
 
 VERSION = 10
 WAIT = 2.0  # seconds to wait for an expected frame
 QUIET = 0.5  # seconds to wait for a frame that should not come
 MISSING = "9007199254740991"  # a log_id no test server has reached (2^53 - 1)
+BURST = 12  # messages a burst posts at once, without waiting for each result
+# Messages of SLOW_TEXT bytes posted to a reader that has stopped reading: 8 MiB, past what the kernel buffers
+# for a socket (Linux grows a send buffer up to 4 MiB by default), so the server's own writes back up.
+SLOW_BURST = 512
+SLOW_TEXT = 16384
 CODES = {"parse_error": -32700, "invalid_request": -32600, "unsupported": -32601,
          "invalid_params": -32602, "internal_error": -32603, "denied": -32001,
          "retry_after": -32002, "too_large": -32003}
@@ -103,6 +114,84 @@ class Schema:
                 for e in self.validators[name].iter_errors(instance)]
 
 
+class SlowSocket:
+    """A WebSocket client that reads from its socket only while it is iterated, with small buffers, so that a reader
+    that stops leaves what the server sends in the kernel and the server's own writes back up. (A websockets client
+    keeps reading the socket into memory whether or not anyone takes the frames.) Enough of a websockets connection
+    for Conn: iterate for text frames, send, close."""
+
+    def __init__(self, protocol, reader, writer):
+        self.protocol, self.reader, self.writer, self.pending = protocol, reader, writer, []
+
+    @classmethod
+    async def open(cls, url):
+        parts = urllib.parse.urlsplit(url)
+        tls = ssl.create_default_context() if parts.scheme == "wss" else None
+        loop = asyncio.get_running_loop()
+        family, kind, proto, _, address = (await loop.getaddrinfo(parts.hostname, parts.port or (443 if tls else 80),
+                                                                   type=socket.SOCK_STREAM))[0]
+        sock = socket.socket(family, kind, proto)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
+        sock.setblocking(False)
+        await asyncio.wait_for(loop.sock_connect(sock, address), WAIT)
+        reader, writer = await asyncio.open_connection(sock=sock, ssl=tls, server_hostname=parts.hostname if tls else None,
+                                                       limit=16384)
+        conn = cls(ClientProtocol(parse_uri(url), max_size=None), reader, writer)
+        conn.protocol.send_request(conn.protocol.connect())
+        await conn.flush()
+        while True:
+            data = await asyncio.wait_for(reader.read(65536), WAIT)
+            if not data:
+                raise OSError("closed during the handshake")
+            conn.protocol.receive_data(data)
+            events = conn.protocol.events_received()
+            for i, event in enumerate(events):
+                if isinstance(event, Response):
+                    if event.status_code != 101:
+                        raise OSError(f"handshake answered {event.status_code}")
+                    conn.pending = events[i + 1:]  # frames that came with the handshake's answer
+                    return conn
+
+    async def flush(self):
+        for data in self.protocol.data_to_send():
+            if data:
+                self.writer.write(data)
+        await self.writer.drain()
+
+    async def __aiter__(self):
+        parts, events = [], self.pending
+        while True:
+            for frame in events:
+                if frame.opcode in (Opcode.TEXT, Opcode.BINARY, Opcode.CONT):
+                    parts.append(frame.data)
+                    if frame.fin:
+                        yield b"".join(parts).decode()
+                        parts = []
+                elif frame.opcode == Opcode.CLOSE:
+                    return
+            data = await self.reader.read(16384)
+            if not data:
+                return
+            self.protocol.receive_data(data)
+            events = self.protocol.events_received()
+            await self.flush()  # answers pings
+
+    async def send(self, text):
+        try:
+            self.protocol.send_text(text.encode())
+            await self.flush()
+        except (OSError, RuntimeError) as error:
+            raise ConnectionClosed(None, None) from error
+
+    async def close(self):
+        try:
+            self.protocol.send_close()
+            await self.flush()
+        except Exception:
+            pass
+        self.writer.close()
+
+
 class Conn:
     """One WebSocket connection: frames in arrival order, and replies matched by id."""
 
@@ -113,11 +202,14 @@ class Conn:
         self.methods = {}  # request id -> method
         self.asked, self.answered = {}, {}
         self.changed = asyncio.Condition()
+        self.reading = asyncio.Event()  # cleared: the connection stops reading, and the server's writes back up
+        self.reading.set()
         self.reader = asyncio.create_task(self.read())
 
     async def read(self):
         try:
             async for raw in self.ws:
+                await self.reading.wait()
                 try:
                     frame = json.loads(raw)
                 except ValueError:
@@ -126,7 +218,7 @@ class Conn:
                 async with self.changed:
                     self.frames.append(frame)
                     self.changed.notify_all()
-        except ConnectionClosed:
+        except (ConnectionClosed, OSError):
             pass
         finally:
             async with self.changed:
@@ -306,11 +398,16 @@ class Run:
             if isinstance(room, dict) and missing:
                 self.violate("listed-rooms", f"room {room.get('room_id')} lacks {', '.join(missing)}")
 
-    async def open(self, auth=True, name="Conformance"):
-        """Open a connection, wait for its server frame, and sign in."""
+    async def open(self, auth=True, name="Conformance", small_buffers=False):
+        """Open a connection, wait for its server frame, and sign in. With small_buffers, its socket's receive
+        buffer and the frames queued unread are small, so a connection that stops reading backs up the server's
+        writes after little traffic."""
         for attempt in itertools.count():
             try:
-                ws = await connect(self.args.url, max_size=None, open_timeout=WAIT)
+                if small_buffers:
+                    ws = await SlowSocket.open(self.args.url)
+                else:
+                    ws = await connect(self.args.url, max_size=None, open_timeout=WAIT)
                 break
             except (OSError, asyncio.TimeoutError) as error:
                 if attempt >= 20:
@@ -332,11 +429,11 @@ class Run:
             return {"scheme": "guest", "name": name}
         raise Skip("no guest scheme; pass --token")
 
-    async def joined(self, name="Conformance"):
+    async def joined(self, name="Conformance", small_buffers=False):
         """Open a signed-in connection that receives the deliveries of the default room."""
         if not self.room:
             raise Skip("the default room is unknown")
-        conn = await self.open(name=name)
+        conn = await self.open(name=name, small_buffers=small_buffers)
         if self.has("rooms"):
             await conn.call("room_join", {"room_id": self.room})
         return conn
@@ -600,6 +697,97 @@ async def _(run):
     must("result" in reply, f"history without room_id: {describe(reply)}")
     rooms = {m.get("room_id") for m in reply["result"].get("messages", []) if m.get("message_id") in (first, second)}
     must(rooms == {run.room, other}, f"history without room_id returned only {', '.join(sorted(map(str, rooms))) or 'neither room'}")
+
+
+async def burst(run, conn, texts):
+    """Post the texts at once, each request sent before the previous result, and return their message_ids in order.
+    A refusal by server policy (retry_after or denied, such as a posting limit) skips the check."""
+    sent = []
+    for text in texts:
+        id = next(ids)
+        sent.append(id)
+        await conn.send({"method": "message", "id": id, "params": {"room_id": run.room, "body": {"text": text}}})
+    message_ids = []
+    for id in sent:
+        _, reply = await conn.reply(id, timeout=WAIT * 4)
+        must(reply, "no reply to a message of the burst" + (" (connection closed)" if conn.closed else ""))
+        if code(reply) in (CODES["retry_after"], CODES["denied"]):
+            raise Skip(f"the server's policy refused the burst: {describe(reply)}")
+        must(isinstance(reply.get("result", {}).get("message_id"), str), f"posting: {describe(reply)}")
+        message_ids.append(reply["result"]["message_id"])
+    return message_ids
+
+
+async def logged(conn, room_id, after):
+    """The room's message snapshots and reaction sets from after on, by history, as {log_id: kind}."""
+    found = {}
+    while True:
+        page = await conn.call("history", {"room_id": room_id, "after": after, "limit": 200})
+        for key, kind in (("messages", "message"), ("reactions", "reactions")):
+            for record in page.get(key, []):
+                if isinstance(record, dict) and "log_id" in record:
+                    found[int(record["log_id"])] = kind
+        if not page.get("more") or "last_log_id" not in page:
+            return found
+        after = str(int(page["last_log_id"]) + 1)
+
+
+def delivered(conn, start, room_id):
+    """The room's message snapshots and reaction sets that conn received live from start on, as (log_id, kind)."""
+    live = []
+    for frame in conn.since(start, lambda f: f.get("method") in ("message", "reactions")):
+        params = frame.get("params", {})
+        if params.get("room_id") == room_id and "log_id" in params:
+            live.append((int(params["log_id"]), frame["method"]))
+    return live
+
+
+@check("3.5.3", "live delivery brings every record of a burst once, in log order", needs="history")
+async def _(run):
+    a, b = await run.joined("Conformance burst A"), await run.joined("Conformance burst B")
+    start = len(b.frames)
+    message_ids = await burst(run, a, [f"conformance: burst {n}" for n in range(BURST)])
+    # The other kinds of record a room logs, where the server has them.
+    if run.has("edit"):
+        await a.call("message", {"message_id": message_ids[0], "room_id": run.room, "body": {"text": "conformance: burst, edited"}})
+        await a.call("message", {"message_id": message_ids[1], "room_id": run.room, "deleted": True})
+    if run.has("reactions"):
+        await a.call("reactions", {"message_id": message_ids[2], "emojis": ["👍"]})
+    # Every result has reached the poster, so every broadcast went out before the server reads b's next request, and
+    # its reply (an error is as good) comes after them (§1): one round trip, no waiting for what shouldn't come.
+    await b.request("me", {})
+    logged_ids = await logged(b, run.room, message_ids[0])
+    live = delivered(b, start, run.room)
+    live_ids = {log_id for log_id, _ in live}
+    missing = sorted(log_id for log_id, kind in logged_ids.items() if kind == "message" and log_id not in live_ids)
+    must(not missing, f"{len(missing)} message snapshots in the log never arrived live, such as {missing[0] if missing else ''} (§3.5.3)")
+    messages = [log_id for log_id, kind in live if kind == "message"]
+    must(messages == sorted(set(messages)), "the burst's message snapshots arrived out of log order or twice (§3.5.3)")
+    missing = sorted(log_id for log_id, kind in logged_ids.items() if kind == "reactions" and log_id not in live_ids)
+    should(not missing, f"a reaction set in the log never arrived live: {missing[:1]} (§3.4)")
+    every = [log_id for log_id, _ in live]
+    should(every == sorted(every), "the room's reaction sets and message snapshots arrived out of log order between them")
+
+
+@check("3.5.3", "a reader that falls behind gets every record, or loses its connection", needs="history")
+async def _(run):
+    a, b = await run.joined("Conformance flood A"), await run.joined("Conformance flood B", small_buffers=True)
+    start = len(b.frames)
+    b.reading.clear()
+    filler = "x" * SLOW_TEXT
+    message_ids = await burst(run, a, [f"conformance: flood {n} {filler}" for n in range(SLOW_BURST)])
+    b.reading.set()
+    # Everything sent has arrived, or the server closed the connection: wait for the last record, or the close.
+    await b.wait(snapshot_of(message_ids[-1]), start, timeout=WAIT * 4)
+    logged_ids = sorted(log_id for log_id, kind in (await logged(a, run.room, message_ids[0])).items() if kind == "message")
+    live = [log_id for log_id, kind in delivered(b, start, run.room) if kind == "message" and log_id >= int(message_ids[0])]
+    if b.closed:
+        # A connection the server gave up on: what did arrive is everything up to its last record, with no gap.
+        must(live == logged_ids[:len(live)], "a reader that fell behind lost records before later ones, then its connection")
+        return
+    missing = sorted(set(logged_ids) - set(live))
+    must(not missing, f"a reader that fell behind kept its connection and lost {len(missing)} records, such as {missing[0] if missing else ''} (§3.5.3)")
+    must(live == logged_ids, "a reader that fell behind got records out of log order or twice (§3.5.3)")
 
 
 @check("4.3.2", "after and before are inclusive bounds", needs="history")
