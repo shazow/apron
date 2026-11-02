@@ -26,4 +26,4 @@ jobs:
         if: matrix.server == 'js-minimal'
       - run: pip install "websockets>=14,<17" "jsonschema>=4.18"
       - run: ${{ matrix.start }} &
-      - run: python tests/conformance/conform.py ws://127.0.0.1:8765 --slow
+      - run: python tests/conformance/conform.py ws://127.0.0.1:8765

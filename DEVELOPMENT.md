@@ -52,11 +52,6 @@ uv run tests/conformance/conform.py ws://127.0.0.1:8765
 It signs in as a guest, or with `--token`, and posts messages, so point it at
 a test server.
 
-Each check takes a round trip or two. A check that takes seconds is tagged slow
-and runs only with `--slow`: today, a reader that stops reading while 8 MiB is
-posted, past what the kernel buffers, must get every record or lose its
-connection, never later records after missing earlier ones. CI runs it too.
-
 ## Schema
 
 `schema/apron.schema.json` describes every frame in PROTOCOL.md. A protocol

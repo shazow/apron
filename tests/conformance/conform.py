@@ -15,13 +15,9 @@ It signs in as a guest, or with --token. Guests are created and messages
 posted, so point it at a test server. Not covered: passkey, email, and external
 sign-in, push registration, token rotation, compaction, and redaction.
 
-Checks that take seconds rather than a round trip or two, such as one that
-posts megabytes to fill a slow reader's buffers, run only with --slow.
-
 Run from the repository root:
   uv run tests/conformance/conform.py ws://127.0.0.1:8765
   uv run tests/conformance/conform.py wss://chat.example/ws --token SECRET
-  uv run tests/conformance/conform.py ws://127.0.0.1:8765 --slow
 """
 
 import argparse
@@ -55,7 +51,7 @@ WAIT = 2.0  # seconds to wait for an expected frame
 QUIET = 0.5  # seconds to wait for a frame that should not come
 MISSING = "9007199254740991"  # a log_id no test server has reached (2^53 - 1)
 BURST = 12  # messages a burst posts at once, without waiting for each result
-# Messages of SLOW_TEXT bytes posted to a reader that has stopped reading (--slow): 8 MiB, past what the kernel buffers
+# Messages of SLOW_TEXT bytes posted to a reader that has stopped reading: 8 MiB, past what the kernel buffers
 # for a socket (Linux grows a send buffer up to 4 MiB by default), so the server's own writes back up.
 SLOW_BURST = 512
 SLOW_TEXT = 16384
@@ -453,10 +449,9 @@ class Run:
 CHECKS = []
 
 
-def check(ref, title, needs=None, slow=False):
-    """Register a check. A slow one, taking seconds rather than a round trip or two, runs only with --slow."""
+def check(ref, title, needs=None):
     def wrap(fn):
-        CHECKS.append((ref, title, needs, fn, slow))
+        CHECKS.append((ref, title, needs, fn))
         return fn
     return wrap
 
@@ -774,7 +769,7 @@ async def _(run):
     should(every == sorted(every), "the room's reaction sets and message snapshots arrived out of log order between them")
 
 
-@check("3.5.3", "a reader that falls behind gets every record, or loses its connection", needs="history", slow=True)
+@check("3.5.3", "a reader that falls behind gets every record, or loses its connection", needs="history")
 async def _(run):
     a, b = await run.joined("Conformance flood A"), await run.joined("Conformance flood B", small_buffers=True)
     start = len(b.frames)
@@ -1442,16 +1437,13 @@ async def main():
     parser.add_argument("url", help="WebSocket URL, such as ws://127.0.0.1:8765")
     parser.add_argument("--token", help="sign in with scheme token instead of guest")
     parser.add_argument("-v", "--verbose", action="store_true", help="print tracebacks of crashed checks")
-    parser.add_argument("--slow", action="store_true", help="also run the checks that take seconds, such as a slow reader's")
     args = parser.parse_args()
     run, counts = Run(args), {}
     if not run.schema.schema:
         print(f"note: {SCHEMA_PATH} not found; frames are not validated against the schema")
-    for ref, title, needs, fn, slow in CHECKS:
+    for ref, title, needs, fn in CHECKS:
         status, detail = "PASS", ""
         try:
-            if slow and not args.slow:
-                raise Skip("slow; pass --slow")
             if run.server is None and fn is not CHECKS[0][3]:
                 raise Skip("no server frame")
             if isinstance(needs, str) and not run.has(needs):
