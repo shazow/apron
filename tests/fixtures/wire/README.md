@@ -383,7 +383,16 @@ joined, or a `room_update` that lists it in `joined` or `updated`.
   the pending `after`, history was discarded: ignore that page and any pending
   request, rebuild from the new F with the same H, and keep buffered records at
   or above F. A bound equal to `after` only evicts.
-- **Completion.** Apply the buffer; C becomes `max(C, H)`.
+- **Completion.** Apply the buffer; C becomes the greatest of C, H, and the
+  `log_id`s of the buffered records (live delivery brought them in order, so
+  the room is complete up to the last one).
+- **Live records after completion.** Until the room's next recovery starts or
+  fails, or the connection is lost, each live record delivered for the room
+  (a snapshot, a reaction set, a membership, a room record in `room_update`
+  `updated`) moves C to its `log_id` when that is greater. A room record frame
+  whose head is above C then means live delivery missed records, and starts a
+  resume as above. A record that a server dropped below a later live record of
+  the same room is not recovered.
 - **Failure.** An `error` reply; a result lacking a boolean `more`, a valid
   `latest_log_id`, or a `history_log_id` that is null or a valid ID, or with a
   record key (`rooms`, `messages`, `reactions`, `memberships`) that is present
@@ -401,7 +410,11 @@ joined, or a `room_update` that lists it in `joined` or `updated`.
   checkpoint T, kept across a lost connection, `loadRoom` pages forward from
   `max(T + 1, F)` to H: pages apply as they arrive; if F overtakes `after`,
   continue from F; T advances to each page's `last_log_id` and to H at
-  `more: false`. Live records for the thread apply directly. (A thread the
+  `more: false`. Live records for the thread apply directly, and once
+  `loadRoom` completes on the connection each one moves T to its `log_id`
+  when that is greater, as for C above. A client MAY start that load by itself
+  when a room record frame reports the head of a joined thread above its T;
+  a later `loadRoom` then waits for it rather than asking again. (A thread the
   user has not joined delivers nothing live; the example client can open one
   without joining it and load it the same way, but the fixtures do not.)
 
@@ -514,7 +527,8 @@ no sleeps, timers, or DOM selectors.
 | `history-live-boundary.json` | fixed H with live records above it (edit, room update, reaction), mixed-kind pages (limit counts every kind), raw and compacted |
 | `history-boundaries.json` | inclusive bound with eviction, bound overtaking a recovery by `room_update` or by page, sparse IDs, `null` bounds (empty log, expired cache, becoming retained, page head) |
 | `history-recovery-failure.json` | a head above the checkpoint resumes from `C + 1`; an error or invalid page keeps partial and buffered state; the next room record frame rebuilds |
-| `reconnect-history.json` | new guest identity after reconnect with a full listing; the kept room's recovery resumes from its checkpoint behind `auth`, without a head, across message and reaction records |
+| `reconnect-history.json` | new guest identity after reconnect with a full listing; the kept room's recovery resumes from its checkpoint behind `auth`, without a head, across message and reaction records, after the message delivered live before the loss |
+| `live-checkpoint.json` | live records move C after a recovery, and T after a thread's `loadRoom`; a room frame at that head needs no request; records buffered during a resume count; a head above the live records recovers what live delivery missed |
 | `thread-recovery.json` | thread room loaded only by `loadRoom`, newest page first and an older page by `loadOlder`, as its own room; move in both rooms' logs; interleaved with room recovery |
 
 The Node adapter is apron-server-go's
@@ -541,7 +555,9 @@ were checked with an independent reference reducer and client):
   requested and at least its `last_log_id` (it may be captured before later live
   frames). A non-null `history_log_id` never exceeds `latest_log_id`, and the
   effective bound never decreases. Records may be missing from live delivery
-  (a server may drop notifications); a later head reveals them.
+  (a server may drop notifications); a later head reveals them. No variant
+  drops a record and then delivers a later live record of the same room
+  before a head reveals it: the profile doesn't recover that one.
 - A room's log holds its room records, its reaction records, its memberships
   (unless the server keeps a guest's out of the log, as a server MAY), and
   every snapshot of a message that was in the room just before or after it, so
