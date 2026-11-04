@@ -393,14 +393,20 @@ joined, or a `room_update` that lists it in `joined` or `updated`.
   whose head is above C then means live delivery missed records, and starts a
   resume as above. A record that a server dropped below a later live record of
   the same room is not recovered.
-- **Failure.** An `error` reply; a result lacking a boolean `more`, a valid
-  `latest_log_id`, or a `history_log_id` that is null or a valid ID, or with a
-  record key (`rooms`, `messages`, `reactions`, `memberships`) that is present
-  but not an array; or a `more: true` page whose `last_log_id` is below
-  `after` or not below H. The client applies the pages it has and the buffer, leaves C
-  unchanged, and marks the room failed; the next room record frame for it rebuilds.
-  A failure is not retried on a timer (the `retry_after` variant's
-  `data.retry_after` is not waited on).
+- **Failure.** An `error` reply other than `retry_after`; a result lacking a
+  boolean `more`, a valid `latest_log_id`, or a `history_log_id` that is null or
+  a valid ID, or with a record key (`rooms`, `messages`, `reactions`,
+  `memberships`) that is present but not an array; or a `more: true` page whose
+  `last_log_id` is below `after` or not below H. The client applies the pages it
+  has and the buffer, leaves C unchanged, and marks the room failed; the next
+  room record frame for it rebuilds. A failure is not retried on a timer.
+- **Refused for a wait.** A `retry_after` error reply is not a failure. The
+  client applies the pages it has and the buffer, and C becomes the position
+  before the refused page's `after`, as far as its pages reached; a rebuild
+  that has applied no page keeps no C. The room is not marked failed: the next
+  room record frame resumes from `max(C + 1, F)` as above, its requests waiting
+  out `data.retry_after`. A client MAY also resume by itself once the wait is
+  over; the fixtures send the room record frame first.
 - **Thread rooms** never recover automatically. `loadRoom` loads one with
   H = its known head when invoked. Without a checkpoint it requests only the
   newest page, `{room_id, before: H}` with no `after`; T becomes H, and the
@@ -526,7 +532,7 @@ no sleeps, timers, or DOM selectors.
 | `request-errors.json` | denied send, save, and room creation, `invalid_params` for a room the user cannot see, and `unsupported` for a command without capability `command` keep the session usable |
 | `history-live-boundary.json` | fixed H with live records above it (edit, room update, reaction), mixed-kind pages (limit counts every kind), raw and compacted |
 | `history-boundaries.json` | inclusive bound with eviction, bound overtaking a recovery by `room_update` or by page, sparse IDs, `null` bounds (empty log, expired cache, becoming retained, page head) |
-| `history-recovery-failure.json` | a head above the checkpoint resumes from `C + 1`; an error or invalid page keeps partial and buffered state; the next room record frame rebuilds |
+| `history-recovery-failure.json` | a head above the checkpoint resumes from `C + 1`; an error or invalid page keeps partial and buffered state, and the next room record frame rebuilds; a page refused with `retry_after` keeps what was recovered, and the next room record frame resumes from there |
 | `reconnect-history.json` | new guest identity after reconnect with a full listing; the kept room's recovery resumes from its checkpoint behind `auth`, without a head, across message and reaction records, after the message delivered live before the loss |
 | `live-checkpoint.json` | live records move C after a recovery, and T after a thread's `loadRoom`; a room frame at that head needs no request; records buffered during a resume count; a head above the live records recovers what live delivery missed |
 | `thread-recovery.json` | thread room loaded only by `loadRoom`, newest page first and an older page by `loadOlder`, as its own room; move in both rooms' logs; interleaved with room recovery |
