@@ -34,6 +34,12 @@ The main distinction is that Apron is designed for there to be a plurality of fr
 
 Chats like Zulip and Discord are great but they're designed to be tightly coupled between the server and client (it's designed to work with one server implementation and client). Apron wants to be more like HTTP: Lots of servers, many of clients.
 
+## Why another standard? XKCD 927!
+
+Yes, it's [a funny comic](https://xkcd.com/927/) but the reality is that it's often difficult to one-shot the right solution from the start *and* have it remain relevant forever. Sometimes it requires iteration and hitting new dead ends until we understand the problem space well enough to address some if it mindfully.
+
+Apron draws on lessons we've learned designing chat apps and protocols from the past 20 years, while also prioritizing the needs of today and the near future. We don't need more global social networks with algorithmic timelines, we don't need more end-to-end encrypted messaging apps (these are great but they already exist). I believe we need more self-hosted group chats with portable reusable frontends and custom functionality so we can experiment with new form factors around group chats.
+
 ## How was AI used to create Apron? Is it slop?
 
 Apron is a culmination of something I've wanted to design and create for many years now, but I knew that normally it would take a small team many months to put it together. Part of this project is experimenting with a new kind of protocol-centric agentic engineering. I mainly used Anthropic's and OpenAI's latest models (Opus 5.5, Fable 5.1 and GPT 6.1 Sol) throughout the process:
