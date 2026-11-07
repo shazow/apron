@@ -1701,8 +1701,7 @@ A user's status has three views:
 - It is `true`, `false`, or a positive integer number of seconds. Without
   `room_id`, it applies everywhere. With `room_id`, it applies only in that room
   and its threads. Suggested convention: a mute with `room_id` still lets
-  mentions of the user notify. A `status` request with `room_id` and no `mute`
-  is `invalid_params`.
+  mentions of the user notify.
 - `mute` is private. Others never see it.
 - Servers without timed mutes treat seconds as `true`.
 - Servers send each change to the mutes of the user to all connections of the
