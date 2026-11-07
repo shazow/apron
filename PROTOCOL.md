@@ -1700,8 +1700,8 @@ A user's status has three views:
 
 - It is `true`, `false`, or a positive integer number of seconds. Without
   `room_id`, it applies everywhere. With `room_id`, it applies only in that room
-  and its threads. A `status` request with `room_id` and no `mute` is
-  `invalid_params`.
+  and its threads. Suggested convention: a mute with `room_id` still lets
+  mentions of the user notify.
 - `mute` is private. Others never see it.
 - Servers without timed mutes treat seconds as `true`.
 - Servers send each change to the mutes of the user to all connections of the
@@ -2304,8 +2304,6 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   It is the same for all registrations of the user. Clients MAY show it as an
   app badge.
   - Servers whose `server.push.wake` lists `badge` send `unread`.
-  - Servers MAY leave messages that a room `mute` silences out of `unread`. A
-    `mute` without `room_id` does not change `unread`.
 - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients
   never install it as a snapshot. Servers do not push transient notices.
   - Servers SHOULD omit `format`, `embeds`, and `ext`.
