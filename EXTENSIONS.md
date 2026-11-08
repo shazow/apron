@@ -285,7 +285,7 @@ Suggested convention, with capabilities `command` and `embed:upload`
   replaces its image.
 - `/emoji remove :name:` removes the key.
 
-## `ext:share_edit`
+## `ext:editors`
 
 Lets the sender of a message share the editing of its text with the users
 that it mentions, such as a list that the people in it keep up to date.
@@ -296,7 +296,7 @@ that it mentions, such as a list that the people in it keep up to date.
   "method": "message", "id": "c70", "params": {
     "room_id": "general",
     "body": {"text": "Lunch orders, @bob @carol:\n- Alice: soup", "mentions": ["bob", "carol"]},
-    "ext": {"share_edit": {"body.text": "mentioned"}}
+    "ext": {"editors": {"body.text": "mentioned"}}
   }
 }
 // -> Bob saves the text
@@ -313,13 +313,13 @@ that it mentions, such as a list that the people in it keep up to date.
     "prev_log_id": "1724803200042",
     "from": {"user_id": "alice", "name": "Alice"},
     "body": {"text": "Lunch orders, @bob @carol:\n- Alice: soup\n- Bob: salad", "mentions": ["bob", "carol"]},
-    "ext": {"share_edit": {"body.text": "mentioned", "edited_by": "bob"}}
+    "ext": {"editors": {"body.text": "mentioned", "edited_by": "bob"}}
   }
 }
 ```
 
 ```ts
-class ShareEdit {               // message.ext.share_edit
+class Editors {                 // message.ext.editors
   "body.text"?: "mentioned";    // who else may save body.text
   edited_by?: string;           // set by the server: who saved this snapshot, if not the sender
 }
@@ -339,5 +339,5 @@ class ShareEdit {               // message.ext.share_edit
   (Otherwise the edited text reads as the sender's words.)
 - Clients offer the editing that a grant allows. A key or value that a
   client or server does not know shares nothing.
-- Without the extension, clients send no `share_edit`, and offer editing only
+- Without the extension, clients send no `editors`, and offer editing only
   to the sender.
