@@ -16,7 +16,7 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 - One shared default room, `general`: requests without `room_id` use it, and its creation record, titled "General", is in history while retained. Without capability `rooms`, clients learn the room from the messages and history in it.
 - Guest authentication with `guest_` user IDs and changeable display names (`auth` or `me`; `""` clears the name). It offers only `guest`: the other schemes that PROTOCOL.md defines are `error/unsupported`, and any other scheme, or none, is `error/invalid_params`.
 - `auth` and `me` results carry the complete `you`: `user_id` and `name`. Profile `avatar` and `ext` are declined.
-- Ordered, flat message snapshot broadcasts, including to the sender, before the sender's result. `message_id` equals the message's creation `log_id`. A message with no text and no embeds is neither logged nor broadcast.
+- Ordered, flat message snapshot broadcasts, including to the sender, before the sender's result. `message_id` equals the message's creation `log_id`. A message with no text and no embeds is `invalid_params`.
 - Replies via `reply_to` (a bare `{"message_id": ...}` reference); `body` (with `format` defaulting to `plain`) and embeds pass through.
 - One server-wide `log_id` sequence covering the room record and every message.
 - In-memory history of the latest 1,000 log records, with inclusive `after`/`before` pagination, `first_log_id`/`last_log_id`, and `more`. The room's creation record appears in `rooms` while retained. Pages default to 50 records, capped at 200.
