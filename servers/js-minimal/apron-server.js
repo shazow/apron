@@ -63,7 +63,7 @@ function readHistory(params) {
 function createMessage(you, params) {
   check(params.body && typeof params.body === "object", "Missing body");
   check(!params.deleted, "Cannot create a deleted message");
-  if (!params.body.text && !params.body.embeds?.length) return {}; // Nothing to show: neither logged nor broadcast.
+  check(params.body.text || params.body.embeds?.length, "Empty message");
   const replyTo = params.reply_to?.message_id;
   // The new ID is minted below, so a known target can never be the message itself.
   if ("reply_to" in params) {
