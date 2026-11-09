@@ -559,14 +559,14 @@ async def _(run):
     run.message = p
 
 
-@check("3.5.1", "a message with no text and no embeds is not logged")
+@check("3.5.1", "a message with no text and no embeds is error/invalid_params")
 async def _(run):
     a, b = await run.joined(), await run.joined()
     start = len(b.frames)
-    result = await a.call("message", {"room_id": run.room, "body": {"text": ""}})
+    reply = (await a.request("message", {"room_id": run.room, "body": {"text": ""}}))[1]
     await asyncio.sleep(QUIET)
-    should(result == {}, f"result is {json.dumps(result)}")
-    should(not b.since(start, lambda f: f.get("method") == "message"), "it was broadcast")
+    expect_error(reply, "invalid_params", "an empty message")
+    must(not b.since(start, lambda f: f.get("method") == "message"), "it was broadcast")
 
 
 @check("3.5.4", "reply_to must refer to an existing message")

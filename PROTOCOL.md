@@ -720,8 +720,7 @@ authoritative **snapshot** at one log position.
 - A request without `room_id` posts to the default room of the server. The
   snapshot refers to that room.
 - Posting does not require joining the room.
-- A new message with no `text` and no `embeds` SHOULD NOT be logged or
-  broadcast. Its result is then `{}`.
+- A new message with no `text` and no `embeds` is `invalid_params`.
 - The result is `{"message_id": "..."}`, the permanent ID. It is the
   confirmation.
 
