@@ -651,7 +651,8 @@ async def _(run):
     should(count == 1, f"the retry was broadcast {count} times")
     other = {"room_id": run.room, "body": {"text": "conformance: other"}}
     expect = (await a.request("message", other, id="conformance-retry"))[1]
-    should(code(expect) == CODES["invalid_params"], f"an id reused with other params got {describe(expect)}")
+    should(code(expect) == CODES["invalid_params"] or expect.get("result") == first["result"],
+           f"an id reused with other params ran again: {describe(expect)}")
 
 
 @check("3.3.2", "me returns the user's complete object")

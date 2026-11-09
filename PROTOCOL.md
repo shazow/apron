@@ -216,14 +216,15 @@ act.
 
 A retry SHOULD keep the same `id`, `method`, and `params`, also across
 reconnects. A new operation MUST use a new `id`. Changing the params makes a new
-operation. Deduplication ignores the order of object keys.
+operation.
 
 Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated
 `user_id`:
 
 - The server does not execute or broadcast a duplicate again. The result of a
   duplicate shows the current state ([§1](#1-transport--framing)).
-- An `id` used again with a different method or params is `invalid_params`.
+- A server MAY reply `invalid_params` to an `id` used again with a different
+  method or params. This comparison ignores the order of object keys.
 - The server handles concurrent duplicates as one request.
 
 How long a server remembers an `id` is implementation-defined. Before
