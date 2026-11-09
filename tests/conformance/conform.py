@@ -504,10 +504,10 @@ async def _(run):
          "me ran as a different user than auth")
 
 
-@check("1", "an unknown auth scheme is error/invalid_params")
+@check("3.2", "an unknown auth scheme is error/unsupported")
 async def _(run):
     conn = await run.open(auth=False)
-    expect_error((await conn.request("auth", {"scheme": "ext:conformance-unknown"}))[1], "invalid_params", "auth with an unknown scheme")
+    expect_error((await conn.request("auth", {"scheme": "ext:conformance-unknown"}))[1], "unsupported", "auth with an unknown scheme")
 
 
 @check("3.2", "a defined scheme the server does not offer is error/unsupported")

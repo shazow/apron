@@ -113,8 +113,8 @@ Unknown names:
 - Implementations MUST ignore unknown keys, and MAY drop them.
 - Servers reply `error/unsupported` to requests with unknown methods.
 - Notifications with unknown methods are ignored.
-- A request that depends on an unknown name, such as an auth scheme or a
-  kind, fails with `invalid_params`.
+- A request that depends on an unknown name, such as a kind, fails with
+  `invalid_params`.
 - Receivers ignore an unknown name in any other frame, or show the fallback of
   its section.
 
@@ -429,8 +429,7 @@ class AuthResult {
     ([§4.11](#411-email-and-external-sign-in)).
   - `external`: optional sign-in on a web page of the server
     ([§4.11](#411-email-and-external-sign-in)).
-- A scheme that this document defines but the server does not offer is
-  `unsupported`.
+- A scheme that the server does not offer is `unsupported`.
 - Which credentials an offered scheme accepts is server policy. For example,
   a guest-access server that offers `token` MAY accept any token.
 - With `server.signup`, `server.auth` lists the schemes that sign in, and
