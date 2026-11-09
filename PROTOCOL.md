@@ -20,7 +20,8 @@ that posts deploy notices. To make that practical, the protocol is
 incremental. The mandatory core ([§3](#3-core)) is enough for a working chat,
 in about a hundred lines of code. Everything else is an optional capability
 ([§4](#4-capabilities)) that a server advertises, with a fallback for clients
-and servers that lack it.
+and servers that lack it. The checklist in [§3.6](#36-core-conformance-checklist)
+lists what a minimal server and a minimal client implement.
 
 Example of a valid session:
 
@@ -34,7 +35,7 @@ Example of a valid session:
 // <- server assigns the identity
 {"id": "c1", "result": {"you": {"user_id": "guest_1234", "name": "Ada"}}}
 
-// -> client requests the joined rooms and their members (server may ignore the filters)
+// -> client requests the joined rooms and their members
 {"method": "room_list", "id": "c2", "params": {"filter": "joined", "members": true}}
 
 // <- one room
@@ -78,6 +79,8 @@ Apron runs over any transport that carries whole JSON messages in both
 directions. The framing borrows from JSON-RPC: a client matches each reply to
 its request, and every other frame is a one-way notification.
 
+Transport and frames:
+
 - WebSocket is the reference transport. Other transports work if they deliver
   whole frames.
 - A server's **address** is the URI that clients connect to, such as
@@ -91,7 +94,11 @@ its request, and every other frame is a one-way notification.
 - Frames use the shape of [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
   requests, responses, and notifications (`method`, `params`, `id`, `result`,
   `error`). They omit the `"jsonrpc": "2.0"` key, and every `id` is a string.
-- Implementations MUST ignore unknown keys, and MAY drop them.
+- Implementations SHOULD accept frames up to 256 KiB. They MAY reject a larger
+  request with `error/too_large`, and MAY drop a larger notification.
+
+Order:
+
 - Servers MAY process requests concurrently and reply in any order. If a
   client needs one request applied before another, it waits for the first
   reply.
@@ -100,15 +107,19 @@ its request, and every other frame is a one-way notification.
 - When a request causes notifications on its own connection, the server sends
   them before the result, such as the broadcast of a posted message. A sign-in
   is the only exception ([§3.2.2](#322-order)).
-- Server announcements and broadcasts are notifications.
+
+Unknown names:
+
+- Implementations MUST ignore unknown keys, and MAY drop them.
 - Servers reply `error/unsupported` to requests with unknown methods.
 - Notifications with unknown methods are ignored.
 - A request that depends on an unknown name, such as an auth scheme or a
   kind, fails with `invalid_params`.
 - Receivers ignore an unknown name in any other frame, or show the fallback of
   its section.
-- Implementations SHOULD accept frames up to 256 KiB. They MAY reject a larger
-  request with `error/too_large`, and MAY drop a larger notification.
+
+Liveness:
+
 - A server MAY advertise `ping` ([§3.1](#31-server-frame)). Clients that
   support it then send exactly `{"method":"ping"}` at that interval. The
   server answers with `{"method":"pong"}`, also before authentication. A
@@ -147,7 +158,7 @@ A server MAY ignore a request method sent without an `id`. It MAY ignore the
 A notification:
 
 ```json
-{"method": "activity", "params": {"room_id": "general", "typing": 8}}
+{"method": "user", "params": {"new": {"user_id": "guest_1234", "name": "Ada L"}}}
 ```
 
 A successful reply has a `result` object, which is `{}` when empty. An error
@@ -239,7 +250,8 @@ A `log_id` is the position of one change in the server's append-only log.
 - Decimal string of Unix epoch milliseconds, such as `"1724803200042"`.
 - One strictly increasing sequence per server, covering every record.
 - Its value is the commit time. If the clock has not passed the previous
-  `log_id`, the value is the previous `log_id + 1`.
+  `log_id`, the value is the previous `log_id + 1`:
+  `str(max(unix_epoch_ms(), last_id + 1))`.
 - Clients MAY show it as a time. Other timestamps, such as `seen`
   ([§4.5.2](#452-delivery)), use the same format.
 - It is positive and below `2^53`. Compare values as numbers. Clients MAY
@@ -247,7 +259,6 @@ A `log_id` is the position of one change in the server's append-only log.
 - Unique within one server only.
 - A room's log is the subsequence of records that touch that room
   ([§4.3.1](#431-a-rooms-log)).
-- Reference generator: `str(max(unix_epoch_ms(), last_id + 1))`.
 
 ### 2.2 `message_id`
 
@@ -411,7 +422,7 @@ class AuthResult {
   - `guest`: no credentials. The server assigns the identity. Suggested
     convention: `guest_` plus a global counter, such as `guest_1234`
     ([§3.3](#33-identity)).
-  - `token`: a bearer string. This is the reference default.
+  - `token`: a bearer string ([§3.2.1](#321-bearer-tokens)).
   - `webauthn`: optional passkey scheme
     ([§4.10](#410-webauthn-authentication)).
   - `email`: optional sign-in by a code sent to an email address
@@ -519,7 +530,7 @@ There are two kinds of user objects:
 Clients keep one user object for each `user_id`:
 
 - Clients replace the kept object with a complete object.
-- Clients merge every other current object into the kept object. Each field
+- Clients **merge** every other current object into the kept object. Each field
   that it carries replaces the kept value. An empty value (`""`, `[]`, `{}`)
   clears the field. Fields that it does not carry stay the same. `null` is an
   ordinary value.
@@ -532,9 +543,9 @@ Clients keep one user object for each `user_id`:
 
 #### 3.3.2 Profile
 
-A `me` request changes the user's own profile after authentication. It merges by
-the same rules as a current object. Clients can set `name` and `avatar`. `roles`
-is not settable. Servers announce a cleared field as its empty value:
+A `me` request changes the user's own profile. The server merges it into the
+profile ([§3.3.1](#331-user-objects)). Clients can set `name` and `avatar`.
+`roles` is not settable.
 
 ```jsonc
 // -> rename and clear the avatar
@@ -573,7 +584,6 @@ others who share a room with the user. `new` is the current object of the user.
   servers announce that the previous identity left. They do not send `old`.
 - After a `user_id` change, logged records keep the old `user_id`. Clients MAY
   treat it as the new identity.
-- Servers SHOULD NOT give a retired `user_id` to another user.
 
 #### 3.3.4 Roles
 
@@ -603,7 +613,7 @@ class Room {
   room_id: string;
 
   title?: string;               // absent: shown as room_id
-  description?: string;         // CommonMark by convention
+  description?: string;         // CommonMark: what the room is about
 
   // "rooms" capability
   parent_room_id?: string;      // marks a thread; fixed once the room is created
@@ -705,9 +715,9 @@ authoritative **snapshot** at one log position.
 
 #### 3.5.1 Creating
 
-- `body` is required when a client creates a message. `text` defaults to `""`.
-  `embeds` and `mentions` default to `[]`. `format` is `"plain"` or
-  `"markdown"`, and the default is `"plain"`.
+- `body` is required when a client creates a message.
+- A request with a `message_id` is a save ([§4.4](#44-edit)). Without
+  capability `edit`, it is `unsupported`.
 - A request without `room_id` posts to the default room of the server. The
   snapshot refers to that room.
 - Posting does not require joining the room.
@@ -867,12 +877,11 @@ names that an extension can add to, such as methods, capabilities, auth schemes,
 and kinds. This document never defines a name with that prefix. Display values,
 such as a status or a role, are free text and take no prefix.
 
-Six frame patterns cover everything that is logged or announced:
+Five frame patterns cover everything that is logged or announced:
 
-- **Records** (room records, `message`): the complete state at a `log_id`
-  ([§2.3](#23-records-and-replay)).
-- **Per-user state** (`reactions`, memberships): the user and their complete
-  state for a scope. The newest wins for each user. Logged.
+- **Records** (room records, `message`, `reactions`, memberships): the
+  complete state for a key at a `log_id` ([§2.3](#23-records-and-replay)).
+  Logged.
 - **Activity** (`activity`): `from` and changes to the transient state of the
   user. Absent fields do not change it. Not logged.
 - **Announcements** (`server`): not logged, and sent again in full. Each one
@@ -1021,7 +1030,7 @@ change it.
 | `parent_room_id` | client   | optional; fixed at creation; marks a thread ([§4.2.4](#424-creating-and-editing))          |
 | `private`        | client   | optional; visible only to members ([§4.2.4](#424-creating-and-editing))                    |
 | `title`          | client   | optional plain string; absent falls back to `room_id`                                      |
-| `description`    | client   | optional string, CommonMark by convention: what the room is about                          |
+| `description`    | client   | optional CommonMark ([§3.5.2](#352-rendering)): the room's purpose or current state        |
 | `ext`            | client   | optional extension data; merges by key ([§4.12](#412-ext))                                 |
 | `latest_log_id`  | delivery | greatest `log_id` in the room's log, memberships included                                  |
 | `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none                            |
@@ -1030,10 +1039,6 @@ change it.
 
 A room record is complete ([§2.3](#23-records-and-replay)). A `server` or
 `client` field that it omits is cleared.
-
-`description` is the summary of the room, such as its purpose or the state of
-its conversation. Users who can edit the room can change it with `room_set`. It
-is CommonMark ([§3.5.2](#352-rendering)).
 
 A **thread** is a room with a `parent_room_id`. A client that ignores this
 field shows threads as ordinary rooms. A client that uses it groups threads
@@ -1229,10 +1234,6 @@ the full list:
     thread in `updated` is from its last record change.
 
 ```jsonc
-// <- after the join above
-{"method": "room_update", "params": {"joined": [{"room_id": "1724803399000", "parent_room_id": "general", "title": "Incident", ...}]}}
-// <- after the leave above
-{"method": "room_update", "params": {"left": [{"room_id": "1724803312001"}]}}
 // <- a joined room was renamed
 {"method": "room_update", "params": {"updated": [{"room_id": "general", "log_id": "1724803600000", "title": "General (ops)", ...}]}}
 ```
@@ -1409,8 +1410,6 @@ A record can point to the previous record for its key:
   delivery fields.
 - Every result includes `latest_log_id` and `history_log_id`. The server
   reads them at the same time as the page. They describe the log, not the page.
-- Retention can advance between requests, so clients check each response before
-  they apply it.
 - If the server rejects a request for lack of resources, it returns an error,
   not an empty result.
 
@@ -1726,7 +1725,7 @@ sends:
 Adds the `activity` notification. A client sends it when its activity changes.
 Activity is typing, and how far the user has read in a room. Each field that is
 present updates that state. Absent fields do not change it. Activity is not
-logged. Servers MAY ignore `typing` and `read_message_id`.
+logged. Servers MAY ignore either field.
 
 ```jsonc
 // -> start typing
@@ -1840,13 +1839,14 @@ Clients render an unknown kind from `og`, or else as the fallback card
 ]
 ```
 
-- `iframe`: render with `sandbox="allow-scripts"`, and **never** with
+- `iframe`: clients render it with `sandbox="allow-scripts"`, and never with
   `allow-same-origin` too (together, they let the embed remove its own sandbox).
-  Allow no top navigation and no popups. Use a restrictive Permissions-Policy.
-  Clamp the dimensions, because `height` is only a suggestion. Load lazily, and
-  limit the number of live iframes at one time.
-- `html`: sanitize it with an allowlist sanitizer, such as DOMPurify, before
-  insertion. Do this for every source.
+  Clients allow no top navigation and no popups, and use a restrictive
+  Permissions-Policy. Clients clamp the dimensions, because `height` is only a
+  suggestion. Clients load iframes lazily, and limit how many are live at one
+  time.
+- `html`: clients sanitize it with an allowlist sanitizer, such as DOMPurify,
+  before insertion, for every source.
 - `upload` is [§4.8.4](#484-embedupload), `append` is
   [§4.8.5](#485-embedappend), and `terminal` is
   [§4.8.6](#486-embedterminal).
@@ -2498,8 +2498,8 @@ addition. The server delivers a temporary token outside the connection. An
 
 #### 4.11.3 Approval
 
-- Approval is an `auth` request with `token`, and `token` or either scheme
-  that the server offers.
+- Approval is an `auth` request with `token`. Its `scheme` is `token`, or
+  `email` or `external` where the server offers it.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and a
   bearer `token` for later connections ([§3.2.1](#321-bearer-tokens)).
@@ -2555,10 +2555,9 @@ prefix ([§4](#4-capabilities)), such as `irc`:
 "ext": {"irc": {"network": "libera", "channel": "#ops", "nick": "ada_", "msgid": "a1b2c3"}}
 ```
 
-- A write merges `ext` one level down. Each key that it carries replaces the
-  kept value, an empty value (`""`, `[]`, `{}`) clears that key, and keys that
-  it leaves out stay. The value under a key is replaced whole. `null` is an
-  ordinary value, and `"ext": {}` changes nothing.
+- A write merges `ext` by its keys, as a current user object merges by its
+  fields ([§3.3.1](#331-user-objects)). The value under a key is replaced
+  whole, and `"ext": {}` changes nothing.
 - Writes are `me` ([§3.3.2](#332-profile)), `message` requests
   ([§3.5](#35-messages), [§4.4](#44-edit)), and `room_set`
   ([§4.2.4](#424-creating-and-editing)). A write that creates a record, or saves
@@ -2669,8 +2668,8 @@ server.
 - Clients never merge recorded user objects into current ones
   ([§3.3.1](#331-user-objects)). So an old history page cannot overwrite a
   current profile.
-- Servers do not give a retired `user_id` to another user
-  ([§3.3.3](#333-changes)). Logged messages and mentions refer to it, and the
+- Servers do not give a used `user_id` to another user
+  ([§3.2](#32-authentication)). Logged messages and mentions refer to it, and the
   new owner would inherit them.
 - Clients show the server's address with its `title` where the user signs in
   or picks a server ([§3.1](#31-server-frame)). So a server cannot pass as

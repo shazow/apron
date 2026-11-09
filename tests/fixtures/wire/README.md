@@ -21,7 +21,7 @@ Go transport peer; no browser or running server is needed.
 
 Each file has `format: 4`, `kind` (`replay` or `session`), `name`,
 `description`, `references`, `variants`, and `expected`, and no other
-top-level keys. Frames are protocol 9. Each variant has `name` and ordered
+top-level keys. Frames are protocol 10. Each variant has `name` and ordered
 `steps`, starts with fresh client state, and must reach the top-level
 `expected` state. An `expect` step additionally checks an intermediate state.
 
