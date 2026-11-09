@@ -896,6 +896,13 @@ async def _(run):
     j, update = await conn.wait(room_update("updated", room_id), start)
     must(update and j < i, "no room_update updated before the result")
     must(records(update, "updated", room_id)[0].get("title") == "Conformance 2", "the new title is missing")
+    for description in ("About", ""):
+        start = len(conn.frames)
+        await conn.call("room_set", {"room_id": room_id, "description": description})
+        _, update = await conn.wait(room_update("updated", room_id), start)
+        record = records(update, "updated", room_id)[0] if update else {}
+        must(record.get("title") == "Conformance 2", "an edit without title did not keep the title")
+        must(record.get("description", "") == description, f"description is {record.get('description')!r}, not {description!r}")
     run.new_room = room_id
 
 

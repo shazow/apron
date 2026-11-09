@@ -16,6 +16,7 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 - Any auth scheme that the server does not offer is `unsupported` (§3.2), also one that PROTOCOL.md does not define. It was `invalid_params`.
 - Clients no longer have to render both text formats (§3.5.2).
 - A new message with no `text` and no `embeds` is `invalid_params` (§3.5.1). Its result was `{}`, so the result of a new message now always has `message_id`.
+- `room_set` with `room_id` merges (§4.2.4): a field that is present replaces the kept value, an empty value clears it, and an absent field stays. An edit used to clear every field that it left out.
 - Clarified: clients warn on a version mismatch and continue (§3.1), reactions keep the order in which they first appeared (§4.7), a room `mute` may let mentions through (§4.5.3), and how mutes change `unread` is up to the server (§4.9.3).
 
 ## v9 (2026-10-27)

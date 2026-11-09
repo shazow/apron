@@ -224,7 +224,7 @@ client's public API.
 | `react: {as, message_id, emojis}` | Set the user's complete emoji set on the message (`[]` clears). |
 | `mute: {as, mute}` | Pause notifications everywhere for `mute` seconds, or until resumed (`true`), or resume them (`false`). |
 | `createRoom: {as, parent_room_id?, title?, description?}` | Create a room; with `parent_room_id` it is a thread. |
-| `updateRoom: {as, room, title?, description?}` | Patch a room's metadata: a present key sets the value (`null` clears it), an absent key keeps the current value. |
+| `updateRoom: {as, room, title?, description?}` | Patch a room's metadata: a present key sets the value (`null` clears it, sent as `""`), an absent key keeps the current value. |
 | `joinRoom: {as, room}` / `leaveRoom: {as, room}` | Join or leave a room (or thread). |
 | `listRooms: {as, parent_room_id?}` | List the rooms not joined (with their members), or with `parent_room_id` that room's threads not joined. |
 | `loadRoom: {as, room}` | Open a thread room (a room with `parent_room_id`): load its history as its own room. |
@@ -286,7 +286,7 @@ operation is invoked.
 | `mute` | `status` | `{mute}` as given |
 | (`idle`, capability `status`) | `status` | `{idle}`: the latest `idle` step's seconds plus the whole seconds since that step, or `false`. Sent at once on a connection that starts unattended, after its `auth` |
 | `createRoom` | `room_set` | `{parent_room_id?, title?, description?}`: only the keys given; no `room_id`, no `ext` |
-| `updateRoom` | `room_set` | `{room_id, title?, description?}` from the latest record with the patch applied; never `parent_room_id` |
+| `updateRoom` | `room_set` | `{room_id, title?, description?}`: only the keys of the patch, with `""` for a cleared one; never `parent_room_id` |
 | `joinRoom` / `leaveRoom` | `room_join` / `room_leave` | `{room_id: room}` |
 | `listRooms` | `room_list` | `{filter: "not_joined", members: true}`, or `{parent_room_id, filter: "not_joined"}` |
 | (recovery) | `history` | `{room_id, after, before}`, or `{room_id, after}` for a resume sent behind `auth` (see below), plus an optional positive `limit` |
@@ -295,7 +295,8 @@ operation is invoked.
 
 In saves, `reply_to` is always resubmitted bare even when the stored snapshot
 embedded it, `deleted` is omitted unless deleting, and fields absent from the
-latest snapshot stay absent. Room updates resubmit `title` and `description`.
+latest snapshot stay absent. Room updates send only the fields that change,
+since `room_set` merges ([PROTOCOL.md §4.2.4](../../../PROTOCOL.md#424-creating-and-editing)).
 
 No operation changes `ext` ([PROTOCOL.md §4.12](../../../PROTOCOL.md#412-ext)),
 and clients do not have to send it back:
@@ -523,7 +524,7 @@ no sleeps, timers, or DOM selectors.
 | `ext-merge.json` | capability `ext`: a save and a `room_set` built without `ext` while another writer adds it, and the server's snapshot and record keep it; `user` notifications merge `ext` one level down, and an empty value clears one key |
 | `ext-without-capability.json` | a server without capability `ext` whose extension (`ext:irc`) keeps its data in `ext`: an edit, a `room_set`, and a delete built from records with `ext` send none, and the tombstone carries none |
 | `message-saves.json` | edit, move into a thread room, and delete resubmit `room_id`, `body`, and bare `reply_to` from the latest snapshot, including a change from another connection |
-| `rooms.json` | thread and top-level creation with `room_set`, patch-style updates resubmitting `title` and `description`, full record replacement, `left` |
+| `rooms.json` | thread and top-level creation with `room_set`, updates that send only the changed field (`""` clears one), full record replacement, `left` |
 | `sign-in.json` | the automatic join, the shown statuses, and the mutes in effect arrive after the `auth` result; a later sign-in drops kept statuses and applies the ones that arrive; a complete `you` in the `auth` result replaces the kept object; the mutes in effect replace the kept ones |
 | `status-seen.json` | a disconnect and a change to a chosen `invisible` send the same shown `offline` with `seen`; while the shown status stays `offline`, `seen` stays, through a `user` notification for another field, a reconnect, and a later listing; a kept `seen` is not shown once the shown status leaves `offline`; a `dnd` user who disconnects; a shown `""`; the user's own chosen status from `you` survives a complete listing object with a shown `offline` and `seen` |
 | `status.json` | `idle` sent at once on a connection that starts unattended, as seconds, then `idle: false`, and again on a new connection; a `mute` applies by its `{}` result at the latest, and an error changes nothing; another connection's `mute: false` ends a room's mute; a sign-in replaces the kept mutes |

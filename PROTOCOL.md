@@ -1013,7 +1013,7 @@ A **room record** describes one room, as `room_list`, `room_update`, and
 ```
 
 In the "set by" column, `server` fields are read-only
-([§2.3](#23-records-and-replay)), and `room_set` replaces `client` fields
+([§2.3](#23-records-and-replay)), and `room_set` sets `client` fields
 ([§4.2.4](#424-creating-and-editing)). `delivery` fields describe the room as
 this client sees it. They are not logged. Clients always use the latest value,
 even if `log_id` did not change. A frame that omits a delivery field does not
@@ -1238,8 +1238,8 @@ the full list:
 #### 4.2.4 Creating and editing
 
 `room_set` without `room_id` creates a room, and joins the creator to it.
-`room_set` with `room_id` replaces the client fields of that room
-([§4.2](#42-rooms)). Both forms return `{"room_id": "..."}`.
+`room_set` with `room_id` merges its fields into the client fields of that room
+([§3.3.1](#331-user-objects)). Both forms return `{"room_id": "..."}`.
 
 ```jsonc
 // -> start a thread in general
@@ -1269,10 +1269,10 @@ the full list:
 // <- then the result
 {"id": "c26", "result": {"room_id": "1724803312001"}}
 
-// -> later, a summarizer bot rewrites the description, resubmitting the title
+// -> later, a summarizer bot rewrites the description
 {
   "method": "room_set", "id": "s9", "params": {
-    "room_id": "1724803312001", "title": "Deploy",
+    "room_id": "1724803312001",
     "description": "Root cause: **expired cert** on the build runner. Fix is rolling out."
   }
 }
@@ -1293,8 +1293,7 @@ the full list:
 ```
 
 - Fields that end in `_id` are fixed at creation.
-- A server MAY also fix `private`. An edit that omits `private` keeps its value.
-- `ext` merges ([§4.12](#412-ext)). Other omitted fields are cleared.
+- A server MAY also fix `private`.
 - `parent_room_id` MUST refer to an existing visible room.
 - `private: true` makes the room visible only to its members. A thread that is
   created without `private` takes the value of its parent. Members add other
