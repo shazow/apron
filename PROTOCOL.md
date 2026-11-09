@@ -727,11 +727,10 @@ authoritative **snapshot** at one log position.
 
 #### 3.5.2 Rendering
 
-- Clients MUST render both formats. `"markdown"` text is
-  [CommonMark](https://commonmark.org/). Clients MAY render common extensions,
-  such as tables, and MAY render soft line breaks as hard breaks.
+- `"markdown"` text is [CommonMark](https://commonmark.org/). Clients MAY
+  render common extensions, such as tables, and MAY render soft line breaks as
+  hard breaks.
 - Other fields that this document calls CommonMark follow the same rules.
-  Clients MAY show them as plain text.
 - Clients MUST disable raw HTML in CommonMark, or sanitize it with the same
   allowlist as HTML embeds ([§4.8](#48-embeds-and-avatars)).
 - Clients SHOULD isolate the text direction of each string that users write,
@@ -816,8 +815,8 @@ A minimal client (informative):
 4. Keeps one user object per `user_id`, merged from current objects and falling
    back to `from`, and shows `Name (@user_id)` when two `user_id`s share a name
    ([§3.3.1](#331-user-objects)).
-5. Renders `plain` and `markdown` text with raw HTML disabled, and a fallback
-   card for embed kinds it does not support ([§3.5.2](#352-rendering)).
+5. Disables raw HTML where it renders CommonMark, and shows a fallback card
+   for embed kinds it does not support ([§3.5.2](#352-rendering)).
 6. Matches replies by `id`, acts on error codes, and ignores unknown
    notifications and keys ([§1](#1-transport--framing)).
 
