@@ -85,8 +85,7 @@ function createMessage(you, params) {
 // Keep this synchronous: history reads, commits, and broadcasts must stay ordered.
 function dispatch(ws, method, params) {
   if (method === "auth") {
-    check(!["token", "webauthn", "email", "external"].includes(params.scheme), "Unsupported scheme", -32601);
-    check(params.scheme === "guest", "Unknown scheme");
+    check(params.scheme === "guest", "Unsupported scheme", -32601);
     ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() };
   }
   check(ws.data.you, "Authenticate first", -32001);
