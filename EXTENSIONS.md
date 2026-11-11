@@ -9,7 +9,7 @@ disagree.
 - Clients use an extension only while the latest `server` frame lists its
   capability, unless its section says otherwise.
 - An extension keeps its data under its name in `ext`
-  ([§4.12](PROTOCOL.md#412-ext)).
+  ([§4.13](PROTOCOL.md#413-ext)).
 - Clients ignore a field whose value has the wrong type, and use its default.
 - Each section says what clients do without the extension.
 

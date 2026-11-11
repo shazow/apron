@@ -32,7 +32,7 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Extension data, keyed by extension name without the ext: prefix (§4). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.12).",
+      "description": "Extension data, keyed by extension name without the ext: prefix (§4). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.13).",
       "type": "object",
       "propertyNames": {
         "not": {
@@ -70,7 +70,7 @@
           "$ref": "#/$defs/LogId"
         },
         "ext": {
-          "description": "Extension data (§4.12). Complete objects carry all of it; a user notification carries the keys that changed.",
+          "description": "Extension data (§4.13). Complete objects carry all of it; a user notification carries the keys that changed.",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -288,7 +288,7 @@
           "default": false
         },
         "ext": {
-          "description": "Extension data (§4.12). Absent on tombstones.",
+          "description": "Extension data (§4.13). Absent on tombstones.",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -363,7 +363,7 @@
           "minimum": 0
         },
         "ext": {
-          "description": "Extension data (§4.12).",
+          "description": "Extension data (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -544,7 +544,7 @@
           }
         },
         "ext": {
-          "description": "Data of extensions that define it on the server frame, each under its name (§4.12).",
+          "description": "Data of extensions that define it on the server frame, each under its name (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -639,7 +639,7 @@
           "description": "The chosen status, with capability status (§4.5.1)."
         },
         "ext": {
-          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       }
@@ -663,7 +663,7 @@
           "type": "boolean"
         },
         "ext": {
-          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -682,7 +682,7 @@
           "$ref": "#/$defs/MessageRef"
         },
         "ext": {
-          "description": "Extension data, an argument like the other params (§4.1, §4.12).",
+          "description": "Extension data, an argument like the other params (§4.1, §4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -786,7 +786,7 @@
           "type": "string"
         },
         "ext": {
-          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       }
