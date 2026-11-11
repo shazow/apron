@@ -2469,8 +2469,9 @@ approves the proposal:
   type, or both. It builds any link from its own configuration.
 - A temporary token expires within minutes of its delivery.
 - A token that is short enough to type, such as six digits, works only on the
-  connection that made the proposal (short codes are easy to guess). A token
-  that works on other connections MUST be unguessable.
+  connection that made the proposal, or with the proposal's `state` (short
+  codes are easy to guess, and `state` is not).
+- A token that works without either MUST be unguessable.
 - An email with a code gives the server's address. It tells the user to type
   the code only in a client that is connected to that server (otherwise a
   server could propose a sign-in to another server with the user's address,
@@ -2496,7 +2497,7 @@ approves the proposal:
 - Approval of an addition works only on a connection that is signed in to the
   account that proposed it (otherwise someone could lead a victim to link the
   victim's address to the other person's account). It adds the address to
-  that account, and returns `{}`.
+  that account, and returns `you`.
 - An invalid, expired, or used token is `denied`. A sign-in token on a
   signed-in connection is also `denied`, and so is an address that belongs to
   another account.
@@ -2554,6 +2555,13 @@ class External {
 - Servers SHOULD publish
   [protected resource metadata](https://www.rfc-editor.org/rfc/rfc9728) for
   `resource`, with `issuer` in `authorization_servers`.
+- Servers SHOULD advertise an authorization server that any client can use.
+  It:
+  - allows cross-origin requests to its metadata, token, and registration
+    endpoints.
+  - gives any client a client ID, by a client ID metadata document, dynamic
+    registration, or `client_id`.
+  - offers the device authorization grant.
 
 #### 4.12.2 Signing in
 
@@ -2595,6 +2603,10 @@ class External {
   `exp`.
 - An invalid, expired, or wrongly addressed token is `denied`.
 - A successful result carries `you`, and no `token`.
+- On a connection that is signed in, guests included, an `external` request
+  adds the token's identity to that account. It never signs in to another
+  account.
+- An identity that belongs to another account is `denied`.
 - Servers identify an account by the token's `sub`. They never identify it
   by a claim that can change, such as a user name.
 - Servers MUST NOT pass a client's token on, except to the issuer, such as for
@@ -2698,10 +2710,10 @@ server.
   another web origin.
 - An email proposal returns `{}` for every address ([§4.11.1](#4111-proposals)).
   So proposals do not reveal which addresses have accounts.
-- A short code works only on the connection that proposed, and failed attempts
-  from any connection count against the proposal
-  ([§4.11.2](#4112-temporary-tokens)). This stops brute force across
-  connections.
+- A short code works only on the connection that proposed, or with the
+  proposal's `state`, and failed attempts from any connection count against
+  the proposal ([§4.11.2](#4112-temporary-tokens)). This stops brute force
+  across connections.
 - Link tokens travel in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
   Browsers do not send fragments in request lines or `Referer` headers, so
   tokens stay out of server logs.
@@ -2711,8 +2723,10 @@ server.
 - A link carries the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
   else's link into that person's account (login cross-site request forgery).
-- A signed-in connection cannot approve a sign-in ([§4.11.3](#4113-approval)).
-  So a link cannot silently switch a session to another account.
+- A signed-in connection cannot approve a sign-in ([§4.11.3](#4113-approval)),
+  and `external` on a signed-in connection only adds an identity
+  ([§4.12.3](#4123-token-checks)). So a link or a token cannot silently switch
+  a session to another account.
 - An addition works only on a connection of the account that proposed it
   ([§4.11.3](#4113-approval)). Otherwise someone could lead a victim to link the
   victim's identity to the other person's account.
