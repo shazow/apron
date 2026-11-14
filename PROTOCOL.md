@@ -2708,6 +2708,13 @@ server.
 - A bearer `token` from WebAuthn is bound to the origin of its ceremony
   ([§4.10](#410-webauthn-authentication)). So a stolen token does not work from
   another web origin.
+- A bearer `token` works for anyone who copies it, such as from storage or a
+  log ([§3.2.1](#321-bearer-tokens)). Rotation limits this, as an optional
+  server policy. A server that replaces the token at each sign-in, and treats
+  a replaced token that comes back as a copy, can revoke the tokens that
+  followed it. The copy then works only until the real client next connects,
+  and its use shows the theft. A short grace period lets several connections
+  of one client sign in with the same token at once.
 - An email proposal returns `{}` for every address ([§4.11.1](#4111-proposals)).
   So proposals do not reveal which addresses have accounts.
 - A short code works only on the connection that proposed, or with the
