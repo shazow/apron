@@ -395,7 +395,9 @@ class AuthResult {
   public_key?: object;          // WebAuthn options
 
   // "external" scheme, begin (§4.12.1)
-  external?: External;
+  url?: string;                 // the sign-in page
+  issuer?: string;              // absent: the server's origin
+  client_id?: string;           // a client ID that any client MAY use
 }
 ```
 
@@ -2528,7 +2530,7 @@ use an OAuth library, or a few lines of their own.
 // -> begin
 {"method": "auth", "id": "c1", "params": {"scheme": "external"}}
 // <-
-{"id": "c1", "result": {"external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
+{"id": "c1", "result": {"url": "https://chat.example/oauth/authorize"}}
 
 // the client opens
 // https://chat.example/oauth/authorize?response_type=code&client_id=com.sidekick.app
@@ -2550,39 +2552,32 @@ use an OAuth library, or a few lines of their own.
 
 #### 4.12.1 Begin
 
-```ts
-class External {
-  authorization_endpoint: string; // where the client sends the user
-  issuer?: string;                // absent: the server's origin
-  client_id?: string;             // a client ID that any client MAY use
-  scope?: string;                 // space-separated scopes to request
-  params?: object;                // more authorization parameters, as strings
-}
-```
-
 - An `external` request with neither `code` nor `token` is a begin. It
-  authenticates nothing, and returns `external`.
+  authenticates nothing, and returns `url`, the sign-in page: the
+  authorization endpoint.
+- `url` MAY carry a query, such as `scope` or a provider hint. Clients keep it,
+  and add their own parameters ([§4.12.2](#4122-signing-in)) to it. The
+  server's query never includes a parameter that §4.12.2 sets.
 - The server's origin is `https://` plus the host and any port of its address
   ([§1](#1-transport--framing)), such as `https://chat.example`.
 - Without `issuer`, the server is its own authorization server, and the issuer
   is its origin.
-- Clients add `params` to the authorization request as they are. They never
-  replace a parameter that [§4.12.2](#4122-signing-in) sets.
+- `client_id` is a client ID that a foreign issuer accepts from any client.
 
 #### 4.12.2 Signing in
 
-- Clients send the user to `authorization_endpoint` with the authorization
-  code grant, PKCE `S256`, and an unguessable `state`.
+- Clients send the user to `url` with the authorization code grant
+  (`response_type`, `client_id`, `redirect_uri`), PKCE `S256`
+  (`code_challenge`, `code_challenge_method`), and an unguessable `state`.
 - Clients send the server's origin as
   [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
   from the address that they connected to (otherwise a server could get a
   token for another server, and use it there).
-- Clients send `scope` and `params` from begin, when present.
 - When the server is its own authorization server, any `client_id` works,
   such as the client's app ID. Otherwise clients use a client ID that the
   issuer accepts, such as begin's `client_id`.
-- Clients open the authorization endpoint in the system browser or a sign-in
-  session, never in an embedded web view.
+- Clients open `url` in the system browser or a sign-in session, never in an
+  embedded web view.
 - Before they use a code, clients MUST check that `state` is theirs, and that
   [`iss`](https://www.rfc-editor.org/rfc/rfc9207) is the issuer.
 - Clients redeem the code with `code`, `code_verifier`, `redirect_uri`, and
