@@ -395,9 +395,7 @@ class AuthResult {
   public_key?: object;          // WebAuthn options
 
   // "external" scheme, begin (§4.12.1)
-  url?: string;                 // the sign-in page
-  issuer?: string;              // absent: the server's origin
-  client_id?: string;           // a client ID that any client MAY use
+  external?: External;
 }
 ```
 
@@ -2530,7 +2528,7 @@ use an OAuth library, or a few lines of their own.
 // -> begin
 {"method": "auth", "id": "c1", "params": {"scheme": "external"}}
 // <-
-{"id": "c1", "result": {"url": "https://chat.example/oauth/authorize"}}
+{"id": "c1", "result": {"external": {"url": "https://chat.example/oauth/authorize"}}}
 
 // the client opens
 // https://chat.example/oauth/authorize?response_type=code&client_id=com.sidekick.app
@@ -2552,9 +2550,16 @@ use an OAuth library, or a few lines of their own.
 
 #### 4.12.1 Begin
 
+```ts
+class External {
+  url: string;                  // the sign-in page: the authorization endpoint
+  issuer?: string;              // absent: the server's origin
+  client_id?: string;           // a client ID that a foreign issuer accepts from any client
+}
+```
+
 - An `external` request with neither `code` nor `token` is a begin. It
-  authenticates nothing, and returns `url`, the sign-in page: the
-  authorization endpoint.
+  authenticates nothing, and returns `external`.
 - `url` MAY carry a query, such as `scope` or a provider hint. Clients keep it,
   and add their own parameters ([§4.12.2](#4122-signing-in)) to it. The
   server's query never includes a parameter that §4.12.2 sets.
@@ -2562,7 +2567,6 @@ use an OAuth library, or a few lines of their own.
   ([§1](#1-transport--framing)), such as `https://chat.example`.
 - Without `issuer`, the server is its own authorization server, and the issuer
   is its origin.
-- `client_id` is a client ID that a foreign issuer accepts from any client.
 
 #### 4.12.2 Signing in
 
