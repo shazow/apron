@@ -129,7 +129,7 @@ One line for each cell that is not plain.
   proposal's `state`. Otherwise, the code.
 - **`external`, W3:** a redirect to the frontend's own origin. It needs CORS
   on the authorization server, and a client ID: a client ID metadata
-  document, dynamic registration, or `server.external.client_id` (C3).
+  document, dynamic registration, or the begin result's `client_id` (C3).
 - **`external`, N3:** a sign-in session or loopback, with PKCE. A client ID
   as for W3.
 - **`external`, T:** the device authorization grant (C3). Without it, a
@@ -168,6 +168,7 @@ Contexts:
 | Email link that approves a waiting portal page² | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OpenID Connect provider, such as Pocket ID | ✅ | ✅ | ✅ | ✅ | ✅ |
 | SIWE | ✅ extension or WalletConnect | ⚠️³ | ⚠️³ | ✅ extension wallet | ✅ wallet app; ⚠️ return to the browser³ |
+| AT Protocol ("Sign in with Bluesky"), with the server as its OAuth client⁴ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 1. A link opens in the browser that the mail app chooses, not in the context
    that the client opened. The portal page that waits for the result is
@@ -182,6 +183,11 @@ Contexts:
    session or a Custom Tab, so the portal falls back to WalletConnect. The
    return from the wallet app to the sign-in session may need the user to
    switch apps by hand. Check on devices.
+4. A redirect to the user's own authorization server (found from their
+   handle), then back to the server's callback, like any OpenID Connect
+   provider. The portal needs the handle: typed on the page, or sent as
+   `login_hint` (`ext:auth_external`). AT Protocol is never a foreign issuer
+   (PLAN_LOOSE.md, "Scenarios behind the portal").
 
 Guidance for operators:
 
@@ -211,7 +217,7 @@ Guidance for operators:
   server's address in the email.
 - **R2.** Servers on one host and port share a `resource`, and servers under
   one RP ID share passkeys, so they trust each other.
-- **R3.** A shared `server.external.client_id` shows every client as one
+- **R3.** A shared `client_id` from begin shows every client as one
   name on the consent screen, so a phishing frontend looks like any other.
   Client ID metadata documents show the real client.
 - **R4.** A frontend that a server lists as a related origin can relay its

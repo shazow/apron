@@ -52,44 +52,62 @@ reconnects work.
 
 ## Wire
 
-### Advertising
+### Begin
+
+The `server` frame only lists `external` in `server.auth`. A client asks
+for the sign-in details when it needs them, with an `external` request that
+has neither `code` nor `token`. This is the begin request (decided
+2026-11-14): one way to get the details, and room for a server to answer
+differently by request, such as by the user's choice of provider
+(`ext:auth_external`).
 
 ```jsonc
-// <- from wss://chat.example/ws: the server is the issuer
-{"method": "server", "params": {"apron": 10, "auth": ["external", "token"],
-  "external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
+// <- from wss://chat.example/ws
+{"method": "server", "params": {"apron": 10, "auth": ["external", "token"]}}
 
-// <- or with a foreign issuer
-{"method": "server", "params": {"apron": 10, "auth": ["external", "token"],
-  "external": {"issuer": "https://id.example", "authorization_endpoint": "https://id.example/authorize",
-               "client_id": "apron", "scope": "openid"}}}
+// -> begin
+{"method": "auth", "id": "c1", "params": {"scheme": "external"}}
+// <- the server is the issuer
+{"id": "c1", "result": {"external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
+// <- or a foreign issuer
+{"id": "c1", "result": {"external": {"issuer": "https://id.example",
+  "authorization_endpoint": "https://id.example/authorize", "client_id": "apron", "scope": "openid"}}}
 ```
 
 ```ts
-class External {                  // server.external
+class External {                  // the begin result's "external"
   authorization_endpoint: string; // where clients send the user
   issuer?: string;                // absent: the server's origin
   client_id?: string;             // a public client that any client MAY use
   scope?: string;                 // space-separated scopes to request
+  params?: object;                // more authorization parameters, added as they are
 }
 ```
 
-- A server that lists `external` in `server.auth` sends `server.external`.
+- Begin authenticates nothing, on any connection, signed in or not. A
+  server needs no state to answer it.
 - The server's origin is `https://` plus the host and any port of its
   address. It is the `resource`, and the issuer when `issuer` is absent.
 - `authorization_endpoint` lets simple clients skip discovery. Library
   clients discover the rest from `issuer` (RFC 8414).
+- `params` carries parameters such as a provider hint, which the client adds
+  to the authorization URL unchanged. They never replace `response_type`,
+  `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`,
+  `state`, or `resource`.
+- `step` is not needed: the fields tell begin, redemption, and a foreign
+  access token apart, as they tell an email proposal from its approval.
 
 ### Simple client
 
 ```text
-1. verifier = 32 random bytes; challenge = BASE64URL(SHA-256(verifier)); state = 16 random bytes
-2. opens  <authorization_endpoint>?response_type=code&client_id=<id>&redirect_uri=<return>
+1. begin, as above
+2. verifier = 32 random bytes; challenge = BASE64URL(SHA-256(verifier)); state = 16 random bytes
+3. opens  <authorization_endpoint>?response_type=code&client_id=<id>&redirect_uri=<return>
             &code_challenge=<challenge>&code_challenge_method=S256&state=<state>
-            &resource=<the server's origin>[&scope=<scope>]
-3. the portal signs the user in, confirms, and redirects to
+            &resource=<the server's origin>[&scope=<scope>][&<params>]
+4. the portal signs the user in, confirms, and redirects to
    <return>?code=…&state=…&iss=…        (or ?error=access_denied&state=…&iss=…)
-4. checks state, and that iss is the issuer
+5. checks state, and that iss is the issuer
 ```
 
 ```jsonc
@@ -106,8 +124,8 @@ and issues an Apron `token`.
 
 ### Library client
 
-The standard authorization code flow with PKCE against `issuer`, with
-`resource`. Then:
+Begin, then the standard authorization code flow with PKCE against
+`issuer`, with `resource` and any `params`. Then:
 
 - **The server is the issuer:** the token endpoint's `access_token` is an
   Apron bearer token. The client presents it with `scheme: "token"`.
@@ -181,7 +199,8 @@ Servers:
   that key (RFC 9449 §7.2). A bound token never passes as a bearer token.
 - When a foreign issuer supports or requires DPoP, redeem codes with a DPoP
   key of their own, and handle `use_dpop_nonce` themselves.
-- An `external` request with neither `code` nor `token` is `invalid_params`.
+- An `external` request with neither `code` nor `token` is the begin
+  request.
 
 A server that is its own issuer:
 
@@ -258,6 +277,31 @@ tokens, redeems codes for simple clients, and maps `sub` to accounts.
   beside it.
 - Keeps `webauthn` for web.apron.chat, and `token` for bots and invites.
 
+## Scenarios behind the portal
+
+Apron does not support these natively. They are scenarios the design must
+keep working, each as a method behind a portal, so that clients see only
+`external`. [EVALUATIONS.md](EVALUATIONS.md#behind-the-portal) checks where
+each one runs.
+
+- **Pocket ID or another OpenID Connect provider:** behind the server's
+  portal, or as the foreign issuer.
+- **SIWE:** the portal asks the user's wallet to sign an EIP-4361 message,
+  then issues an Apron code. A native `ext:siwe` scheme was considered and
+  set aside: clients would need wallet code, and the portal gives them SIWE
+  for free.
+- **AT Protocol ("Sign in with Bluesky"):** only behind the server's
+  portal, never as a foreign issuer. The server is the AT Protocol OAuth
+  client: its own client metadata document and callback, pushed
+  authorization requests and DPoP with its own key, the `atproto` scope,
+  and a check that the returned DID belongs to the authorization server. It
+  maps the DID to an account, and issues an Apron code to the Apron client.
+  A handle can arrive as `login_hint` (`ext:auth_external`). It cannot be a
+  foreign issuer: its tokens are for the user's PDS, not for
+  `https://chat.example`; its redirect URIs must be listed in one client
+  metadata document; and the issuer depends on the user. Research:
+  RESEARCH_ATPROTO.md (pending).
+
 ## Email
 
 `email` stays as a native shortcut: v10, plus the mix-up fix, codes that
@@ -269,7 +313,7 @@ its portal instead.
 
 | | v10 `external` (PLAN_MINIMAL) | loose `external` | `oauth` (PLAN_OAUTH) |
 |---|---|---|---|
-| simple client | propose, open, read the fragment, redeem | build the URL, open, read the query, redeem | not possible |
+| simple client | propose, open, read the fragment, redeem | begin, build the URL, open, read the query, redeem | not possible |
 | library client | not possible | ✅ | ✅ |
 | third-party clients | a trust list, or a typed code | ✅ open, when the server is the issuer | needs client IDs and CORS from the issuer |
 | foreign issuer | behind the server's page | ✅ | ✅ |
@@ -426,10 +470,15 @@ verifiers carry over.
 
 ## Changes to shazow/apron#115
 
-- §3.1: `server.external` as above.
-- §3.2: `external` takes `code` with `code_verifier`, `redirect_uri`, and
-  `client_id`, or `token`. `return_url`, `state`, and the result's `url`
-  stay gone.
+Done in `8755cfa` (2026-11-14): §4.12 now follows this plan, with begin,
+and `auth` gains `ext` for extensions such as `ext:auth_external`. Still to
+do: HISTORY.md, the schema, and fixtures.
+
+
+- §3.1: `server.external` goes; the details come from begin.
+- §3.2: `external` takes nothing (begin), `code` with `code_verifier`,
+  `redirect_uri`, and `client_id`, or `token`. The result of begin carries
+  `external`. `return_url`, `state`, and the result's `url` stay gone.
 - §4.12, renamed "External sign-in" with this plan: advertising, signing
   in, the issuer's rules, and token checks.
 - §5.2: one line for each guard above.
@@ -458,8 +507,9 @@ verifiers carry over.
 8. Should a server be able to require binding (`server.dpop.required`) and
    refuse unbound tokens? Old clients would then fail to sign in with
    `token`.
-9. Issuers that require pushed authorization requests: should the server
-   push the request for simple clients, or are they library-only?
+9. Issuers that require pushed authorization requests: settled. They go
+   behind the server's portal, which pushes requests on its own behalf (see
+   AT Protocol in "Scenarios behind the portal").
 10. Terminals: is a key file worth binding to, or only keys in an agent, a
     TPM, or a platform keystore?
 11. Once tokens bind to keys, does §4.10's origin binding of WebAuthn tokens

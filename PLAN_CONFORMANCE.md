@@ -154,13 +154,12 @@ Server, without sign-in:
 
 | ID | Side | Checks |
 |---|---|---|
-| `external.shape.frame` | server | `server.external` is present; without `issuer`, `authorization_endpoint` is on the server's origin |
+| `external.shape.begin` | server | begin (`external` without `code` or `token`) returns `external`; without `issuer`, `authorization_endpoint` is on the server's origin; it works signed in or not |
 | `external.shape.metadata` | server | the issuer's metadata exists, its `issuer` is identical, it lists `S256`, and it says that it sends `iss` |
 | `external.shape.cors` | server | the metadata and the token endpoint allow cross-origin requests |
 | `external.A3.pkce-required` | server | a request without `code_challenge`, or with `plain`, is refused |
 | `external.A1.resource` | server | a `resource` other than the server's origin is refused |
 | `external.A2.redirect-uri` | server | `javascript:`, a scheme without a `.`, and non-loopback `http` are refused |
-| `external.shape.invalid-params` | server | `external` without `code` or `token` is `invalid_params` |
 | `external.A5.bad-code` | server | an unknown code is `denied` |
 
 Server, after the portal:
