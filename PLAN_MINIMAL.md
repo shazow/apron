@@ -3,8 +3,12 @@
 Status: proposal, local and not committed. Protocol version 10 as on `main`
 (`687605b`), with small wire fixes. Section numbers below are `main`'s.
 
-This is the shortest path: it keeps v10's `external` as it is. The
-alternatives change `external`'s shape:
+This is the shortest path: it keeps v10's `external` as it is. Its shape is
+close to the passkey page of
+[PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md): begin returns a
+`url`, and the client redeems on the connection. But it binds results to the
+proposing connection and a trust list instead of PKCE, so the passkey page
+would bring a second mechanism. The alternatives change `external`'s shape:
 
 - [PLAN_OAUTH.md](PLAN_OAUTH.md): `external` becomes an OAuth 2.1 profile,
   drafted on [shazow/apron#115](https://github.com/shazow/apron/pull/115).

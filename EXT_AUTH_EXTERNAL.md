@@ -7,8 +7,9 @@ replaces the earlier draft, which only labelled a single portal.
 
 Why an extension and not core: a client that does not know it still signs
 in. It shows one "Sign in" button, begins without a choice, and gets the
-server's default. Core defines the begin request and `params`, so a choice
-made through the extension reaches every client.
+server's default. Core defines the begin request and its `url`, whose
+query the client keeps, so a choice made through the extension reaches
+every client.
 
 The section below is written to drop into EXTENSIONS.md.
 
@@ -34,13 +35,8 @@ typed to find their account, when it begins.
 }
 // -> begin with the user's choice
 {"method": "auth", "id": "c1", "params": {"scheme": "external", "ext": {"auth_external": {"prefer": "github"}}}}
-// <- the choice shows in params, which every client adds to the URL
-{
-  "id": "c1", "result": {"external": {
-    "authorization_endpoint": "https://chat.example/oauth/authorize",
-    "params": {"provider": "github"}
-  }}
-}
+// <- the choice shows in url's query, which every client keeps
+{"id": "c1", "result": {"url": "https://chat.example/oauth/authorize?provider=github"}}
 ```
 
 ```ts
@@ -71,10 +67,10 @@ class AuthExternalBegin {       // auth params.ext.auth_external, on begin
   email address or an AT Protocol handle. Clients send it only as the user
   typed it, never guessed or remembered from another server.
 - The server MAY use `login_hint` to choose the way, such as a company's own
-  sign-in for its email domain, and MAY pass it on in `params`.
+  sign-in for its email domain, and MAY pass it on in `url`'s query.
 - The server answers begin as [§4.12.1](PROTOCOL.md#4121-begin) says. A
-  choice changes only the result's fields, such as `params` or
-  `authorization_endpoint`.
+  choice changes only the result's fields: `url`, and `issuer` and
+  `client_id` for a foreign issuer.
 - Without the extension, clients show one "Sign in" button, and begin without
   `ext`.
 
@@ -94,11 +90,11 @@ Each is a way behind the portal; clients see only `external`.
 
 | Option | Begin's result | The portal |
 |---|---|---|
-| Pocket ID, as the issuer | `issuer: "https://id.example"`, its `authorization_endpoint`, `client_id: "apron"` | Pocket ID itself |
-| GitHub, through Keycloak | the Keycloak issuer, and `params: {"kc_idp_hint": "github"}` | Keycloak sends the user straight on to GitHub |
+| Pocket ID, as the issuer | `url: "https://id.example/authorize?scope=openid"`, `issuer: "https://id.example"`, `client_id: "apron"` | Pocket ID itself |
+| GitHub, through Keycloak | `url: "https://kc.example/auth?kc_idp_hint=github"`, with the Keycloak `issuer` | Keycloak sends the user straight on to GitHub |
 | A company's sign-in, chosen by `login_hint: "ada@corp.example"` | that company's issuer | the company's sign-in |
-| Bluesky, with `login_hint: "alice.bsky.social"` | the server's own endpoint, and `params: {"provider": "atproto", "login_hint": "alice.bsky.social"}` | the server's portal, acting as an AT Protocol OAuth client ([PLAN_LOOSE.md](PLAN_LOOSE.md), "Scenarios behind the portal") |
-| SIWE | the server's own endpoint, and `params: {"provider": "siwe"}` | the server's portal, which asks the user's wallet to sign |
+| Bluesky, with `login_hint: "alice.bsky.social"` | `url: "https://chat.example/oauth/authorize?provider=atproto&login_hint=alice.bsky.social"` | the server's portal, acting as an AT Protocol OAuth client ([PLAN_LOOSE.md](PLAN_LOOSE.md), "Scenarios behind the portal") |
+| SIWE | `url: "https://chat.example/oauth/authorize?provider=siwe"` | the server's portal, which asks the user's wallet to sign |
 
 ## Security considerations
 

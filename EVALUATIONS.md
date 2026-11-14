@@ -102,7 +102,7 @@ carries its ID.
 | | W1 | W3 | N1 | N3 | T |
 |---|---|---|---|---|---|
 | `token` | ✅¹ · ✅ · — · ✗² | ✅¹ · ✅ · — · ✗² | ✅¹ · ✅ · — · ✗² | ✅¹ · ✅ · — · ✗² | ✅¹ · ✅ · — · ✗² |
-| `webauthn` | ✅ · ✅ · ✅ · ✗³ | ✗⁴ | ✅⁵ · ✅⁵ · ✅⁵ · ✗³ | ✗⁴ | ✗⁴ |
+| `webauthn` | ✅ · ✅ · ✅ · ✗³ | ✗⁴ (✅ with a passkey page⁸) | ✅⁵ · ✅⁵ · ✅⁵ · ✗³ | ✗⁴ (✅ with a passkey page⁸) | ✗⁴ (⚠️ loopback with a passkey page⁸) |
 | `email` | ✅ · ✅ · ✅ · ✅ | ✅ (C1) | ✅ (C1) | ✅ (C1) | ✅ (C1) |
 | `external` | ✅⁶ · ✅ · ✅ (C2) · ✅⁷ | ✅ (C3) | ✅ · ✅ · ✅ (C2) · ✅⁷ | ✅ (C3) | ✅ (C3) |
 
@@ -116,6 +116,10 @@ carries its ID.
    RP ID's owner can grant.
 6. The authorization server's sign-up, then server policy for a new `sub`.
 7. The authorization server's own recovery.
+8. [PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md): `webauthn`'s
+   begin also returns a `url` to a passkey page on the server's domain, and
+   the client finishes with a code. Terminals need a browser on the same
+   machine.
 
 ## Traces
 

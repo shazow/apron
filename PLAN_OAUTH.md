@@ -1,8 +1,11 @@
 # Plan: `external` as OAuth 2.1
 
-Status: proposal, drafted in PROTOCOL.md on
-[shazow/apron#115](https://github.com/shazow/apron/pull/115), as a change to
-v10. The rest of the repository follows once the decisions settle.
+Status: earlier proposal, replaced on
+[shazow/apron#115](https://github.com/shazow/apron/pull/115) by
+[PLAN_LOOSE.md](PLAN_LOOSE.md) (§4.12 since `8755cfa`). Kept for comparison.
+It fits the passkey page of [PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md)
+least: its details are static in the `server` frame, codes are redeemed
+over HTTP, and sign-in ends in the issuer's tokens, not an Apron `token`.
 Supersedes [PLAN_ENDGAME.md](PLAN_ENDGAME.md). Prior art is in
 [PRIOR_ART.md](PRIOR_ART.md#oauth-for-open-protocols).
 

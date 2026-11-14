@@ -68,32 +68,39 @@ differently by request, such as by the user's choice of provider
 // -> begin
 {"method": "auth", "id": "c1", "params": {"scheme": "external"}}
 // <- the server is the issuer
-{"id": "c1", "result": {"external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
-// <- or a foreign issuer
-{"id": "c1", "result": {"external": {"issuer": "https://id.example",
-  "authorization_endpoint": "https://id.example/authorize", "client_id": "apron", "scope": "openid"}}}
+{"id": "c1", "result": {"url": "https://chat.example/oauth/authorize"}}
+// <- or a foreign issuer; its scope rides in the query
+{"id": "c1", "result": {"url": "https://id.example/authorize?scope=openid",
+  "issuer": "https://id.example", "client_id": "apron"}}
 ```
 
 ```ts
-class External {                  // the begin result's "external"
-  authorization_endpoint: string; // where clients send the user
+class AuthResult {                // §3.2, besides its other fields
+  // "external" scheme, begin
+  url?: string;                   // the sign-in page: the authorization endpoint
   issuer?: string;                // absent: the server's origin
-  client_id?: string;             // a public client that any client MAY use
-  scope?: string;                 // space-separated scopes to request
-  params?: object;                // more authorization parameters, added as they are
+  client_id?: string;             // a client ID that a foreign issuer accepts from any client
 }
 ```
+
+The same `url` is what a `webauthn` begin returns for its passkey page
+([PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md)), so clients follow
+one path for both.
 
 - Begin authenticates nothing, on any connection, signed in or not. A
   server needs no state to answer it.
 - The server's origin is `https://` plus the host and any port of its
   address. It is the `resource`, and the issuer when `issuer` is absent.
-- `authorization_endpoint` lets simple clients skip discovery. Library
-  clients discover the rest from `issuer` (RFC 8414).
-- `params` carries parameters such as a provider hint, which the client adds
-  to the authorization URL unchanged. They never replace `response_type`,
-  `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`,
-  `state`, or `resource`.
+- `url` lets simple clients skip discovery. Library clients discover the
+  rest from `issuer` (RFC 8414), and use `url` as the authorization
+  endpoint.
+- `url` MAY carry a query, such as `scope` or a provider hint (decided
+  2026-11-14, replacing `params`). Clients keep it, and add their own
+  parameters to it, as RFC 6749 §3.1 requires. The server's query never
+  includes `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
+  `code_challenge_method`, `state`, or `resource`.
+- Flat fields, not an `external` object (decided 2026-11-14): `url` is the
+  name that v10 used for the page to open.
 - `step` is not needed: the fields tell begin, redemption, and a foreign
   access token apart, as they tell an email proposal from its approval.
 
@@ -102,9 +109,9 @@ class External {                  // the begin result's "external"
 ```text
 1. begin, as above
 2. verifier = 32 random bytes; challenge = BASE64URL(SHA-256(verifier)); state = 16 random bytes
-3. opens  <authorization_endpoint>?response_type=code&client_id=<id>&redirect_uri=<return>
+3. opens  <url, with its own query kept>&response_type=code&client_id=<id>&redirect_uri=<return>
             &code_challenge=<challenge>&code_challenge_method=S256&state=<state>
-            &resource=<the server's origin>[&scope=<scope>][&<params>]
+            &resource=<the server's origin>
 4. the portal signs the user in, confirms, and redirects to
    <return>?code=…&state=…&iss=…        (or ?error=access_denied&state=…&iss=…)
 5. checks state, and that iss is the issuer
@@ -125,7 +132,7 @@ and issues an Apron `token`.
 ### Library client
 
 Begin, then the standard authorization code flow with PKCE against
-`issuer`, with `resource` and any `params`. Then:
+`issuer`, with `url` as the authorization endpoint, and `resource`. Then:
 
 - **The server is the issuer:** the token endpoint's `access_token` is an
   Apron bearer token. The client presents it with `scheme: "token"`.
@@ -321,8 +328,8 @@ this plan.
 2. Register one public client, such as `apron`, with the callbacks to allow:
    Pocket ID takes `*` wildcards in callback URLs. Or allow client ID
    metadata documents by URL pattern.
-3. Set `issuer`, `authorization_endpoint`, `client_id`, and `scope` in the
-   server's configuration.
+3. Set `issuer`, the authorization endpoint (with `scope` in its query) as
+   begin's `url`, and `client_id` in the server's configuration.
 
 Pocket ID already rejects an unknown `resource` (`invalid_target`), makes
 the resource the token's `aud`, sends `iss`, allows cross-origin requests,
@@ -340,6 +347,28 @@ tokens, redeems codes for simple clients, and maps `sub` to accounts.
 - No device grant in the library: terminals use loopback until one is built
   beside it.
 - Keeps `webauthn` for web.apron.chat, and `token` for bots and invites.
+
+## Shared with the passkey page
+
+[PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md) lets `webauthn`'s
+begin return the same `url`, to a passkey page on the server's domain, for
+clients that cannot use the RP ID. Of the `external` plans, this one is the
+closest fit: the passkey page is this plan's flow, scoped to passkeys and
+finished under `webauthn`. What they share:
+
+| | `external` | `webauthn` with a passkey page |
+|---|---|---|
+| Begin returns | `url`, and `issuer` and `client_id` for a foreign issuer | `public_key`, and `url` |
+| `url`'s query | `scope`, a provider hint | `action`, `name`, an addition's `request` |
+| The client adds | `response_type`, `client_id`, `redirect_uri`, PKCE, `state`, `resource` | the same |
+| The page | any method; confirms (Confirmation, above) | a passkey; confirms around the prompt |
+| Back comes | `code`, `state`, `iss` | the same |
+| Finish | `auth {scheme: "external", code, code_verifier, redirect_uri, client_id}` | `auth {scheme: "webauthn", step: "finish", action, code, code_verifier, redirect_uri, client_id}` |
+| Result | `you` and an Apron `token` | the same |
+
+A client implements the trip once, as a function from `url` to a code, and
+calls it from both schemes. A server implements one authorization endpoint
+and code store, and offers the passkey page as one of its sign-in pages.
 
 ## Scenarios behind the portal
 
@@ -479,8 +508,7 @@ verifiers carry over.
 ```jsonc
 // <- a fresh nonce on every connection
 {"method": "server", "params": {"apron": 10, "auth": ["external", "token"],
-  "dpop": {"algs": ["ES256"], "nonce": "n_7Qx2…"},
-  "external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
+  "dpop": {"algs": ["ES256"], "nonce": "n_7Qx2…"}}}
 
 // -> redeem a code, and ask for a bound token
 {"method": "auth", "id": "c1", "params": {"scheme": "external", "code": "Hk41x9…",
