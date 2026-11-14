@@ -2788,6 +2788,13 @@ server.
   ([§4.12.3](#4123-authorization-server)). So a client that the user did not
   choose, or code running in a client, does not get a session without the
   user's action.
+- The user can only refuse a client that they recognize. A page helps when it
+  names the client by the host of `redirect_uri`, marks clients that the
+  server does not know, says that the client will act as the user, and shows
+  the account before it redirects. Remembering a user's consent is safe only
+  for `https` redirects: an app scheme or a loopback address does not
+  identify the client
+  ([RFC 8252 §8.6](https://www.rfc-editor.org/rfc/rfc8252#section-8.6)).
 - PKCE binds an authorization code to the client that started the sign-in
   ([§4.12.2](#4122-signing-in)). So an app that claims the same redirect URI
   cannot redeem the code.
