@@ -315,7 +315,7 @@ class Server {
   push?: object;                // push kinds and wake scopes; enables push (§4.9)
 
   // extensions
-  ext?: object;                 // extension data (§4.12)
+  ext?: object;                 // extension data (§4.13)
 }
 ```
 
@@ -364,6 +364,7 @@ class Auth {
   name?: string;                // requested display name
   user_id?: string;             // requested user_id
   agent?: string;               // implementation/version string, for debugging
+  ext?: object;                 // extension data (§4.13)
 
   // "token", "email", and "external" schemes
   token?: string;
@@ -374,10 +375,15 @@ class Auth {
   challenge_id?: string;        // finish
   credential?: object;          // finish
 
-  // "email" and "external" schemes (§4.11)
+  // "email" scheme (§4.11)
   state?: string;
-  email?: string;               // email
-  return_url?: string;          // external
+  email?: string;
+
+  // "external" scheme (§4.12)
+  code?: string;
+  code_verifier?: string;
+  redirect_uri?: string;
+  client_id?: string;
 }
 
 class AuthResult {
@@ -388,8 +394,8 @@ class AuthResult {
   challenge_id?: string;
   public_key?: object;          // WebAuthn options
 
-  // "external" scheme, proposal
-  url?: string;
+  // "external" scheme, begin (§4.12.1)
+  external?: External;
 }
 ```
 
@@ -415,9 +421,9 @@ class AuthResult {
   - `webauthn`: optional passkey scheme
     ([§4.10](#410-webauthn-authentication)).
   - `email`: optional sign-in by a code sent to an email address
-    ([§4.11](#411-email-and-external-sign-in)).
-  - `external`: optional sign-in on a web page of the server
-    ([§4.11](#411-email-and-external-sign-in)).
+    ([§4.11](#411-email-sign-in)).
+  - `external`: optional sign-in on a web page, through OAuth 2.1
+    ([§4.12](#412-external-sign-in)).
 - A scheme that this document defines but the server does not offer is
   `unsupported`.
 - Which credentials an offered scheme accepts is server policy. For example,
@@ -489,7 +495,7 @@ class User {
   seen?: string;                // log_id format; with a shown "offline" (§4.5.2)
 
   // "ext" capability
-  ext?: object;                 // §4.12
+  ext?: object;                 // §4.13
 }
 ```
 
@@ -618,7 +624,7 @@ class Room {
   history_log_id?: string | null;
 
   // "ext" capability
-  ext?: object;                 // §4.12
+  ext?: object;                 // §4.13
 }
 ```
 
@@ -663,7 +669,7 @@ class Message {
   deleted?: boolean = false;
 
   // "ext" capability
-  ext?: object;                 // absent on tombstones (§4.12)
+  ext?: object;                 // absent on tombstones (§4.13)
 }
 ```
 
@@ -701,7 +707,7 @@ authoritative **snapshot** at one log position.
 | `body`         | client | `text`, `format`, `embeds`, `mentions`                                  |
 | `reply_to`     | client | optional message object referring to the message replied to             |
 | `deleted`      | client | tombstone marker, default false ([§4.4](#44-edit))                      |
-| `ext`          | client | optional extension data; merges by key ([§4.12](#412-ext))              |
+| `ext`          | client | optional extension data; merges by key ([§4.13](#413-ext))              |
 
 #### 3.5.1 Creating
 
@@ -841,16 +847,16 @@ the client uses the fallback in this table:
 | `embed:upload`   | `upload` embeds: files the sender writes over HTTP          | no attachments               | [§4.8.4](#484-embedupload)   |
 | `embed:append`   | text that grows at the end of a message's body              | post the finished text       | [§4.8.5](#485-embedappend)   |
 | `embed:terminal` | live terminal output in a message                           | post the output when it ends | [§4.8.6](#486-embedterminal) |
-| `ext`            | extension data kept on users, messages, and rooms           | servers may drop `ext`       | [§4.12](#412-ext)            |
+| `ext`            | extension data kept on users, messages, and rooms           | servers may drop `ext`       | [§4.13](#413-ext)            |
 
 Some features have no capability:
 
 - Embeds of kinds without an `embed:*` capability are body content
   ([§4.8](#48-embeds-and-avatars)).
 - `server.push` enables push ([§4.9](#49-push)).
-- `server.auth` enables passkeys, and email and external sign-in
-  ([§4.10](#410-webauthn-authentication),
-  [§4.11](#411-email-and-external-sign-in)).
+- `server.auth` enables passkeys, email sign-in, and external sign-in
+  ([§4.10](#410-webauthn-authentication), [§4.11](#411-email-sign-in),
+  [§4.12](#412-external-sign-in)).
 - `server.ping` enables liveness checks ([§1](#1-transport--framing)).
 
 The features in this section add these methods
@@ -1022,7 +1028,7 @@ change it.
 | `private`        | client   | optional; visible only to members ([§4.2.4](#424-creating-and-editing))                    |
 | `title`          | client   | optional plain string; absent falls back to `room_id`                                      |
 | `description`    | client   | optional string, CommonMark by convention: what the room is about                          |
-| `ext`            | client   | optional extension data; merges by key ([§4.12](#412-ext))                                 |
+| `ext`            | client   | optional extension data; merges by key ([§4.13](#413-ext))                                 |
 | `latest_log_id`  | delivery | greatest `log_id` in the room's log, memberships included                                  |
 | `history_log_id` | delivery | inclusive lower bound of retrievable history, or `null` if none                            |
 | `members`        | delivery | on request in `room_list`, and in `room_update` `joined` ([§4.2.1](#421-listing))          |
@@ -1296,7 +1302,7 @@ the full list:
 
 - Fields that end in `_id` are fixed at creation.
 - A server MAY also fix `private`. An edit that omits `private` keeps its value.
-- `ext` merges ([§4.12](#412-ext)). Other omitted fields are cleared.
+- `ext` merges ([§4.13](#413-ext)). Other omitted fields are cleared.
 - `parent_room_id` MUST refer to an existing visible room.
 - `private: true` makes the room visible only to its members. A thread that is
   created without `private` takes the value of its parent. Members add other
@@ -1474,7 +1480,7 @@ position. The same mechanism moves and deletes messages.
 Lets a `message` request with an existing `message_id` **save** that message:
 
 - A save replaces every client field ([§3.5](#35-messages)) with the submitted
-  state, except `ext`, which merges ([§4.12](#412-ext)). It removes omitted
+  state, except `ext`, which merges ([§4.13](#413-ext)). It removes omitted
   fields, and replaces objects and arrays whole.
 - `null` does not mean deletion.
 - Clients MUST send again every client field that they want to keep, except
@@ -2366,8 +2372,9 @@ only on that domain, or on origins that the domain lists as
 phishing site cannot use it. A server can let a client on another domain use
 its passkeys, such as a web client that many servers share, by listing the
 client's origin as related and accepting it as an allowed origin. On other
-clients, the user signs in with another scheme, such as `external` or email
-([§4.11](#411-email-and-external-sign-in)), or `token`
+clients, the user signs in with another scheme, such as `external`
+([§4.12](#412-external-sign-in)), `email` ([§4.11](#411-email-sign-in)), or
+`token`
 ([§3.2.1](#321-bearer-tokens)). A server can also offer a command
 ([§4.1](#41-command)) that issues more bearer tokens.
 
@@ -2422,18 +2429,16 @@ A verified `finish` result MAY carry a bearer `token`
 lists `token`. Servers MUST bind such a token to the allowed origin of the
 ceremony, and MUST make it expire. A mismatched origin is `denied`.
 
-### 4.11 Email and external sign-in
+### 4.11 Email sign-in
 
-Some sign-ins finish outside the connection. Email sign-in proves that a user
-controls an address. It suits sign-up and account recovery, and works on any
-device that gets mail. External sign-in sends the user to a web page of the
-server. The page can put any sign-in portal in front of Apron, such as OAuth,
-OpenID Connect, SAML, SSO, or a password check against a SASL backend.
+Email sign-in proves that a user controls an address. It suits sign-up and
+account recovery, and works on any device that gets mail. It finishes outside
+the connection.
 
-Servers that list `email` or `external` in `server.auth` use this exchange, and
-also list `token`. An `auth` request without `token` proposes a sign-in or an
-addition. The server delivers a temporary token outside the connection. An
-`auth` request with that `token` approves the proposal:
+Servers that list `email` in `server.auth` use this exchange, and also list
+`token`. An `auth` request without `token` proposes a sign-in or an addition.
+The server emails a temporary token. An `auth` request with that `token`
+approves the proposal:
 
 ```jsonc
 // -> propose signing in with this address
@@ -2441,7 +2446,7 @@ addition. The server delivers a temporary token outside the connection. An
 // <- nothing is authenticated yet
 {"id": "c1", "result": {}}
 
-// email: "Your code is 418092, or open https://chat.example/login#token=Hk41x9…&state=q8Rz…"
+// email: "Your code for wss://chat.example/ws is 418092, or open https://chat.example/login#token=Hk41x9…&state=q8Rz…"
 
 // -> on any connection not signed in, such as one opened by the link
 {"method": "auth", "id": "c2", "params": {"scheme": "email", "token": "Hk41x9…"}}
@@ -2449,26 +2454,13 @@ addition. The server delivers a temporary token outside the connection. An
 {"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
 ```
 
-```jsonc
-// -> propose an external sign-in that returns to this client
-{"method": "auth", "id": "c1", "params": {"scheme": "external", "return_url": "https://web.apron.chat/", "state": "q8Rz…"}}
-// <- the page to open
-{"id": "c1", "result": {"url": "https://chat.example/sso?p=Qm7x…"}}
-
-// the page signs the user in, then redirects to
-// https://web.apron.chat/#token=Hk41x9…&state=q8Rz…&server=wss://chat.example/ws
-
-// -> on a connection from https://web.apron.chat
-{"method": "auth", "id": "c2", "params": {"scheme": "external", "token": "Hk41x9…"}}
-// <-
-{"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
-```
-
 #### 4.11.1 Proposals
 
-- A proposal is an `auth` request without `token`. It authenticates nothing.
+- A proposal is an `auth` request without `token`. It carries `email`, and
+  authenticates nothing.
+- A proposal returns `{}`, whether or not the address has an account.
 - On a connection that is signed in to an account, guests included, a
-  proposal adds to that account. Otherwise it proposes a sign-in.
+  proposal adds the address to that account. Otherwise it proposes a sign-in.
 - A connection has one pending proposal, and a new one replaces it.
 - A proposal expires within minutes. A disconnect does not cancel it.
   Approval uses it up.
@@ -2478,70 +2470,183 @@ addition. The server delivers a temporary token outside the connection. An
   the client chooses (like OAuth's `state`, it guards against a link that
   signs the user in to someone else's account). The server returns it
   unchanged in each link.
+- Send rate limits (`retry_after`) are server policy.
 
 #### 4.11.2 Temporary tokens
 
-- The server delivers a temporary token for the proposal, as a link, a code to
-  type, or both.
+- The server emails a temporary token for the proposal, as a link, a code to
+  type, or both. It builds any link from its own configuration.
 - A temporary token expires within minutes of its delivery.
 - A token that is short enough to type, such as six digits, works only on the
-  connection that made the proposal (short codes are easy to guess). A token
-  that works on other connections MUST be unguessable.
+  connection that made the proposal, or with the proposal's `state` (short
+  codes are easy to guess, and `state` is not).
+- A token that works without either MUST be unguessable.
+- An email with a code gives the server's address. It tells the user to type
+  the code only in a client that is connected to that server (otherwise a
+  server could propose a sign-in to another server with the user's address,
+  and get the code from the user).
 - A link carries the token in its URL fragment: `#token=…`, plus `&state=…`
   when the proposal carried `state`, plus `&server=…` with the server's
   address ([A.4](#a4-links)).
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made. It then presents the link's token with
   `scheme: "token"`.
-- For a link with the `state` of its own proposal, a client uses the server
-  that it proposed to, and ignores `server`.
+- A client uses a link with the `state` of its own proposal only if the
+  link's `server` is the server that it proposed to. It drops any other such
+  link (otherwise a server could pass a client's `state` on to another server,
+  and receive the token that the other server sends).
 
 #### 4.11.3 Approval
 
-- Approval is an `auth` request with `token`, and `token` or either scheme
-  that the server offers.
+- Approval is an `auth` request with `token`, and `scheme` `email` or
+  `token`.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and a
   bearer `token` for later connections ([§3.2.1](#321-bearer-tokens)).
 - Approval of an addition works only on a connection that is signed in to the
   account that proposed it (otherwise someone could lead a victim to link the
-  victim's identity to the other person's account). It adds the address or the
-  external identity to that account, and returns `{}`.
+  victim's address to the other person's account). It adds the address to
+  that account, and returns `you`.
 - An invalid, expired, or used token is `denied`. A sign-in token on a
-  signed-in connection is also `denied`, and so is an address or an external
-  identity that belongs to another account.
+  signed-in connection is also `denied`, and so is an address that belongs to
+  another account.
+- Account creation for unknown addresses, and the bearer token's lifetime, are
+  server policy.
 
-#### 4.11.4 Email
+### 4.12 External sign-in
 
-- A proposal carries `email`. It returns `{}`, whether or not the address has
-  an account.
-- The server emails the temporary token. It builds any link from its own
-  configuration.
-- Account creation for unknown addresses, send rate limits (`retry_after`),
-  and the bearer token's lifetime are server policy.
+External sign-in sends the user to a sign-in page, which can use any method,
+and ends in a bearer `token` ([§3.2.1](#321-bearer-tokens)). It is a profile of
+[OAuth 2.1](https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/): the
+client sends the user to an authorization endpoint with PKCE, and redeems the
+code that comes back. By default, the server is its own authorization server,
+and any client can use it without registration. A server can name another
+authorization server instead, such as an OpenID Connect provider. Clients can
+use an OAuth library, or a few lines of their own.
 
-#### 4.11.5 External
+```jsonc
+// -> begin
+{"method": "auth", "id": "c1", "params": {"scheme": "external"}}
+// <-
+{"id": "c1", "result": {"external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
 
-- A proposal MAY carry `return_url`, a URL of the client. Servers MUST accept
-  only a `return_url` on an origin that they trust (otherwise the page would
-  hand a working token to any site).
-- A proposal returns `url`, a page of the server. `url` is an absolute `https`
-  URL, or `http` on a loopback host. Clients reject any other `url`, such as
-  `javascript:…`.
-- The client opens `url` in a browser. The page signs the user in by a method
-  that the server chooses.
-- With `return_url`, the page shows its host, and whether the user signs in
-  or adds an identity. The page asks the user to confirm before it redirects,
-  also when the user is already signed in to the page.
-- The page redirects to `return_url` with the link fragment, which replaces
-  any fragment of `return_url`.
-- Without `return_url`, the page shows a code to type after the user signs in.
-  It tells the user to type the code only in the client where they started.
-- Servers SHOULD accept a link token only on a connection from the origin of
-  `return_url`, such as by the WebSocket `Origin` header.
-- Account creation for new external identities is server policy.
+// the client opens
+// https://chat.example/oauth/authorize?response_type=code&client_id=com.sidekick.app
+//   &redirect_uri=com.sidekick.app:/signed-in&code_challenge=E9Mel…&code_challenge_method=S256
+//   &state=q8Rz…&resource=https://chat.example
+// the page signs the user in, confirms, and redirects to
+// com.sidekick.app:/signed-in?code=Hk41x9…&state=q8Rz…&iss=https://chat.example
 
-### 4.12 `ext`
+// -> on any connection
+{
+  "method": "auth", "id": "c2", "params": {
+    "scheme": "external", "code": "Hk41x9…", "code_verifier": "dBjftJ…",
+    "redirect_uri": "com.sidekick.app:/signed-in", "client_id": "com.sidekick.app"
+  }
+}
+// <-
+{"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
+```
+
+#### 4.12.1 Begin
+
+```ts
+class External {
+  authorization_endpoint: string; // where the client sends the user
+  issuer?: string;                // absent: the server's origin
+  client_id?: string;             // a client ID that any client MAY use
+  scope?: string;                 // space-separated scopes to request
+  params?: object;                // more authorization parameters, as strings
+}
+```
+
+- An `external` request with neither `code` nor `token` is a begin. It
+  authenticates nothing, and returns `external`.
+- The server's origin is `https://` plus the host and any port of its address
+  ([§1](#1-transport--framing)), such as `https://chat.example`.
+- Without `issuer`, the server is its own authorization server, and the issuer
+  is its origin.
+- Clients add `params` to the authorization request as they are. They never
+  replace a parameter that [§4.12.2](#4122-signing-in) sets.
+
+#### 4.12.2 Signing in
+
+- Clients send the user to `authorization_endpoint` with the authorization
+  code grant, PKCE `S256`, and an unguessable `state`.
+- Clients send the server's origin as
+  [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
+  from the address that they connected to (otherwise a server could get a
+  token for another server, and use it there).
+- Clients send `scope` and `params` from begin, when present.
+- When the server is its own authorization server, any `client_id` works,
+  such as the client's app ID. Otherwise clients use a client ID that the
+  issuer accepts, such as begin's `client_id`.
+- Clients open the authorization endpoint in the system browser or a sign-in
+  session, never in an embedded web view.
+- Before they use a code, clients MUST check that `state` is theirs, and that
+  [`iss`](https://www.rfc-editor.org/rfc/rfc9207) is the issuer.
+- Clients redeem the code with `code`, `code_verifier`, `redirect_uri`, and
+  `client_id`, on any connection.
+- Clients MAY instead redeem the code at the issuer's token endpoint, such as
+  with an OAuth library. When the server is its own authorization server, the
+  access token is a bearer token for `scheme: "token"`. Otherwise clients
+  present it with `scheme: "external"` and `token`.
+- Clients without a browser MAY use the
+  [device authorization grant](https://www.rfc-editor.org/rfc/rfc8628), where
+  the issuer offers it.
+
+#### 4.12.3 Authorization server
+
+A server that is its own authorization server:
+
+- SHOULD publish its
+  [metadata](https://www.rfc-editor.org/rfc/rfc8414) at its origin.
+- Accepts any `client_id`, and any `redirect_uri` that is `https`, a scheme
+  with a `.`, or `http` on a loopback address with any port. It MAY accept
+  fewer.
+- Requires PKCE `S256`, and refuses a `resource` other than its origin.
+- Signs the user in on its page by any method. The page shows the server, and
+  the host or scheme of `redirect_uri`. It asks the user to confirm before it
+  redirects, also when the user is already signed in to it.
+- MAY fetch a client ID metadata document when `client_id` is an `https` URL.
+  It then accepts only a `redirect_uri` that the document lists, and shows the
+  document's `client_name` only beside the host of `client_id` (otherwise a
+  client could borrow another client's name for its own `redirect_uri`).
+- Redirects with `code`, `state`, and `iss`, or with `error=access_denied` when
+  the user declines.
+- Makes each code unguessable and single use, and binds it to `client_id`,
+  `redirect_uri`, the PKCE challenge, and `resource`. A code expires within
+  minutes.
+- Allows cross-origin requests to its metadata and token endpoint.
+
+A server that names another authorization server SHOULD use one that binds
+codes and tokens to `resource`, sends `iss`, and lets any client in, such as
+by a public `client_id` or
+[client ID metadata documents](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/).
+
+#### 4.12.4 Token checks
+
+- With `code`, the server redeems the code: itself, or at the issuer's token
+  endpoint, which it finds from the issuer's metadata.
+- Servers MUST accept only tokens from the issuer whose `aud` includes their
+  origin. They check the signature against the issuer's keys, or
+  [introspect](https://www.rfc-editor.org/rfc/rfc7662) the token, and check
+  `iss` and `exp`.
+- Servers MUST reject a token that is bound to a key, such as by a `cnf`
+  claim. This document defines no proof for one.
+- An invalid, expired, used, or wrongly addressed code or token is `denied`.
+- A successful sign-in returns `you` and a bearer `token`
+  ([§3.2.1](#321-bearer-tokens)).
+- On a connection that is signed in, guests included, an `external` request
+  adds the identity to that account, and returns `you`. It never signs in to
+  another account.
+- An identity that belongs to another account is `denied`.
+- Servers identify an account by the issuer and the token's `sub`, never by a
+  claim that can change, such as a user name.
+- Servers MUST NOT pass a client's code or token on, except to the issuer.
+- Account creation for new identities is server policy.
+
+### 4.13 `ext`
 
 Some data has no field in this document: a bridge's IDs for the messages it
 relays, an agent's settings for a room, or a user's time zone. Capability
@@ -2634,12 +2739,19 @@ server.
 - A bearer `token` from WebAuthn is bound to the origin of its ceremony
   ([§4.10](#410-webauthn-authentication)). So a stolen token does not work from
   another web origin.
+- A bearer `token` works for anyone who copies it, such as from storage or a
+  log ([§3.2.1](#321-bearer-tokens)). Rotation limits this, as an optional
+  server policy. A server that replaces the token at each sign-in, and treats
+  a replaced token that comes back as a copy, can revoke the tokens that
+  followed it. The copy then works only until the real client next connects,
+  and its use shows the theft. A short grace period lets several connections
+  of one client sign in with the same token at once.
 - An email proposal returns `{}` for every address ([§4.11.1](#4111-proposals)).
   So proposals do not reveal which addresses have accounts.
-- A short code works only on the connection that proposed, and failed attempts
-  from any connection count against the proposal
-  ([§4.11.2](#4112-temporary-tokens)). This stops brute force across
-  connections.
+- A short code works only on the connection that proposed, or with the
+  proposal's `state`, and failed attempts from any connection count against
+  the proposal ([§4.11.2](#4112-temporary-tokens)). This stops brute force
+  across connections.
 - Link tokens travel in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
   Browsers do not send fragments in request lines or `Referer` headers, so
   tokens stay out of server logs.
@@ -2649,17 +2761,36 @@ server.
 - A link carries the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
   else's link into that person's account (login cross-site request forgery).
-- A signed-in connection cannot approve a sign-in ([§4.11.3](#4113-approval)).
-  So a link cannot silently switch a session to another account.
+- A signed-in connection cannot approve a sign-in ([§4.11.3](#4113-approval)),
+  and `external` on a signed-in connection only adds an identity
+  ([§4.12.4](#4124-token-checks)). So a link or a token cannot silently switch
+  a session to another account.
 - An addition works only on a connection of the account that proposed it
   ([§4.11.3](#4113-approval)). Otherwise someone could lead a victim to link the
   victim's identity to the other person's account.
-- Servers accept only a `return_url` on a trusted origin, and bind link tokens
-  to that origin ([§4.11.5](#4115-external)). Otherwise the sign-in page would
-  be an open redirect that hands working tokens to any site.
-- The sign-in page asks the user to confirm before it redirects, and tells the
-  user where to type a code ([§4.11.5](#4115-external)). Someone else may have
-  started the sign-in, as in device-code phishing.
+- A client uses a link only with the server that it proposed to, and an email
+  tells the user where to type its code ([§4.11.2](#4112-temporary-tokens)).
+  Otherwise a server could propose a sign-in to another server with the
+  user's address, get the token from the user or the client, and sign in to
+  the other server as the user (mix-up).
+- Clients send `resource` for the server that they are connected to, never
+  one that a server names ([§4.12.2](#4122-signing-in)), and servers accept
+  only tokens whose `aud` includes their own origin
+  ([§4.12.4](#4124-token-checks)). So a server that names another server's
+  authorization server gets tokens addressed to itself, which the other server
+  rejects. Servers on one host and port share an origin, so they trust each
+  other.
+- Clients check `iss` in the authorization response
+  ([§4.12.2](#4122-signing-in)). So an authorization server cannot take a code
+  that another one issued (mix-up).
+- The sign-in page shows who receives the result, and confirms before it
+  redirects, also when the user is already signed in
+  ([§4.12.3](#4123-authorization-server)). So a client that the user did not
+  choose, or code running in a client, does not get a session without the
+  user's action.
+- PKCE binds an authorization code to the client that started the sign-in
+  ([§4.12.2](#4122-signing-in)). So an app that claims the same redirect URI
+  cannot redeem the code.
 
 ### 5.3 Identity and access control
 
@@ -2715,9 +2846,6 @@ server.
   bidirectional overrides in them ([§3.5.2](#352-rendering)). So a name or a
   file title cannot reorder the text around it, or show its own characters
   out of order, such as a file name that hides its real extension.
-- Clients open only an `https` `url` for external sign-in
-  ([§4.11.5](#4115-external)). So a server cannot run script in the client with
-  a `javascript:` URL.
 - Interactive clients send or join only on an action of the user, not
   because of a link ([A.4](#a4-links)). So a link cannot make a local
   server, such as a coding agent with guest sign-in, run a command with one
@@ -2763,7 +2891,7 @@ server.
 
 ### 5.6 Resource limits
 
-- Size limits apply to the merged `ext` ([§4.12](#412-ext)). So repeated small
+- Size limits apply to the merged `ext` ([§4.13](#413-ext)). So repeated small
   merges cannot grow a record without bound.
 - Receivers can reject frames larger than 256 KiB
   ([§1](#1-transport--framing)).
