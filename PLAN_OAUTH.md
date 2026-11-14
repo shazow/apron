@@ -385,6 +385,19 @@ than only to the connection, keeps guessing hard and lets phone apps finish.
 matches email, gives a guest a way to keep its account, and covers fresh
 tokens.
 
+**The portal does not tell registration, login, or addition apart (decided
+2026-11-14).** Don't re-open this without a new threat. Registration is the
+authorization server's and the Apron server's policy: `server.signup` says
+whether `external` creates accounts, `name` and `user_id` ride on `auth`, and
+`prompt=create` is an optional UI hint. Addition is decided when the token
+is presented, by whether the connection is signed in. PKCE means only the
+client that started can use the result, so v10's page warning has nothing
+left to guard; a phishing client is stopped by the consent screen's redirect
+host, as for sign-in. Clients start additions only from an explicit account
+action, and show the account that `you` names. Rejected: an
+`apron_intent=add` parameter, a pushed request that names the account, and
+linking only on the account page. Details in PLAN_LOOSE.md, Additions.
+
 **Operators pick an authorization server that any client can use (C3).** A
 recommendation, since the wire cannot make an authorization server open.
 

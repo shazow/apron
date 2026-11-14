@@ -132,6 +132,26 @@ The standard authorization code flow with PKCE against `issuer`, with
   identity to that account, and returns `you`. It never signs in to another
   account.
 - An identity that belongs to another account is `denied`.
+- Clients start an addition only from an explicit account action, such as
+  "Add a sign-in to ada", and show the account that `you` names.
+
+**Decided (2026-11-14): the portal does not tell registration, login, or
+addition apart.** Don't re-open this without a new threat.
+
+- Registration vs login is the portal's and the server's business. The
+  portal offers sign-up or refuses it; the server creates an account for a
+  new `sub` or says `denied`, by policy. `server.signup` already says whether
+  `external` creates accounts, `name` and `user_id` ride on the redemption
+  (§3.2), and a client MAY add OpenID Connect's `prompt=create` as a UI hint.
+- Addition vs sign-in is decided at redemption: the server knows whether the
+  connection is signed in. v10's page warning existed because a link token
+  worked on any connection. PKCE removes that: only the client that started
+  can redeem.
+- The remaining case, a phishing URL from an attacker's own client, is
+  guarded by the consent screen's redirect host, as for sign-in, which is
+  the worse outcome. A parameter such as `apron_intent=add` would only
+  change that screen's wording. Rejected, with a pushed request that names
+  the account, and account-page-only linking (which brings back F3).
 
 ## Rules
 
