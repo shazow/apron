@@ -5,6 +5,10 @@ Status: research notes, local and not committed, 2026-11-14. Input to
 vocabulary of [EVALUATIONS.md](EVALUATIONS.md) (A1 to A5, W1, W3, N1, N3,
 T) and [PLAN_CONFORMANCE.md](PLAN_CONFORMANCE.md).
 
+Decision since (2026-11-14): binding is allowed by the design and never
+required of clients. The baseline against copied tokens is rotation with
+reuse detection on the server. See PLAN_LOOSE.md, "Forward compatibility".
+
 ## Summary
 
 - **DPoP (RFC 9449)** is the only shipped, standard way to bind OAuth

@@ -170,6 +170,10 @@ whenever a client sends a proof) break the plan as written. The mail
 profile's exception for bearer access tokens needs a bare hostname as
 `resource`, which this plan rejected.
 
+As in PLAN_LOOSE.md, binding is allowed by the design and never required of
+clients (decided 2026-11-14). The rules below keep bearer clients working
+with issuers that bind.
+
 - Reserve the same names as PLAN_LOOSE.md's "Forward compatibility" section:
   `auth.params.dpop`, `server.dpop {algs, nonce}`, and `data.dpop_nonce` on
   `denied`. A proof on `auth` is RFC 9449's JWT with `htm: "GET"`, `htu` the

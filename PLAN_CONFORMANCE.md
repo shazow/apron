@@ -200,9 +200,12 @@ Client:
 
 ### Proof of possession
 
-From [RESEARCH_DPOP_DBSC.md](RESEARCH_DPOP_DBSC.md). One test applies now;
-the rest apply once servers bind tokens (PLAN_LOOSE.md, Forward
-compatibility). The drivers then need a JOSE library, which `uv` scripts can
+From [RESEARCH_DPOP_DBSC.md](RESEARCH_DPOP_DBSC.md). Binding is optional for
+clients and servers (PLAN_LOOSE.md, Forward compatibility), so these tests
+run only for implementations that offer it, and their absence is SKIP, not
+FAIL. Rotation with reuse detection is optional too: `token.A6.reuse` checks
+that a server that rotates also revokes the line when a replaced token
+comes back. The drivers then need a JOSE library, which `uv` scripts can
 declare.
 
 Now:
@@ -212,6 +215,7 @@ Now:
 | `external.A6.cnf` | server | an issuer token with `cnf` and no proof is `denied` |
 | `external.A3.no-dpop-jkt` | client | the simple path's authorization URL has no `dpop_jkt` |
 | `external.shape.token-type` | server | the token endpoint returns `"Bearer"` unless `server.dpop` is present |
+| `token.A6.reuse` | server | WARN: after rotation, presenting the replaced token (outside the grace period) is `denied`, and so is its successor |
 
 Once bound tokens exist:
 

@@ -37,7 +37,9 @@ Every supported cell holds against each attacker.
 
 A6 and A7 come from [RESEARCH_DPOP_DBSC.md](RESEARCH_DPOP_DBSC.md).
 
-- **A6 today:** fails for `token`, and for PLAN_OAUTH's refresh tokens. A
+- **A6 today:** fails for `token`, and for PLAN_OAUTH's refresh tokens.
+  With rotation and reuse detection, a copy works only until the real
+  client next connects, and its use revokes the line. A
   `webauthn` token resists only on another web origin (F4). With key-bound
   tokens ([PLAN_LOOSE.md](PLAN_LOOSE.md#forward-compatibility-proof-of-possession)),
   it holds against copies: for web with a non-extractable software key (but
@@ -199,7 +201,7 @@ Guidance for operators:
 | F4 | The origin binding of a `webauthn` token stops theft between browser origins only. A native client can send any `Origin`. | Accepted: §5.2 already says "another web origin". |
 | F5 | `external` on third-party web and native clients needs CORS and a client ID from the authorization server; a terminal needs the device grant. | Fixed by C3, a recommendation to operators. |
 | F6 | Plain email links behind a portal open in another browser context, so a native client's sign-in session never gets the result. | Guidance: portals send codes, or links that approve a waiting page ([Behind the portal](#behind-the-portal)). |
-| F7 | Apron tokens are long-lived bearer credentials, kept in web storage on arbitrary origins (A6). | Open: names reserved now, key-bound tokens later (PLAN_LOOSE.md, Forward compatibility). Guidance now: no logging of `auth` params, hashed storage, rotation for web clients. |
+| F7 | Apron tokens are long-lived bearer credentials, kept in web storage on arbitrary origins (A6). | Mitigated: rotation with reuse detection, server-side, named in §5.2 as optional; no logging of `auth` params; hashed storage. Key-bound tokens stay optional for clients that choose them (PLAN_LOOSE.md, Forward compatibility). |
 | F8 | PLAN_OAUTH breaks with issuers that bind access tokens: a server that ignores `cnf` accepts a stolen bound token as bearer, and one that checks it rejects every DPoP client. | Fixed in the plans: servers reject bound tokens without a proof; clients use DPoP at the issuer only when `server.dpop` is advertised. |
 | F9 | A foreign issuer that requires DPoP breaks PLAN_LOOSE's redemption on the connection. | Fixed: the Apron server redeems with its own DPoP key; simple clients send no `dpop_jkt`. |
 

@@ -229,7 +229,7 @@ this plan.
 | A3, scheme squatting, loopback ports | PKCE |
 | A4, login CSRF; linking to someone else's account | `state`; additions only on the account's own connection |
 | A5, guessing | codes need their verifier |
-| A6, a copied token, from storage or a log | not yet: the Apron `token` is a bearer token (F7). Later, a key-bound token ([Forward compatibility](#forward-compatibility-proof-of-possession)). A bound issuer token never passes as bearer. |
+| A6, a copied token, from storage or a log | rotation with reuse detection: a copy works until the real client next connects, and its use revokes the line (F7). Optional key-bound tokens later ([Forward compatibility](#forward-compatibility-proof-of-possession)). A bound issuer token never passes as bearer. |
 | A7, code running in the client while it is open | no binding helps; the portal's confirmation before each redirect (R5) |
 
 ## Pocket ID
@@ -286,6 +286,50 @@ a client key in browsers; it is defined for HTTP only, and no standard
 carries a proof over a WebSocket. DBSC binds cookies only. Pocket ID and
 `workers-oauth-provider` issue bearer tokens only. So the plan reserves
 names and rules now, and binds the Apron `token` later.
+
+**Decided (2026-11-14): binding is allowed by the design, never required.**
+No client has to implement DPoP, now or as part of the baseline. A client
+that never sends `dpop` works with every server. Reasons:
+
+- It guards one case, a token copied out of storage or a log (A6). It does
+  nothing against code running in the client while it is open (A7), the
+  usual way a web token is stolen.
+- In browsers, a non-extractable WebCrypto key still lives in the profile on
+  disk, so malware that copies the profile likely copies the key. Only
+  native hardware keys bind strongly.
+- Comparable systems (Matrix's authentication service, Slack, Discord, MCP)
+  use bearer tokens; OAuth 2.1 accepts rotation instead of binding for
+  public clients. Only AT Protocol and financial-grade profiles require
+  binding.
+- It costs every client a key store per platform, a JOSE signature, the DER
+  conversion on Apple and Android, a retry path, and giving up `auth` before
+  `server`.
+
+**The baseline instead: rotation with reuse detection.** Server-side only;
+clients already save the latest `token` (§3.2.1).
+
+- The server rotates a `token` each time it signs in a connection, and
+  stores only its hash.
+- A replaced token that comes back means someone holds a copy. The server
+  revokes that token's whole line, which signs out the copy and the user,
+  who signs in again.
+- A short grace period lets several tabs reconnect with the same token at
+  once.
+- A copied token then works at most until the real client next connects,
+  and using it shows the theft. PROTOCOL.md §5.2 names this as an optional
+  mitigation (shazow/apron#115).
+
+**Revisit binding when** one of these happens:
+
+1. Token theft from web storage becomes a real problem for Apron
+   deployments.
+2. Apron must support issuers that give clients only bound tokens (mostly a
+   PLAN_OAUTH problem; PLAN_LOOSE's server absorbs it).
+3. Platforms make binding free: DBSC for tokens, or OAuth libraries that
+   bind keys by default.
+4. Operators of high-value deployments want to require it.
+
+What follows is the design that keeps that door open.
 
 **Reserved now:**
 
@@ -368,12 +412,13 @@ verifiers carry over.
   code running in a client (A7), no binding helps, and that click is the
   guard (RFC 10017 §5.1.3).
 
-**Later:**
+**Later, and optional:**
 
-- Bind the Apron `token`: web clients with a non-extractable ES256 WebCrypto
+- Bind the Apron `token`, for clients that choose to: web clients with a non-extractable ES256 WebCrypto
   key in IndexedDB, native clients with Secure Enclave or Android Keystore
-  keys. It answers token theft from storage and logs (A6, F7), and makes
-  §4.10's origin binding of WebAuthn tokens redundant (F4).
+  keys. It strengthens the answer to token theft from storage and logs (A6,
+  F7) beyond rotation, and makes §4.10's origin binding of WebAuthn tokens
+  redundant (F4).
 - DBSC for first-party web clients only: a DBSC-bound cookie that mints
   short-lived Apron tokens over HTTP, with no wire change. Nothing signs in
   from the upgrade's cookie until DBSC is shown to cover WebSocket upgrades
