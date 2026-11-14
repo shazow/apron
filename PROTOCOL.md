@@ -2608,6 +2608,10 @@ A server that is its own authorization server:
 - Signs the user in on its page by any method. The page shows the server, and
   the host or scheme of `redirect_uri`. It asks the user to confirm before it
   redirects, also when the user is already signed in to it.
+- MAY fetch a client ID metadata document when `client_id` is an `https` URL.
+  It then accepts only a `redirect_uri` that the document lists, and shows the
+  document's `client_name` only beside the host of `client_id` (otherwise a
+  client could borrow another client's name for its own `redirect_uri`).
 - Redirects with `code`, `state`, and `iss`, or with `error=access_denied` when
   the user declines.
 - Makes each code unguessable and single use, and binds it to `client_id`,
