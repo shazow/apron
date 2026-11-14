@@ -81,8 +81,8 @@ with `credential`, as today. A client that cannot:
 1. opens  https://chat.example/passkey?response_type=code&client_id=com.example.myapp
             &redirect_uri=com.example.myapp:/signed-in&code_challenge=E9Mel…&code_challenge_method=S256
             &state=q8Rz…&resource=https://chat.example&action=login
-2. the page shows one screen: "Sign in to chat.example from com.example.myapp. [Use passkey]"
-   The button is the confirmation, and the click that the browser needs before the passkey prompt.
+2. the page asks who is signing in, runs the passkey, and asks to allow access
+   (see "Confirmation", below)
 3. the page redirects to  com.example.myapp:/signed-in?code=Hk41x9…&state=q8Rz…&iss=https://chat.example
 4. the client checks state and iss
 ```
@@ -125,8 +125,8 @@ passkey for ada (`user.id`, `user.name`) and to say so.
                "params": {"action": "register", "request": "rq_7Kp…"}}}}
 ```
 
-The page shows "Add a passkey to ada’s account on chat.example, from
-com.example.myapp. [Create passkey]". The code is redeemable only on a
+The page names the account before it creates the passkey (see
+"Confirmation"). The code is redeemable only on a
 connection signed in as ada, and the result is `you`, as for a local
 addition.
 
@@ -156,9 +156,8 @@ Servers:
   It acts as an authorization endpoint under §4.12.3, with these additions:
   - It refuses to be shown in a frame.
   - It requires user verification, as §4.10 does.
-  - It shows the server, and the host of `redirect_uri` or its scheme,
-    and, for an addition, the account. The button that starts the
-    ceremony is the confirmation.
+  - It asks for confirmation as "Confirmation" says: who is asking and
+    what they get before the passkey, then the account and Allow after it.
   - It redirects with `code`, `state`, and `iss`, or with
     `error=access_denied`.
 - A code from the passkey page is bound to the action, to the passkey page
@@ -174,6 +173,82 @@ Servers:
   (§3.2.1).
 - A mismatched action, a used or expired code, or an addition's code on
   another account's connection is `denied`.
+
+## Confirmation
+
+The passkey prompt shows only the RP ("Use your passkey for chat.example"),
+never the client. So the page says who is asking, what they get, and which
+account, before it redirects. Prior art: RFC 8252 §8.6 (no automatic
+approval for clients whose identity cannot be assured), the open-clients
+profile and the client ID metadata document draft (show the redirect's or
+the `client_id`'s host, mark unverified clients), AT Protocol's sign-in
+screen ("Signing in as @handle", the full `client_id` for untrusted
+clients), and Google's and GitHub's consent screens (verified badge, "Not
+you?", Allow or Cancel).
+
+Who is asking, in the page's words:
+
+| `redirect_uri` | Shown as |
+|---|---|
+| `https://chat.alice.dev/callback` | **chat.alice.dev** |
+| `com.example.myapp:/signed-in` | **An app on this device (com.example.myapp)** |
+| `http://127.0.0.1:53682/callback` | **An app on this device** |
+
+A client name from a client ID metadata document appears only beside the
+host (PLAN_LOOSE.md, B1).
+
+**Screen 1, before the passkey: who is asking, and what they get.**
+
+> **Sign in to Chat Example**
+>
+> **chat.alice.dev** wants to sign in to your account on **chat.example**.
+> It will be able to read and send messages as you.
+>
+> chat.example has not verified this app.
+>
+> [Continue with passkey] [Cancel]
+
+"Continue with passkey" is the click that the browser needs before the
+passkey prompt. Omit the "not verified" line only for clients that the
+server recognises.
+
+**The passkey prompt.** The account becomes known here: the passkey is a
+discoverable credential.
+
+**Screen 2, after the passkey: the account, and Allow.**
+
+> Allow **chat.alice.dev** to use **Ada (@ada)**’s account?
+>
+> Not you? Use another passkey
+>
+> [Allow] [Cancel]
+
+**Variants:**
+
+- **New account (`action: register`):**
+  > **chat.alice.dev** wants to create an account for you on
+  > **chat.example**, with a new passkey. It will be able to read and send
+  > messages as you.
+  >
+  > [Create passkey] [Cancel]
+
+  No screen 2: the account is new.
+- **Addition:** the account is known from the `request` handle, so one
+  screen does:
+  > **An app on this device (com.example.myapp)** wants to add a passkey to
+  > **Ada (@ada)**’s account on **chat.example**.
+  >
+  > [Create passkey] [Cancel]
+
+**Remembering consent.** The page MAY skip screen 2 when the same account
+already allowed the same `https` redirect host. It always asks for app
+schemes and loopback addresses, which do not identify the client (RFC 8252
+§8.6).
+
+**Cancel** redirects with `error=access_denied`, at either screen.
+
+"Read and send messages as you" is the whole truth: an Apron `token` acts
+as the full account, and there are no scopes.
 
 ## State
 
@@ -195,9 +270,9 @@ next begin or a disconnect drops it (§4.10).
    protects the sign-in, which runs on the real domain; the page's
    confirmation decides who receives it, as with `external`. A server that
    wants passkey sessions only for first-party clients omits `external`.
-2. **Clickjacking.** The page's one button is both consent and the user
-   activation for the passkey prompt, so the page refuses framing
-   (`frame-ancestors 'none'`).
+2. **Clickjacking.** The page's buttons are consent, and "Continue with
+   passkey" is also the user activation for the passkey prompt, so the page
+   refuses framing (`frame-ancestors 'none'`).
 3. **Origin binding.** A token from a remote ceremony cannot be bound to the
    client's origin, since the ceremony's origin is the page. It relies on
    rotation with reuse detection (§5.2), like other bearer tokens.
@@ -282,14 +357,23 @@ ceremony" to apply to a finish with `credential`.
 
 ## Open questions
 
-1. Should the RP ID also be in the `server` frame, so that clients can
-   choose their buttons before begin? It never changes for a server.
-2. Should begin take a flag that the client will go remote, so that the
-   server skips the local challenge?
-3. Should servers be encouraged to offer the passkey page only to clients
-   that they recognise, such as by client ID metadata documents on known
-   hosts?
-4. Terminals over SSH: a device grant for the passkey page, or leave them
-   to `token` and `external`?
-5. Is `request` the right name for the addition handle, or should it follow
-   OAuth's `request_uri` (RFC 9126), which libraries already send?
+Settled (2026-11-14):
+
+- No RP ID in the `server` frame. No standard advertises one, and the
+  passkey page makes the choice between local and remote invisible after
+  begin.
+- No flag to skip the local challenge. It is tens of bytes per connection,
+  and dropped on the next begin or a disconnect (§4.10).
+- No device grant for the passkey page. Terminals use a `token` issued from
+  a first-party client, or `external` where its issuer offers a device
+  grant.
+
+Open:
+
+1. Should servers be encouraged to offer the passkey page only to clients
+   that they recognise? Current answer: no; the confirmation covers
+   unrecognised clients.
+2. The field that carries the page's URL: see the naming options for the
+   begin result (`authorization_endpoint` or another name), and whether the
+   server's parameters, such as `action` and `request`, ride in the URL's
+   query instead of `params`.

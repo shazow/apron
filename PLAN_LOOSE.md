@@ -220,6 +220,8 @@ A server that is its own issuer:
   never in place of a host. (Otherwise a phishing client could name a good
   client's real document with its own `redirect_uri`, and PKCE would not
   help, since the phishing client started the flow. RESEARCH_ATPROTO.md, B1.)
+- It asks for confirmation as "Confirmation" below says, and SHOULD NOT skip
+  it for app schemes or loopback redirects.
 - It redirects with `code`, `state`, and `iss`, or with
   `error=access_denied`.
 - A code is single-use, expires within minutes, and is bound to `client_id`,
@@ -234,6 +236,63 @@ A foreign issuer (operator setup, not wire):
 - Sends `iss` in the authorization response (RFC 9207).
 - Gives any client a way in: a public `client_id` with wildcard callbacks,
   client ID metadata documents, or dynamic registration.
+
+## Confirmation
+
+The page is where the user decides which client gets their account, so it
+says who is asking, what they get, and which account, before it redirects.
+Encouraged in PROTOCOL.md §5.2, not required on the wire. Prior art: RFC
+8252 §8.6 (no automatic approval for clients whose identity cannot be
+assured); the open-clients profile and the client ID metadata document
+draft (show hosts, mark unverified clients); AT Protocol's sign-in screen;
+Google's and GitHub's consent screens. The passkey variant is in
+[PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md#confirmation).
+
+Who is asking, in the page's words: an `https` redirect's host, such as
+**chat.alice.dev**; an app scheme as **An app on this device
+(com.example.myapp)**; a loopback address as **An app on this device**. A
+client name from a metadata document appears only beside the host.
+
+Example phrasing, for prototypes:
+
+**Before sign-in:**
+
+> **Sign in to Chat Example**
+>
+> **chat.alice.dev** wants to sign in to your account on **chat.example**.
+> It will be able to read and send messages as you.
+>
+> chat.example has not verified this app.
+>
+> [Continue] [Cancel]
+
+Then the page's own sign-in: a passkey, an email code, Pocket ID, Bluesky,
+a wallet.
+
+**After sign-in:**
+
+> Allow **chat.alice.dev** to use **Ada (@ada)**’s account?
+>
+> Not you? Sign in as someone else
+>
+> [Allow] [Cancel]
+
+**A new account:**
+
+> **chat.alice.dev** wants to create an account for you on
+> **chat.example**. It will be able to read and send messages as you.
+>
+> [Continue] [Cancel]
+
+- Omit "not verified" only for clients that the server recognises.
+- The page MAY skip "After sign-in" when the same account already allowed
+  the same `https` redirect host. It always asks for app schemes and
+  loopback addresses.
+- Cancel, at any step, redirects with `error=access_denied`.
+- "Read and send messages as you" is the whole truth: an Apron `token` acts
+  as the full account.
+- The page does not need to know whether the code will add an identity
+  (decided above, "Additions"); the connection that redeems decides.
 
 ## Coverage
 
