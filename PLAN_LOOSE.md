@@ -212,9 +212,14 @@ A server that is its own issuer:
 - It requires PKCE with `S256`.
 - It rejects a `resource` other than its own origin.
 - The page signs the user in by any method. It shows the server, and the
-  host or scheme of `redirect_uri`, or the client's name from a client ID
-  metadata document. It confirms before it redirects, also when the user is
-  already signed in.
+  host of `redirect_uri`, or its scheme for an app scheme. It confirms before
+  it redirects, also when the user is already signed in.
+- It MAY fetch a client ID metadata document when `client_id` is an `https`
+  URL. It then accepts only a `redirect_uri` that the document lists.
+- It MAY show the document's `client_name` beside the host of `client_id`,
+  never in place of a host. (Otherwise a phishing client could name a good
+  client's real document with its own `redirect_uri`, and PKCE would not
+  help, since the phishing client started the flow. RESEARCH_ATPROTO.md, B1.)
 - It redirects with `code`, `state`, and `iss`, or with
   `error=access_denied`.
 - A code is single-use, expires within minutes, and is bound to `client_id`,

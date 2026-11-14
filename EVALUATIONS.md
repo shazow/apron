@@ -210,6 +210,9 @@ Guidance for operators:
 | F7 | Apron tokens are long-lived bearer credentials, kept in web storage on arbitrary origins (A6). | Mitigated: rotation with reuse detection, server-side, named in §5.2 as optional; no logging of `auth` params; hashed storage. Key-bound tokens stay optional for clients that choose them (PLAN_LOOSE.md, Forward compatibility). |
 | F8 | PLAN_OAUTH breaks with issuers that bind access tokens: a server that ignores `cnf` accepts a stolen bound token as bearer, and one that checks it rejects every DPoP client. | Fixed in the plans: servers reject bound tokens without a proof; clients use DPoP at the issuer only when `server.dpop` is advertised. |
 | F9 | A foreign issuer that requires DPoP breaks PLAN_LOOSE's redemption on the connection. | Fixed: the Apron server redeems with its own DPoP key; simple clients send no `dpop_jkt`. |
+| F10 | An AT Protocol portal that trusts the token response's `sub` without resolving the DID lets any self-hosted PDS sign in as any account. | Guidance for portals: resolve the DID, and check that its PDS names the authorization server that issued the token, before trusting `sub` (RESEARCH_ATPROTO.md, B2). |
+| F11 | Keying AT Protocol accounts by issuer and `sub` breaks when a user moves to another PDS, since the issuer changes. | Guidance for portals: key AT Protocol identities by DID alone. Apron's own rule (issuer and `sub`) is unaffected: the Apron server is the issuer of the codes it gives clients. |
+| F12 | A page that shows a client's name from a client ID metadata document, without checking the redirect against it, lets a phishing client borrow a good client's name. | Fixed in PLAN_LOOSE.md and §4.12.3: the page shows the redirect's host; a fetched document limits `redirect_uri`; `client_name` appears only beside the `client_id` host. |
 
 ## Remaining risks
 
@@ -219,10 +222,13 @@ Guidance for operators:
   one RP ID share passkeys, so they trust each other.
 - **R3.** A shared `client_id` from begin shows every client as one
   name on the consent screen, so a phishing frontend looks like any other.
-  Client ID metadata documents show the real client.
+  A client ID metadata document shows a host that the client controls; its `client_name` is only the client's claim, so pages show it only beside that host (PLAN_LOOSE.md).
 - **R4.** A frontend that a server lists as a related origin can relay its
   passkey ceremonies. The listing is the trust.
 - **R5.** Code running in a client while it is open (A7) can start a new
   sign-in. The portal's confirmation before every redirect is the guard,
   also when the user is already signed in. A foreign issuer that skips
   consent for a known client weakens it.
+- **R6.** An AT Protocol portal holds tokens for the user's PDS. It requests
+  only the `atproto` scope, which proves identity and grants no access to
+  the user's data, and discards the tokens once it has the DID.
