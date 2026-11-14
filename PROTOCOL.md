@@ -302,7 +302,6 @@ class Server {
   capabilities?: string[] = []; // §4
   welcome?: string;             // user-readable CommonMark details and auth instructions
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
-  external?: External;          // the authorization server for "external" (§4.12.1)
   ping?: number;                // seconds between client pings (§1)
 
   title?: string;               // plain display name; absent: the server's address
@@ -365,6 +364,7 @@ class Auth {
   name?: string;                // requested display name
   user_id?: string;             // requested user_id
   agent?: string;               // implementation/version string, for debugging
+  ext?: object;                 // extension data (§4.13)
 
   // "token", "email", and "external" schemes
   token?: string;
@@ -378,6 +378,12 @@ class Auth {
   // "email" scheme (§4.11)
   state?: string;
   email?: string;
+
+  // "external" scheme (§4.12)
+  code?: string;
+  code_verifier?: string;
+  redirect_uri?: string;
+  client_id?: string;
 }
 
 class AuthResult {
@@ -387,6 +393,9 @@ class AuthResult {
   // "webauthn" scheme, begin step
   challenge_id?: string;
   public_key?: object;          // WebAuthn options
+
+  // "external" scheme, begin (§4.12.1)
+  external?: External;
 }
 ```
 
@@ -413,7 +422,7 @@ class AuthResult {
     ([§4.10](#410-webauthn-authentication)).
   - `email`: optional sign-in by a code sent to an email address
     ([§4.11](#411-email-sign-in)).
-  - `external`: optional sign-in with an OAuth 2.1 access token
+  - `external`: optional sign-in on a web page, through OAuth 2.1
     ([§4.12](#412-external-sign-in)).
 - A scheme that this document defines but the server does not offer is
   `unsupported`.
@@ -2506,114 +2515,132 @@ approves the proposal:
 
 ### 4.12 External sign-in
 
-External sign-in is a profile of
-[OAuth 2.1](https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/). The user
-signs in at an authorization server, such as an OpenID Connect provider or one
-that the server runs, and the client presents the access token in `auth`. The
-server is a resource server, and clients are public clients. So clients and
-servers can use standard OAuth libraries, and a server can use an existing
-identity provider as is.
+External sign-in sends the user to a sign-in page, which can use any method,
+and ends in a bearer `token` ([§3.2.1](#321-bearer-tokens)). It is a profile of
+[OAuth 2.1](https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/): the
+client sends the user to an authorization endpoint with PKCE, and redeems the
+code that comes back. By default, the server is its own authorization server,
+and any client can use it without registration. A server can name another
+authorization server instead, such as an OpenID Connect provider. Clients can
+use an OAuth library, or a few lines of their own.
 
 ```jsonc
-// <- from wss://chat.example/ws
+// -> begin
+{"method": "auth", "id": "c1", "params": {"scheme": "external"}}
+// <-
+{"id": "c1", "result": {"external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
+
+// the client opens
+// https://chat.example/oauth/authorize?response_type=code&client_id=com.sidekick.app
+//   &redirect_uri=com.sidekick.app:/signed-in&code_challenge=E9Mel…&code_challenge_method=S256
+//   &state=q8Rz…&resource=https://chat.example
+// the page signs the user in, confirms, and redirects to
+// com.sidekick.app:/signed-in?code=Hk41x9…&state=q8Rz…&iss=https://chat.example
+
+// -> on any connection
 {
-  "method": "server", "params": {
-    "apron": 10,
-    "auth": ["external"],
-    "external": {
-      "issuer": "https://id.example",
-      "resource": "https://chat.example",
-      "scope": "openid offline_access"
-    }
+  "method": "auth", "id": "c2", "params": {
+    "scheme": "external", "code": "Hk41x9…", "code_verifier": "dBjftJ…",
+    "redirect_uri": "com.sidekick.app:/signed-in", "client_id": "com.sidekick.app"
   }
 }
-
-// the client signs in at https://id.example, and gets an access token for https://chat.example
-
-// ->
-{"method": "auth", "id": "c1", "params": {"scheme": "external", "token": "eyJhbGciOiJFUzI1NiIs…"}}
 // <-
-{"id": "c1", "result": {"you": {"user_id": "ada", "name": "Ada"}}}
+{"id": "c2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
 ```
 
-#### 4.12.1 `server.external`
+#### 4.12.1 Begin
 
 ```ts
 class External {
-  issuer: string;               // the authorization server's issuer identifier
-  resource: string;             // this server's resource indicator
-  scope?: string;               // space-separated scopes to request
-  client_id?: string;           // a public client ID that any client MAY use
+  authorization_endpoint: string; // where the client sends the user
+  issuer?: string;                // absent: the server's origin
+  client_id?: string;             // a client ID that any client MAY use
+  scope?: string;                 // space-separated scopes to request
+  params?: object;                // more authorization parameters, as strings
 }
 ```
 
-- A server that lists `external` in `server.auth` MUST send `server.external`.
-- `resource` is `https://` plus the host and any port of the server's address
+- An `external` request with neither `code` nor `token` is a begin. It
+  authenticates nothing, and returns `external`.
+- The server's origin is `https://` plus the host and any port of its address
   ([§1](#1-transport--framing)), such as `https://chat.example`.
-- `scope` lists what the authorization server needs, such as `openid`, or
-  `offline_access` for refresh tokens.
-- Servers SHOULD publish
-  [protected resource metadata](https://www.rfc-editor.org/rfc/rfc9728) for
-  `resource`, with `issuer` in `authorization_servers`.
-- Servers SHOULD advertise an authorization server that any client can use.
-  It:
-  - allows cross-origin requests to its metadata, token, and registration
-    endpoints.
-  - gives any client a client ID, by a client ID metadata document, dynamic
-    registration, or `client_id`.
-  - offers the device authorization grant.
+- Without `issuer`, the server is its own authorization server, and the issuer
+  is its origin.
+- Clients add `params` to the authorization request as they are. They never
+  replace a parameter that [§4.12.2](#4122-signing-in) sets.
 
 #### 4.12.2 Signing in
 
-- Clients MUST check that `resource` is the one for the server's address
-  (otherwise a server could advertise another server's `resource`, and replay
-  the user's token there).
-- Clients fetch the
-  [authorization server's metadata](https://www.rfc-editor.org/rfc/rfc8414)
-  from `issuer`, and MUST check that its `issuer` is identical.
-- Clients use the authorization code grant with PKCE `S256`. They MUST NOT
-  sign in if the metadata does not list `S256` in
-  `code_challenge_methods_supported`.
+- Clients send the user to `authorization_endpoint` with the authorization
+  code grant, PKCE `S256`, and an unguessable `state`.
+- Clients send the server's origin as
+  [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
+  from the address that they connected to (otherwise a server could get a
+  token for another server, and use it there).
+- Clients send `scope` and `params` from begin, when present.
+- When the server is its own authorization server, any `client_id` works,
+  such as the client's app ID. Otherwise clients use a client ID that the
+  issuer accepts, such as begin's `client_id`.
+- Clients open the authorization endpoint in the system browser or a sign-in
+  session, never in an embedded web view.
+- Before they use a code, clients MUST check that `state` is theirs, and that
+  [`iss`](https://www.rfc-editor.org/rfc/rfc9207) is the issuer.
+- Clients redeem the code with `code`, `code_verifier`, `redirect_uri`, and
+  `client_id`, on any connection.
+- Clients MAY instead redeem the code at the issuer's token endpoint, such as
+  with an OAuth library. When the server is its own authorization server, the
+  access token is a bearer token for `scheme: "token"`. Otherwise clients
+  present it with `scheme: "external"` and `token`.
 - Clients without a browser MAY use the
-  [device authorization grant](https://www.rfc-editor.org/rfc/rfc8628)
-  instead, if the metadata offers it.
-- Clients send `resource` as a
-  [resource indicator](https://www.rfc-editor.org/rfc/rfc8707) in the
-  authorization and token requests, and `scope` unchanged.
-- Clients MUST check `iss` in the
-  [authorization response](https://www.rfc-editor.org/rfc/rfc9207) when the
-  metadata says that the authorization server sends it.
-- Clients SHOULD get a client ID in this order:
-  1. a client ID that they were configured with for `issuer`.
-  2. a [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/),
-     if the metadata has `client_id_metadata_document_supported`.
-  3. [dynamic registration](https://www.rfc-editor.org/rfc/rfc7591), if the
-     metadata has `registration_endpoint`.
-  4. `server.external.client_id`.
-- Clients present the access token in `auth` with `scheme: "external"` and
-  `token`. They keep the refresh token, and present a fresh access token on
-  each new connection.
+  [device authorization grant](https://www.rfc-editor.org/rfc/rfc8628), where
+  the issuer offers it.
 
-#### 4.12.3 Token checks
+#### 4.12.3 Authorization server
 
-- An `external` request without `token` is `invalid_params`.
-- Servers MUST accept only access tokens from `issuer` whose `aud` includes
-  `resource`. They check the signature against the issuer's keys, or
+A server that is its own authorization server:
+
+- SHOULD publish its
+  [metadata](https://www.rfc-editor.org/rfc/rfc8414) at its origin.
+- Accepts any `client_id`, and any `redirect_uri` that is `https`, a scheme
+  with a `.`, or `http` on a loopback address with any port. It MAY accept
+  fewer.
+- Requires PKCE `S256`, and refuses a `resource` other than its origin.
+- Signs the user in on its page by any method. The page shows the server, and
+  the host or scheme of `redirect_uri`. It asks the user to confirm before it
+  redirects, also when the user is already signed in to it.
+- Redirects with `code`, `state`, and `iss`, or with `error=access_denied` when
+  the user declines.
+- Makes each code unguessable and single use, and binds it to `client_id`,
+  `redirect_uri`, the PKCE challenge, and `resource`. A code expires within
+  minutes.
+- Allows cross-origin requests to its metadata and token endpoint.
+
+A server that names another authorization server SHOULD use one that binds
+codes and tokens to `resource`, sends `iss`, and lets any client in, such as
+by a public `client_id` or
+[client ID metadata documents](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/).
+
+#### 4.12.4 Token checks
+
+- With `code`, the server redeems the code: itself, or at the issuer's token
+  endpoint, which it finds from the issuer's metadata.
+- Servers MUST accept only tokens from the issuer whose `aud` includes their
+  origin. They check the signature against the issuer's keys, or
   [introspect](https://www.rfc-editor.org/rfc/rfc7662) the token, and check
-  `exp`.
-- An invalid, expired, or wrongly addressed token is `denied`.
-- A successful result carries `you`, and no `token`.
+  `iss` and `exp`.
+- Servers MUST reject a token that is bound to a key, such as by a `cnf`
+  claim. This document defines no proof for one.
+- An invalid, expired, used, or wrongly addressed code or token is `denied`.
+- A successful sign-in returns `you` and a bearer `token`
+  ([§3.2.1](#321-bearer-tokens)).
 - On a connection that is signed in, guests included, an `external` request
-  adds the token's identity to that account. It never signs in to another
-  account.
+  adds the identity to that account, and returns `you`. It never signs in to
+  another account.
 - An identity that belongs to another account is `denied`.
-- Servers identify an account by the token's `sub`. They never identify it
-  by a claim that can change, such as a user name.
-- Servers MUST NOT pass a client's token on, except to the issuer, such as for
-  introspection or user info.
-- A token's expiry does not end the connection that it signed in. A server MAY
-  close a connection when the authorization server revokes its session.
-- Account creation for new `sub` values is server policy.
+- Servers identify an account by the issuer and the token's `sub`, never by a
+  claim that can change, such as a user name.
+- Servers MUST NOT pass a client's code or token on, except to the issuer.
+- Account creation for new identities is server policy.
 
 ### 4.13 `ext`
 
@@ -2732,7 +2759,7 @@ server.
   else's link into that person's account (login cross-site request forgery).
 - A signed-in connection cannot approve a sign-in ([§4.11.3](#4113-approval)),
   and `external` on a signed-in connection only adds an identity
-  ([§4.12.3](#4123-token-checks)). So a link or a token cannot silently switch
+  ([§4.12.4](#4124-token-checks)). So a link or a token cannot silently switch
   a session to another account.
 - An addition works only on a connection of the account that proposed it
   ([§4.11.3](#4113-approval)). Otherwise someone could lead a victim to link the
@@ -2742,16 +2769,21 @@ server.
   Otherwise a server could propose a sign-in to another server with the
   user's address, get the token from the user or the client, and sign in to
   the other server as the user (mix-up).
-- Clients check that `resource` belongs to the server
-  ([§4.12.2](#4122-signing-in)). Otherwise a server could get a token for
-  another server and replay it there. Servers on one host and port share a
-  `resource`, so they trust each other.
-- Servers accept only tokens whose `aud` includes their `resource`
-  ([§4.12.3](#4123-token-checks)). So a token that the same authorization server
-  issued to another service does not sign in.
-- Clients check the authorization server's `issuer`, and `iss` in its response
+- Clients send `resource` for the server that they are connected to, never
+  one that a server names ([§4.12.2](#4122-signing-in)), and servers accept
+  only tokens whose `aud` includes their own origin
+  ([§4.12.4](#4124-token-checks)). So a server that names another server's
+  authorization server gets tokens addressed to itself, which the other server
+  rejects. Servers on one host and port share an origin, so they trust each
+  other.
+- Clients check `iss` in the authorization response
   ([§4.12.2](#4122-signing-in)). So an authorization server cannot take a code
   that another one issued (mix-up).
+- The sign-in page shows who receives the result, and confirms before it
+  redirects, also when the user is already signed in
+  ([§4.12.3](#4123-authorization-server)). So a client that the user did not
+  choose, or code running in a client, does not get a session without the
+  user's action.
 - PKCE binds an authorization code to the client that started the sign-in
   ([§4.12.2](#4122-signing-in)). So an app that claims the same redirect URI
   cannot redeem the code.
