@@ -68,22 +68,21 @@ differently by request, such as by the user's choice of provider
 // -> begin
 {"method": "auth", "id": "c1", "params": {"scheme": "external"}}
 // <- the server is the issuer
-{"id": "c1", "result": {"url": "https://chat.example/oauth/authorize"}}
+{"id": "c1", "result": {"external": {"url": "https://chat.example/oauth/authorize"}}}
 // <- or a foreign issuer; its scope rides in the query
-{"id": "c1", "result": {"url": "https://id.example/authorize?scope=openid",
-  "issuer": "https://id.example", "client_id": "apron"}}
+{"id": "c1", "result": {"external": {"url": "https://id.example/authorize?scope=openid",
+  "issuer": "https://id.example", "client_id": "apron"}}}
 ```
 
 ```ts
-class AuthResult {                // §3.2, besides its other fields
-  // "external" scheme, begin
-  url?: string;                   // the sign-in page: the authorization endpoint
+class External {                  // the begin result's "external"
+  url: string;                    // the sign-in page: the authorization endpoint
   issuer?: string;                // absent: the server's origin
   client_id?: string;             // a client ID that a foreign issuer accepts from any client
 }
 ```
 
-The same `url` is what a `webauthn` begin returns for its passkey page
+The same `external` is what a `webauthn` begin returns for its passkey page
 ([PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md)), so clients follow
 one path for both.
 
@@ -91,7 +90,7 @@ one path for both.
   server needs no state to answer it.
 - The server's origin is `https://` plus the host and any port of its
   address. It is the `resource`, and the issuer when `issuer` is absent.
-- `url` lets simple clients skip discovery. Library clients discover the
+- `external.url` lets simple clients skip discovery. Library clients discover the
   rest from `issuer` (RFC 8414), and use `url` as the authorization
   endpoint.
 - `url` MAY carry a query, such as `scope` or a provider hint (decided
@@ -99,8 +98,21 @@ one path for both.
   parameters to it, as RFC 6749 §3.1 requires. The server's query never
   includes `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
   `code_challenge_method`, `state`, or `resource`.
-- Flat fields, not an `external` object (decided 2026-11-14): `url` is the
-  name that v10 used for the page to open.
+- One `External` object, not flat fields on the result (decided
+  2026-11-14): it reads clearly beside `webauthn`'s `public_key`, and
+  keeps generic names off the result that every scheme shares. `url` is
+  the name that v10 used for the page to open.
+- `url` is where the client sends the user; `redirect_uri` is where the
+  user comes back. `redirect_uri` keeps OAuth's name, because issuers and
+  libraries read it, and the server passes it on when it redeems.
+- `issuer` is who issues the code. Clients check the redirect's `iss`
+  against it (mix-up), and library clients discover the token endpoint from
+  it. The Apron server checks tokens' `iss` against it. Absent, the server
+  is its own issuer, which is the usual case, and every passkey page.
+- `client_id` is for a foreign issuer that admits only clients it knows,
+  such as Pocket ID with one public client registered for Apron. Absent, any
+  value works, and clients send their own, such as their app ID. It is not
+  in `url`'s query, because the client sends it again when it redeems.
 - `step` is not needed: the fields tell begin, redemption, and a foreign
   access token apart, as they tell an email proposal from its approval.
 
@@ -351,14 +363,14 @@ tokens, redeems codes for simple clients, and maps `sub` to accounts.
 ## Shared with the passkey page
 
 [PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md) lets `webauthn`'s
-begin return the same `url`, to a passkey page on the server's domain, for
+begin return the same `external`, with a `url` to a passkey page on the server's domain, for
 clients that cannot use the RP ID. Of the `external` plans, this one is the
 closest fit: the passkey page is this plan's flow, scoped to passkeys and
 finished under `webauthn`. What they share:
 
 | | `external` | `webauthn` with a passkey page |
 |---|---|---|
-| Begin returns | `url`, and `issuer` and `client_id` for a foreign issuer | `public_key`, and `url` |
+| Begin returns | `external`: `url`, and `issuer` and `client_id` for a foreign issuer | `public_key`, and `external` with `url` |
 | `url`'s query | `scope`, a provider hint | `action`, `name`, an addition's `request` |
 | The client adds | `response_type`, `client_id`, `redirect_uri`, PKCE, `state`, `resource` | the same |
 | The page | any method; confirms (Confirmation, above) | a passkey; confirms around the prompt |

@@ -7,7 +7,7 @@ replaces the earlier draft, which only labelled a single portal.
 
 Why an extension and not core: a client that does not know it still signs
 in. It shows one "Sign in" button, begins without a choice, and gets the
-server's default. Core defines the begin request and its `url`, whose
+server's default. Core defines the begin request and its `external.url`, whose
 query the client keeps, so a choice made through the extension reaches
 every client.
 
@@ -36,7 +36,7 @@ typed to find their account, when it begins.
 // -> begin with the user's choice
 {"method": "auth", "id": "c1", "params": {"scheme": "external", "ext": {"auth_external": {"prefer": "github"}}}}
 // <- the choice shows in url's query, which every client keeps
-{"id": "c1", "result": {"url": "https://chat.example/oauth/authorize?provider=github"}}
+{"id": "c1", "result": {"external": {"url": "https://chat.example/oauth/authorize?provider=github"}}}
 ```
 
 ```ts
@@ -69,7 +69,7 @@ class AuthExternalBegin {       // auth params.ext.auth_external, on begin
 - The server MAY use `login_hint` to choose the way, such as a company's own
   sign-in for its email domain, and MAY pass it on in `url`'s query.
 - The server answers begin as [§4.12.1](PROTOCOL.md#4121-begin) says. A
-  choice changes only the result's fields: `url`, and `issuer` and
+  choice changes only `external`'s fields: `url`, and `issuer` and
   `client_id` for a foreign issuer.
 - Without the extension, clients show one "Sign in" button, and begin without
   `ext`.

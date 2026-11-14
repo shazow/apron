@@ -29,8 +29,8 @@ domain's asset links. Trying is cheap: a mismatched RP ID fails at once
 ## Approach
 
 The `webauthn` begin result keeps `public_key`, for clients that can run
-the ceremony themselves, and gains an optional `url`: the same field as
-`external`'s begin result (§4.12.1), pointing at a **passkey page** on the
+the ceremony themselves, and gains an optional `external`: the same object
+as `external`'s begin result (§4.12.1), whose `url` pointing at a **passkey page** on the
 server's own domain. A client that cannot use the RP ID opens that page, the user
 signs in there with their passkey, and the page redirects back with a code.
 The client finishes the `webauthn` exchange with the code instead of a
@@ -46,7 +46,7 @@ class AuthResult {              // §3.2, besides its other fields
   // "webauthn" scheme, begin step
   challenge_id?: string;
   public_key?: object;          // WebAuthn options, for a ceremony in the client
-  url?: string;                 // the passkey page, for a ceremony elsewhere (§4.12.1)
+  external?: External;          // { url }: the passkey page, for a ceremony elsewhere (§4.12.1)
 }
 
 class Auth {                    // §3.2: a "webauthn" finish step takes either
@@ -70,7 +70,7 @@ class Auth {                    // §3.2: a "webauthn" finish step takes either
 {"id": "a1", "result": {
   "challenge_id": "ch_1…",
   "public_key": {"rpId": "chat.example", "challenge": "…", "userVerification": "required"},
-  "url": "https://chat.example/passkey?action=login"
+  "external": {"url": "https://chat.example/passkey?action=login"}
 }}
 ```
 
@@ -104,7 +104,7 @@ The same, with `action: "register"`. Begin's `name` (§3.2) travels in
 ```jsonc
 -> {"method": "auth", "id": "a1", "params": {"scheme": "webauthn", "action": "register", "step": "begin", "name": "Ada"}}
 <- {"id": "a1", "result": {"challenge_id": "ch_2…", "public_key": {…},
-     "url": "https://chat.example/passkey?action=register&name=Ada"}}
+     "external": {"url": "https://chat.example/passkey?action=register&name=Ada"}}}
 ```
 
 The page creates the passkey. The server keeps the new credential with the
@@ -121,7 +121,7 @@ passkey for ada (`user.id`, `user.name`) and to say so.
 {"method": "auth", "id": "a1", "params": {"scheme": "webauthn", "action": "register", "step": "begin"}}
 // <-
 {"id": "a1", "result": {"challenge_id": "ch_3…", "public_key": {…},
-  "url": "https://chat.example/passkey?action=register&request=rq_7Kp…"}}
+  "external": {"url": "https://chat.example/passkey?action=register&request=rq_7Kp…"}}}
 ```
 
 The page names the account before it creates the passkey (see
@@ -134,22 +134,22 @@ addition.
 Clients:
 
 - Clients use `public_key` when they can use its RP ID, and pass the RP ID
-  check of §4.10. Otherwise they use `url`, when present.
-- A client MAY try `public_key` first, and go to `url` when the platform
-  refuses the RP ID.
-- For `url`, clients follow §4.12.2: PKCE `S256`, an unguessable `state`,
+  check of §4.10. Otherwise they use `external`, when present.
+- A client MAY try `public_key` first, and go to `external` when the
+  platform refuses the RP ID.
+- For `external`, clients follow §4.12.2: PKCE `S256`, an unguessable `state`,
   `resource` as the server's origin, `url`'s own query kept, the
   system browser or a sign-in session (a popup or a redirect for web
   clients), and the checks of `state` and `iss`.
 - Clients finish with `code`, `code_verifier`, `redirect_uri`, and
   `client_id`, on any connection, with the same `action` as begin.
-- Without `url`, a client that cannot use the RP ID tells the user
+- Without `external`, a client that cannot use the RP ID tells the user
   that the server's passkeys work only in its own apps and website, and
   shows `server.welcome`.
 
 Servers:
 
-- `url` in a begin result is optional. A server that omits it keeps
+- `external` in a begin result is optional. A server that omits it keeps
   passkey sign-in to clients that can use its RP ID.
 - The passkey page is on an origin that the server accepts for its RP ID.
   It acts as an authorization endpoint under §4.12.3, with these additions:
@@ -268,7 +268,7 @@ next begin or a disconnect drops it (§4.10).
    that the user approves on the page gets a session. The passkey still
    protects the sign-in, which runs on the real domain; the page's
    confirmation decides who receives it, as with `external`. A server that
-   wants passkey sessions only for first-party clients omits `url`.
+   wants passkey sessions only for first-party clients omits `external`.
 2. **Clickjacking.** The page's buttons are consent, and "Continue with
    passkey" is also the user activation for the passkey prompt, so the page
    refuses framing (`frame-ancestors 'none'`).
@@ -322,15 +322,16 @@ redirect target; a device grant for the passkey page is an open question.
 
 ## Draft for PROTOCOL.md
 
-§3.2: `url` (already in the begin result for `external`) also comes from a
-`webauthn` begin; `code`, `code_verifier`, `redirect_uri`, and `client_id`
+§3.2: `external` (already in the begin result of the `external` scheme)
+also comes from a `webauthn` begin; `code`, `code_verifier`, `redirect_uri`, and `client_id`
 also go to a `webauthn` finish step.
 
 §4.10, after the table of steps:
 
-> - A begin result MAY carry `url` ([§4.12.1](#4121-begin)), a passkey page
->   on an origin that the server accepts for its RP ID.
-> - Clients that cannot use the RP ID of `public_key` use `url`, when
+> - A begin result MAY carry `external` ([§4.12.1](#4121-begin)), whose
+>   `url` is a passkey page on an origin that the server accepts for its RP
+>   ID.
+> - Clients that cannot use the RP ID of `public_key` use `external`, when
 >   present, as [§4.12.2](#4122-signing-in) says, and finish with `code`,
 >   `code_verifier`, `redirect_uri`, and `client_id` instead of
 >   `credential`.
@@ -373,6 +374,6 @@ Open:
    that they recognise? Current answer: no; the confirmation covers
    unrecognised clients.
 
-Settled since: the page's URL is the flat `url` of the begin result, shared
-with `external`'s begin, and the server's parameters (`action`, `name`,
+Settled since: the page's URL is `external.url` in the begin result, the
+same object as `external`'s begin, and the server's parameters (`action`, `name`,
 `request`) ride in its query.

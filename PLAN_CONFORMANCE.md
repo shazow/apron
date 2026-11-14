@@ -154,9 +154,9 @@ Server, without sign-in:
 
 | ID | Side | Checks |
 |---|---|---|
-| `external.shape.begin` | server | begin (`external` without `code` or `token`) returns `url`; without `issuer`, `url` is on the server's origin; its query has none of the client's parameters; it works signed in or not |
-| `webauthn.shape.page` | server | when a `webauthn` begin carries `url`, a finish with a code from that page signs in, and a code from another page or another action is `denied` |
-| `external.shape.query-kept` | client | the authorization URL keeps `url`'s query, and adds the client's parameters to it |
+| `external.shape.begin` | server | begin (`external` without `code` or `token`) returns `external`; without `issuer`, `external.url` is on the server's origin; its query has none of the client's parameters; it works signed in or not |
+| `webauthn.shape.page` | server | when a `webauthn` begin carries `external`, a finish with a code from that page signs in, and a code from another page or another action is `denied` |
+| `external.shape.query-kept` | client | the authorization URL keeps `external.url`'s query, and adds the client's parameters to it |
 | `external.shape.metadata` | server | the issuer's metadata exists, its `issuer` is identical, it lists `S256`, and it says that it sends `iss` |
 | `external.shape.cors` | server | the metadata and the token endpoint allow cross-origin requests |
 | `external.A3.pkce-required` | server | a request without `code_challenge`, or with `plain`, is refused |
