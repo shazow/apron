@@ -198,6 +198,41 @@ Client:
 | `external.shape.declined` | client | after `error=access_denied`, sends nothing, and reports that it stopped |
 | `external.A2.webview` | client | MANUAL: the portal opens in the system browser or a sign-in session, not an embedded web view |
 
+### Proof of possession
+
+From [RESEARCH_DPOP_DBSC.md](RESEARCH_DPOP_DBSC.md). One test applies now;
+the rest apply once servers bind tokens (PLAN_LOOSE.md, Forward
+compatibility). The drivers then need a JOSE library, which `uv` scripts can
+declare.
+
+Now:
+
+| ID | Side | Checks |
+|---|---|---|
+| `external.A6.cnf` | server | an issuer token with `cnf` and no proof is `denied` |
+| `external.A3.no-dpop-jkt` | client | the simple path's authorization URL has no `dpop_jkt` |
+| `external.shape.token-type` | server | the token endpoint returns `"Bearer"` unless `server.dpop` is present |
+
+Once bound tokens exist:
+
+| ID | Side | Checks |
+|---|---|---|
+| `token.shape.unbound-default` | server | without `dpop`, the result has no `token_type` or `"Bearer"`, and the token works without a proof |
+| `token.shape.bound` | server | with `dpop`, the result has `token_type: "DPoP"` |
+| `token.A6.needs-proof` | server | a bound token without `dpop` is `denied` |
+| `token.A6.wrong-key` | server | a proof by another key is `denied` |
+| `token.A6.other-connection` | server | a proof with another connection's nonce is `denied`, with `data.dpop_nonce` |
+| `token.A6.htu` | server | a proof for another address is `denied` |
+| `token.A6.ath` | server | a proof whose `ath` does not match `token` is `denied` |
+| `token.A6.jti` | server | a second proof with the same `jti` on one connection is `denied` |
+| `token.shape.alg` | server | `alg: none`, HS256, and a `typ` other than `dpop+jwt` are `denied` |
+| `external.shape.foreign-dpop` | server | redemption works with an issuer that requires DPoP, such as Keycloak with "Require DPoP bound tokens" |
+| `token.shape.bearer-fallback` | client | after sending `dpop` to a server that returns no `token_type`, uses the token without a proof |
+| `token.shape.nonce-retry` | client | after `denied` with `data.dpop_nonce`, retries once with that nonce, and not again |
+| `token.A1.htu` | client | signs `htu` as the address that it connected to |
+| `token.A6.no-pipeline` | client | sends no requests after an `auth` with a proof that has no nonce |
+| `token.A6.non-extractable` | client | MANUAL or adapter: a web client's key is non-extractable |
+
 ## Design choices that make this work
 
 Wire rules, for the plan that we pick:

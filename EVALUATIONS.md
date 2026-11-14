@@ -32,6 +32,20 @@ Every supported cell holds against each attacker.
 | A3 | Another app on the same device | It cannot redeem a code or token meant for another client, such as by claiming the same scheme or loopback port. |
 | A4 | A person who sends a link | No login CSRF, no silent switch to another account, and no linking the victim's identity to the sender's account. |
 | A5 | A person who guesses | No brute force of codes, and no list of which addresses have accounts. |
+| A6 | Someone who copies a stored or logged credential: one-shot XSS, a malicious extension, a stolen backup or synced profile, an infostealer, or a log of frames on a server, a proxy, or in devtools | A copied token or refresh token alone does not sign in from elsewhere. |
+| A7 | Code that runs in the client while it is open: persistent XSS, a malicious extension | It cannot get a new session without the user's action. |
+
+A6 and A7 come from [RESEARCH_DPOP_DBSC.md](RESEARCH_DPOP_DBSC.md).
+
+- **A6 today:** fails for `token`, and for PLAN_OAUTH's refresh tokens. A
+  `webauthn` token resists only on another web origin (F4). With key-bound
+  tokens ([PLAN_LOOSE.md](PLAN_LOOSE.md#forward-compatibility-proof-of-possession)),
+  it holds against copies: for web with a non-extractable software key (but
+  not against malware that also copies the key), for native with a hardware
+  key. For terminals, a key file is copied as easily as a token, unless the
+  key lives in an agent, a TPM, or a platform keystore.
+- **A7:** no binding helps (RFC 10017 §5.1.3, §5.1.4). The portal's
+  confirmation before every redirect is the guard (R5).
 
 ## Works decently: graded
 
@@ -185,6 +199,9 @@ Guidance for operators:
 | F4 | The origin binding of a `webauthn` token stops theft between browser origins only. A native client can send any `Origin`. | Accepted: §5.2 already says "another web origin". |
 | F5 | `external` on third-party web and native clients needs CORS and a client ID from the authorization server; a terminal needs the device grant. | Fixed by C3, a recommendation to operators. |
 | F6 | Plain email links behind a portal open in another browser context, so a native client's sign-in session never gets the result. | Guidance: portals send codes, or links that approve a waiting page ([Behind the portal](#behind-the-portal)). |
+| F7 | Apron tokens are long-lived bearer credentials, kept in web storage on arbitrary origins (A6). | Open: names reserved now, key-bound tokens later (PLAN_LOOSE.md, Forward compatibility). Guidance now: no logging of `auth` params, hashed storage, rotation for web clients. |
+| F8 | PLAN_OAUTH breaks with issuers that bind access tokens: a server that ignores `cnf` accepts a stolen bound token as bearer, and one that checks it rejects every DPoP client. | Fixed in the plans: servers reject bound tokens without a proof; clients use DPoP at the issuer only when `server.dpop` is advertised. |
+| F9 | A foreign issuer that requires DPoP breaks PLAN_LOOSE's redemption on the connection. | Fixed: the Apron server redeems with its own DPoP key; simple clients send no `dpop_jkt`. |
 
 ## Remaining risks
 
@@ -197,3 +214,7 @@ Guidance for operators:
   Client ID metadata documents show the real client.
 - **R4.** A frontend that a server lists as a related origin can relay its
   passkey ceremonies. The listing is the trust.
+- **R5.** Code running in a client while it is open (A7) can start a new
+  sign-in. The portal's confirmation before every redirect is the guard,
+  also when the user is already signed in. A foreign issuer that skips
+  consent for a known client weakens it.

@@ -124,6 +124,10 @@ class External {               // server.external
   4. `server.external.client_id`.
 - Clients present the access token in `auth`. They keep the refresh token,
   and present a fresh access token on each new connection.
+- Clients send DPoP proofs (RFC 9449) to the issuer only when the server
+  advertises `server.dpop`, and check `token_type` in the token response. A
+  DPoP-bound access token is useless at a server that cannot verify proofs
+  on `auth` (F8).
 
 ```jsonc
 // ->
@@ -151,6 +155,33 @@ class External {               // server.external
 - A token's expiry does not end the connection that it signed in. A server MAY
   close a connection when the authorization server revokes its session.
 - Account creation for new `sub` values is server policy.
+- Servers MUST reject an access token that is bound to a key (a `cnf`
+  claim, or an introspection result with `cnf` or `token_type: DPoP`) unless
+  they verify a proof for that key (RFC 9449 §7.2). Until servers take
+  proofs on `auth`, this profile supports bearer access tokens only.
+
+### Proof of possession
+
+PLAN_OAUTH is more exposed than PLAN_LOOSE (F8 in EVALUATIONS.md). The
+client presents the issuer's access token on every connection, and keeps
+the issuer's refresh token in web storage. Issuers that bind access tokens
+(AT Protocol always; Okta and Keycloak by per-client settings, and Keycloak
+whenever a client sends a proof) break the plan as written. The mail
+profile's exception for bearer access tokens needs a bare hostname as
+`resource`, which this plan rejected.
+
+- Reserve the same names as PLAN_LOOSE.md's "Forward compatibility" section:
+  `auth.params.dpop`, `server.dpop {algs, nonce}`, and `data.dpop_nonce` on
+  `denied`. A proof on `auth` is RFC 9449's JWT with `htm: "GET"`, `htu` the
+  server's address, `ath` the access token's hash, and the connection's
+  nonce from the `server` frame.
+- Recommend to operators, until Apron servers take proofs: bind refresh
+  tokens only, and keep access tokens bearer and short (Keycloak 26.4 offers
+  this; the mail profile §3.8 does the same split).
+- A server that verifies proofs adds `dpop_signing_alg_values_supported` to
+  its protected resource metadata, and MAY add
+  `dpop_bound_access_tokens_required`.
+- Details: [RESEARCH_DPOP_DBSC.md](RESEARCH_DPOP_DBSC.md#impact-on-plan_oauth).
 
 ### Left to OAuth 2.1, not restated
 

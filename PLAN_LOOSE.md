@@ -163,6 +163,9 @@ Clients:
   `state`, so that any tab or connection can finish.
 - Check `state`, and that `iss` is the issuer, before they use a code.
 - Use the system browser or a sign-in session, never an embedded web view.
+- Don't send `dpop_jkt` in the authorization URL on the simple path: the
+  server redeems the code, so the code must not be bound to the client's
+  key.
 
 Servers:
 
@@ -173,6 +176,11 @@ Servers:
 - Never pass on a client's token, except to the issuer.
 - Identify an account by the issuer and the token's `sub`.
 - Return an Apron `token` for each successful `external` sign-in.
+- Reject a token that is bound to a key (a `cnf` claim, or an introspection
+  result with `cnf` or `token_type: DPoP`) unless they verify a proof for
+  that key (RFC 9449 §7.2). A bound token never passes as a bearer token.
+- When a foreign issuer supports or requires DPoP, redeem codes with a DPoP
+  key of their own, and handle `use_dpop_nonce` themselves.
 - An `external` request with neither `code` nor `token` is `invalid_params`.
 
 A server that is its own issuer:
@@ -221,6 +229,8 @@ this plan.
 | A3, scheme squatting, loopback ports | PKCE |
 | A4, login CSRF; linking to someone else's account | `state`; additions only on the account's own connection |
 | A5, guessing | codes need their verifier |
+| A6, a copied token, from storage or a log | not yet: the Apron `token` is a bearer token (F7). Later, a key-bound token ([Forward compatibility](#forward-compatibility-proof-of-possession)). A bound issuer token never passes as bearer. |
+| A7, code running in the client while it is open | no binding helps; the portal's confirmation before each redirect (R5) |
 
 ## Pocket ID
 
@@ -268,6 +278,107 @@ its portal instead.
 | session | Apron `token` | Apron `token` | the issuer's tokens |
 | server work | page, proposals, trust list | page, codes, token endpoint, metadata; or none behind a foreign issuer | an authorization server, or none |
 
+## Forward compatibility: proof of possession
+
+Research: [RESEARCH_DPOP_DBSC.md](RESEARCH_DPOP_DBSC.md). Nothing here
+ships now. DPoP (RFC 9449) is the only shipped way to bind OAuth tokens to
+a client key in browsers; it is defined for HTTP only, and no standard
+carries a proof over a WebSocket. DBSC binds cookies only. Pocket ID and
+`workers-oauth-provider` issue bearer tokens only. So the plan reserves
+names and rules now, and binds the Apron `token` later.
+
+**Reserved now:**
+
+- `auth.params.dpop`: a proof JWT.
+- `AuthResult.token_type`: `"Bearer"` or `"DPoP"`. Absent means `"Bearer"`.
+- `server.dpop`: `{algs: string[], nonce: string}`.
+- `data.dpop_nonce` on a `denied` reply to `auth`: retry once with this
+  nonce.
+
+**Binding is opt-in.** A server binds a token only when the `auth` that
+issued it carried a valid `dpop`. An old server ignores `dpop` and returns
+no `token_type`, so the client uses a bearer token. An old client never
+sends `dpop`, so it never gets a bound token.
+
+**The proof (decided: reuse RFC 9449's JWT).** Existing DPoP code and
+verifiers carry over.
+
+| RFC 9449 | On `auth` |
+|---|---|
+| `DPoP` header | `params.dpop` |
+| `typ` | `dpop+jwt` |
+| `htm` | `"GET"`, the method of the upgrade request that opened the connection |
+| `htu` | the server's address as the client connected to it, such as `wss://chat.example/ws` |
+| `ath` | the hash of `params.token`, when there is one |
+| `DPoP-Nonce` | `server.dpop.nonce` |
+| `use_dpop_nonce` | `denied` with `data.dpop_nonce` |
+
+- The nonce is unpredictable and bound to its connection, as WebAuthn
+  challenges are (§4.10). A proof copied from a log fails on any other
+  connection, and `jti` only needs to be unique per connection.
+- A client with a bound token waits for the `server` frame before it sends
+  `auth`, and doesn't pipeline requests after an `auth` without a nonce. This
+  is the one exception to §3.2.2's "MAY send `auth` before `server`".
+- Each reconnect signs one new proof with the same key, with no extra round
+  trip.
+- ES256 MUST be supported; Ed25519 MAY; `none` and MAC algorithms MUST NOT.
+- Every proof failure is `denied`, as today.
+
+```jsonc
+// <- a fresh nonce on every connection
+{"method": "server", "params": {"apron": 10, "auth": ["external", "token"],
+  "dpop": {"algs": ["ES256"], "nonce": "n_7Qx2…"},
+  "external": {"authorization_endpoint": "https://chat.example/oauth/authorize"}}}
+
+// -> redeem a code, and ask for a bound token
+{"method": "auth", "id": "c1", "params": {"scheme": "external", "code": "Hk41x9…",
+  "code_verifier": "dBjftJ…", "redirect_uri": "com.sidekick.app:/signed-in",
+  "client_id": "com.sidekick.app", "dpop": "eyJ0eXAiOiJkcG9wK2p3dCIs…"}}
+// <-
+{"id": "c1", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_…", "token_type": "DPoP"}}
+
+// -> a later connection; the proof's payload adds "ath"
+{"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "st_…", "dpop": "eyJ0eXAiOiJkcG9wK2p3dCIs…"}}
+// <- a proof without this connection's nonce
+{"id": "c1", "error": {"code": -32001, "message": "Sign-in proof expired; retry", "data": {"dpop_nonce": "n_Zp9…"}}}
+```
+
+**The library path.** The token endpoint returns the Apron token as the
+`access_token` with `token_type: "Bearer"` until the server advertises
+`server.dpop`. Only then MAY it return `"DPoP"`, and advertise
+`dpop_signing_alg_values_supported` in its metadata.
+
+**Foreign issuers.**
+
+- An issuer that requires DPoP gets proofs from the Apron server's own key
+  (Rules, above). The bound refresh token, if the server keeps one, is then
+  useless to anyone who copies the server's database without the key.
+- An issuer that requires pushed authorization requests, such as AT
+  Protocol, cannot serve the simple path: its authorization URL needs a
+  `request_uri` from an HTTP POST. Library clients only, unless the server
+  pushes the request for the client (question 9).
+
+**Guidance now:**
+
+- Servers never log `auth` params, and store only hashes of tokens.
+- Servers rotate Apron tokens for web clients, as OAuth 2.1 asks for public
+  clients' refresh tokens.
+- Clients keep tokens out of URLs and crash reports.
+- Keep the portal's "confirm before redirect, also when signed in": against
+  code running in a client (A7), no binding helps, and that click is the
+  guard (RFC 10017 §5.1.3).
+
+**Later:**
+
+- Bind the Apron `token`: web clients with a non-extractable ES256 WebCrypto
+  key in IndexedDB, native clients with Secure Enclave or Android Keystore
+  keys. It answers token theft from storage and logs (A6, F7), and makes
+  §4.10's origin binding of WebAuthn tokens redundant (F4).
+- DBSC for first-party web clients only: a DBSC-bound cookie that mints
+  short-lived Apron tokens over HTTP, with no wire change. Nothing signs in
+  from the upgrade's cookie until DBSC is shown to cover WebSocket upgrades
+  and ships beyond Chrome on desktop.
+
 ## Changes to shazow/apron#115
 
 - §3.1: `server.external` as above.
@@ -297,3 +408,16 @@ its portal instead.
    v10 path, which asks the user first.
 6. Does `workers-oauth-provider` let server.apron.chat accept any
    `client_id`?
+7. Should every `server` frame carry `server.dpop.nonce`, or only a server
+   that offers binding?
+8. Should a server be able to require binding (`server.dpop.required`) and
+   refuse unbound tokens? Old clients would then fail to sign in with
+   `token`.
+9. Issuers that require pushed authorization requests: should the server
+   push the request for simple clients, or are they library-only?
+10. Terminals: is a key file worth binding to, or only keys in an agent, a
+    TPM, or a platform keystore?
+11. Once tokens bind to keys, does §4.10's origin binding of WebAuthn tokens
+    stay, or become the fallback for clients without a key?
+12. Does Chrome refresh an expired DBSC-bound cookie before a WebSocket
+    upgrade? Worth one test before any cookie scheme is considered.
