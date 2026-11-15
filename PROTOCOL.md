@@ -2684,8 +2684,9 @@ These rules apply to a server that is its own authorization server:
   redirector).
 - The page signs the user in by any method, and shows the server and the host
   or scheme of `redirect_uri`.
-- The page MUST ask the user to confirm before it redirects, also when the user
-  is already signed in to it.
+- The page MUST redirect only to a client that the user allowed. A user
+  allows an `https` `redirect_uri` once for their account, and any other
+  `redirect_uri` at each sign-in.
 - The page redirects with `code`, `state`, and `iss` when the user confirms,
   or with `error=access_denied` when the user declines.
 - The server MUST make each code unguessable and single use, and MUST bind it
@@ -2892,11 +2893,12 @@ server.
   user's action.
 - The user can only refuse a client that they recognize. A page helps when it
   names the client by the host of `redirect_uri`, marks clients that the
-  server does not know, says that the client will act as the user, and shows
-  the account before it redirects. Remembering a user's consent is safe only
-  for `https` redirects: an app scheme or a loopback address does not
-  identify the client
-  ([RFC 8252 §8.6](https://www.rfc-editor.org/rfc/rfc8252#section-8.6)).
+  server does not know, and says that the client will act as the user. The
+  account shows on the page, or in the passkey prompt. A user's choice is kept
+  only for an exact `https` `redirect_uri`: an app scheme or a loopback address
+  does not identify the client
+  ([RFC 8252 §8.6](https://www.rfc-editor.org/rfc/rfc8252#section-8.6)), and
+  another page on the same host can be another client.
 - Any `https` address is a valid `redirect_uri` for open clients. So a sign-in
   page that redirected request errors would send users to any address that a
   link chose (open redirect). The page shows such errors itself
