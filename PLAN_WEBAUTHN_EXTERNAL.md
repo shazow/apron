@@ -409,3 +409,10 @@ All settled (2026-11-14 and 2026-11-15); none open.
    v10's own proposal result). FIDO's server API names (`/attestation/…`,
    `/assertion/…`, `options`, `result`) were compared and not adopted: they
    name the cryptography, not what the user does.
+8. **The page returns by redirect and code, not a back channel (2026-11-15).** A back channel would carry the begin's challenge in `url`, and the page would complete the original connection's ceremony. Rejected because:
+   - **No fewer taps.** The user does the same steps either way.
+   - **One-click phishing.** An attacker could begin on their own connection and send the victim the link. With a redirect, the result goes back through the browser that ran the passkey, to a host the page names.
+   - **It depends on the begin connection.** That connection has to outlive the trip to the browser, which mobile apps often lose.
+   - **Native and fallback flows break.** Native sign-in sheets can't close themselves, and the full-page fallback loses the connection.
+
+   Devices that can't take a redirect, such as a terminal over SSH or a TV, would need a separate device-code mode (RFC 8628 style: the user types a code shown on the device). Not planned.
