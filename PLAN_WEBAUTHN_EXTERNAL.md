@@ -355,6 +355,21 @@ ceremony" to apply to a finish with `credential`.
 >   external sign-in. A server that wants passkey sessions only in its own
 >   clients offers no passkey page.
 
+## Prior art
+
+Details: [RESEARCH_PASSKEY_PAGE.md](RESEARCH_PASSKEY_PAGE.md). The pattern
+is known: sign in natively where the platform allows it, otherwise go
+through the system browser to a page that returns a code (RFC 8252, MSAL's
+broker fallback, Sign in with Apple on other platforms). The closest
+standard is the IETF draft OAuth 2.0 for First-Party Applications: a native
+challenge flow, with a passkey example, whose `redirect_to_web` error sends
+the client to an ordinary browser authorization request, and both paths end
+in a code at one token endpoint. What this plan adds, and the research found
+nowhere as a defined mechanism: a fallback page for passkeys only, whose
+code finishes only the passkey exchange, with both branches inside one
+scheme. No W3C, WICG, or FIDO document defines a relying party's page that
+completes a ceremony for apps.
+
 ## Decisions
 
 All settled (2026-11-14 and 2026-11-15); none open.
