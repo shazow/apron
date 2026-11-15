@@ -129,3 +129,17 @@ PLAN_WEBAUTHN_EXTERNAL.md passkey page in the Go server, against spec branch
 - What happened: `PublicKeyCredential.parseCreationOptionsFromJSON`/`toJSON` are not in every browser yet, so the page script carries a ~40-line fallback; it also needs a CSP nonce because of `frame-ancestors`/no-inline policy. The whole script is ~80 lines. Verified end to end in Chromium with a virtual authenticator (tests/interop/passkey-page.spec.ts).
 - What I did: as described.
 - Suggested spec change: none.
+
+### F19. Every authorization-request error on the page (M6) made the code smaller
+- Spec: §4.12.3 (errors on the authorization pages), as decided for feedback M6
+- Kind: worked well
+- What happened: the server used to split request problems in two: before `redirect_uri` validated, on the page; after, redirected as `error=invalid_target` / `invalid_request` / `unsupported_response_type` with `state` and `iss`. Moving every problem to the page dropped `Problem.Page`, `Request.Refuse`, and the two-way switch in both pages (net about -10 lines). Redirects now happen only from a button (Allow, Cancel, decline at the identity provider), which is easy to audit.
+- What I did: one 400 page, "This sign-in link doesn't work", with a human sentence ("The app that sent you here asked to sign in to another server (resource must be this server's origin, …)") and a muted "Error: invalid_target" line, so a developer can still see the OAuth code. A bad `action` on the passkey page is the same page. Tests now expect 400 with no `Location`.
+- Suggested spec change: the M6 wording as proposed; optionally "The page SHOULD name the OAuth error, for the client's developer", since the client gets no machine-readable error.
+
+### F20. "A token from a code" leaves the foreign issuer's `token` path and additions implicit
+- Spec: §4.12.4 ("A token from a code, here or at the token endpoint, is not bound to an origin"); PLAN_WEBAUTHN_EXTERNAL.md "Rules"
+- Kind: ambiguity
+- What happened: making code tokens unbound (S14) needed a per-session "any origin" flag, a stored field (`any_origin`), and the flag threaded through the server's three sign-in paths (sign-in, addition with a token, invitation enrollment): about 30 lines and a signature change of `Core.Issue`. Two cases are not covered by the sentence's wording: an `external` sign-in with a foreign issuer's access token the client redeemed itself (`token`, no code at this server), and the token an addition returns (a guest becoming an account, or the passkey page's addition).
+- What I did: every `external` sign-in (own codes, foreign codes, foreign access tokens) and every passkey-page code finish, additions included, issues an unbound token. Local ceremonies, email, and proposals stay bound to the connection's `Origin`.
+- Suggested spec change: "Every token from §4.12, and from a `webauthn` finish with `code`, is not bound to an origin; only a token from a ceremony in the client (§4.10) is."
