@@ -416,8 +416,8 @@ class AuthResult {
 - `params.scheme` selects the scheme:
   - `guest`: no credentials. The server assigns the identity. Suggested
     convention: `guest_` plus a global counter, such as `guest_1234`
-    ([§3.3](#33-identity)). Whether a guest counts as signed in to an account,
-    such as when it adds another scheme, is server policy.
+    ([§3.3](#33-identity)). On a guest connection, server policy decides
+    whether signing in with another scheme adds it to the guest's account.
   - `token`: a bearer string. This is the reference default.
   - `webauthn`: optional passkey scheme
     ([§4.10](#410-webauthn-authentication)).
@@ -2586,6 +2586,8 @@ and any client can use it without registration. A server can name another
 authorization server instead, such as an OpenID Connect provider. Clients can
 use an OAuth library, or a few lines of their own.
 
+Servers that list `external` in `server.auth` MUST also list `token`.
+
 ```jsonc
 // -> begin
 {"method": "auth", "id": "c1", "params": {"scheme": "external"}}
@@ -2670,32 +2672,32 @@ class External {
 
 These rules apply to a server that is its own authorization server:
 
-- The server accepts any `client_id`, and any `redirect_uri` that is `https`, a
-  scheme with a `.`, or `http` on a loopback address with any port. It MAY
-  accept fewer.
+- The server SHOULD accept any `client_id`, and any `redirect_uri` that is
+  `https`, a scheme with a `.`, or `http` on a loopback address with any port.
 - The server MAY fetch a
   [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
   when `client_id` is an `https` URL. It then accepts only a `redirect_uri`
   that the document lists, and shows the document's `client_name` only beside
   the host of `client_id` (otherwise a client could borrow another client's
   name for its own `redirect_uri`).
-- The server requires PKCE `S256`, and refuses a `resource` other than its
-  origin.
-- The page shows the error of an invalid request itself (any `https` address
+- The server MUST require PKCE `S256`, and MUST refuse a `resource` other than
+  its origin.
+- The page MUST show the error of an invalid request itself (any `https` address
   is a valid `redirect_uri`, so redirecting errors would make the page an open
   redirector).
 - The page signs the user in by any method, and shows the server and the host
   or scheme of `redirect_uri`.
-- The page asks the user to confirm before it redirects, also when the user is
-  already signed in to it.
+- The page MUST ask the user to confirm before it redirects, also when the user
+  is already signed in to it.
 - The page redirects with `code`, `state`, and `iss` when the user confirms,
   or with `error=access_denied` when the user declines.
-- The server makes each code unguessable and single use, and binds it to
-  `client_id`, `redirect_uri`, the PKCE challenge, and `resource`. A code
+- The server MUST make each code unguessable and single use, and MUST bind it
+  to `client_id`, `redirect_uri`, the PKCE challenge, and `resource`. A code
   expires within minutes.
 - The server SHOULD publish its
   [metadata](https://www.rfc-editor.org/rfc/rfc8414) at its origin.
-- The server allows cross-origin requests to its metadata and token endpoint.
+- The server MUST allow cross-origin requests to its metadata and token
+  endpoint.
 
 A server that names another authorization server SHOULD use one that binds
 codes and tokens to `resource`, sends `iss`, and lets any client in, such as
@@ -2713,9 +2715,9 @@ by a public `client_id` or client ID metadata documents.
 - Servers MUST reject a token that is bound to a key, such as by a `cnf`
   claim. This document defines no proof for one.
 - An invalid, expired, used, or wrongly addressed code or token is `denied`.
-- Servers MUST NOT refuse a token of `external`, including an access token
-  from their own token endpoint, because of a connection's `Origin` (an app
-  sends no `Origin`).
+- Servers MUST NOT refuse the bearer token that an `external` sign-in returns,
+  or an access token from their own token endpoint, because of a connection's
+  `Origin` (an app sends no `Origin`).
 - Servers identify an account by the issuer and the token's `sub`, never by a
   claim that can change, such as a user name.
 - A successful sign-in returns `you` and a bearer `token`
