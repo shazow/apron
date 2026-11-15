@@ -514,7 +514,7 @@ async def _(run):
 async def _(run):
     offered = run.server.get("auth", []) + run.server.get("signup", [])
     params = {"guest": {}, "token": {"token": "conformance"}, "webauthn": {"action": "login", "step": "begin"},
-              "email": {"email": "conformance@example.invalid"}, "external": {"return_url": "https://example.invalid/"}}
+              "email": {"email": "conformance@example.invalid"}, "external": {}}
     missing = [s for s in params if s not in offered]
     if not missing:
         raise Skip("the server offers every scheme that PROTOCOL.md defines")

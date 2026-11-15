@@ -1,6 +1,6 @@
 ---
 version: 10
-updated: 2026-10-30
+updated: 2026-11-15
 license: CC0-1.0
 ---
 
@@ -372,14 +372,14 @@ class Auth {
   // "webauthn" scheme (§4.10)
   action?: "register" | "login";
   step?: "begin" | "finish";
-  challenge_id?: string;        // finish
-  credential?: object;          // finish
+  challenge_id?: string;        // finish with a credential
+  credential?: object;          // finish with a credential
 
   // "email" scheme (§4.11)
   state?: string;
   email?: string;
 
-  // "external" scheme (§4.12)
+  // "external" scheme (§4.12), and a "webauthn" finish with a code (§4.10.1)
   code?: string;
   code_verifier?: string;
   redirect_uri?: string;
@@ -394,7 +394,7 @@ class AuthResult {
   challenge_id?: string;
   public_key?: object;          // WebAuthn options
 
-  // "external" scheme, begin (§4.12.1)
+  // "external" scheme, begin (§4.12.1), and the passkey page (§4.10.1)
   external?: External;
 }
 ```
@@ -2371,8 +2371,9 @@ only on that domain, or on origins that the domain lists as
 [related](https://www.w3.org/TR/webauthn-3/#sctn-related-origins), so a
 phishing site cannot use it. A server can let a client on another domain use
 its passkeys, such as a web client that many servers share, by listing the
-client's origin as related and accepting it as an allowed origin. On other
-clients, the user signs in with another scheme, such as `external`
+client's origin as related and accepting it as an allowed origin. Other
+clients can use the server's passkey page
+([§4.10.1](#4101-passkey-page)), or another scheme, such as `external`
 ([§4.12](#412-external-sign-in)), `email` ([§4.11](#411-email-sign-in)), or
 `token`
 ([§3.2.1](#321-bearer-tokens)). A server can also offer a command
@@ -2387,10 +2388,10 @@ call between them, they make one WebAuthn
 creates a credential, and `action: "login"` signs in. Both steps use the same
 `action`.
 
-| Step     | Additional request fields                      | Successful result                                        |
-|----------|------------------------------------------------|----------------------------------------------------------|
-| `begin`  | `step: "begin"`                                | `challenge_id` (opaque), `public_key` (WebAuthn options) |
-| `finish` | `step: "finish"`, `challenge_id`, `credential` | `you` ([§3.3](#33-identity))                             |
+| Step     | Additional request fields                               | Successful result                                                                                    |
+|----------|---------------------------------------------------------|------------------------------------------------------------------------------------------------------|
+| `begin`  | `step: "begin"`                                         | `challenge_id` (opaque) and `public_key` (WebAuthn options), `external` ([§4.10.1](#4101-passkey-page)), or both |
+| `finish` | `step: "finish"`, and `challenge_id` and `credential`, or a code ([§4.10.1](#4101-passkey-page)) | `you` ([§3.3](#33-identity))                                                         |
 
 `public_key` holds creation options for a registration, or request options for a
 login. It uses standard
@@ -2426,8 +2427,66 @@ registration identity.
 
 A verified `finish` result MAY carry a bearer `token`
 ([§3.2.1](#321-bearer-tokens)) to **resume the session**, if the server also
-lists `token`. Servers MUST bind such a token to the allowed origin of the
-ceremony, and MUST make it expire. A mismatched origin is `denied`.
+lists `token`. Servers MUST bind a token from a finish with `credential` to the
+allowed origin of the ceremony, and MUST make it expire. A mismatched origin is
+`denied`.
+
+#### 4.10.1 Passkey page
+
+A client that cannot use the RP ID can send the user to a passkey page on the
+server's domain. The user runs the ceremony there, and the page returns a code
+that finishes the exchange. The page works like the sign-in page of
+`external` ([§4.12](#412-external-sign-in)).
+
+```jsonc
+// -> the user pressed "Sign in with a passkey"
+{"method": "auth", "id": "a1", "params": {"scheme": "webauthn", "action": "login", "step": "begin"}}
+// <-
+{
+  "id": "a1", "result": {
+    "challenge_id": "ch_1…",
+    "public_key": {"rpId": "chat.example", "challenge": "…", "userVerification": "required"},
+    "external": {"url": "https://chat.example/passkey?action=login"}
+  }
+}
+
+// the client cannot use chat.example. It opens url as §4.12.2 says, and the
+// page redirects to com.example.myapp:/signed-in?code=Hk41x9…&state=q8Rz…&iss=https://chat.example
+
+// -> on any connection
+{
+  "method": "auth", "id": "a2", "params": {
+    "scheme": "webauthn", "action": "login", "step": "finish",
+    "code": "Hk41x9…", "code_verifier": "dBjftJ…",
+    "redirect_uri": "com.example.myapp:/signed-in", "client_id": "com.example.myapp"
+  }
+}
+// <-
+{"id": "a2", "result": {"you": {"user_id": "ada", "name": "Ada"}, "token": "st_Hk41…"}}
+```
+
+- A begin result MAY carry `external` ([§4.12.1](#4121-begin)), whose `url`
+  is the passkey page. Servers offer it only where the page's origin can use
+  the RP ID.
+- A begin result MAY carry `external` without `public_key`, such as for a
+  connection whose origin the server does not allow. It then has no
+  `challenge_id`.
+- Clients that cannot use the RP ID of `public_key`, or whose platform refuses
+  it (such as with `SecurityError`), use `external` if present. A user's
+  cancel is not a refusal.
+- Clients open `url` as [§4.12.2](#4122-signing-in) says. They finish with
+  `code`, `code_verifier`, `redirect_uri`, and `client_id`, and the action of
+  begin, on any connection. The result's `token` is not bound to an origin.
+- The page acts as an authorization endpoint
+  ([§4.12.3](#4123-authorization-server)). It requires user verification. It
+  refuses to be shown in a frame, and rejects client data with `crossOrigin`
+  or `topOrigin` (otherwise a site could run the ceremony in a frame, and
+  trick the user into consent).
+- For an addition, the page shows the account before it creates the passkey.
+  Its code works only on a connection signed in to that account.
+- A code from the page finishes only `webauthn`, with the action of its begin.
+  A code from another sign-in page does not finish `webauthn`.
+- Server policy for new accounts applies when the code is redeemed.
 
 ### 4.11 Email sign-in
 
@@ -2559,6 +2618,8 @@ class External {
 
 - An `external` request with neither `code` nor `token` is a begin. It
   authenticates nothing, and returns `external`.
+- `url` is an absolute `https` URL, or `http` on a loopback host. Clients
+  reject any other `url`, such as `javascript:…`.
 - `url` MAY carry a query, such as `scope` or a provider hint. Clients keep it,
   and add their own parameters ([§4.12.2](#4122-signing-in)) to it. The
   server's query never includes a parameter that §4.12.2 sets, except
@@ -2566,7 +2627,8 @@ class External {
 - A server that names a foreign issuer puts in `url` a `client_id` that the
   issuer accepts from any client, if the issuer needs one.
 - The server's origin is `https://` plus the host and any port of its address
-  ([§1](#1-transport--framing)), such as `https://chat.example`.
+  ([§1](#1-transport--framing)), such as `https://chat.example`. For a `ws://`
+  address on a loopback host, it is `http://` instead.
 - Without `issuer`, the server is its own authorization server, and the issuer
   is its origin.
 
@@ -2585,6 +2647,8 @@ class External {
 - Clients open `url` in the system browser or a sign-in session, never in an
   embedded web view.
 - Before they use a code, clients MUST check that `state` is theirs.
+- `error=access_denied` means that the user declined. Clients treat any other
+  `error` as a failed sign-in.
 - Clients redeem the code with `code`, `code_verifier`, `redirect_uri`, and
   the `client_id` that they sent, on any connection.
 - Clients MAY instead redeem the code at the issuer's token endpoint, such as
@@ -2614,8 +2678,11 @@ A server that is its own authorization server:
   It then accepts only a `redirect_uri` that the document lists, and shows the
   document's `client_name` only beside the host of `client_id` (otherwise a
   client could borrow another client's name for its own `redirect_uri`).
-- Redirects with `code`, `state`, and `iss`, or with `error=access_denied` when
-  the user declines.
+- Shows the error of an invalid request on the page. It redirects only after
+  the user acts: with `code`, `state`, and `iss`, or with
+  `error=access_denied` when the user declines (any `https` address is a valid
+  `redirect_uri`, so redirecting errors would make the page an open
+  redirector).
 - Makes each code unguessable and single use, and binds it to `client_id`,
   `redirect_uri`, the PKCE challenge, and `resource`. A code expires within
   minutes.
@@ -2638,7 +2705,8 @@ by a public `client_id` or
   claim. This document defines no proof for one.
 - An invalid, expired, used, or wrongly addressed code or token is `denied`.
 - A successful sign-in returns `you` and a bearer `token`
-  ([§3.2.1](#321-bearer-tokens)).
+  ([§3.2.1](#321-bearer-tokens)). A token from a code, here or at the token
+  endpoint, is not bound to an origin.
 - On a connection that is signed in, guests included, an `external` request
   adds the identity to that account, and returns `you`. It never signs in to
   another account.
@@ -2738,9 +2806,18 @@ server.
   another server's challenge through a client that both use, and sign in as the
   user with the response. A server on a domain under the RP ID can still do
   this, so servers that share an RP ID trust each other.
-- A bearer `token` from WebAuthn is bound to the origin of its ceremony
-  ([§4.10](#410-webauthn-authentication)). So a stolen token does not work from
-  another web origin.
+- A bearer `token` from a WebAuthn ceremony in the client is bound to the
+  origin of its ceremony ([§4.10](#410-webauthn-authentication)). So a stolen
+  token does not work from another web origin.
+- A passkey page lets clients that cannot use the RP ID sign in with a passkey
+  ([§4.10.1](#4101-passkey-page)). The page's confirmation then decides which
+  client receives the session, as for external sign-in, and the token is not
+  bound to an origin. A server that wants passkey sessions only in its own
+  clients offers no passkey page.
+- A passkey page that is shown in a frame on another site could take the
+  user's click on its own consent, which also starts the passkey prompt
+  (clickjacking). The page refuses frames, and ceremonies run in a frame
+  ([§4.10.1](#4101-passkey-page)).
 - A bearer `token` works for anyone who copies it, such as from storage or a
   log ([§3.2.1](#321-bearer-tokens)). Rotation limits this, as an optional
   server policy. A server that replaces the token at each sign-in, and treats
@@ -2799,6 +2876,13 @@ server.
   for `https` redirects: an app scheme or a loopback address does not
   identify the client
   ([RFC 8252 §8.6](https://www.rfc-editor.org/rfc/rfc8252#section-8.6)).
+- Clients open only an `https` or loopback `url`
+  ([§4.12.1](#4121-begin)). Otherwise a server could run its own script in a
+  web client, such as with a `javascript:` URL.
+- Any `https` address is a valid `redirect_uri` for open clients. So a sign-in
+  page that redirected request errors would send users to any address that a
+  link chose (open redirect). The page shows such errors itself
+  ([§4.12.3](#4123-authorization-server)).
 - PKCE binds an authorization code to the client that started the sign-in
   ([§4.12.2](#4122-signing-in)). So an app that claims the same redirect URI
   cannot redeem the code.

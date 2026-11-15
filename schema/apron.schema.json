@@ -571,7 +571,7 @@
       ]
     },
     "AuthParams": {
-      "description": "§3.2, §4.10, §4.11",
+      "description": "§3.2, §4.10, §4.11, §4.12",
       "type": "object",
       "properties": {
         "scheme": {
@@ -593,13 +593,9 @@
           "type": "string"
         },
         "state": {
-          "description": "email and external proposals: an unguessable value the client chooses, returned unchanged in each link (§4.11).",
+          "description": "email proposals: an unguessable value the client chooses, returned unchanged in each link (§4.11.1).",
           "type": "string",
           "maxLength": 256
-        },
-        "return_url": {
-          "description": "external proposals: where the sign-in page redirects with the link fragment; only on an origin the server trusts (§4.11).",
-          "type": "string"
         },
         "action": {
           "enum": [
@@ -618,6 +614,22 @@
         },
         "credential": {
           "type": "object"
+        },
+        "code": {
+          "description": "external, or a webauthn finish from the passkey page: the authorization code (§4.12.2, §4.10.1).",
+          "type": "string"
+        },
+        "code_verifier": {
+          "description": "The PKCE verifier of the code (§4.12.2).",
+          "type": "string"
+        },
+        "redirect_uri": {
+          "description": "The redirect_uri that the authorization request sent (§4.12.2).",
+          "type": "string"
+        },
+        "client_id": {
+          "description": "The client_id that the authorization request sent (§4.12.2).",
+          "type": "string"
         }
       },
       "required": [
@@ -914,12 +926,28 @@
         "public_key": {
           "type": "object"
         },
-        "url": {
-          "description": "external proposals: the sign-in page to open, an absolute https URL (http only on a loopback host) (§4.11).",
-          "type": "string",
-          "pattern": "^(https://|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])([:/]|$))"
+        "external": {
+          "$ref": "#/$defs/External"
         }
       }
+    },
+    "External": {
+      "description": "The sign-in page of an external begin (§4.12.1), or a webauthn begin's passkey page (§4.10.1).",
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "The authorization endpoint, an absolute https URL (http only on a loopback host). Clients keep its query.",
+          "type": "string",
+          "pattern": "^(https://|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])([:/?]|$))"
+        },
+        "issuer": {
+          "description": "For clients that redeem at the issuer's token endpoint; absent: the server's origin (§4.12.1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ]
     },
     "MeResult": {
       "type": "object",
