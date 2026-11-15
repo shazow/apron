@@ -416,7 +416,8 @@ class AuthResult {
 - `params.scheme` selects the scheme:
   - `guest`: no credentials. The server assigns the identity. Suggested
     convention: `guest_` plus a global counter, such as `guest_1234`
-    ([§3.3](#33-identity)).
+    ([§3.3](#33-identity)). Whether a guest counts as signed in, such as for
+    additions, is server policy.
   - `token`: a bearer string. This is the reference default.
   - `webauthn`: optional passkey scheme
     ([§4.10](#410-webauthn-authentication)).
@@ -2518,8 +2519,8 @@ approves the proposal:
 - A proposal is an `auth` request without `token`. It carries `email`, and
   authenticates nothing.
 - A proposal returns `{}`, whether or not the address has an account.
-- On a connection that is signed in to an account, guests included, a
-  proposal adds the address to that account. Otherwise it proposes a sign-in.
+- On a connection that is signed in to an account, a proposal adds the
+  address to that account. Otherwise it proposes a sign-in.
 - A connection has one pending proposal, and a new one replaces it.
 - A proposal expires within minutes. A disconnect does not cancel it.
   Approval uses it up.
@@ -2707,9 +2708,8 @@ by a public `client_id` or
 - A successful sign-in returns `you` and a bearer `token`
   ([§3.2.1](#321-bearer-tokens)). A token from a code, here or at the token
   endpoint, is not bound to an origin.
-- On a connection that is signed in, guests included, an `external` request
-  adds the identity to that account, and returns `you`. It never signs in to
-  another account.
+- On a connection that is signed in, an `external` request adds the identity
+  to that account, and returns `you`. It never signs in to another account.
 - An identity that belongs to another account is `denied`.
 - Servers identify an account by the issuer and the token's `sub`, never by a
   claim that can change, such as a user name.
