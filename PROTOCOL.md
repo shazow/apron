@@ -2553,8 +2553,7 @@ use an OAuth library, or a few lines of their own.
 ```ts
 class External {
   url: string;                  // the sign-in page: the authorization endpoint
-  issuer?: string;              // absent: the server's origin
-  client_id?: string;           // a client ID that a foreign issuer accepts from any client
+  issuer?: string;              // for clients that redeem at its token endpoint; absent: the server's origin
 }
 ```
 
@@ -2562,7 +2561,10 @@ class External {
   authenticates nothing, and returns `external`.
 - `url` MAY carry a query, such as `scope` or a provider hint. Clients keep it,
   and add their own parameters ([§4.12.2](#4122-signing-in)) to it. The
-  server's query never includes a parameter that §4.12.2 sets.
+  server's query never includes a parameter that §4.12.2 sets, except
+  `client_id`.
+- A server that names a foreign issuer puts in `url` a `client_id` that the
+  issuer accepts from any client, if the issuer needs one.
 - The server's origin is `https://` plus the host and any port of its address
   ([§1](#1-transport--framing)), such as `https://chat.example`.
 - Without `issuer`, the server is its own authorization server, and the issuer
@@ -2577,17 +2579,18 @@ class External {
   [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
   from the address that they connected to (otherwise a server could get a
   token for another server, and use it there).
-- When the server is its own authorization server, any `client_id` works,
-  such as the client's app ID. Otherwise clients use a client ID that the
-  issuer accepts, such as begin's `client_id`.
+- Clients add their own `client_id`, such as their app ID, unless `url`
+  carries one. When the server is its own authorization server, any value
+  works.
 - Clients open `url` in the system browser or a sign-in session, never in an
   embedded web view.
-- Before they use a code, clients MUST check that `state` is theirs, and that
-  [`iss`](https://www.rfc-editor.org/rfc/rfc9207) is the issuer.
+- Before they use a code, clients MUST check that `state` is theirs.
 - Clients redeem the code with `code`, `code_verifier`, `redirect_uri`, and
-  `client_id`, on any connection.
+  the `client_id` that they sent, on any connection.
 - Clients MAY instead redeem the code at the issuer's token endpoint, such as
-  with an OAuth library. When the server is its own authorization server, the
+  with an OAuth library. They then discover it from `issuer`, and MUST check
+  that [`iss`](https://www.rfc-editor.org/rfc/rfc9207) in the authorization
+  response is the issuer. When the server is its own authorization server, the
   access token is a bearer token for `scheme: "token"`. Otherwise clients
   present it with `scheme: "external"` and `token`.
 - Clients without a browser MAY use the
@@ -2779,9 +2782,11 @@ server.
   authorization server gets tokens addressed to itself, which the other server
   rejects. Servers on one host and port share an origin, so they trust each
   other.
-- Clients check `iss` in the authorization response
-  ([§4.12.2](#4122-signing-in)). So an authorization server cannot take a code
-  that another one issued (mix-up).
+- A client that redeems on the connection gives a code only to the server that
+  it is connected to, which redeems it only at its own issuer. A client that
+  redeems at a token endpoint checks `iss` first ([§4.12.2](#4122-signing-in)).
+  So an authorization server cannot take a code that another one issued
+  (mix-up).
 - The sign-in page shows who receives the result, and confirms before it
   redirects, also when the user is already signed in
   ([§4.12.3](#4123-authorization-server)). So a client that the user did not
