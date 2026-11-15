@@ -394,7 +394,7 @@ class AuthResult {
   challenge_id?: string;
   public_key?: object;          // WebAuthn options
 
-  // "external" scheme, begin (§4.12.1), and the passkey page (§4.10.1)
+  // "external" begin (§4.12.1), or a "webauthn" begin's passkey page (§4.10.1)
   external?: External;
 }
 ```
@@ -416,8 +416,8 @@ class AuthResult {
 - `params.scheme` selects the scheme:
   - `guest`: no credentials. The server assigns the identity. Suggested
     convention: `guest_` plus a global counter, such as `guest_1234`
-    ([§3.3](#33-identity)). Whether a guest counts as signed in, such as for
-    additions, is server policy.
+    ([§3.3](#33-identity)). Whether a guest counts as signed in to an account,
+    such as when it adds another scheme, is server policy.
   - `token`: a bearer string. This is the reference default.
   - `webauthn`: optional passkey scheme
     ([§4.10](#410-webauthn-authentication)).
@@ -2373,12 +2373,11 @@ only on that domain, or on origins that the domain lists as
 phishing site cannot use it. A server can let a client on another domain use
 its passkeys, such as a web client that many servers share, by listing the
 client's origin as related and accepting it as an allowed origin. Other
-clients can use the server's passkey page
-([§4.10.1](#4101-passkey-page)), or another scheme, such as `external`
-([§4.12](#412-external-sign-in)), `email` ([§4.11](#411-email-sign-in)), or
-`token`
-([§3.2.1](#321-bearer-tokens)). A server can also offer a command
-([§4.1](#41-command)) that issues more bearer tokens.
+clients can use the server's passkey page ([§4.10.1](#4101-passkey-page)), or
+another scheme, such as `external` ([§4.12](#412-external-sign-in)), `email`
+([§4.11](#411-email-sign-in)), or `token` ([§3.2.1](#321-bearer-tokens)). A
+server can also offer a command ([§4.1](#41-command)) that issues more bearer
+tokens.
 
 Servers that list `webauthn` in `server.auth` MUST use this exchange. No
 separate capability is necessary.
@@ -2389,10 +2388,10 @@ call between them, they make one WebAuthn
 creates a credential, and `action: "login"` signs in. Both steps use the same
 `action`.
 
-| Step     | Additional request fields                               | Successful result                                                                                    |
-|----------|---------------------------------------------------------|------------------------------------------------------------------------------------------------------|
-| `begin`  | `step: "begin"`                                         | `challenge_id` (opaque) and `public_key` (WebAuthn options), `external` ([§4.10.1](#4101-passkey-page)), or both |
-| `finish` | `step: "finish"`, and `challenge_id` and `credential`, or a code ([§4.10.1](#4101-passkey-page)) | `you` ([§3.3](#33-identity))                                                         |
+| Step     | Additional request fields                                                                         | Successful result                                                                                                |
+|----------|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| `begin`  | `step: "begin"`                                                                                   | `challenge_id` (opaque) and `public_key` (WebAuthn options), `external` ([§4.10.1](#4101-passkey-page)), or both |
+| `finish` | `step: "finish"`, with `challenge_id` and `credential`, or a code ([§4.10.1](#4101-passkey-page)) | `you` ([§3.3](#33-identity))                                                                                     |
 
 `public_key` holds creation options for a registration, or request options for a
 login. It uses standard
@@ -2429,16 +2428,16 @@ registration identity.
 A verified `finish` result MAY carry a bearer `token`
 ([§3.2.1](#321-bearer-tokens)) to **resume the session**, if the server also
 lists `token`. Servers MUST accept a token from a finish with `credential` only
-on a connection whose `Origin` is the ceremony's origin (so that a copied token
-does not work from another website), and MUST make it expire. A mismatched
+on a connection whose `Origin` is the ceremony's origin (otherwise a copied
+token would work from another website), and MUST make it expire. A mismatched
 origin is `denied`.
 
 #### 4.10.1 Passkey page
 
 A client that cannot use the RP ID can send the user to a passkey page on the
 server's domain. The user runs the ceremony there, and the page returns a code
-that finishes the exchange. The page works like the sign-in page of
-`external` ([§4.12](#412-external-sign-in)).
+that finishes the exchange, as in external sign-in
+([§4.12](#412-external-sign-in)).
 
 ```jsonc
 // -> the user pressed "Sign in with a passkey"
@@ -2470,34 +2469,34 @@ that finishes the exchange. The page works like the sign-in page of
 - A begin result MAY carry `external` ([§4.12.1](#4121-begin)), whose `url`
   is the passkey page. Servers offer it only where the page's origin can use
   the RP ID.
-- A begin result MAY carry `external` without `public_key`, such as for a
-  connection whose origin the server does not allow. It then has no
-  `challenge_id`.
+- A begin result MAY carry `external` alone, without `challenge_id` and
+  `public_key`, such as for a connection whose origin the server does not
+  allow.
 - Clients that cannot use the RP ID of `public_key`, or whose platform refuses
-  it (such as with `SecurityError`), use `external` if present. A user's
-  cancel is not a refusal.
-- Clients open `url` as [§4.12.2](#4122-signing-in) says. They finish with
-  `code`, `code_verifier`, `redirect_uri`, and `client_id`, and the action of
-  begin, on any connection.
-- Servers MUST NOT refuse the `token` of a finish with `code` because of a
-  connection's `Origin` (the client may be an app, which sends none, and the
-  ceremony ran on the server's page, not on the client's origin).
-- The page acts as an authorization endpoint
-  ([§4.12.3](#4123-authorization-server)). It requires user verification. It
-  refuses to be shown in a frame, and rejects client data with `crossOrigin`
-  or `topOrigin` (otherwise a site could run the ceremony in a frame, and
-  trick the user into consent).
+  it (such as with `SecurityError`), use `external` if present. A cancel by
+  the user is not a refusal.
+- Clients open `url` as [§4.12.2](#4122-signing-in) says. They finish with the
+  action of begin, `code`, `code_verifier`, `redirect_uri`, and `client_id`,
+  on any connection.
+- The page is an authorization endpoint of the server
+  ([§4.12.3](#4123-authorization-server)).
+- The page refuses to be shown in a frame, and rejects client data with
+  `crossOrigin` or `topOrigin` (otherwise a site could run the ceremony in a
+  frame, and trick the user into consent).
 - For an addition, the page shows the account before it creates the passkey.
-  Its code works only on a connection signed in to that account.
+  The code of an addition works only on a connection that is signed in to that
+  account.
 - A code from the page finishes only `webauthn`, with the action of its begin.
-  A code from another sign-in page does not finish `webauthn`.
-- Server policy for new accounts applies when the code is redeemed.
+  No other code finishes `webauthn`.
+- Servers MUST NOT refuse the `token` of a finish with `code` because of a
+  connection's `Origin` (the ceremony ran on the server's page, and an app
+  sends no `Origin`).
+- The server applies its policy for new accounts when it redeems the code.
 
 ### 4.11 Email sign-in
 
 Email sign-in proves that a user controls an address. It suits sign-up and
-account recovery, and works on any device that gets mail. It finishes outside
-the connection.
+account recovery, and works on any device that gets mail.
 
 Servers that list `email` in `server.auth` use this exchange, and also list
 `token`. An `auth` request without `token` proposes a sign-in or an addition.
@@ -2520,9 +2519,9 @@ approves the proposal:
 
 #### 4.11.1 Proposals
 
-- A proposal is an `auth` request without `token`. It carries `email`, and
-  authenticates nothing.
-- A proposal returns `{}`, whether or not the address has an account.
+- A proposal is an `auth` request with `email` and without `token`. It
+  authenticates nothing, and returns `{}` whether or not the address has an
+  account.
 - On a connection that is signed in to an account, a proposal adds the
   address to that account. Otherwise it proposes a sign-in.
 - A connection has one pending proposal, and a new one replaces it.
@@ -2545,7 +2544,7 @@ approves the proposal:
   connection that made the proposal, or with the proposal's `state` (short
   codes are easy to guess, and `state` is not).
 - A token that works without either MUST be unguessable.
-- An email with a code gives the server's address. It tells the user to type
+- An email with a code gives the server's address, and tells the user to type
   the code only in a client that is connected to that server (otherwise a
   server could propose a sign-in to another server with the user's address,
   and get the code from the user).
@@ -2555,10 +2554,10 @@ approves the proposal:
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made. It then presents the link's token with
   `scheme: "token"`.
-- A client uses a link with the `state` of its own proposal only if the
-  link's `server` is the server that it proposed to. It drops any other such
-  link (otherwise a server could pass a client's `state` on to another server,
-  and receive the token that the other server sends).
+- A client drops a link with the `state` of its own proposal, unless the
+  link's `server` is the server that it proposed to (otherwise a server could
+  pass a client's `state` on to another server, and receive the token that the
+  other server sends).
 
 #### 4.11.3 Approval
 
@@ -2574,8 +2573,7 @@ approves the proposal:
 - An invalid, expired, or used token is `denied`. A sign-in token on a
   signed-in connection is also `denied`, and so is an address that belongs to
   another account.
-- Account creation for unknown addresses, and the bearer token's lifetime, are
-  server policy.
+- Account creation for unknown addresses is server policy.
 
 ### 4.12 External sign-in
 
@@ -2629,26 +2627,26 @@ class External {
   and add their own parameters ([§4.12.2](#4122-signing-in)) to it. The
   server's query never includes a parameter that §4.12.2 sets, except
   `client_id`.
-- A server that names a foreign issuer puts in `url` a `client_id` that the
-  issuer accepts from any client, if the issuer needs one.
 - The server's origin is `https://` plus the host and any port of its address
   ([§1](#1-transport--framing)), such as `https://chat.example`. For a `ws://`
   address on a loopback host, it is `http://` instead.
 - Without `issuer`, the server is its own authorization server, and the issuer
   is its origin.
+- A server that names another authorization server in `issuer` puts in `url`
+  a `client_id` that the issuer accepts from any client, if the issuer needs
+  one.
 
 #### 4.12.2 Signing in
 
 - Clients send the user to `url` with the authorization code grant
   (`response_type`, `client_id`, `redirect_uri`), PKCE `S256`
   (`code_challenge`, `code_challenge_method`), and an unguessable `state`.
+- Clients add their own `client_id`, such as their app ID, unless `url`
+  carries one.
 - Clients send the server's origin as
   [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
   from the address that they connected to (otherwise a server could get a
   token for another server, and use it there).
-- Clients add their own `client_id`, such as their app ID, unless `url`
-  carries one. When the server is its own authorization server, any value
-  works.
 - Clients open `url` in the system browser or a sign-in session, never in an
   embedded web view.
 - Before they use a code, clients MUST check that `state` is theirs.
@@ -2657,69 +2655,74 @@ class External {
 - Clients redeem the code with `code`, `code_verifier`, `redirect_uri`, and
   the `client_id` that they sent, on any connection.
 - Clients MAY instead redeem the code at the issuer's token endpoint, such as
-  with an OAuth library. They then discover it from `issuer`, and MUST check
-  that [`iss`](https://www.rfc-editor.org/rfc/rfc9207) in the authorization
-  response is the issuer. When the server is its own authorization server, the
-  access token is a bearer token for `scheme: "token"`. Otherwise clients
-  present it with `scheme: "external"` and `token`.
+  with an OAuth library. They then find the endpoint from the issuer's
+  metadata, and MUST check that
+  [`iss`](https://www.rfc-editor.org/rfc/rfc9207) in the authorization
+  response is the issuer.
+- When the server is its own authorization server, the access token is a
+  bearer token for `scheme: "token"` ([§3.2.1](#321-bearer-tokens)).
+  Otherwise clients present it with `scheme: "external"` and `token`.
 - Clients without a browser MAY use the
   [device authorization grant](https://www.rfc-editor.org/rfc/rfc8628), where
   the issuer offers it.
 
 #### 4.12.3 Authorization server
 
-A server that is its own authorization server:
+These rules apply to a server that is its own authorization server:
 
-- SHOULD publish its
-  [metadata](https://www.rfc-editor.org/rfc/rfc8414) at its origin.
-- Accepts any `client_id`, and any `redirect_uri` that is `https`, a scheme
-  with a `.`, or `http` on a loopback address with any port. It MAY accept
-  fewer.
-- Requires PKCE `S256`, and refuses a `resource` other than its origin.
-- Signs the user in on its page by any method. The page shows the server, and
-  the host or scheme of `redirect_uri`. It asks the user to confirm before it
-  redirects, also when the user is already signed in to it.
-- MAY fetch a client ID metadata document when `client_id` is an `https` URL.
-  It then accepts only a `redirect_uri` that the document lists, and shows the
-  document's `client_name` only beside the host of `client_id` (otherwise a
-  client could borrow another client's name for its own `redirect_uri`).
-- Shows the error of an invalid request on the page. It redirects only after
-  the user acts: with `code`, `state`, and `iss`, or with
-  `error=access_denied` when the user declines (any `https` address is a valid
-  `redirect_uri`, so redirecting errors would make the page an open
+- The server accepts any `client_id`, and any `redirect_uri` that is `https`, a
+  scheme with a `.`, or `http` on a loopback address with any port. It MAY
+  accept fewer.
+- The server MAY fetch a
+  [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
+  when `client_id` is an `https` URL. It then accepts only a `redirect_uri`
+  that the document lists, and shows the document's `client_name` only beside
+  the host of `client_id` (otherwise a client could borrow another client's
+  name for its own `redirect_uri`).
+- The server requires PKCE `S256`, and refuses a `resource` other than its
+  origin.
+- The page shows the error of an invalid request itself (any `https` address
+  is a valid `redirect_uri`, so redirecting errors would make the page an open
   redirector).
-- Makes each code unguessable and single use, and binds it to `client_id`,
-  `redirect_uri`, the PKCE challenge, and `resource`. A code expires within
-  minutes.
-- Allows cross-origin requests to its metadata and token endpoint.
+- The page signs the user in by any method, and shows the server and the host
+  or scheme of `redirect_uri`.
+- The page asks the user to confirm before it redirects, also when the user is
+  already signed in to it.
+- The page redirects with `code`, `state`, and `iss` when the user confirms,
+  or with `error=access_denied` when the user declines.
+- The server makes each code unguessable and single use, and binds it to
+  `client_id`, `redirect_uri`, the PKCE challenge, and `resource`. A code
+  expires within minutes.
+- The server SHOULD publish its
+  [metadata](https://www.rfc-editor.org/rfc/rfc8414) at its origin.
+- The server allows cross-origin requests to its metadata and token endpoint.
 
 A server that names another authorization server SHOULD use one that binds
 codes and tokens to `resource`, sends `iss`, and lets any client in, such as
-by a public `client_id` or
-[client ID metadata documents](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/).
+by a public `client_id` or client ID metadata documents.
 
 #### 4.12.4 Token checks
 
 - With `code`, the server redeems the code: itself, or at the issuer's token
   endpoint, which it finds from the issuer's metadata.
-- Servers MUST accept only tokens from the issuer whose `aud` includes their
-  origin. They check the signature against the issuer's keys, or
+- Servers MUST NOT pass a client's code or token on, except to the issuer.
+- Servers MUST accept only tokens from the issuer, with an `aud` that includes
+  their origin. They check the signature against the issuer's keys, or
   [introspect](https://www.rfc-editor.org/rfc/rfc7662) the token, and check
   `iss` and `exp`.
 - Servers MUST reject a token that is bound to a key, such as by a `cnf`
   claim. This document defines no proof for one.
 - An invalid, expired, used, or wrongly addressed code or token is `denied`.
-- A successful sign-in returns `you` and a bearer `token`
-  ([§3.2.1](#321-bearer-tokens)).
 - Servers MUST NOT refuse a token of `external`, including an access token
-  from their token endpoint, because of a connection's `Origin` (the client
-  may be an app, which sends none).
-- On a connection that is signed in, an `external` request adds the identity
-  to that account, and returns `you`. It never signs in to another account.
-- An identity that belongs to another account is `denied`.
+  from their own token endpoint, because of a connection's `Origin` (an app
+  sends no `Origin`).
 - Servers identify an account by the issuer and the token's `sub`, never by a
   claim that can change, such as a user name.
-- Servers MUST NOT pass a client's code or token on, except to the issuer.
+- A successful sign-in returns `you` and a bearer `token`
+  ([§3.2.1](#321-bearer-tokens)).
+- On a connection that is signed in, an `external` request adds the identity
+  to that account, and returns `you`. An identity that belongs to another
+  account is `denied`.
 - Account creation for new identities is server policy.
 
 ### 4.13 `ext`
@@ -2812,27 +2815,26 @@ server.
   another server's challenge through a client that both use, and sign in as the
   user with the response. A server on a domain under the RP ID can still do
   this, so servers that share an RP ID trust each other.
-- A server accepts a bearer `token` from a WebAuthn ceremony in the client
-  only from the ceremony's origin ([§4.10](#410-webauthn-authentication)). So a
-  copied token does not work from another website.
 - A passkey page lets clients that cannot use the RP ID sign in with a passkey
   ([§4.10.1](#4101-passkey-page)). The page's confirmation then decides which
   client receives the session, as for external sign-in. A server that wants
   passkey sessions only in its own clients offers no passkey page.
-- A token from a code works from any origin
-  ([§4.10.1](#4101-passkey-page), [§4.12.4](#4124-token-checks)). Rotation
-  ([§3.2.1](#321-bearer-tokens)) is what limits a copy of it.
-- A passkey page that is shown in a frame on another site could take the
-  user's click on its own consent, which also starts the passkey prompt
-  (clickjacking). The page refuses frames, and ceremonies run in a frame
+- A site that shows the passkey page in a frame could trick the user into a
+  click on its consent, which also starts the passkey prompt (clickjacking).
+  So the page refuses frames, and rejects a ceremony that runs in one
   ([§4.10.1](#4101-passkey-page)).
+- A server accepts a bearer `token` from a WebAuthn ceremony in the client
+  only from the ceremony's origin ([§4.10](#410-webauthn-authentication)). So a
+  copied token does not work from another website.
 - A bearer `token` works for anyone who copies it, such as from storage or a
-  log ([§3.2.1](#321-bearer-tokens)). Rotation limits this, as an optional
-  server policy. A server that replaces the token at each sign-in, and treats
-  a replaced token that comes back as a copy, can revoke the tokens that
-  followed it. The copy then works only until the real client next connects,
-  and its use shows the theft. A short grace period lets several connections
-  of one client sign in with the same token at once.
+  log ([§3.2.1](#321-bearer-tokens)), and a token from a code works from any
+  origin ([§4.10.1](#4101-passkey-page), [§4.12.4](#4124-token-checks)).
+  Rotation limits this, as an optional server policy. A server that replaces
+  the token at each sign-in, and treats a replaced token that comes back as a
+  copy, can revoke the tokens that followed it. The copy then works only until
+  the real client next connects, and its use shows the theft. A short grace
+  period lets several connections of one client sign in with the same token at
+  once.
 - An email proposal returns `{}` for every address ([§4.11.1](#4111-proposals)).
   So proposals do not reveal which addresses have accounts.
 - A short code works only on the connection that proposed, or with the
@@ -2868,10 +2870,13 @@ server.
   rejects. Servers on one host and port share an origin, so they trust each
   other.
 - A client that redeems on the connection gives a code only to the server that
-  it is connected to, which redeems it only at its own issuer. A client that
-  redeems at a token endpoint checks `iss` first ([§4.12.2](#4122-signing-in)).
-  So an authorization server cannot take a code that another one issued
-  (mix-up).
+  it is connected to, which redeems it only at its own issuer
+  ([§4.12.4](#4124-token-checks)). A client that redeems at a token endpoint
+  checks `iss` first ([§4.12.2](#4122-signing-in)). So an authorization
+  server cannot take a code that another one issued (mix-up).
+- PKCE binds an authorization code to the client that started the sign-in
+  ([§4.12.2](#4122-signing-in)). So an app that claims the same redirect URI
+  cannot redeem the code.
 - The sign-in page shows who receives the result, and confirms before it
   redirects, also when the user is already signed in
   ([§4.12.3](#4123-authorization-server)). So a client that the user did not
@@ -2884,16 +2889,13 @@ server.
   for `https` redirects: an app scheme or a loopback address does not
   identify the client
   ([RFC 8252 §8.6](https://www.rfc-editor.org/rfc/rfc8252#section-8.6)).
-- Clients open only an `https` or loopback `url`
-  ([§4.12.1](#4121-begin)). Otherwise a server could run its own script in a
-  web client, such as with a `javascript:` URL.
 - Any `https` address is a valid `redirect_uri` for open clients. So a sign-in
   page that redirected request errors would send users to any address that a
   link chose (open redirect). The page shows such errors itself
   ([§4.12.3](#4123-authorization-server)).
-- PKCE binds an authorization code to the client that started the sign-in
-  ([§4.12.2](#4122-signing-in)). So an app that claims the same redirect URI
-  cannot redeem the code.
+- Clients open only an `https` or loopback `url` ([§4.12.1](#4121-begin)).
+  Otherwise a server could run its own script in a web client, such as with a
+  `javascript:` URL.
 
 ### 5.3 Identity and access control
 
