@@ -151,9 +151,17 @@ Servers:
 
 - `external` in a begin result is optional. A server that omits it keeps
   passkey sign-in to clients that can use its RP ID.
+- A begin result MAY carry `external` without `public_key`, so that the
+  server requires the passkey page, such as for a sign-in that it judges
+  risky (as in OAuth 2.0 for First-Party Applications §9.2). Clients then
+  use the page, even if they could use the RP ID. A client that cannot open
+  a page cannot sign in that time.
 - The passkey page is on an origin that the server accepts for its RP ID.
   It acts as an authorization endpoint under §4.12.3, with these additions:
-  - It refuses to be shown in a frame.
+  - It refuses to be shown in a frame, and rejects an assertion or
+    attestation whose client data has `crossOrigin: true` or a `topOrigin`
+    (WebAuthn Level 3 §13.4.9): a ceremony run inside a frame on another
+    site.
   - It requires user verification, as §4.10 does.
   - It asks for confirmation as "Confirmation" says: who is asking and
     what they get before the passkey, then the account and Allow after it.
@@ -205,11 +213,19 @@ host (PLAN_LOOSE.md, B1).
 >
 > chat.example has not verified this app.
 >
+> Only continue if you just started signing in on chat.alice.dev.
+>
 > [Continue with passkey] [Cancel]
 
 "Continue with passkey" is the click that the browser needs before the
-passkey prompt. Omit the "not verified" line only for clients that the
-server recognises.
+passkey prompt. The "only continue" line follows RFC 10027 §6.1.14, against
+consent phishing: someone else may have started the sign-in and sent the
+link. Omit the "not verified" line only for clients that the server
+recognises. Recognised means a registered `https` redirect, or an `https` app link
+that the app has claimed (an associated domain or a verified app link),
+never `client_id` alone. App schemes and loopback addresses are never
+recognised: any app can claim them (RFC 8252 §8.6; Okta and Microsoft's
+Storm-2372 device-code phishing show why).
 
 **The passkey prompt.** The account becomes known here: the passkey is a
 discoverable credential.

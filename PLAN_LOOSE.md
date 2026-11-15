@@ -291,6 +291,8 @@ Example phrasing, for prototypes:
 >
 > chat.example has not verified this app.
 >
+> Only continue if you just started signing in on chat.alice.dev.
+>
 > [Continue] [Cancel]
 
 Then the page's own sign-in: a passkey, an email code, Pocket ID, Bluesky,
@@ -311,7 +313,14 @@ a wallet.
 >
 > [Continue] [Cancel]
 
-- Omit "not verified" only for clients that the server recognises.
+- Omit "not verified" only for clients that the server recognises. Recognised means a registered `https` redirect, or an `https` app link
+  that the app has claimed (an associated domain or a verified app link),
+  never `client_id` alone. App schemes and loopback addresses are never
+  recognised: any app can claim them (RFC 8252 §8.6; Okta and Microsoft's
+  Storm-2372 device-code phishing show why).
+- "Only continue if you just started signing in on …" follows RFC 10027
+  §6.1.14, against consent phishing: someone else may have started the
+  sign-in and sent the link.
 - The page MAY skip "After sign-in" when the same account already allowed
   the same `https` redirect host. It always asks for app schemes and
   loopback addresses.
