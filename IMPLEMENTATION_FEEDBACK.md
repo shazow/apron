@@ -98,6 +98,9 @@ These are small, and none made two implementations disagree.
   - **Two pending proposals with one `state`.** apron-server-go lets the newest proposal own it. Proposed: "Clients use a new `state` for each proposal."
   - **A `state` that matches no pending proposal.** apron-server-go treats it as `denied`, and the attempt counts against nothing. Proposed: "A `state` that matches no pending proposal is ignored."
 
+- **S17. apron-server-go lists `webauthn` in `signup` with guests off.** [real-screens run] `server.signup` is `auth` minus `token` (`apron/server.go:1160`), so with `--disable-guests` it still offers passkey sign-up. But a passkey registration needs a guest or an invitation, so apron-web shows "Create account" and the server refuses it. The bug is already on main, not from #39. Fix: leave `webauthn` out of `signup` when guests are off.
+- **S18. Pocket ID as issuer creates nameless accounts.** [real-screens run, go F15] Pocket ID's access token carries no profile claims, so mode A creates `user_1` with no name. Keeping foreign-issuer mode needs a userinfo lookup in apron-server-go, or another source for the name.
+
 ## Housekeeping
 
 - **H1.** Drop the `workers-oauth-provider` note from PLAN_WEBAUTHN_EXTERNAL.md and PLAN_LOOSE.md. [cf F1] It needs its own KV binding, mints its own tokens, refuses unknown `client_id`s, and cannot redeem a code on a WebSocket.
