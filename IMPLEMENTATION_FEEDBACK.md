@@ -36,6 +36,7 @@ The design held:
 | M5. Passkey page into the spec | The page is §4.10.1. It is offered only where the page's origin can use the RP ID. Clients fall back on a failed RP ID check, or when the platform refuses the RP ID (such as with `SecurityError`), but not when the user cancels. The schema, HISTORY.md and `conform.py` are updated. | §4.10.1, `a475c07` |
 | M6. Errors on the sign-in pages | The page shows an invalid request's error itself, and redirects only after the user acts. Clients treat any `error` other than `access_denied` as a failed sign-in. | §4.12.2, §4.12.3, `a475c07` |
 | S14. Tokens from codes and `Origin` | The rules now say what servers check, instead of "binding" a token to an origin. A passkey token from a ceremony in the client is accepted only on a connection with the ceremony's `Origin`. Servers never refuse a token from a code, or any token of `external`, because of `Origin`. §5.2 says that rotation limits a copy. | §4.10, §4.10.1, §4.12.4, §5.2, `347ebd4` |
+| Offering the passkey page to old clients | Servers offer `webauthn` with `external.url` to every connection, and the begin result has no `public_key` where the origin can't use the RP ID. There is no rollout switch: clients that predate §4.10.1 see a passkey option they can't complete, and they update. `token` and `guest` keep working for them. | apron-server-cloudflare#97, as is |
 | apron-web's startup budget | Raised for the startup JS size only, `a4f9220` | apron-web#278 |
 
 Implementations brought in line:
