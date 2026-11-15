@@ -376,7 +376,7 @@ class Auth {
   credential?: object;          // finish with a credential
 
   // "email" scheme (§4.11)
-  state?: string;
+  state?: string;               // a proposal, or an approval with a short token
   email?: string;
 
   // "external" scheme (§4.12), and a "webauthn" finish with a code (§4.10.1)
@@ -2498,9 +2498,9 @@ that finishes the exchange, as in external sign-in
 Email sign-in proves that a user controls an address. It suits sign-up and
 account recovery, and works on any device that gets mail.
 
-Servers that list `email` in `server.auth` use this exchange, and also list
-`token`. An `auth` request without `token` proposes a sign-in or an addition.
-The server emails a temporary token. An `auth` request with that `token`
+Servers that list `email` in `server.auth` use this exchange, and MUST also
+list `token`. An `auth` request without `token` proposes a sign-in or an
+addition. The server emails a temporary token. An `auth` request with that `token`
 approves the proposal:
 
 ```jsonc
@@ -2563,6 +2563,7 @@ approves the proposal:
 
 - Approval is an `auth` request with `token`, and `scheme` `email` or
   `token`.
+- An approval MAY carry the proposal's `state`.
 - Approval of a sign-in authenticates the connection that presents the token.
   That connection MUST NOT be signed in already. The result carries `you` and a
   bearer `token` for later connections ([§3.2.1](#321-bearer-tokens)).

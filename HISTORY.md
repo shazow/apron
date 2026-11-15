@@ -5,7 +5,8 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 ## v10 (2026-11-15)
 
 - Scheme `external` (§4.12) is a profile of OAuth 2.1, and replaces the proposal-based sign-in and `return_url`. Begin returns `external` (`url`, `issuer`). The client sends the user to `url` with PKCE and `resource`, and redeems the code on any connection. By default the server is its own authorization server, and accepts any client. It can name another one instead.
-- Whether a guest counts as signed in, such as for an addition by email or `external`, is server policy (§3.2).
+- An email approval may carry the proposal's `state`, so that a short code works on a connection other than the one that proposed (§4.11.3).
+- On a guest connection, whether signing in with another scheme adds it to the guest's account is server policy (§3.2).
 - A `webauthn` begin may carry `external`, a passkey page for clients that cannot use the RP ID, with or without `public_key`. Its code finishes `webauthn` (§4.10.1).
 - `embed:stream` is removed, with the embed fields `format` and `text`. Capabilities `embed:append` and `embed:terminal` replace it.
 - Live text (§4.8.5): rules that both new kinds share for writing with `PUT` to `write_url` and reading `GET url`, limits, disconnects, how `url` is served, a redirect for browsers to a page that shows the text, and UTF-8 decoding. A live embed has no `url` until its write starts, when a snapshot adds it. A writer that disconnects ends the text.

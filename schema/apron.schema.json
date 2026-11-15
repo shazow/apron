@@ -593,7 +593,7 @@
           "type": "string"
         },
         "state": {
-          "description": "email proposals: an unguessable value the client chooses, returned unchanged in each link (§4.11.1).",
+          "description": "email: an unguessable value the client chooses for a proposal, returned unchanged in each link (§4.11.1); an approval may carry it, so that a short token works on another connection (§4.11.3).",
           "type": "string",
           "maxLength": 256
         },
