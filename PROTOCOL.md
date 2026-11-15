@@ -2428,9 +2428,10 @@ registration identity.
 
 A verified `finish` result MAY carry a bearer `token`
 ([§3.2.1](#321-bearer-tokens)) to **resume the session**, if the server also
-lists `token`. Servers MUST bind a token from a finish with `credential` to the
-allowed origin of the ceremony, and MUST make it expire. A mismatched origin is
-`denied`.
+lists `token`. Servers MUST accept a token from a finish with `credential` only
+on a connection whose `Origin` is the ceremony's origin (so that a copied token
+does not work from another website), and MUST make it expire. A mismatched
+origin is `denied`.
 
 #### 4.10.1 Passkey page
 
@@ -2477,7 +2478,10 @@ that finishes the exchange. The page works like the sign-in page of
   cancel is not a refusal.
 - Clients open `url` as [§4.12.2](#4122-signing-in) says. They finish with
   `code`, `code_verifier`, `redirect_uri`, and `client_id`, and the action of
-  begin, on any connection. The result's `token` is not bound to an origin.
+  begin, on any connection.
+- Servers MUST NOT refuse the `token` of a finish with `code` because of a
+  connection's `Origin` (the client may be an app, which sends none, and the
+  ceremony ran on the server's page, not on the client's origin).
 - The page acts as an authorization endpoint
   ([§4.12.3](#4123-authorization-server)). It requires user verification. It
   refuses to be shown in a frame, and rejects client data with `crossOrigin`
@@ -2706,8 +2710,10 @@ by a public `client_id` or
   claim. This document defines no proof for one.
 - An invalid, expired, used, or wrongly addressed code or token is `denied`.
 - A successful sign-in returns `you` and a bearer `token`
-  ([§3.2.1](#321-bearer-tokens)). A token from a code, here or at the token
-  endpoint, is not bound to an origin.
+  ([§3.2.1](#321-bearer-tokens)).
+- Servers MUST NOT refuse a token of `external`, including an access token
+  from their token endpoint, because of a connection's `Origin` (the client
+  may be an app, which sends none).
 - On a connection that is signed in, an `external` request adds the identity
   to that account, and returns `you`. It never signs in to another account.
 - An identity that belongs to another account is `denied`.
@@ -2806,14 +2812,16 @@ server.
   another server's challenge through a client that both use, and sign in as the
   user with the response. A server on a domain under the RP ID can still do
   this, so servers that share an RP ID trust each other.
-- A bearer `token` from a WebAuthn ceremony in the client is bound to the
-  origin of its ceremony ([§4.10](#410-webauthn-authentication)). So a stolen
-  token does not work from another web origin.
+- A server accepts a bearer `token` from a WebAuthn ceremony in the client
+  only from the ceremony's origin ([§4.10](#410-webauthn-authentication)). So a
+  copied token does not work from another website.
 - A passkey page lets clients that cannot use the RP ID sign in with a passkey
   ([§4.10.1](#4101-passkey-page)). The page's confirmation then decides which
-  client receives the session, as for external sign-in, and the token is not
-  bound to an origin. A server that wants passkey sessions only in its own
-  clients offers no passkey page.
+  client receives the session, as for external sign-in. A server that wants
+  passkey sessions only in its own clients offers no passkey page.
+- A token from a code works from any origin
+  ([§4.10.1](#4101-passkey-page), [§4.12.4](#4124-token-checks)). Rotation
+  ([§3.2.1](#321-bearer-tokens)) is what limits a copy of it.
 - A passkey page that is shown in a frame on another site could take the
   user's click on its own consent, which also starts the passkey prompt
   (clickjacking). The page refuses frames, and ceremonies run in a frame
