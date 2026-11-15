@@ -280,14 +280,27 @@ Who is asking, in the page's words: an `https` redirect's host, such as
 (com.example.myapp)**; a loopback address as **An app on this device**. A
 client name from a metadata document appears only beside the host.
 
-Example phrasing, for prototypes:
+One confirmation, after the page's own sign-in (decided 2026-11-15, "trimmed"; see
+the storyboards and real screenshots in the session artifact *Sign-in
+Storyboards*). The page goes straight to its sign-in: a passkey, an email
+code, Pocket ID, Bluesky, a wallet. Then:
 
-**Before sign-in:**
+**An account that exists:**
 
-> **Sign in to Chat Example**
+> Allow **chat.alice.dev** to use **Ada (@ada)**’s account?
 >
-> **chat.alice.dev** wants to sign in to your account on **chat.example**.
-> It will be able to read and send messages as you.
+> chat.example has not verified this app.
+>
+> Only allow if you just started signing in on chat.alice.dev.
+>
+> Not you? Sign in as someone else
+>
+> [Allow] [Cancel]
+
+**A new identity** (true whether the code makes an account or is added to one):
+
+> **chat.alice.dev** wants to sign in to **chat.example** as you. It will
+> be able to read and send messages as you.
 >
 > chat.example has not verified this app.
 >
@@ -295,23 +308,9 @@ Example phrasing, for prototypes:
 >
 > [Continue] [Cancel]
 
-Then the page's own sign-in: a passkey, an email code, Pocket ID, Bluesky,
-a wallet.
-
-**After sign-in:**
-
-> Allow **chat.alice.dev** to use **Ada (@ada)**’s account?
->
-> Not you? Sign in as someone else
->
-> [Allow] [Cancel]
-
-**A new account:**
-
-> **chat.alice.dev** wants to create an account for you on
-> **chat.example**. It will be able to read and send messages as you.
->
-> [Continue] [Cancel]
+There is no screen before the sign-in: nothing is issued until the user
+allows, so a screen before it only added a tap (3 taps per repeat sign-in
+as first built, 1 tap trimmed).
 
 - Omit "not verified" only for clients that the server recognises. Recognised means a registered `https` redirect, or an `https` app link
   that the app has claimed (an associated domain or a verified app link),
@@ -321,9 +320,10 @@ a wallet.
 - "Only continue if you just started signing in on …" follows RFC 10027
   §6.1.14, against consent phishing: someone else may have started the
   sign-in and sent the link.
-- The page MAY skip "After sign-in" when the same account already allowed
-  the same `https` redirect host. It always asks for app schemes and
-  loopback addresses.
+- A user allows an `https` `redirect_uri` once for their account, and any
+  other `redirect_uri` at each sign-in (PROTOCOL.md §4.12.3). The page keeps
+  the exact `redirect_uri`, not its host: another page on the same host can
+  be another client.
 - Cancel, at any step, redirects with `error=access_denied`.
 - "Read and send messages as you" is the whole truth: an Apron `token` acts
   as the full account.

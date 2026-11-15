@@ -163,8 +163,8 @@ Servers:
     (WebAuthn Level 3 §13.4.9): a ceremony run inside a frame on another
     site.
   - It requires user verification, as §4.10 does.
-  - It asks for confirmation as "Confirmation" says: who is asking and
-    what they get before the passkey, then the account and Allow after it.
+  - It asks for confirmation as "Confirmation" says: one screen, before
+    the passkey, with who is asking and what they get.
   - It redirects with `code`, `state`, and `iss`, or with
     `error=access_denied`.
 - A code from the passkey page is bound to the action, to the passkey page
@@ -204,11 +204,12 @@ Who is asking, in the page's words:
 A client name from a client ID metadata document appears only beside the
 host (PLAN_LOOSE.md, B1).
 
-**Screen 1, before the passkey: who is asking, and what they get.**
+**One screen, before the passkey** (decided 2026-11-15, "trimmed"): who is
+asking and what they get. Its button is also the tap that the browser needs
+before the passkey prompt.
 
-> **Sign in to Chat Example**
+> **Sign in to Chat Example on chat.alice.dev?**
 >
-> **chat.alice.dev** wants to sign in to your account on **chat.example**.
 > It will be able to read and send messages as you.
 >
 > chat.example has not verified this app.
@@ -217,26 +218,20 @@ host (PLAN_LOOSE.md, B1).
 >
 > [Continue with passkey] [Cancel]
 
-"Continue with passkey" is the click that the browser needs before the
-passkey prompt. The "only continue" line follows RFC 10027 §6.1.14, against
-consent phishing: someone else may have started the sign-in and sent the
-link. Omit the "not verified" line only for clients that the server
-recognises. Recognised means a registered `https` redirect, or an `https` app link
-that the app has claimed (an associated domain or a verified app link),
-never `client_id` alone. App schemes and loopback addresses are never
-recognised: any app can claim them (RFC 8252 §8.6; Okta and Microsoft's
-Storm-2372 device-code phishing show why).
+The "only continue" line follows RFC 10027 §6.1.14, against consent
+phishing: someone else may have started the sign-in and sent the link. Omit
+the "not verified" line only for clients that the server recognises.
+Recognised means a registered `https` redirect, or an `https` app link that
+the app has claimed (an associated domain or a verified app link), never
+`client_id` alone. App schemes and loopback addresses are never recognised:
+any app can claim them (RFC 8252 §8.6; Okta and Microsoft's Storm-2372
+device-code phishing show why).
 
-**The passkey prompt.** The account becomes known here: the passkey is a
-discoverable credential.
-
-**Screen 2, after the passkey: the account, and Allow.**
-
-> Allow **chat.alice.dev** to use **Ada (@ada)**’s account?
->
-> Not you? Use another passkey
->
-> [Allow] [Cancel]
+**The passkey prompt** shows the account: the device's passkey sheet lists
+the account of each discoverable credential. After a verified passkey, the
+page redirects with the code at once. There is no second "Allow Ada's
+account?" screen; as first built it cost a tap on every sign-in and told the
+user nothing that the passkey sheet had not.
 
 **Variants:**
 
@@ -247,7 +242,6 @@ discoverable credential.
   >
   > [Create passkey] [Cancel]
 
-  No screen 2: the account is new.
 - **Addition:** the account is known from the `request` handle, so one
   screen does:
   > **An app on this device (com.example.myapp)** wants to add a passkey to
@@ -255,12 +249,7 @@ discoverable credential.
   >
   > [Create passkey] [Cancel]
 
-**Remembering consent.** The page MAY skip screen 2 when the same account
-already allowed the same `https` redirect host. It always asks for app
-schemes and loopback addresses, which do not identify the client (RFC 8252
-§8.6).
-
-**Cancel** redirects with `error=access_denied`, at either screen.
+**Cancel** redirects with `error=access_denied`.
 
 "Read and send messages as you" is the whole truth: an Apron `token` acts
 as the full account, and there are no scopes.

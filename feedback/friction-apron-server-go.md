@@ -143,3 +143,38 @@ PLAN_WEBAUTHN_EXTERNAL.md passkey page in the Go server, against spec branch
 - What happened: making code tokens unbound (S14) needed a per-session "any origin" flag, a stored field (`any_origin`), and the flag threaded through the server's three sign-in paths (sign-in, addition with a token, invitation enrollment): about 30 lines and a signature change of `Core.Issue`. Two cases are not covered by the sentence's wording: an `external` sign-in with a foreign issuer's access token the client redeemed itself (`token`, no code at this server), and the token an addition returns (a guest becoming an account, or the passkey page's addition).
 - What I did: every `external` sign-in (own codes, foreign codes, foreign access tokens) and every passkey-page code finish, additions included, issues an unbound token. Local ceremonies, email, and proposals stay bound to the connection's `Origin`.
 - Suggested spec change: "Every token from §4.12, and from a `webauthn` finish with `code`, is not bound to an origin; only a token from a ceremony in the client (§4.10) is."
+
+### F21. Remembered consent contradicts "MUST ask … also when the user is already signed in"
+- Spec: §4.12.3 ("The page MUST ask the user to confirm before it redirects, also when the user is already signed in to it")
+- Kind: contradiction (with the decision to remember consent)
+- What happened: the decided change lets `/oauth/authorize` skip its confirmation and redirect at once when the same account already allowed the same `https` redirect host. As written, §4.12.3 forbids that. The safety argument still holds per account and host: the code goes only to a host the account owner allowed, and an app's scheme or a loopback redirect (which any app on the device can claim) is never remembered. But the remembered unit is the host, not the full `redirect_uri`: any path on an allowed host receives codes, so an open redirect or user-controlled path on that host (`https://pages.example/~mallory/cb`) gets silent codes once the owner allowed any page there.
+- What I did: remember per account + `https` host (port included, lowercased; never app schemes, loopback, `localhost`, `*.localhost`), stored with the account, at most 32, forgotten on sign-out everywhere (`account.sign_out` with `others`, `Server.SignOut`, allowlist removal). A new identity's "Continue" remembers nothing (no account yet). The passkey page remembers nothing.
+- Suggested spec change: "The page MUST ask the user to confirm before it redirects, unless the same account already allowed the same `https` origin of `redirect_uri` (never a private-use scheme or loopback). It forgets that when the account signs out everywhere." Consider keying on the origin and saying a server MAY key on the exact `redirect_uri` instead, to avoid the shared-host case.
+
+### F22. The foreign-issuer text still describes a shared public `client_id`
+- Spec: §4.12.1 ("A server that names another authorization server in `issuer` puts in `url` a `client_id` that the issuer accepts from any client, if the issuer needs one"); §4.12.3 last paragraph ("lets any client in, such as by a public `client_id` or client ID metadata documents")
+- Kind: outdated (against the decision, and the Pocket ID evidence)
+- What happened: the server now puts no `client_id` in `url`, and clients name themselves with their own `https` client ID metadata document. §4.12.1 and §4.12.3 still recommend the shared public client that the Pocket ID run showed to give silent codes to any site after one consent. S2's proposed sentence ("If `url` carries `client_id`, clients use it …") becomes moot for this server.
+- What I did: removed `ExternalIssuer.ClientID`; `--external.client-id` is refused with the reason. SERVER.md documents Pocket ID ≥ 2.13 with CIMD.
+- Suggested spec change: drop the shared-`client_id` sentence from §4.12.1, and in §4.12.3: "A server that names another authorization server SHOULD use one that binds codes and tokens to `resource`, sends `iss`, and lets clients in by client ID metadata documents, naming the client and asking for consent per client. It MUST NOT rely on one `client_id` shared by every client." Clients without an `https` metadata document then cannot use a foreign issuer at all; say so (they use a server that is its own authorization server).
+
+### F23. §4.12.4 does not say the token must be an access token
+- Spec: §4.12.4 ("Servers MUST accept only tokens from the issuer, with an `aud` that includes their origin …")
+- Kind: missing
+- What happened: an ID token is signed with the issuer's same keys, has `iss`, `exp`, and an `aud` (a client ID). Any issuer that lets a client's ID be the server's origin, or puts extra audiences in ID tokens, makes an ID token pass every check §4.12.4 lists. RFC 9068 tells them apart by the header `typ` (`at+jwt`).
+- What I did: require `typ` `at+jwt` or `application/at+jwt` (case-insensitive) before the signature check; none, `JWT`, and anything else are `denied`. Pocket ID (≥ 2.13) sends `at+jwt`.
+- Suggested spec change: in §4.12.4, "A JWT access token MUST have `typ` `at+jwt` (RFC 9068); servers reject other JWTs, such as ID tokens." (Also settles S4: require RFC 9068 tokens from a foreign issuer.)
+
+### F24. A foreign access token rarely names the person; userinfo works, with conditions
+- Spec: §4.12.4 (identity by issuer and `sub`; account creation is server policy)
+- Kind: extra burden
+- What happened: Pocket ID's access tokens carry no profile claims, so new accounts were nameless `user_1` (S18). Asking the issuer's `userinfo_endpoint` with the access token fixes it, but (a) the endpoint is only in OpenID Connect metadata, which the RFC 8414 document an issuer serves first may lack, so the server reads both; (b) userinfo accepts the token only if its `aud` includes the issuer, which Pocket ID adds only with an identity scope (`openid profile`), so the operator must set `--external.scope`; (c) the answer is trusted only for the token's `sub` (OIDC Core §5.3.2).
+- What I did: for a new account that neither the request nor the token names, fetch userinfo; a failure is logged and the account is made without a name, as before; existing accounts and additions never fetch. About 50 lines plus tests with the fake issuer.
+- Suggested spec change: none required; an informative note under §4.12.4 that "a server may ask the issuer's userinfo endpoint with the access token for a new account's name" would help implementers.
+
+### F25. `signup` and invitation-only registration
+- Spec: §3.2 (`server.signup` lists the schemes that create an account)
+- Kind: ambiguity
+- What happened: on this server a passkey registration makes an account only for a guest or with an invitation. With guests off, listing `webauthn` in `signup` made clients offer "Create account" that the server refused (S17). An invitation is a secret given to one person, so it can't change what `signup`, sent to everyone, says.
+- What I did: without guests, `signup` leaves out `webauthn` (and is `[]` when nothing else creates accounts); an invited client still registers, since `webauthn` stays in `auth`.
+- Suggested spec change: "`signup` lists the schemes that any client can create an account with. A scheme that creates accounts only with a secret, such as an invitation, need not be listed."
