@@ -1,6 +1,6 @@
 # Plan: a remote passkey page for `webauthn`
 
-Status: proposal, 2026-11-14. Scope: the `webauthn` scheme (§4.10) only.
+Status: drafted into PROTOCOL.md §4.10.1 on #115 (`a475c07`, 2026-11-15). Proposed 2026-11-14. Scope: the `webauthn` scheme (§4.10) only.
 It reuses the authorization flow of `external` as drafted in PROTOCOL.md
 §4.12 on [shazow/apron#115](https://github.com/shazow/apron/pull/115)
 ([PLAN_LOOSE.md](PLAN_LOOSE.md)), but needs no `external` scheme.

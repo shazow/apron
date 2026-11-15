@@ -15,6 +15,14 @@ Its purpose is to decide whether the spec is ready to accept. Raw logs from each
 
 Item IDs below (M, S, H, W) are stable, so we can refer to them. The source entries are in brackets: `go F6` means apron-server-go's log, F6.
 
+## Decisions (2026-11-15)
+
+- **M2, M3, M4, M5 and M6:** applied to PROTOCOL.md on #115 (`a475c07`). The passkey page is §4.10.1. The schema, HISTORY.md, and `conform.py`'s check (H3) are updated too.
+- **S14:** applied, as one phrase each in §4.10.1 and §4.12.4. A token from a code is not bound to an origin.
+- **apron-server-go** follows M6 and S14 in a follow-up commit.
+- **M1:** open. Guest behaviour stays server policy; see the answer in the session.
+- **apron-web's startup budget:** bumped, as justified in its commit.
+
 ## Verdict
 
 The design held. Three implementers worked independently, and they reached the same shape, and the same guesses where the text was silent, for the following:
