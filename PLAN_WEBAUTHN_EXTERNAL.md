@@ -355,25 +355,27 @@ ceremony" to apply to a finish with `credential`.
 >   external sign-in. A server that wants passkey sessions only in its own
 >   clients offers no passkey page.
 
-## Open questions
+## Decisions
 
-Settled (2026-11-14):
+All settled (2026-11-14 and 2026-11-15); none open.
 
-- No RP ID in the `server` frame. No standard advertises one, and the
-  passkey page makes the choice between local and remote invisible after
-  begin.
-- No flag to skip the local challenge. It is tens of bytes per connection,
-  and dropped on the next begin or a disconnect (§4.10).
-- No device grant for the passkey page. Terminals use a `token` issued from
-  a first-party client, or `external` where its issuer offers a device
-  grant.
-
-Open:
-
-1. Should servers be encouraged to offer the passkey page only to clients
-   that they recognise? Current answer: no; the confirmation covers
-   unrecognised clients.
-
-Settled since: the page's URL is `external.url` in the begin result, the
-same object as `external`'s begin, and the server's parameters (`action`, `name`,
-`request`) ride in its query.
+1. **No RP ID in the `server` frame.** No standard advertises one, and the
+   passkey page makes the choice between local and remote invisible after
+   begin.
+2. **No flag to skip the local challenge.** It is tens of bytes per
+   connection, and dropped on the next begin or a disconnect (§4.10).
+3. **No device grant for the passkey page.** Terminals use a `token` issued
+   from a first-party client, or `external` where its issuer offers a device
+   grant.
+4. **Any client may use the passkey page,** not only clients that the server
+   recognises. The confirmation ("Confirmation", above) is the guard: it
+   names the client, marks unverified ones, says what they get, and shows
+   the account. A server that wants passkey sessions only in its own clients
+   omits `external`.
+5. **The page's URL is `external.url`,** the same object as the `external`
+   scheme's begin result (§4.12.1). The server's parameters (`action`,
+   `name`, an addition's `request`) ride in its query, which the client
+   keeps.
+6. **A client reads only `external.url`.** It adds its OAuth parameters,
+   checks `state` on the way back, and finishes `webauthn` with the code on
+   its own connection. No `iss` check: the server redeems the code itself.
