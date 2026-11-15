@@ -410,3 +410,13 @@ All settled (2026-11-14 and 2026-11-15); none open.
 6. **A client reads only `external.url`.** It adds its OAuth parameters,
    checks `state` on the way back, and finishes `webauthn` with the code on
    its own connection. No `iss` check: the server redeems the code itself.
+
+7. **The field stays `url` (2026-11-15).** Not `redirect_uri`, which is the
+   client's return address in the same exchange; not `redirect_to_web`,
+   which First-Party Apps uses as an error code with no URL, and nothing is
+   redirected; not `authorization_endpoint`, which implies discovery that
+   simple clients skip. `url` inside a descriptive object is common (a
+   Stripe Checkout Session's `url`, `ASWebAuthenticationSession(url:)`, and
+   v10's own proposal result). FIDO's server API names (`/attestation/…`,
+   `/assertion/…`, `options`, `result`) were compared and not adopted: they
+   name the cryptography, not what the user does.
