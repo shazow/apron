@@ -2628,24 +2628,21 @@ class External {
   reject any other `url`, such as `javascript:…`.
 - `url` MAY carry a query, such as `scope` or a provider hint. Clients keep it,
   and add their own parameters ([§4.12.2](#4122-signing-in)) to it. The
-  server's query never includes a parameter that §4.12.2 sets, except
-  `client_id`.
+  server's query never includes a parameter that §4.12.2 sets.
 - The server's origin is `https://` plus the host and any port of its address
   ([§1](#1-transport--framing)), such as `https://chat.example`. For a `ws://`
   address on a loopback host, it is `http://` instead.
 - Without `issuer`, the server is its own authorization server, and the issuer
   is its origin.
-- A server that names another authorization server in `issuer` puts in `url`
-  a `client_id` that the issuer accepts from any client, if the issuer needs
-  one.
 
 #### 4.12.2 Signing in
 
 - Clients send the user to `url` with the authorization code grant
   (`response_type`, `client_id`, `redirect_uri`), PKCE `S256`
   (`code_challenge`, `code_challenge_method`), and an unguessable `state`.
-- Clients add their own `client_id`, such as their app ID, unless `url`
-  carries one.
+- Clients add their own `client_id`, such as their app ID. With `issuer`, it
+  is the `https` URL of the client's
+  [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/).
 - Clients send the server's origin as
   [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
   from the address that they connected to (otherwise a server could get a
@@ -2675,9 +2672,8 @@ These rules apply to a server that is its own authorization server:
 
 - The server SHOULD accept any `client_id`, and any `redirect_uri` that is
   `https`, a scheme with a `.`, or `http` on a loopback address with any port.
-- The server MAY fetch a
-  [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
-  when `client_id` is an `https` URL. It then accepts only a `redirect_uri`
+- The server MAY fetch a client ID metadata document when `client_id` is an
+  `https` URL. It then accepts only a `redirect_uri`
   that the document lists, and shows the document's `client_name` only beside
   the host of `client_id` (otherwise a client could borrow another client's
   name for its own `redirect_uri`).
@@ -2700,19 +2696,23 @@ These rules apply to a server that is its own authorization server:
 - The server MUST allow cross-origin requests to its metadata and token
   endpoint.
 
-A server that names another authorization server SHOULD use one that binds
-codes and tokens to `resource`, sends `iss`, and lets any client in, such as
-by a public `client_id` or client ID metadata documents.
+A server that names another authorization server MUST use one that binds
+codes and tokens to `resource`, sends `iss`, and issues
+[JWT access tokens](https://www.rfc-editor.org/rfc/rfc9068). It MUST accept
+clients only by their client ID metadata documents, and ask the user to
+confirm each client by the host of its document (otherwise clients that share
+one `client_id` share the user's consent, and any site can get a code without
+a click).
 
 #### 4.12.4 Token checks
 
 - With `code`, the server redeems the code: itself, or at the issuer's token
   endpoint, which it finds from the issuer's metadata.
 - Servers MUST NOT pass a client's code or token on, except to the issuer.
-- Servers MUST accept only tokens from the issuer, with an `aud` that includes
-  their origin. They check the signature against the issuer's keys, or
-  [introspect](https://www.rfc-editor.org/rfc/rfc7662) the token, and check
-  `iss` and `exp`.
+- Servers MUST accept only access tokens from the issuer, with an `aud` that
+  includes their origin. They check the signature against the issuer's keys,
+  and check `typ` (`at+jwt`), `iss`, and `exp` (an ID token is not an access
+  token, even when its `aud` matches).
 - Servers MUST reject a token that is bound to a key, such as by a `cnf`
   claim. This document defines no proof for one.
 - An invalid, expired, used, or wrongly addressed code or token is `denied`.
@@ -2872,6 +2872,11 @@ server.
   authorization server gets tokens addressed to itself, which the other server
   rejects. Servers on one host and port share an origin, so they trust each
   other.
+- An authorization server that lets clients share one `client_id` cannot tell
+  them apart, so the user's consent for one is consent for all. Any site could
+  then send the user there and get a code without a click. A client ID
+  metadata document gives each client its own identity and consent
+  ([§4.12.3](#4123-authorization-server)).
 - A client that redeems on the connection gives a code only to the server that
   it is connected to, which redeems it only at its own issuer
   ([§4.12.4](#4124-token-checks)). A client that redeems at a token endpoint
