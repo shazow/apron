@@ -88,7 +88,9 @@ Acceptance:
   every address (A5). An addition works only on the proposing account's
   connection (A4).
 - **`external`:** the client's `resource` check and the server's `aud` check
-  stop replay (A1). The `issuer` and `iss` checks stop mix-up between
+  stop replay (A1). Codes go only to the server that the client is
+  connected to, which redeems them only at its own issuer; clients that
+  redeem at a token endpoint check `iss`. That stops mix-up between
   authorization servers (A1). PKCE binds the code to its client (A3). OAuth
   `state` stops login CSRF (A4). The authorization server's consent screen
   shows the client (A2). An addition uses a token from the client's own

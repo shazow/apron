@@ -69,8 +69,8 @@ class AuthExternalBegin {       // auth params.ext.auth_external, on begin
 - The server MAY use `login_hint` to choose the way, such as a company's own
   sign-in for its email domain, and MAY pass it on in `url`'s query.
 - The server answers begin as [§4.12.1](PROTOCOL.md#4121-begin) says. A
-  choice changes only `external`'s fields: `url`, and `issuer` and
-  `client_id` for a foreign issuer.
+  choice changes only `external`'s fields: `url`, and `issuer` for a foreign
+  issuer.
 - Without the extension, clients show one "Sign in" button, and begin without
   `ext`.
 
@@ -90,7 +90,7 @@ Each is a way behind the portal; clients see only `external`.
 
 | Option | Begin's result | The portal |
 |---|---|---|
-| Pocket ID, as the issuer | `url: "https://id.example/authorize?scope=openid"`, `issuer: "https://id.example"`, `client_id: "apron"` | Pocket ID itself |
+| Pocket ID, as the issuer | `url: "https://id.example/authorize?scope=openid&client_id=apron"`, `issuer: "https://id.example"` | Pocket ID itself |
 | GitHub, through Keycloak | `url: "https://kc.example/auth?kc_idp_hint=github"`, with the Keycloak `issuer` | Keycloak sends the user straight on to GitHub |
 | A company's sign-in, chosen by `login_hint: "ada@corp.example"` | that company's issuer | the company's sign-in |
 | Bluesky, with `login_hint: "alice.bsky.social"` | `url: "https://chat.example/oauth/authorize?provider=atproto&login_hint=alice.bsky.social"` | the server's portal, acting as an AT Protocol OAuth client ([PLAN_LOOSE.md](PLAN_LOOSE.md), "Scenarios behind the portal") |
@@ -105,7 +105,7 @@ Each is a way behind the portal; clients see only `external`.
   the user typed for this server, so it tells the server no more than the
   sign-in page would.
 - A choice cannot weaken the guards of §4.12: clients still send `resource`
-  for their own server, and check `iss` against begin's issuer.
+  for their own server, and give the code only to it.
 
 ## Open questions
 

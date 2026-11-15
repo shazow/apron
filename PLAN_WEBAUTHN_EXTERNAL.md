@@ -84,7 +84,7 @@ with `credential`, as today. A client that cannot:
 2. the page asks who is signing in, runs the passkey, and asks to allow access
    (see "Confirmation", below)
 3. the page redirects to  com.example.myapp:/signed-in?code=Hk41x9…&state=q8Rz…&iss=https://chat.example
-4. the client checks state and iss
+4. the client checks state
 ```
 
 ```jsonc
@@ -140,7 +140,7 @@ Clients:
 - For `external`, clients follow §4.12.2: PKCE `S256`, an unguessable `state`,
   `resource` as the server's origin, `url`'s own query kept, the
   system browser or a sign-in session (a popup or a redirect for web
-  clients), and the checks of `state` and `iss`.
+  clients), and the check of `state`.
 - Clients finish with `code`, `code_verifier`, `redirect_uri`, and
   `client_id`, on any connection, with the same `action` as begin.
 - Without `external`, a client that cannot use the RP ID tells the user

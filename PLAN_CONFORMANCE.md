@@ -193,7 +193,7 @@ Client:
 | `external.A3.pkce` | client | the authorization request uses `S256`, and the verifier has enough entropy |
 | `external.A4.state` | client | `state` is present, and differs on each sign-in |
 | `external.A1.resource` | client | `resource` is the origin that the client is connected to, also when the frame names a foreign issuer |
-| `external.A1.iss` | client | does not redeem after a redirect with the wrong `iss` |
+| `external.A1.iss` | client | a client that redeems at the token endpoint does not redeem after a redirect with the wrong `iss` (library clients only) |
 | `external.A4.wrong-state` | client | does not redeem after a redirect with another `state` |
 | `external.shape.reconnect` | client | after the driver drops the connection mid-sign-in, the client reconnects and redeems |
 | `external.shape.declined` | client | after `error=access_denied`, sends nothing, and reports that it stopped |

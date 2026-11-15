@@ -70,15 +70,14 @@ differently by request, such as by the user's choice of provider
 // <- the server is the issuer
 {"id": "c1", "result": {"external": {"url": "https://chat.example/oauth/authorize"}}}
 // <- or a foreign issuer; its scope rides in the query
-{"id": "c1", "result": {"external": {"url": "https://id.example/authorize?scope=openid",
-  "issuer": "https://id.example", "client_id": "apron"}}}
+{"id": "c1", "result": {"external": {"url": "https://id.example/authorize?scope=openid&client_id=apron",
+  "issuer": "https://id.example"}}}
 ```
 
 ```ts
 class External {                  // the begin result's "external"
   url: string;                    // the sign-in page: the authorization endpoint
-  issuer?: string;                // absent: the server's origin
-  client_id?: string;             // a client ID that a foreign issuer accepts from any client
+  issuer?: string;                // for clients that redeem at its token endpoint; absent: the server's origin
 }
 ```
 
@@ -96,8 +95,9 @@ one path for both.
 - `url` MAY carry a query, such as `scope` or a provider hint (decided
   2026-11-14, replacing `params`). Clients keep it, and add their own
   parameters to it, as RFC 6749 §3.1 requires. The server's query never
-  includes `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
-  `code_challenge_method`, `state`, or `resource`.
+  includes `response_type`, `redirect_uri`, `code_challenge`,
+  `code_challenge_method`, `state`, or `resource`. It MAY include
+  `client_id`, which clients then keep instead of adding their own.
 - One `External` object, not flat fields on the result (decided
   2026-11-14): it reads clearly beside `webauthn`'s `public_key`, and
   keeps generic names off the result that every scheme shares. `url` is
@@ -105,14 +105,21 @@ one path for both.
 - `url` is where the client sends the user; `redirect_uri` is where the
   user comes back. `redirect_uri` keeps OAuth's name, because issuers and
   libraries read it, and the server passes it on when it redeems.
-- `issuer` is who issues the code. Clients check the redirect's `iss`
-  against it (mix-up), and library clients discover the token endpoint from
-  it. The Apron server checks tokens' `iss` against it. Absent, the server
-  is its own issuer, which is the usual case, and every passkey page.
-- `client_id` is for a foreign issuer that admits only clients it knows,
-  such as Pocket ID with one public client registered for Apron. Absent, any
-  value works, and clients send their own, such as their app ID. It is not
-  in `url`'s query, because the client sends it again when it redeems.
+- A simple client reads only `url` (decided 2026-11-15). It adds its
+  parameters, checks `state` on the way back, and gives the code to its
+  server.
+- `issuer` is for clients that redeem at the token endpoint themselves, such
+  as library clients: they discover the endpoint from it, and check the
+  redirect's `iss` against it. A client that redeems on the connection needs
+  neither: it gives the code only to the server it is connected to, which
+  redeems it only at its own issuer, so a code from another issuer fails
+  there. The Apron server checks tokens' `iss` against it too. Absent, the
+  server is its own issuer: the usual case, and every passkey page.
+- `client_id` rides in `url`'s query when a foreign issuer admits only
+  clients it knows, such as Pocket ID with one public client registered for
+  Apron. Clients keep it, add none of their own, and send it again when they
+  redeem. Otherwise clients add their own, such as their app ID, and any
+  value works.
 - `step` is not needed: the fields tell begin, redemption, and a foreign
   access token apart, as they tell an email proposal from its approval.
 
@@ -126,7 +133,7 @@ one path for both.
             &resource=<the server's origin>
 4. the portal signs the user in, confirms, and redirects to
    <return>?code=…&state=…&iss=…        (or ?error=access_denied&state=…&iss=…)
-5. checks state, and that iss is the issuer
+5. checks state (a library client that redeems at the token endpoint also checks iss)
 ```
 
 ```jsonc
@@ -198,7 +205,8 @@ Clients:
   they connect to.
 - Use PKCE with `S256`, and an unguessable `state`. Keep the verifier by
   `state`, so that any tab or connection can finish.
-- Check `state`, and that `iss` is the issuer, before they use a code.
+- Check `state` before they use a code. Clients that redeem at the
+  issuer's token endpoint also check `iss` against `issuer`.
 - Use the system browser or a sign-in session, never an embedded web view.
 - Don't send `dpop_jkt` in the authorization URL on the simple path: the
   server redeems the code, so the code must not be bound to the client's
@@ -326,7 +334,7 @@ this plan.
 
 | Attacker | Guard |
 |---|---|
-| A1, relay or mix-up | `resource` bound to the server that the client is connected to, `aud` checked by that server, and `iss` |
+| A1, relay or mix-up | `resource` bound to the server that the client is connected to, `aud` checked by that server; codes redeemed only by that server, at its own issuer; `iss` for clients that redeem at a token endpoint |
 | A2, a phishing client | the portal's confirmation, which shows the redirect's host or scheme |
 | A3, scheme squatting, loopback ports | PKCE |
 | A4, login CSRF; linking to someone else's account | `state`; additions only on the account's own connection |
@@ -340,8 +348,8 @@ this plan.
 2. Register one public client, such as `apron`, with the callbacks to allow:
    Pocket ID takes `*` wildcards in callback URLs. Or allow client ID
    metadata documents by URL pattern.
-3. Set `issuer`, the authorization endpoint (with `scope` in its query) as
-   begin's `url`, and `client_id` in the server's configuration.
+3. Set `issuer`, and the authorization endpoint with `scope` and `client_id`
+   in its query as begin's `url`, in the server's configuration.
 
 Pocket ID already rejects an unknown `resource` (`invalid_target`), makes
 the resource the token's `aud`, sends `iss`, allows cross-origin requests,
@@ -370,8 +378,8 @@ finished under `webauthn`. What they share:
 
 | | `external` | `webauthn` with a passkey page |
 |---|---|---|
-| Begin returns | `external`: `url`, and `issuer` and `client_id` for a foreign issuer | `public_key`, and `external` with `url` |
-| `url`'s query | `scope`, a provider hint | `action`, `name`, an addition's `request` |
+| Begin returns | `external`: `url`, and `issuer` for a foreign issuer | `public_key`, and `external` with `url` |
+| `url`'s query | `scope`, a provider hint, a foreign issuer's `client_id` | `action`, `name`, an addition's `request` |
 | The client adds | `response_type`, `client_id`, `redirect_uri`, PKCE, `state`, `resource` | the same |
 | The page | any method; confirms (Confirmation, above) | a passkey; confirms around the prompt |
 | Back comes | `code`, `state`, `iss` | the same |
