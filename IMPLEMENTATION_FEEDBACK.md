@@ -93,6 +93,10 @@ These are small, and none made two implementations disagree.
   Proposed: "When a login presents an unknown credential, the page SHOULD call `PublicKeyCredential.signalUnknownCredential`, and say that the passkey is not for an account here."
 - **S15. A failed redemption may burn the code.** [interop F7] apron-server-cloudflare burns a code on any failed try; apron-server-go does not. Proposed: "A server MAY invalidate a code after a failed redemption."
 
+- **S16. Email `state` on approval: details.** [email-state F1, F2] The new rule ("An approval MAY carry the proposal's `state`") works in apron-server-go (`f2e44a8`) and apron-web (`60a1960`). Two cases are open:
+  - **Two pending proposals with one `state`.** apron-server-go lets the newest proposal own it. Proposed: "Clients use a new `state` for each proposal."
+  - **A `state` that matches no pending proposal.** apron-server-go treats it as `denied`, and the attempt counts against nothing. Proposed: "A `state` that matches no pending proposal is ignored."
+
 ## Housekeeping
 
 - **H1.** Drop the `workers-oauth-provider` note from PLAN_WEBAUTHN_EXTERNAL.md and PLAN_LOOSE.md. [cf F1] It needs its own KV binding, mints its own tokens, refuses unknown `client_id`s, and cannot redeem a code on a WebSocket.
