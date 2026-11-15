@@ -2427,10 +2427,10 @@ registration identity.
 
 A verified `finish` result MAY carry a bearer `token`
 ([§3.2.1](#321-bearer-tokens)) to **resume the session**, if the server also
-lists `token`. Servers MUST accept a token from a finish with `credential` only
-on a connection whose `Origin` is the ceremony's origin (otherwise a copied
-token would work from another website), and MUST make it expire. A mismatched
-origin is `denied`.
+lists `token`. Servers MUST make such a token expire. They MUST accept a token
+from a finish with `credential` only on a connection whose `Origin` is the
+ceremony's origin (otherwise a copied token would work from another website).
+A mismatched origin is `denied`.
 
 #### 4.10.1 Passkey page
 
