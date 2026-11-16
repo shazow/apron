@@ -1655,7 +1655,7 @@ async def _(run):
 @check("4.11.1", "an email proposal returns {} and authenticates nothing", needs=offers("email"))
 async def _(run):
     conn = await run.open(auth=False)
-    _, reply = await conn.request("auth", {"scheme": "email", "email": "conformance@example.invalid",
+    _, reply = await conn.request("auth", {"scheme": "email", "email": f"conformance-{secrets.token_hex(4)}@example.invalid",
                                            "state": secrets.token_urlsafe(16)})
     policy(reply)
     if code(reply) == CODES["denied"]:
@@ -2006,7 +2006,7 @@ class Person:
 
     def __init__(self):
         self.hits, self.changed, self.skip = [], threading.Condition(), threading.Event()
-        self.count, self.total = 0, None
+        self.count, self.total, self.states = 0, None, set()  # states: of the requests sent so far
         person = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -2031,11 +2031,13 @@ class Person:
         self.redirect_uri = f"http://127.0.0.1:{self.server.server_address[1]}/cb"
         self.other_redirect_uri = self.redirect_uri[:-len("/cb")] + "/other"
 
-    def hit(self, index, seconds):
-        """The redirect at index, waiting up to seconds for it, or None."""
+    def hit(self, index, stale, seconds):
+        """The first redirect from index on whose state is not in stale, waiting up to seconds for it, or None. A
+        stale state comes from an earlier request, such as a reloaded tab."""
+        fresh = lambda: next((q for q in self.hits[index:] if q.get("state") not in stale), None)
         with self.changed:
-            self.changed.wait_for(lambda: len(self.hits) > index or self.skip.is_set(), seconds)
-            return self.hits[index] if len(self.hits) > index else None
+            self.changed.wait_for(lambda: fresh() is not None or self.skip.is_set(), seconds)
+            return fresh()
 
 
 def wait_for_enter(event):
@@ -2082,7 +2084,8 @@ async def sign_in(run, page, why, decline=False, keep=None):
     person.count += 1
     person.total = max(person.total, person.count)
     grant = Grant(run, page, person.redirect_uri)
-    index = len(person.hits)
+    index, stale = len(person.hits), set(person.states)
+    person.states.add(grant.state)
     print(f"-- sign-in {person.count} of {person.total}: {why}", flush=True)
     print(f"   {'Decline it there, or press Enter here to skip it' if decline else 'Sign in and allow'}, at:", flush=True)
     print(f"   {grant.url}", flush=True)
@@ -2092,7 +2095,7 @@ async def sign_in(run, page, why, decline=False, keep=None):
         threading.Thread(target=wait_for_enter, args=(person.skip,), daemon=True).start()
     deadline = time.monotonic() + SIGN_IN_WAIT
     while True:
-        query = await asyncio.to_thread(person.hit, index, 10)
+        query = await asyncio.to_thread(person.hit, index, stale, 10)
         if query is not None:
             break
         if person.skip.is_set():
