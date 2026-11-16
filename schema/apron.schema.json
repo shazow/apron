@@ -941,9 +941,9 @@
       "type": "object",
       "properties": {
         "url": {
-          "description": "The authorization endpoint, an absolute https URL (http only on a loopback host). Clients keep its query.",
+          "description": "The authorization endpoint, an absolute https URL (http only on a loopback host: localhost or a name under it, 127.0.0.0/8, or [::1]). Clients keep its query.",
           "type": "string",
-          "pattern": "^(https://|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])([:/?]|$))"
+          "pattern": "^(https://|http://(([a-z0-9-]+\\.)*localhost|127(\\.[0-9]{1,3}){3}|\\[::1\\])([:/?]|$))"
         },
         "issuer": {
           "description": "The authorization server of url; absent: the server's origin. Clients that redeem on the connection need not read it (§4.12.1).",
