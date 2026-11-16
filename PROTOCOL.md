@@ -2561,11 +2561,10 @@ approves the proposal:
 - A client asks its user before it uses a link without the `state` of a
   proposal that the client made. It then presents the link's token with
   `scheme: "token"`.
-- A client drops a link with the `state` of its own proposal, unless the
-  link's `server` is the server that it proposed to (otherwise a server could
-  pass a client's `state` on to another server, and receive the token that the
-  other server sends).
-- A link without `server` is not for the server that the client proposed to.
+- A client drops a link with the `state` of its own proposal, unless the link
+  carries `server` with the address of the server that the client proposed to
+  (otherwise a server could pass a client's `state` on to another server, and
+  receive the token that the other server sends).
 
 #### 4.11.3 Approval
 
@@ -2631,8 +2630,9 @@ class External {
 ```
 
 - An `external` request with neither `code` nor `token` is a begin. It
-  authenticates nothing, and returns `external`. A request with `token` is for
-  extensions; without one, it is `denied`.
+  authenticates nothing, and returns `external`.
+- An `external` request with `token` is for extensions. Without an extension
+  that accepts `token`, the request is `denied`.
 - `url` is an absolute `https` URL, or `http` on a loopback host. Clients
   reject any other `url`, such as `javascript:…`.
 - `url` MAY carry a query, such as `scope` or a provider hint. Clients keep it,
@@ -2677,8 +2677,9 @@ sign-in pages: the page at `url`, and its passkey page
   `https`, a scheme with a `.`, or `http` on a loopback address with any port.
 - The server MUST refuse any other `redirect_uri` (such as `javascript:` or
   `data:`).
-- The server MUST require PKCE `S256`, and MUST refuse a request without
-  `resource`, or with one other than its origin.
+- The server MUST require PKCE `S256`.
+- The server MUST refuse a request without `resource`, or with a `resource`
+  other than its origin.
 - The page MUST show the error of an invalid request itself (any `https` address
   is a valid `redirect_uri`, so redirecting errors would make the page an open
   redirector).
@@ -2694,9 +2695,10 @@ sign-in pages: the page at `url`, and its passkey page
   from them).
 - The page SHOULD send `Referrer-Policy: no-referrer` (its URL carries `state`
   and the PKCE challenge).
-- The server MUST make each code unguessable and single use, and MUST bind it
-  to `client_id`, `redirect_uri`, the PKCE challenge, and `resource`. A code
-  expires within minutes.
+- The server MUST make each code unguessable and single use.
+- The server MUST bind each code to `client_id`, `redirect_uri`, the PKCE
+  challenge, and `resource`.
+- A code expires within minutes.
 
 #### 4.12.4 Redemption
 
