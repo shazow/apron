@@ -2841,6 +2841,7 @@ async def identities_flow(run):
     origin = await redeeming_origin(run)
     redeem = lambda grant, conn=None: attempt_auth(run, origin, {"scheme": "external", **grant.redemption()}, conn)
     out = {}
+    tag = secrets.token_hex(3)  # identities that are new on a server that outlives runs
     conn = await open_from(run, origin)
     must(conn, f"the server refused the handshake of {from_origin(origin)}, which it took before")
     grant = await sign_in(run, page, "external sign-in again, to the same account as before, on a connection that "
@@ -2851,15 +2852,30 @@ async def identities_flow(run):
     out["account"] = reply["result"]["you"]["user_id"]
     grant = await sign_in(run, page, "external sign-in with a new identity, which no account has yet, such as another "
                                      "subject or a new passkey. Checks that it adds to the account.",
-                          keep=conn, identity="addition")
+                          keep=conn, identity=f"addition-{tag}")
     out["addition"] = await redeem(grant, conn)
+    if code(out["addition"]) == CODES["denied"] and offers("webauthn")(run.server):
+        # Such as a limit of one external identity per account: try an account that signed in with a passkey.
+        try:
+            passkey = await ceremony(run)
+            if signed_in(passkey["login"]):
+                other, begin, credential = await login(run, passkey["key"])
+                _, reply = await other.request("auth", finish("login", begin, credential))
+                if signed_in(reply):
+                    grant = await sign_in(run, page, "external sign-in with another new identity, for an account that "
+                                                     "signed in with a passkey.", keep=other,
+                                          identity=f"addition-passkey-{tag}")
+                    out["passkey-account"] = reply["result"]["you"]["user_id"]
+                    out["passkey-addition"] = await redeem(grant, other)
+        except Skip:
+            pass
     grant = await sign_in(run, page, "external sign-in with another new identity, to make a second account.",
-                          keep=conn, identity="other")
+                          keep=conn, identity=f"other-{tag}")
     other = await redeem(grant)
     out["other"] = other
     if signed_in(other) and other["result"]["you"]["user_id"] != out["account"]:
         grant = await sign_in(run, page, "external sign-in again, as the second account. Checks that it does not "
-                                         "switch the first account's connection.", keep=conn, identity="other")
+                                         "switch the first account's connection.", keep=conn, identity=f"other-{tag}")
         out["switch"] = await redeem(grant, conn)
         _, out["after"] = await conn.request("me", {})
     return out
@@ -2871,6 +2887,11 @@ async def _(run):
     out = await flow(run, "identities", identities_flow)
     reply = out["addition"]
     policy(reply)
+    if code(reply) == CODES["denied"] and "passkey-addition" in out:
+        run.info(f"the server refused it for the account that signed in by external: {describe(reply)}; tried an "
+                 "account that signed in with a passkey instead")
+        reply, out = out["passkey-addition"], {**out, "account": out["passkey-account"]}
+        policy(reply)
     if code(reply) == CODES["denied"]:
         # Server policy, such as a limit of identities per account (§1.1), or a page that made the new identity an
         # account of its own before the redemption: neither breaks a rule, and conform.py cannot tell them apart.
