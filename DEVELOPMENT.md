@@ -117,7 +117,7 @@ report too. For apron-server-go, with this repository checked out in `apron`:
 
 ```sh
 go run ./cmd/aprond --addr 127.0.0.1:8080 --store memory --upload.dir "$(mktemp -d)" \
-  --webauthn.origin http://localhost:8080 &
+  --webauthn.origin http://localhost:8080 --email.enable --email.sender log &
 uv run apron/tests/conformance/conform.py ws://localhost:8080/ws \
   --portal "node apron/tests/conformance/portals/passkey.cjs" --json conformance.json
 ```
