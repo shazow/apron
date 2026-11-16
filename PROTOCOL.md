@@ -740,8 +740,9 @@ authoritative **snapshot** at one log position.
 #### 3.5.2 Rendering
 
 - `"markdown"` text is [CommonMark](https://commonmark.org/). Clients MAY
-  render common extensions, such as tables, and MAY render soft line breaks as
-  hard breaks.
+  render common extensions, such as tables.
+- Clients that render CommonMark MUST render a soft line break as a hard
+  break.
 - Other fields that this document calls CommonMark follow the same rules.
 - Clients MUST disable raw HTML in CommonMark, or sanitize it with the same
   allowlist as HTML embeds ([§4.8](#48-embeds-and-avatars)).
