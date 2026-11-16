@@ -22,7 +22,10 @@ index, and its general rules apply to every extension.
     that builds on outside standards then lists them under `## References`.
   - Don't restate the general rules of EXTENSIONS.md.
 - Link to PROTOCOL.md as `../PROTOCOL.md#…`, and to another extension as
-  `ext_<name>.md`.
+  `ext_<name>.md`. Link to any other file in this repository with an absolute
+  URL, such as
+  `https://github.com/shazow/apron/blob/main/recipes/trusted_federation.md`
+  (otherwise the link breaks where apron.chat renders the extension).
 - An extension never changes a rule of PROTOCOL.md. If it needs to, change
   PROTOCOL.md instead.
 - Changes to an extension don't go in HISTORY.md.

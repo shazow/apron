@@ -2,8 +2,8 @@
 
 Adds where a user or a message comes from, for a server that copies another
 Apron server's rooms into its own log, as in
-[trusted federation](../recipes/trusted_federation.md). That other server is
-the remote server.
+[trusted federation](https://github.com/shazow/apron/blob/main/recipes/trusted_federation.md).
+That other server is the remote server.
 
 ```jsonc
 // <- a copy of Carol's message from b.example
