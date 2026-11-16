@@ -37,3 +37,7 @@ Each extension has its own file in [extensions/](extensions/):
 - [`ext:oauth`](extensions/ext_oauth.md): Adds the standard OAuth 2.1 and OpenID
   Connect parts that external sign-in
   ([§4.12](PROTOCOL.md#412-external-sign-in)) leaves out.
+- [`ext:auth_external`](extensions/ext_auth_external.md): Lists the ways that a
+  server's external sign-in ([§4.12](PROTOCOL.md#412-external-sign-in)) can go,
+  such as "GitHub" and "Google", and lets a client say which one the user chose
+  when it begins.

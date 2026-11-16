@@ -302,6 +302,7 @@ class Server {
   capabilities?: string[] = []; // §4
   welcome?: string;             // user-readable CommonMark details and auth instructions
   signup?: string[];            // schemes that create accounts; absent: same as auth (§3.2)
+  labels?: object;              // a name for users of each scheme, by scheme (§3.2)
   ping?: number;                // seconds between client pings (§1)
 
   title?: string;               // plain display name; absent: the server's address
@@ -437,6 +438,12 @@ class AuthResult {
   as "Join as a guest. Your client keeps a token to sign you back in." Clients
   show it on the sign-in screen as CommonMark ([§3.5.2](#352-rendering)), and
   never parse it.
+- `server.labels` maps a scheme to a label: a short name for what the user
+  signs in with, such as `{"external": "Acme SSO", "token": "Invite code"}`.
+- A label is plain text, at most 64 characters.
+- Clients show a scheme's label in place of their own name for it, such as
+  "Sign in with Acme SSO". Without a label, a client names the scheme itself,
+  such as "Sign in on chat.example" for `external`.
 - `name` and `user_id` are optional requests, and work with any scheme. `you`
   is what the server assigned.
 - Servers SHOULD NOT assign a `user_id` that was used before, unless they
