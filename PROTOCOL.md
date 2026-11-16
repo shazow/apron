@@ -2515,7 +2515,7 @@ approves the proposal:
 // <- nothing is authenticated yet
 {"id": "c1", "result": {}}
 
-// email: "Your code for wss://chat.example/ws is 418092, or open https://chat.example/login#token=Hk41x9…&state=q8Rz…"
+// email: "Your code for wss://chat.example/ws is 418092, or open https://chat.example/login#token=Hk41x9…&state=q8Rz…&server=wss://chat.example/ws"
 
 // -> on any connection not signed in, such as one opened by the link
 {"method": "auth", "id": "c2", "params": {"scheme": "email", "token": "Hk41x9…"}}
