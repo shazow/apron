@@ -2880,9 +2880,10 @@ server.
   Otherwise a server could run its own script in a web client, such as with a
   `javascript:` URL.
 - A sign-in page refuses a `redirect_uri` that is not `https`, a scheme with
-  a `.`, or loopback `http` ([§4.12.3](#4123-authorization-server)). Otherwise a link
-  could run its own script on the server's origin, such as with a
-  `javascript:` address, or send the code unencrypted over plain `http`.
+  a `.`, or loopback `http` ([§4.12.3](#4123-authorization-server)).
+  Otherwise a link could run its own script on the server's origin, such as
+  with a `javascript:` address, or send the code unencrypted over plain
+  `http`.
 
 ### 5.3 Identity and access control
 
