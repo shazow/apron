@@ -2879,8 +2879,8 @@ server.
 - Clients open only an `https` or loopback `url` ([§4.12.1](#4121-begin)).
   Otherwise a server could run its own script in a web client, such as with a
   `javascript:` URL.
-- A sign-in page redirects only to an `https`, app scheme, or loopback
-  `redirect_uri` ([§4.12.3](#4123-authorization-server)). Otherwise a link
+- A sign-in page refuses a `redirect_uri` that is not `https`, a scheme with
+  a `.`, or loopback `http` ([§4.12.3](#4123-authorization-server)). Otherwise a link
   could run its own script on the server's origin, such as with a
   `javascript:` address, or send the code unencrypted over plain `http`.
 
