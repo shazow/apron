@@ -1,8 +1,8 @@
 # Apron Chat Protocol
 
-Apron is a simple chat protocol that takes advantage of several trade-offs: A server is authoritative, there is no federation, messages inside a server are not end-to-end encrypted, there is no greater social network.
+Apron is a simple chat protocol that takes advantage of several trade-offs: A server is authoritative, there is no global federation or social network, messages inside a server are not end-to-end encrypted.
 
-It should be extremely easy to implement a basic server (~100 lines of code) that works with any client (just a few lines for a stateless bot).
+It should be extremely easy to implement a basic server (~100 lines of code) that works with any client (just a few lines for a stateless bot). Both are designed to maintain as little state as possible.
 
 Do you need a custom self-hosted group chat? Consider using the Apron Chat Protocol!
 
@@ -21,13 +21,13 @@ Do you need a custom self-hosted group chat? Consider using the Apron Chat Proto
 ## Assumptions & Goals
 
 - Trusted deployments: Small groups where members are mostly known to each other. No sybil resistance, no spam defense, no public federation. Permission policy is whatever the backend decides.
-- Backend is authoritative: Identity, membership, history, threading, mutation. The frontend generally acts as a dumb renderer.
-- Backends can be trivial: An afternoon or one-shot LLM prompt should implement a working backend provider.
+- Backend is authoritative: Identity, membership, history, threading, mutation. The frontend generally acts as a renderer with UX enhancements.
+- Backends can be trivial: An afternoon or one-shot LLM prompt should implement a working backend provider, and functionality can be added incrementally.
 - Any frontend, many backends: Aspiring to have many Apron-compatible chat frontends and backends.
 - Encryption is a transport detail: Self-hosters should leverage TLS to secure the connection between the server and clients.
-- Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases..
-- One websocket to start, additional signaling bootstrapped from there (e.g. HTTP upload target, WebRTC, etc).
-- Multimedia-friendly: Upload images, audio, whatever.
+- Incremental capabilities: Partial implementations should be immediately useful. Avoid capability negotiation when possible, but we expect the protocol to be forked and expanded to fit niche use cases. Missing capabilities are designed to naturally degrade gracefully.
+- One websocket to start, additional signaling bootstrapped from there (e.g. HTTP upload target, terminal streams, WebRTC, etc).
+- Multimedia-friendly: Upload images, audio, documents, whatever.
 
 ## Tradeoffs
 
@@ -37,7 +37,7 @@ The Apron protocol is optimized for making correct clients and servers as easy a
 
 - Instead of minimizing payload sizes through tight packing and avoiding full state updates, we have a fairly readable JSON messages that may include excessive details which make it much easier to implement clients that are immediately useful with every response. For example, messages may include the full user object so that the client doesn't need to pull a lookup table of users before being able to display messages. Because we're targeting small self-hosted servers rather than massive federated rooms with millions of users, this is a reasonable tradeoff.
 - Instead of federating across untrusted servers and having a composite network of users, Apron is designed for small independent communities with their own trust assumptions. Designing safe and reliable federation and global auth is very sensitive and complex, and many protocols already attempt it to various degrees of compromise, so Apron explicitly excludes this problem from the scope. The downside is that naively a client may need to connect to multiple transports (such as one websocket per server) which can be battery-inefficient past some size. We include a design for websocket multiplexing to help with this, but there may be other opportunities for worthwhile improvements here.
-- Instead of using full SASL, we include a few high-impact login primitives that are most useful for self-hosting small group chats: The primary forms are `guest` (anonymous users that may have restricted access) and `token` (hard to guess opaque string that may be rotated). Beyond that we include WebAuthn challenge (Passkeys), and a couple of modified forms of "Token" mode: `email` (server sends a short-duration Token via email) and `external` (allows implementing any other portal like OAuth/OIDC or SASL or others which converts to a `token`). For many self-hosted cases, `guest` and `token` should suffice, which are by far the easiest to implement correctly.
+- Instead of requiring a complex authentication suite (e.g. SASL), we include a few high-impact login primitives that are most useful for self-hosting small group chats: The primary forms are `guest` (anonymous users that may have restricted access) and `token` (hard to guess opaque string that may be rotated). Beyond that we include `webauthn` challenge (Passkeys), and a couple of modified forms of the "token" scheme: `email` (server sends a short-duration Token via email) and `external` (allows implementing any other portal like OAuth/OIDC or SASL or others which converts to a `token`). For many self-hosted cases, `guest` and `token` should suffice, which are by far the easiest to implement correctly.
 - Instead of tightly coupling specific frontend and client implementations, Apron is designed to be agnostic similar to how Chrome/Firefox/Safari don't care whether the webserver is Nginx/Caddy/Apache or something entirely custom. In some cases this limits the assumptions we can make, or the UX we can offer (such as adjusting the frontend to respect custom permission policies that a specific server implements).
 
 ## Specification
