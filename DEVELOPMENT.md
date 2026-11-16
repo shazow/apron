@@ -111,8 +111,9 @@ of the same shape for another kind of sign-in page.
 ### In an implementation's CI
 
 Start the server on `localhost` with a fresh store, then run conform.py with
-the passkey portal. It exits 1 on a FAIL. For apron-server-go, with this
-repository checked out in `apron`:
+the passkey portal. It exits 1 on a FAIL. A portal that cannot run, such as one
+without Playwright, skips the sign-in checks instead, so read the SKIPs in the
+report too. For apron-server-go, with this repository checked out in `apron`:
 
 ```sh
 go run ./cmd/aprond --addr 127.0.0.1:8080 --store memory --upload.dir "$(mktemp -d)" \
