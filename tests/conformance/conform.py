@@ -1237,7 +1237,7 @@ PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4
 
 
 def upload_file(run):
-    """A file the server takes: plain text, unless ext:media's upload patterns (EXTENSIONS.md) say otherwise."""
+    """A file the server takes: plain text, unless ext:media's upload patterns (extensions/ext_media.md) say otherwise."""
     files = [("conformance.txt", "text/plain", b"conformance\n"), ("conformance.png", "image/png", PNG)]
     patterns = run.server.get("ext", {}).get("media", {}).get("upload") if run.has("ext:media") else None
     if not isinstance(patterns, dict):
