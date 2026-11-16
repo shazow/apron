@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["websockets>=14,<17", "jsonschema>=4.18"]
+# dependencies = ["websockets>=14,<17", "jsonschema>=4.18", "cryptography>=42"]
 # ///
 """Check a running Apron server against PROTOCOL.md.
 
@@ -1921,6 +1921,244 @@ async def _(run):
     expect_error(reply, "denied", "a finish with a made-up code")
 
 
+# A WebAuthn ceremony in the client (§4.10), with a software authenticator.
+
+def b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def unb64url(text):
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def cbor(value):
+    """The CBOR encoding of value: enough for an attestation object and a COSE key."""
+    def head(major, n):
+        if n < 24:
+            return bytes([major << 5 | n])
+        size = next(size for size in (1, 2, 4, 8) if n < 1 << 8 * size)
+        return bytes([major << 5 | {1: 24, 2: 25, 4: 26, 8: 27}[size]]) + n.to_bytes(size, "big")
+    if isinstance(value, int):
+        return head(0, value) if value >= 0 else head(1, -1 - value)
+    if isinstance(value, bytes):
+        return head(2, len(value)) + value
+    if isinstance(value, str):
+        return head(3, len(value.encode())) + value.encode()
+    if isinstance(value, dict):
+        return head(5, len(value)) + b"".join(cbor(k) + cbor(v) for k, v in value.items())
+    raise TypeError(type(value))
+
+
+class Authenticator:
+    """A passkey authenticator in software: ES256, discoverable credentials, user verification, and none
+    attestation. It answers WebAuthn options as a browser would, for an origin."""
+
+    UP, UV, AT = 0x01, 0x04, 0x40
+
+    def __init__(self):
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+        except ImportError:
+            raise Skip("needs the cryptography package: run with uv, or pip install cryptography") from None
+        self.ec, self.hashes, self.serialization = ec, hashes, serialization
+        self.credentials = {}  # rp_id -> [(credential_id, private key, user handle)]
+        self.count = 0
+
+    def client_data(self, kind, options, origin):
+        return json.dumps({"type": kind, "challenge": options["challenge"], "origin": origin, "crossOrigin": False},
+                          separators=(",", ":")).encode()
+
+    def auth_data(self, rp_id, flags, attested=b""):
+        self.count += 1
+        return hashlib.sha256(rp_id.encode()).digest() + bytes([flags]) + self.count.to_bytes(4, "big") + attested
+
+    def create(self, options, origin):
+        """A registration credential, as PublicKeyCredential.toJSON() gives it."""
+        rp_id = (options.get("rp") or {}).get("id") or urllib.parse.urlsplit(origin).hostname
+        if not any(p.get("alg") == -7 for p in options.get("pubKeyCredParams", [])):
+            raise Skip("the registration does not take ES256 (alg -7), the one algorithm that conform.py signs with")
+        key = self.ec.generate_private_key(self.ec.SECP256R1())
+        numbers = key.public_key().public_numbers()
+        cose = cbor({1: 2, 3: -7, -1: 1, -2: numbers.x.to_bytes(32, "big"), -3: numbers.y.to_bytes(32, "big")})
+        credential_id = secrets.token_bytes(32)
+        attested = bytes(16) + len(credential_id).to_bytes(2, "big") + credential_id + cose
+        auth_data = self.auth_data(rp_id, self.UP | self.UV | self.AT, attested)
+        user = unb64url(options["user"]["id"])
+        self.credentials.setdefault(rp_id, []).append((credential_id, key, user))
+        spki = key.public_key().public_bytes(self.serialization.Encoding.DER,
+                                             self.serialization.PublicFormat.SubjectPublicKeyInfo)
+        extensions = {"credProps": {"rk": True}} if "credProps" in (options.get("extensions") or {}) else {}
+        return {"id": b64url(credential_id), "rawId": b64url(credential_id), "type": "public-key",
+                "authenticatorAttachment": "platform", "clientExtensionResults": extensions,
+                "response": {"clientDataJSON": b64url(self.client_data("webauthn.create", options, origin)),
+                             "attestationObject": b64url(cbor({"fmt": "none", "attStmt": {}, "authData": auth_data})),
+                             "authenticatorData": b64url(auth_data), "publicKey": b64url(spki),
+                             "publicKeyAlgorithm": -7, "transports": ["internal"]}}
+
+    def get(self, options, origin):
+        """A login credential with the newest passkey for the RP ID, as PublicKeyCredential.toJSON() gives it."""
+        rp_id = options.get("rpId") or urllib.parse.urlsplit(origin).hostname
+        if not self.credentials.get(rp_id):
+            raise Skip(f"no passkey for RP ID {rp_id}")
+        credential_id, key, user = self.credentials[rp_id][-1]
+        auth_data = self.auth_data(rp_id, self.UP | self.UV)
+        client_data = self.client_data("webauthn.get", options, origin)
+        signature = key.sign(auth_data + hashlib.sha256(client_data).digest(), self.ec.ECDSA(self.hashes.SHA256()))
+        return {"id": b64url(credential_id), "rawId": b64url(credential_id), "type": "public-key",
+                "authenticatorAttachment": "platform", "clientExtensionResults": {},
+                "response": {"clientDataJSON": b64url(client_data), "authenticatorData": b64url(auth_data),
+                             "signature": b64url(signature), "userHandle": b64url(user)}}
+
+
+def ceremony_origin(run):
+    return run.args.origin or origin_of(run)
+
+
+async def ceremony_begin(run, action, conn):
+    """A begin on conn, and its result, which has challenge_id and public_key, or Skip."""
+    params = {"scheme": "webauthn", "action": action, "step": "begin"}
+    if action == "register":
+        params["name"] = "Conformance"
+    _, reply = await conn.request("auth", params)
+    policy(reply)
+    result = reply.get("result", {})
+    if not isinstance(result.get("public_key"), dict) or "challenge_id" not in result:
+        raise Skip(f"a {action} begin from Origin {ceremony_origin(run)} offers no ceremony ({describe(reply)}): pass "
+                   "--origin with an origin that the server takes for passkeys")
+    return result
+
+
+def finish(action, begin, credential):
+    return {"scheme": "webauthn", "action": action, "step": "finish", "challenge_id": begin["challenge_id"],
+            "credential": credential}
+
+
+async def ceremony_conn(run):
+    origin = ceremony_origin(run)
+    conn = await open_from(run, origin)
+    if not conn:
+        raise Skip(f"the server refused the handshake of a connection with Origin {origin}: pass --origin with an "
+                   "origin that it takes")
+    return conn
+
+
+async def login(run, key, conn=None):
+    """A login begin on conn, or on a new connection, and the credential that answers it: (conn, begin, credential)."""
+    conn = conn or await ceremony_conn(run)
+    begin = await ceremony_begin(run, "login", conn)
+    return conn, begin, key.get(begin["public_key"], ceremony_origin(run))
+
+
+async def ceremony_flow(run):
+    """Register a passkey from --origin, as a guest where the server's policy asks for an account first, and log in
+    with it."""
+    key, origin, out = Authenticator(), ceremony_origin(run), {}
+    conn = await ceremony_conn(run)
+    _, reply = await conn.request("auth", {"scheme": "webauthn", "action": "register", "step": "begin", "name": "Conformance"})
+    if code(reply) == CODES["denied"] and offers("guest")(run.server):
+        _, guest = await conn.request("auth", {"scheme": "guest", "name": "Conformance"})
+        out["guest"] = signed_in(guest)
+    begin = await ceremony_begin(run, "register", conn)
+    _, reply = await conn.request("auth", finish("register", begin, key.create(begin["public_key"], origin)))
+    policy(reply)
+    if not signed_in(reply):
+        raise Skip(f"the registration's finish from Origin {origin} got {describe(reply)}: if the server does not "
+                   "take that origin for passkeys, pass --origin with one that it takes")
+    out["registered"] = reply["result"]["you"]["user_id"]
+    conn, begin, credential = await login(run, key)
+    _, out["login"] = await conn.request("auth", finish("login", begin, credential))
+    out["key"] = key
+    return out
+
+
+async def ceremony(run):
+    if "ceremony" not in run.flows:
+        try:
+            run.flows["ceremony"] = await ceremony_flow(run)
+        except (Fail, Skip) as error:
+            run.flows["ceremony"] = error
+    outcome = run.flows["ceremony"]
+    if isinstance(outcome, Exception):
+        raise outcome
+    return outcome
+
+
+@check("webauthn.shape.ceremony", "4.10", "a ceremony in the client registers a passkey, and logs in with it",
+       needs=offers("webauthn"))
+async def _(run):
+    out = await ceremony(run)
+    run.info(f"Origin {ceremony_origin(run)}" + (", registered as a guest" if out.get("guest") else ""))
+    reply = out["login"]
+    must(signed_in(reply), f"a login with the new passkey: {describe(reply)}")
+    must(reply["result"]["you"]["user_id"] == out["registered"],
+         f"the login signed in as {reply['result']['you']['user_id']}, not {out['registered']}, who registered")
+
+
+@check("webauthn.A4.one-ceremony", "4.10", "a finish on another connection, a second finish, and a finish for a "
+       "replaced begin are denied", needs=offers("webauthn"))
+async def _(run):
+    out = await ceremony(run)
+    if not signed_in(out["login"]):
+        raise Skip("the passkey did not log in, so a refusal proves nothing")
+    key = out["key"]
+    # A finish on another connection: one with no ceremony, and one with its own.
+    _, begin, credential = await login(run, key)
+    for own in (False, True):
+        other = await ceremony_conn(run)
+        if own:
+            await ceremony_begin(run, "login", other)
+        _, reply = await other.request("auth", finish("login", begin, credential))
+        policy(reply)
+        where = "another connection" + (" with its own begin" if own else "")
+        must(not signed_in(reply), f"a finish on {where} signed in")
+        expect_error(reply, "denied", f"a finish on {where}")
+    # A second finish of one ceremony.
+    conn, begin, credential = await login(run, key)
+    _, first = await conn.request("auth", finish("login", begin, credential))
+    must(signed_in(first), f"a login: {describe(first)}")
+    _, again = await conn.request("auth", finish("login", begin, credential))
+    must(not signed_in(again), "a second finish of the ceremony signed in again")
+    expect_error(again, "denied", "a second finish")
+    # A new begin replaces the pending ceremony.
+    conn, begin, credential = await login(run, key)
+    await ceremony_begin(run, "login", conn)
+    _, replaced = await conn.request("auth", finish("login", begin, credential))
+    must(not signed_in(replaced), "a finish for a begin that a later begin replaced signed in")
+    expect_error(replaced, "denied", "a finish for a replaced begin")
+
+
+@check("webauthn.A1.token-origin", "4.10", "a token from a finish with credential signs in only from the ceremony's "
+       "Origin", needs=lambda s: offers("webauthn")(s) and "token" in s.get("auth", []))
+async def _(run):
+    out = await ceremony(run)
+    reply = out["login"]
+    if not signed_in(reply):
+        raise Skip("the passkey did not log in")
+    token = reply["result"].get("token")
+    if not isinstance(token, str):
+        raise Skip("the finish returned no token, which it MAY leave out")
+    origin = ceremony_origin(run)
+    conn = await ceremony_conn(run)
+    _, same = await conn.request("auth", {"scheme": "token", "token": token})
+    policy(same)
+    should(signed_in(same), f"the token, on a connection with the ceremony's Origin {origin}: {describe(same)}")
+    token = same.get("result", {}).get("token", token)  # a server may rotate it (§3.2.1)
+    tried = []
+    for other in (None, FOREIGN if origin != FOREIGN else "https://conformance.example.org"):
+        conn = await open_from(run, other)
+        if not conn:
+            run.info(f"the server refused the handshake of {from_origin(other)}")
+            continue
+        _, reply = await conn.request("auth", {"scheme": "token", "token": token})
+        policy(reply)
+        must(not signed_in(reply), f"the token signed in on {from_origin(other)}")
+        expect_error(reply, "denied", f"the token on {from_origin(other)}")
+        tried.append(other)
+    if not tried:
+        raise Skip("the server refused the handshake of every other Origin")
+
+
 PAGES = {"external": ("the external sign-in page", offers("external")),
          "passkey": ("the passkey page", offers("webauthn"))}
 
@@ -2205,10 +2443,11 @@ def open_browser(url):
 
 async def sign_ins(run):
     """How many sign-ins --sign-in plans for this server, before failed tries that use up codes: for each page, one
-    that redeems, and one for the tries that must fail (chain); one for ext:oauth's token endpoint; one declined."""
+    that redeems, and one for the tries that must fail (chain); four for a new identity and a second account
+    (identities); one for ext:oauth's token endpoint; one declined."""
     total = 0
     if offers("external")(run.server) and run.profile("external"):
-        total += 2
+        total += 2 + 4
         try:
             await own_issuer(run)
             total += oauth_needs(run.server)
@@ -2347,8 +2586,7 @@ async def chain(run, fresh, negatives, redeem):
     redemptions work at all. A refusal proves something only on a code that was still usable: a fresh one, or one
     that a later right redemption redeems, since a failed redemption MAY use up the code (§4.12.4). So the second
     code takes every negative try, then the right redemption. If that fails, failed tries use up codes (burned), and
-    each remaining try takes a fresh code, except optional ones, which are left out to save the person a sign-in
-    (a portal takes them too).
+    each remaining try takes a fresh code, except optional ones, which a person's run leaves out to save a sign-in.
     Later flows start from what earlier ones learned."""
     person = run.person
     out = {"first": None, "negatives": {}, "skipped": {}, "redeemed": None, "reuse": None, "burned": None,
@@ -2578,6 +2816,72 @@ async def _(run):
     await token_elsewhere(run, reply["result"]["token"], out["origin"])
 
 
+async def identities_flow(run):
+    """Codes for other identities, redeemed on a connection that is signed in (§4.12.4): a new identity, which adds
+    to the account, and one that another account has, which is denied. The portal, or the person, signs in as the
+    identity that each sign-in names."""
+    page = (await external_page(run))["url"]
+    origin = await redeeming_origin(run)
+    redeem = lambda grant, conn=None: attempt_auth(run, origin, {"scheme": "external", **grant.redemption()}, conn)
+    out = {}
+    conn = await open_from(run, origin)
+    must(conn, f"the server refused the handshake of {from_origin(origin)}, which it took before")
+    grant = await sign_in(run, page, "external sign-in again, to the same account as before, on a connection that "
+                                     "then redeems codes for other identities.", keep=conn)
+    reply = await redeem(grant, conn)
+    if not signed_in(reply):
+        raise Skip(f"a code for the first identity did not sign in: {describe(reply)}")
+    out["account"] = reply["result"]["you"]["user_id"]
+    grant = await sign_in(run, page, "external sign-in with a new identity, which no account has yet, such as another "
+                                     "subject or a new passkey. Checks that it adds to the account.",
+                          keep=conn, identity="addition")
+    out["addition"] = await redeem(grant, conn)
+    grant = await sign_in(run, page, "external sign-in with another new identity, to make a second account.",
+                          keep=conn, identity="other")
+    other = await redeem(grant)
+    out["other"] = other
+    if signed_in(other) and other["result"]["you"]["user_id"] != out["account"]:
+        grant = await sign_in(run, page, "external sign-in again, as the second account. Checks that it does not "
+                                         "switch the first account's connection.", keep=conn, identity="other")
+        out["switch"] = await redeem(grant, conn)
+        _, out["after"] = await conn.request("me", {})
+    return out
+
+
+@check("external.A4.addition", "4.12.4", "external sign-in: on a signed-in connection, a code for a new identity adds "
+       "it to the account, and returns you", needs=offers("external"))
+async def _(run):
+    out = await flow(run, "identities", identities_flow)
+    reply = out["addition"]
+    policy(reply)
+    if code(reply) == CODES["denied"]:
+        # Server policy, such as a limit of identities per account (§1.1), or a page that made the new identity an
+        # account of its own before the redemption: neither breaks a rule, and conform.py cannot tell them apart.
+        raise Skip(f"the server refused the addition, which its policy may do: {describe(reply)}")
+    must(signed_in(reply), f"a code for a new identity, on a connection signed in to {out['account']}: {describe(reply)}")
+    you = reply["result"]["you"]["user_id"]
+    must(you == out["account"], f"it returned {you}, not the account {out['account']} that the connection is signed in to")
+
+
+@check("external.A4.no-switch", "4.12.4", "external sign-in: on a signed-in connection, a code for another account's "
+       "identity is denied", needs=offers("external"))
+async def _(run):
+    out = await flow(run, "identities", identities_flow)
+    other = out["other"]
+    policy(other)
+    if not signed_in(other):
+        raise Skip(f"a code for a new identity on a new connection made no account: {describe(other)}")
+    if other["result"]["you"]["user_id"] == out["account"]:
+        raise Skip(f"the page gave the second identity the first account, {out['account']}, so there is no second "
+                   "account: the portal or the person could not sign in as someone else")
+    reply = out["switch"]
+    must(not signed_in(reply), f"it switched the connection to {reply.get('result', {}).get('you', {}).get('user_id')}")
+    expect_error(reply, "denied", "a code for another account's identity")
+    after = out["after"]
+    must(after.get("result", {}).get("you", {}).get("user_id") == out["account"],
+         f"me after it got {describe(after)}, not the first account")
+
+
 @check("oauth.shape.token-basic", "ext:oauth", "the token endpoint redeems a code by HTTP Basic, after a request that it refused",
        needs=oauth_needs)
 async def _(run):
@@ -2782,6 +3086,8 @@ async def main():
     parser.add_argument("--portal", metavar="COMMAND",
                         help="with --sign-in, run COMMAND to sign in on each page instead of a person, such as "
                              "'node tests/conformance/portals/passkey.cjs'")
+    parser.add_argument("--origin", metavar="ORIGIN",
+                        help="the Origin of a WebAuthn ceremony in the client (default: the server's own origin)")
     parser.add_argument("--json", metavar="PATH", help="write the results to PATH as JSON")
     parser.add_argument("--only", metavar="PATTERN", action="append",
                         help="run only the checks whose ID matches this glob, such as 'external.A3.*'; repeatable")
