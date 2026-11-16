@@ -44,7 +44,7 @@ request ID or on optional envelope fields.
 ## Records, replay, and the logical projection
 
 Both suites share one client-side model (PROTOCOL.md [§2](../../../PROTOCOL.md#2-identifiers), [§3.4](../../../PROTOCOL.md#34-rooms), [§3.5](../../../PROTOCOL.md#35-messages),
-[§4.2](../../../PROTOCOL.md#42-rooms)–[§4.7](../../../PROTOCOL.md#47-reactions), [§4.12](../../../PROTOCOL.md#412-ext)). The client keeps four stores, one record per key:
+[§4.2](../../../PROTOCOL.md#42-rooms)–[§4.7](../../../PROTOCOL.md#47-reactions), [§4.13](../../../PROTOCOL.md#413-ext)). The client keeps four stores, one record per key:
 
 | record | key | sources |
 |---|---|---|
@@ -297,7 +297,7 @@ In saves, `reply_to` is always resubmitted bare even when the stored snapshot
 embedded it, `deleted` is omitted unless deleting, and fields absent from the
 latest snapshot stay absent. Room updates resubmit `title` and `description`.
 
-No operation changes `ext` ([PROTOCOL.md §4.12](../../../PROTOCOL.md#412-ext)),
+No operation changes `ext` ([PROTOCOL.md §4.13](../../../PROTOCOL.md#413-ext)),
 and clients do not have to send it back:
 
 - With capability `ext`, a write merges `ext`, so a save that leaves it out
@@ -454,7 +454,7 @@ The normalized session state has these keys:
     replaces, a missing one stays. A `user` notification carries `user_id`
     and the fields that changed.
   - An empty value (`""`, `[]`, `{}`) is kept: it records a cleared field.
-  - `ext` merges one level down ([PROTOCOL.md §4.12](../../../PROTOCOL.md#412-ext)): each key that a merged
+  - `ext` merges one level down ([PROTOCOL.md §4.13](../../../PROTOCOL.md#413-ext)): each key that a merged
     object's `ext` carries replaces the kept key, and other keys stay. As at
     the top level, a key with an empty value is kept with that value.
   - The user's own `status` is the chosen status, and comes only from `you`.

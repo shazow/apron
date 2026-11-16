@@ -32,7 +32,7 @@
       "pattern": "^[1-9][0-9]*$"
     },
     "Ext": {
-      "description": "Extension data, keyed by extension name without the ext: prefix (§4). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.12).",
+      "description": "Extension data, keyed by extension name without the ext: prefix (§4). With capability ext, servers keep the ext that clients write on users, messages, and rooms, and writes merge it one level deep; without it, servers may drop it (§4.13).",
       "type": "object",
       "propertyNames": {
         "not": {
@@ -70,7 +70,7 @@
           "$ref": "#/$defs/LogId"
         },
         "ext": {
-          "description": "Extension data (§4.12). Complete objects carry all of it; a user notification carries the keys that changed.",
+          "description": "Extension data (§4.13). Complete objects carry all of it; a user notification carries the keys that changed.",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -288,7 +288,7 @@
           "default": false
         },
         "ext": {
-          "description": "Extension data (§4.12). Absent on tombstones.",
+          "description": "Extension data (§4.13). Absent on tombstones.",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -363,7 +363,7 @@
           "minimum": 0
         },
         "ext": {
-          "description": "Extension data (§4.12).",
+          "description": "Extension data (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -504,6 +504,11 @@
             "type": "string"
           }
         },
+        "labels": {
+          "description": "A label for each sign-in scheme, such as {\"external\": \"Acme SSO\"} (§3.2).",
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
         "ping": {
           "type": "number",
           "exclusiveMinimum": 0
@@ -544,7 +549,7 @@
           }
         },
         "ext": {
-          "description": "Data of extensions that define it on the server frame, each under its name (§4.12).",
+          "description": "Data of extensions that define it on the server frame, each under its name (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -571,7 +576,7 @@
       ]
     },
     "AuthParams": {
-      "description": "§3.2, §4.10, §4.11",
+      "description": "§3.2, §4.10, §4.11, §4.12",
       "type": "object",
       "properties": {
         "scheme": {
@@ -593,13 +598,9 @@
           "type": "string"
         },
         "state": {
-          "description": "email and external proposals: an unguessable value the client chooses, returned unchanged in each link (§4.11).",
+          "description": "email: an unguessable value the client chooses for a proposal, returned unchanged in each link (§4.11.1); an approval may carry it, so that a short token works on another connection (§4.11.3).",
           "type": "string",
           "maxLength": 256
-        },
-        "return_url": {
-          "description": "external proposals: where the sign-in page redirects with the link fragment; only on an origin the server trusts (§4.11).",
-          "type": "string"
         },
         "action": {
           "enum": [
@@ -618,6 +619,22 @@
         },
         "credential": {
           "type": "object"
+        },
+        "code": {
+          "description": "external, or a webauthn finish from the passkey page: the authorization code (§4.12.2, §4.10.1).",
+          "type": "string"
+        },
+        "code_verifier": {
+          "description": "The PKCE verifier of the code (§4.12.2).",
+          "type": "string"
+        },
+        "redirect_uri": {
+          "description": "The redirect_uri that the authorization request sent (§4.12.2).",
+          "type": "string"
+        },
+        "client_id": {
+          "description": "The client_id that the authorization request sent (§4.12.2).",
+          "type": "string"
         }
       },
       "required": [
@@ -639,7 +656,7 @@
           "description": "The chosen status, with capability status (§4.5.1)."
         },
         "ext": {
-          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       }
@@ -663,7 +680,7 @@
           "type": "boolean"
         },
         "ext": {
-          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -682,7 +699,7 @@
           "$ref": "#/$defs/MessageRef"
         },
         "ext": {
-          "description": "Extension data, an argument like the other params (§4.1, §4.12).",
+          "description": "Extension data, an argument like the other params (§4.1, §4.13).",
           "$ref": "#/$defs/Ext"
         }
       },
@@ -786,7 +803,7 @@
           "type": "string"
         },
         "ext": {
-          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.12).",
+          "description": "With capability ext: the keys to change; the server merges them one level deep (§4.13).",
           "$ref": "#/$defs/Ext"
         }
       }
@@ -914,12 +931,28 @@
         "public_key": {
           "type": "object"
         },
-        "url": {
-          "description": "external proposals: the sign-in page to open, an absolute https URL (http only on a loopback host) (§4.11).",
-          "type": "string",
-          "pattern": "^(https://|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])([:/]|$))"
+        "external": {
+          "$ref": "#/$defs/External"
         }
       }
+    },
+    "External": {
+      "description": "The sign-in page of an external begin (§4.12.1), or a webauthn begin's passkey page (§4.10.1).",
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "The authorization endpoint, an absolute https URL (http only on a loopback host: localhost or a name under it, 127.0.0.0/8, or [::1]). Clients keep its query.",
+          "type": "string",
+          "pattern": "^(https://|http://(([a-z0-9-]+\\.)*localhost|127(\\.[0-9]{1,3}){3}|\\[::1\\])([:/?]|$))"
+        },
+        "issuer": {
+          "description": "The authorization server of url; absent: the server's origin. Clients that redeem on the connection need not read it (§4.12.1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ]
     },
     "MeResult": {
       "type": "object",

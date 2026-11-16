@@ -192,7 +192,7 @@ def check_steps(steps, where, file, variant):
         ext = match.get("params", {}).get("ext")
         for key in ext if isinstance(ext, dict) and "ext" not in capabilities else ():
             if f"ext:{key}" not in capabilities:
-                errors.append(f"{at}: the client writes ext.{key} to a server without capability ext or ext:{key} (§4.12)")
+                errors.append(f"{at}: the client writes ext.{key} to a server without capability ext or ext:{key} (§4.13)")
         if "receive" in step and signing_in:
             errors.append(f"{at}: a frame arrives between auth {sorted(signing_in)} and its result (§3.2)")
         if "request" in step and step["request"]["match"].get("method") == "auth":
