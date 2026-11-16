@@ -2,7 +2,7 @@
 
 Lists the ways that a server's external sign-in
 ([§4.12](../PROTOCOL.md#412-external-sign-in)) can go, such as "GitHub" and
-"Google", and lets a client say which one the user chose when it begins.
+"Google", and lets a client send the user's choice with the begin.
 
 ```jsonc
 // <- the server offers three ways
@@ -39,18 +39,18 @@ class AuthExternalBegin {       // auth params.ext.auth_external, on an external
 }
 ```
 
-- The server sends `options` only when it offers two or more ways. A server
-  with one way names it in `labels.external` instead
-  ([§3.2](../PROTOCOL.md#32-authentication)).
-- Clients show one choice for each option, in order, in place of the one
-  `external` choice. They MAY show `labels.external` as a heading for the
-  options.
-- A begin with `prefer` returns `external` for that way
-  ([§4.12.1](../PROTOCOL.md#4121-begin)). A choice changes only `url`, and
-  `issuer` for another authorization server.
+- The server sends `options` only when it offers two or more ways.
+- A server with one way gives that way a label in `labels.external`
+  ([§3.2](../PROTOCOL.md#32-authentication)), and sends no `options`.
+- Clients show one choice for each option, in order, instead of the one
+  `external` choice.
+- Clients MAY show `labels.external` as a heading for the options.
+- A begin with `prefer` returns `external` for the chosen way
+  ([§4.12.1](../PROTOCOL.md#4121-begin)).
+- A choice changes only `url`, and `issuer` for another authorization server.
 - A server that does not know the `id` in `prefer` answers the begin as if
   `prefer` were absent.
-- A begin without `prefer` leads where `labels.external` says, such as a page
-  that lists the ways.
+- A begin without `prefer` leads to the sign-in that `labels.external` refers
+  to, such as a page that lists the ways.
 - Without the extension, clients show one `external` choice, with its label,
   and begin without `ext`.

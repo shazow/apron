@@ -505,7 +505,7 @@
           }
         },
         "labels": {
-          "description": "A scheme's name for users, such as {\"external\": \"Acme SSO\"} (§3.2).",
+          "description": "A label for each sign-in scheme, such as {\"external\": \"Acme SSO\"} (§3.2).",
           "type": "object",
           "additionalProperties": {"type": "string", "maxLength": 64}
         },
