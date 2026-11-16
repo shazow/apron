@@ -18,7 +18,8 @@ index, and its general rules apply to every extension.
   - Show the extension's data in a whole example, and its fields as a `ts`
     class with a comment that gives where it lives, such as
     `// server.ext.settings`.
-  - End with what clients and servers do without the extension.
+  - End with what clients and servers do without the extension. An extension
+    that builds on outside standards then lists them under `## References`.
   - Don't restate the general rules of EXTENSIONS.md.
 - Link to PROTOCOL.md as `../PROTOCOL.md#…`, and to another extension as
   `ext_<name>.md`.

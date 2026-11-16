@@ -87,3 +87,25 @@ These rules apply to a server that is its own authorization server:
 Without the extension, clients redeem codes on the connection
 ([§4.12.2](../PROTOCOL.md#4122-signing-in)), and an `external` request with
 `token` is `denied`.
+
+## References
+
+- [OAuth 2.1](https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/)
+- [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749#section-2.3.1): OAuth 2.0,
+  client authentication (§2.3.1)
+- [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636): PKCE
+- [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414): Authorization Server
+  Metadata
+- [RFC 8628](https://www.rfc-editor.org/rfc/rfc8628): Device Authorization
+  Grant
+- [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707): Resource Indicators
+- [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068): JWT Profile for Access
+  Tokens
+- [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207): Authorization Server
+  Issuer Identification
+- [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728): Protected Resource
+  Metadata
+- [OAuth Client ID Metadata Document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo):
+  UserInfo (§5.3)
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
