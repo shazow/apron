@@ -52,6 +52,16 @@ uv run tests/conformance/conform.py ws://127.0.0.1:8765
 It signs in as a guest, or with `--token`, and posts messages, so point it at
 a test server.
 
+Sign-in checks run for the schemes that the server offers. Most need no
+person: begins, the sign-in pages' answers and headers, made-up codes, and
+`ext:oauth`'s endpoints. With `--sign-in`, a person also signs in on the
+server's pages in a browser, and conform.py catches each redirect on a
+loopback address. It checks the redirect, the code's bindings, and the token:
+
+```sh
+uv run tests/conformance/conform.py wss://chat.example/ws --sign-in
+```
+
 ## Schema
 
 `schema/apron.schema.json` describes every frame in PROTOCOL.md. A protocol

@@ -6,27 +6,48 @@
 """Check a running Apron server against PROTOCOL.md.
 
 Connects to a WebSocket URL, runs the core checklist (§3.6) and checks for each
-capability that the server advertises, and prints one line per check: PASS,
-FAIL (a rule the server breaks), WARN (a SHOULD it does not follow), or SKIP.
-Every server frame is also validated against schema/apron.schema.json. Exits 1
-if any check fails.
+capability and sign-in scheme that the server advertises, and prints one line
+per check: PASS, FAIL (a rule the server breaks), WARN (a SHOULD it does not
+follow), or SKIP, with notes on some lines. Every server frame is also
+validated against schema/apron.schema.json. Exits 1 if any check fails.
 
 It signs in as a guest, or with --token. Guests are created and messages
-posted, so point it at a test server. Not covered: passkey, email, and external
-sign-in, push registration, token rotation, compaction, and redaction.
+posted, so point it at a test server.
+
+Most sign-in checks need no person: what webauthn and external begins return, how
+the sign-in pages (§4.10.1, §4.12.3) answer well-formed and invalid requests,
+their headers, made-up codes and tokens, email proposals, and ext:oauth's
+metadata and token endpoint. With --sign-in, a person also signs in on each
+page, in a browser. conform.py listens on a loopback redirect URI, prints each
+page's address, tries to open a browser, and catches the redirect. It then
+checks the redirect, that a code redeems once and only with its code_verifier,
+redirect_uri, client_id, and scheme, that the token works from another Origin,
+and a declined sign-in. That is six sign-ins, and up to four more on a server
+where a failed try uses up a code. On the passkey page, the person first
+creates a passkey where the server lets a new connection or a guest register,
+and else signs in with one. Set BROWSER=true to only print the addresses.
+
+Not covered: completing an email sign-in, a WebAuthn ceremony in the client,
+another authorization server's tokens, ext:oauth's identity provider, push
+registration, token rotation, compaction, and redaction.
 
 Run from the repository root:
   uv run tests/conformance/conform.py ws://127.0.0.1:8765
   uv run tests/conformance/conform.py wss://chat.example/ws --token SECRET
+  uv run tests/conformance/conform.py wss://chat.example/ws --sign-in
 """
 
 import argparse
 import asyncio
 import base64
 import codecs
+import hashlib
+import http.server
+import ipaddress
 import itertools
 import json
 import re
+import secrets
 import socket
 import ssl
 import sys
@@ -36,12 +57,13 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from websockets.asyncio.client import connect
 from websockets.client import ClientProtocol
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.frames import Opcode
 from websockets.http11 import Response
 from websockets.uri import parse_uri
@@ -192,6 +214,18 @@ class SlowSocket:
         self.writer.close()
 
 
+async def back_off(retry_after, waited, why, most=60):
+    """Wait as a rate limit's Retry-After asks, and return the seconds waited; Skip once most seconds have passed."""
+    try:
+        delay = min(max(int(retry_after), 1), 30)
+    except (TypeError, ValueError):
+        delay = 5
+    if waited + delay > most:
+        raise Skip(why)
+    await asyncio.sleep(delay)
+    return delay
+
+
 class Conn:
     """One WebSocket connection: frames in arrival order, and replies matched by id."""
 
@@ -309,12 +343,19 @@ class Run:
         self.violations = {}  # check key -> set of descriptions, from inspect
         self.order = {}  # (conn, room_id) -> greatest message log_id delivered
         self.conns = []  # of the running check
+        self.notes = []  # of the running check, printed under its line
+        self.person = Person() if args.sign_in else None  # --sign-in
+        self.begun, self.pages, self.oauth, self.flows = {}, {}, {}, {}  # sign-in answers, kept for later checks
+        self.burned = None  # whether a failed redemption used up a code on this server, once a sign-in tells
 
     def violate(self, key, text):
         self.violations.setdefault(key, set()).add(text)
 
     def has(self, capability):
         return capability in self.server.get("capabilities", [])
+
+    def info(self, text):
+        self.notes.append(text)
 
     # Every frame from the server passes through here.
     def inspect(self, conn, frame, raw):
@@ -398,17 +439,24 @@ class Run:
             if isinstance(room, dict) and missing:
                 self.violate("listed-rooms", f"room {room.get('room_id')} lacks {', '.join(missing)}")
 
-    async def open(self, auth=True, name="Conformance", small_buffers=False):
+    async def open(self, auth=True, name="Conformance", small_buffers=False, origin=None):
         """Open a connection, wait for its server frame, and sign in. With small_buffers, its socket's receive
         buffer and the frames queued unread are small, so a connection that stops reading backs up the server's
-        writes after little traffic."""
+        writes after little traffic. With origin, the handshake sends that Origin header."""
+        waited = 0
         for attempt in itertools.count():
             try:
                 if small_buffers:
                     ws = await SlowSocket.open(self.args.url)
                 else:
-                    ws = await connect(self.args.url, max_size=None, open_timeout=WAIT)
+                    ws = await connect(self.args.url, max_size=None, open_timeout=WAIT, origin=origin)
                 break
+            except InvalidStatus as error:
+                status = error.response.status_code
+                if status not in (429, 503):
+                    raise
+                waited += await back_off(error.response.headers.get("Retry-After"), waited,
+                                         f"the server's policy refused a connection: HTTP {status}")
             except (OSError, asyncio.TimeoutError) as error:
                 if attempt >= 20:
                     raise Fail(f"cannot connect: {error}") from None
@@ -1066,7 +1114,7 @@ async def _(run):
     expect_error(reply, "invalid_params", "command with message_id")
 
 
-@check("4.12", "me merges ext one level deep", needs="ext")
+@check("4.13", "me merges ext one level deep", needs="ext")
 async def _(run):
     conn = await run.open()
     ext = lambda params: conn.call("me", params)
@@ -1078,7 +1126,7 @@ async def _(run):
     must("conformance" not in you.get("ext", {}), "an empty value did not clear the key")
 
 
-@check("4.12", "messages keep ext, and saves merge it", needs="ext")
+@check("4.13", "messages keep ext, and saves merge it", needs="ext")
 async def _(run):
     conn = await run.joined()
     _, message_id = await run.post(conn, "conformance: ext", ext={"conformance": {"a": 1}})
@@ -1415,6 +1463,1014 @@ async def _(run):
     must(await conn.call("push_unregister", {"url": "https://push.example.invalid/conformance"}) == {}, "result is not {}")
 
 
+# §4.10–§4.12 sign-in, without a person: begins, the sign-in pages' answers, and made-up codes and tokens.
+
+SIGN_IN_PARAMS = {"response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state", "resource"}
+CLIENT_ID = "apron-conformance"  # a plain client ID: an https one may make the server fetch a metadata document
+FOREIGN = "https://conformance.example"  # an origin that is not the server's
+SIGN_IN_WAIT = 300  # seconds a person has for each sign-in
+
+
+def offers(*schemes):
+    return lambda s: all(name in s.get("auth", []) + s.get("signup", []) for name in schemes)
+
+
+def oauth_needs(s):
+    return "ext:oauth" in s.get("capabilities", []) and offers("external")(s)
+
+
+def policy(reply):
+    """Skip the check when the server's policy refused a request with retry_after."""
+    if code(reply) == CODES["retry_after"]:
+        raise Skip(f"the server's policy refused it: {describe(reply)}")
+
+
+def signed_in(reply):
+    return isinstance(reply, dict) and isinstance(reply.get("result", {}).get("you"), dict)
+
+
+def loopback(host):
+    host = (host or "").strip("[]").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def origin_of(run):
+    """The server's origin (§4.12.1): https:// with the host and any port of its address, or http:// for a ws://
+    address on a loopback host."""
+    parts = urllib.parse.urlsplit(run.args.url)
+    scheme = "http" if parts.scheme == "ws" and loopback(parts.hostname) else "https"
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    port = parts.port if parts.port not in (None, 80 if scheme == "http" else 443) else None
+    return f"{scheme}://{host}" + (f":{port}" if port else "")
+
+
+def unopenable(url, what="url"):
+    """Why clients refuse to open url (§4.12.1), or None."""
+    parts = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    if not parts or not parts.hostname or not (parts.scheme == "https" or parts.scheme == "http" and loopback(parts.hostname)):
+        return f"{what} {url!r} is neither an absolute https URL nor http on a loopback host"
+    return None
+
+
+def page_problem(url):
+    """Why url is not a sign-in page's url (§4.12.1), or None."""
+    problem = unopenable(url)
+    if problem:
+        return problem
+    taken = sorted({k for k, _ in urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query)} & SIGN_IN_PARAMS)
+    return taken and f"url's query sets {', '.join(taken)}, which clients set (§4.12.2)" or None
+
+
+def loopback_redirect():
+    return f"http://127.0.0.1:{secrets.randbelow(16000) + 49152}/cb"
+
+
+def made_up(run):
+    """Redemption fields with a code that no server issued."""
+    return {"code": "conformance-" + secrets.token_urlsafe(24), "code_verifier": secrets.token_urlsafe(48),
+            "redirect_uri": loopback_redirect(), "client_id": CLIENT_ID}
+
+
+class Grant:
+    """An authorization request to a sign-in page (§4.12.2), and the redirect that came back."""
+
+    def __init__(self, run, page, redirect_uri, **change):
+        self.verifier = secrets.token_urlsafe(48)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(self.verifier.encode()).digest()).rstrip(b"=").decode()
+        self.state, self.redirect_uri, self.client_id = secrets.token_urlsafe(16), redirect_uri, CLIENT_ID
+        params = {"response_type": "code", "client_id": CLIENT_ID, "redirect_uri": redirect_uri,
+                  "code_challenge": challenge, "code_challenge_method": "S256", "state": self.state,
+                  "resource": origin_of(run), **change}
+        parts = urllib.parse.urlsplit(page)
+        query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        query += [(k, v) for k, v in params.items() if v is not None]
+        self.url = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+        self.client_id, self.query, self.code = params["client_id"], {}, None
+        self.conn = None  # the connection that the code redeems on, where it must be one
+        self.action = None  # a passkey page code's action
+
+    def redemption(self, **change):
+        return {"code": self.code, "code_verifier": self.verifier, "redirect_uri": self.redirect_uri,
+                "client_id": self.client_id, **change}
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+NO_REDIRECTS = urllib.request.build_opener(NoRedirect)
+
+
+def fetch(url, data=None, headers=None, method=None):
+    """Request url without following redirects, and return (status, headers, body)."""
+    request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with NO_REDIRECTS.open(request, timeout=WAIT * 5) as response:
+            return response.status, response.headers, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.headers, error.read().decode("utf-8", "replace")
+
+
+async def http_request(url, data=None, headers=None, method=None):
+    """fetch, which waits out a rate limit for a while, then skips the check."""
+    waited = 0
+    while True:
+        try:
+            status, answer, body = await asyncio.to_thread(fetch, url, data, headers, method)
+        except OSError as error:
+            raise Fail(f"{method or ('POST' if data else 'GET')} {url}: {error}") from None
+        if status != 429:
+            return status, answer, body
+        waited += await back_off(answer.get("Retry-After"), waited, f"the server's policy refused {url}: HTTP 429")
+
+
+def redirects_to(status, headers, page, redirect_uri):
+    """Whether a response redirects to redirect_uri."""
+    if not 300 <= status < 400 or not headers.get("Location"):
+        return False
+    target = urllib.parse.urlsplit(urllib.parse.urljoin(page, headers["Location"]))
+    want = urllib.parse.urlsplit(redirect_uri)
+    return (target.scheme, target.netloc, target.path) == (want.scheme, want.netloc, want.path)
+
+
+async def open_from(run, origin):
+    """A connection that is not signed in, opened with origin as its Origin header (None: none), or None if the
+    server refuses the handshake, such as for an origin it does not allow."""
+    try:
+        return await run.open(auth=False, origin=origin)
+    except InvalidStatus:
+        return None
+
+
+def from_origin(origin):
+    return "a connection with no Origin" if origin is None else f"a connection with Origin {origin}"
+
+
+async def begun(run, key, params):
+    """The reply to a begin, sent once on a connection with no Origin, and kept for later checks."""
+    if key not in run.begun:
+        conn = await run.open(auth=False)
+        run.begun[key] = (await conn.request("auth", params))[1]
+    policy(run.begun[key])
+    return run.begun[key]
+
+
+async def external_page(run):
+    """The external object of an external begin (§4.12.1)."""
+    reply = await begun(run, "external", {"scheme": "external"})
+    external = reply.get("result", {}).get("external")
+    must(isinstance(external, dict) and isinstance(external.get("url"), str), f"an external begin got {describe(reply)}")
+    return external
+
+
+async def passkey_page(run):
+    """The external object of a login begin: the passkey page (§4.10.1), or Skip."""
+    reply = await begun(run, "login", {"scheme": "webauthn", "action": "login", "step": "begin"})
+    external = reply.get("result", {}).get("external")
+    if not isinstance(external, dict) or not isinstance(external.get("url"), str):
+        raise Skip("a login begin from a connection with no Origin offers no passkey page")
+    return external
+
+
+async def page_of(run, kind):
+    return (await (external_page if kind == "external" else passkey_page)(run))["url"]
+
+
+@check("4.11", "a server that offers email also lists token", needs=offers("email"))
+async def _(run):
+    must("token" in run.server.get("auth", []), "server.auth lists email but not token")
+
+
+@check("4.12", "a server that offers external also lists token", needs=offers("external"))
+async def _(run):
+    must("token" in run.server.get("auth", []), "server.auth lists external but not token")
+
+
+@check("4.11.1", "an email proposal returns {} and authenticates nothing", needs=offers("email"))
+async def _(run):
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "email", "email": "conformance@example.invalid",
+                                           "state": secrets.token_urlsafe(16)})
+    policy(reply)
+    if code(reply) == CODES["denied"]:
+        raise Skip(f"the server's policy refused a proposal for an .invalid address: {describe(reply)}")
+    must(reply.get("result") == {}, f"a proposal got {describe(reply)}")
+    expect_error((await conn.request("me", {}))[1], "denied", "me after a proposal")
+
+
+@check("4.11.3", "an email approval with a made-up token is denied", needs=offers("email"))
+async def _(run):
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "email", "token": "conformance-" + secrets.token_urlsafe(24)})
+    policy(reply)
+    expect_error(reply, "denied", "an approval with a made-up token")
+
+
+@check("4.12.1", "an external begin returns an https or loopback url, and authenticates nothing", needs=offers("external"))
+async def _(run):
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "external"})
+    policy(reply)
+    run.begun.setdefault("external", reply)
+    external = reply.get("result", {}).get("external")
+    must(isinstance(external, dict), f"a begin got {describe(reply)}")
+    must("you" not in reply["result"], "the begin returned you")
+    problem = page_problem(external.get("url"))
+    must(not problem, problem)
+    if "issuer" in external:
+        problem = unopenable(external["issuer"], "issuer")
+        must(not problem, problem)
+        must(not urllib.parse.urlsplit(external["issuer"]).query, "issuer has a query (RFC 8414 §2)")
+    expect_error((await conn.request("me", {}))[1], "denied", "me after a begin")
+
+
+@check("4.12.1", "an external request with a made-up token is denied", needs=offers("external"))
+async def _(run):
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "external", "token": "conformance-" + secrets.token_urlsafe(24)})
+    policy(reply)
+    expect_error(reply, "denied", "external with a made-up token")
+
+
+@check("4.12.4", "an external redemption of a made-up code is denied", needs=offers("external"))
+async def _(run):
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "external", **made_up(run)})
+    policy(reply)
+    expect_error(reply, "denied", "a made-up code")
+
+
+def check_begin(run, result, action, where):
+    """The rules of §4.10 and §4.10.1 for one begin result."""
+    must("you" not in result, f"{where}: the begin returned you")
+    has = [k for k in ("challenge_id", "public_key") if k in result]
+    must(len(has) != 1, f"{where}: the begin has {' '.join(has)} without the other of challenge_id and public_key")
+    must(has or "external" in result, f"{where}: the begin has neither challenge_id and public_key nor external")
+    if "external" in result:
+        problem = page_problem(result["external"].get("url"))
+        must(not problem, f"{where}: {problem}")
+    if not has:
+        return None
+    key = result["public_key"]
+    must(isinstance(key, dict), f"{where}: public_key is not an object")
+    rp = key.get("rpId") if action == "login" else key.get("rp", {}).get("id")
+    host = urllib.parse.urlsplit(run.args.url).hostname
+    if rp and host != rp and not host.endswith("." + rp):
+        must("external" in result, f"{where}: RP ID {rp!r} is neither {host} nor a domain above it, so clients "
+                                   "refuse it (§4.10), and the begin offers no passkey page")
+        run.info(f"{where}: RP ID {rp!r} does not cover {host}, so clients here use the passkey page")
+    if action == "login":
+        must(not key.get("allowCredentials"), f"{where}: the login sends allowCredentials")
+        verification = key.get("userVerification")
+    else:
+        selection = key.get("authenticatorSelection") or {}
+        must(selection.get("residentKey") == "required"
+             or "residentKey" not in selection and selection.get("requireResidentKey") is True,
+             f"{where}: the registration does not require a discoverable credential (residentKey: required)")
+        verification = selection.get("userVerification")
+    must(verification == "required", f"{where}: userVerification is {verification!r}, not 'required'")
+    return key
+
+
+@check("4.10", "a login begin returns a ceremony, a passkey page, or both, for any login", needs=offers("webauthn"))
+async def _(run):
+    tried = 0
+    for origin in (None, origin_of(run)):
+        conn = await open_from(run, origin)
+        if not conn:
+            run.info(f"the server refused the handshake of {from_origin(origin)}")
+            continue
+        _, reply = await conn.request("auth", {"scheme": "webauthn", "action": "login", "step": "begin"})
+        policy(reply)
+        if code(reply) == CODES["denied"]:  # server policy decides who can authenticate (§4.10)
+            run.info(f"from {from_origin(origin)}, the server's policy refused it: {describe(reply)}")
+            continue
+        must("result" in reply, f"from {from_origin(origin)}: {describe(reply)}")
+        check_begin(run, reply["result"], "login", f"from {from_origin(origin)}")
+        expect_error((await conn.request("me", {}))[1], "denied", "me after a begin")
+        tried += 1
+    if not tried:
+        raise Skip("the server refused every handshake or login begin")
+
+
+@check("4.10", "a register begin requires a discoverable credential and user verification", needs=offers("webauthn"))
+async def _(run):
+    keys = []
+    params = {"scheme": "webauthn", "action": "register", "step": "begin", "name": "Conformance"}
+    for origin in (origin_of(run), None):
+        conn = await open_from(run, origin)
+        if not conn:
+            continue
+        where = f"from {from_origin(origin)}"
+        _, reply = await conn.request("auth", params)
+        if code(reply) == CODES["denied"] and offers("guest")(run.server):
+            _, guest = await conn.request("auth", {"scheme": "guest", "name": "Conformance"})
+            if signed_in(guest):
+                where += ", signed in as a guest"
+                _, reply = await conn.request("auth", params)
+        policy(reply)
+        if code(reply) == CODES["denied"]:
+            run.info(f"{where}, the server's policy refused it: {describe(reply)}")
+            continue
+        must("result" in reply, f"{where}: {describe(reply)}")
+        key = check_begin(run, reply["result"], "register", where)
+        if key:
+            keys.append((where, key))
+    if not keys:
+        raise Skip("no register begin returned public_key")
+    for where, key in keys:
+        user = key.get("user") or {}
+        should(user.get("name") == "Conformance" and user.get("displayName") == "Conformance",
+               f"{where}: user.name {user.get('name')!r} and user.displayName {user.get('displayName')!r} are not the "
+               "begin's name 'Conformance'")
+
+
+@check("4.10.1", "a webauthn finish with a made-up code is denied", needs=offers("webauthn"))
+async def _(run):
+    await passkey_page(run)
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "webauthn", "action": "login", "step": "finish", **made_up(run)})
+    policy(reply)
+    expect_error(reply, "denied", "a finish with a made-up code")
+
+
+PAGES = {"external": ("the external sign-in page", offers("external")),
+         "passkey": ("the passkey page", offers("webauthn"))}
+
+
+async def well_formed(run, kind):
+    """The page's answer to a well-formed request, fetched once: (page, request, status, headers)."""
+    if kind not in run.pages:
+        page = await page_of(run, kind)
+        request = Grant(run, page, loopback_redirect())
+        status, headers, _ = await http_request(request.url)
+        run.pages[kind] = (page, request, status, headers)
+    return run.pages[kind]
+
+
+def page_checks(kind):
+    name, needs = PAGES[kind]
+
+    @check("4.12.3", f"{name} answers a well-formed request without a redirect to redirect_uri", needs=needs)
+    async def _(run):
+        page, request, status, headers = await well_formed(run, kind)
+        must(not redirects_to(status, headers, page, request.redirect_uri),
+             f"it redirected to redirect_uri before the user allowed the client: {headers.get('Location')}")
+        if 300 <= status < 400:
+            run.info(f"it answered {status}, to {headers.get('Location')}: a sign-in elsewhere")
+        else:
+            should(200 <= status < 300, f"a request with a loopback redirect_uri got HTTP {status} (§4.12.3)")
+
+    @check("4.12.3", f"{name} sends no Cross-Origin-Opener-Policy other than unsafe-none", needs=needs)
+    async def _(run):
+        _, _, _, headers = await well_formed(run, kind)
+        opener = headers.get("Cross-Origin-Opener-Policy")
+        must(opener is None or opener.split(";")[0].strip().lower() == "unsafe-none",
+             f"it sends Cross-Origin-Opener-Policy: {opener}")
+
+    @check("4.12.3", f"{name} sends Referrer-Policy: no-referrer", needs=needs)
+    async def _(run):
+        _, _, status, headers = await well_formed(run, kind)
+        if 300 <= status < 400:
+            raise Skip(f"it answered {status}, to a sign-in elsewhere, so there is no page to check")
+        tokens = [t.strip().lower() for t in headers.get("Referrer-Policy", "").split(",") if t.strip()]
+        should(tokens and tokens[-1] == "no-referrer", f"Referrer-Policy is {headers.get('Referrer-Policy')!r}")
+
+    @check("4.12.3", f"{name} shows the error of a request without resource, with another resource, without PKCE, "
+                     "or with plain PKCE, and never redirects it", needs=needs)
+    async def _(run):
+        page = await page_of(run, kind)
+        cases = {"without resource": {"resource": None}, "with another resource": {"resource": FOREIGN},
+                 "without PKCE": {"code_challenge": None, "code_challenge_method": None},
+                 "with plain PKCE": {"code_challenge_method": "plain"}}
+        for case, change in cases.items():
+            request = Grant(run, page, loopback_redirect(), **change)
+            status, headers, _ = await http_request(request.url)
+            must(not redirects_to(status, headers, page, request.redirect_uri),
+                 f"a request {case} redirected to redirect_uri, which makes the page an open redirector")
+            must(not 300 <= status < 400, f"a request {case} redirected to {headers.get('Location')} instead of "
+                                          "showing its error")
+            if status < 300:
+                run.info(f"a request {case} got HTTP {status}: make sure that the page shows an error")
+
+    @check("4.12.3", f"{name} takes any client_id, and an https or private-use redirect_uri", needs=needs)
+    async def _(run):
+        page = await page_of(run, kind)
+        refused = []
+        for redirect_uri in ("https://conformance.example/signed-in", "org.apron.conformance:/signed-in"):
+            request = Grant(run, page, redirect_uri, client_id="conformance-" + secrets.token_hex(4))
+            status, headers, _ = await http_request(request.url)
+            must(not redirects_to(status, headers, page, redirect_uri),
+                 f"it redirected to {redirect_uri} before the user allowed the client")
+            if status >= 400:
+                refused.append(f"{redirect_uri} (HTTP {status})")
+        should(not refused, f"it refused a well-formed request to {', '.join(refused)}")
+
+
+page_checks("external")
+page_checks("passkey")
+
+
+@check("4.10.1", "the passkey page refuses to be shown in a frame", needs=offers("webauthn"))
+async def _(run):
+    _, _, status, headers = await well_formed(run, "passkey")
+    frame_options = headers.get("X-Frame-Options", "").strip().lower()
+    ancestors = [d.split()[1:] for d in headers.get("Content-Security-Policy", "").lower().split(";")
+                 if d.split()[:1] == ["frame-ancestors"]]
+    must(frame_options in ("deny", "sameorigin") or ancestors and "*" not in ancestors[0],
+         "it sends neither X-Frame-Options DENY or SAMEORIGIN nor a Content-Security-Policy frame-ancestors")
+
+
+# ext:oauth, for a server that is its own authorization server.
+
+async def own_issuer(run):
+    external = await external_page(run)
+    if external.get("issuer", origin_of(run)) != origin_of(run):
+        raise Skip(f"issuer {external['issuer']} is another authorization server")
+
+
+async def oauth_metadata(run):
+    """The server's authorization server metadata (RFC 8414), fetched once."""
+    await own_issuer(run)
+    if "metadata" not in run.oauth:
+        url = origin_of(run) + "/.well-known/oauth-authorization-server"
+        status, headers, body = await http_request(url, headers={"Accept": "application/json", "Origin": FOREIGN})
+        must(status == 200, f"GET {url}: HTTP {status}")
+        try:
+            run.oauth["metadata"] = (json.loads(body), headers)
+        except ValueError:
+            raise Fail(f"GET {url}: not JSON") from None
+    return run.oauth["metadata"]
+
+
+async def token_endpoint(run):
+    try:
+        endpoint = (await oauth_metadata(run))[0].get("token_endpoint")
+    except Fail as error:
+        raise Skip(f"no metadata: {error}") from None
+    if not isinstance(endpoint, str) or unopenable(endpoint):
+        raise Skip("the metadata gives no usable token_endpoint")
+    return endpoint
+
+
+async def token_request(endpoint, form, basic=None):
+    """POST form to the token endpoint from another origin, with client_id by HTTP Basic if basic is given, and
+    return (status, headers, JSON body or None)."""
+    headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json", "Origin": FOREIGN}
+    if basic is not None:
+        pair = f"{urllib.parse.quote_plus(basic)}:"  # RFC 6749 §2.3.1, with an empty password
+        headers["Authorization"] = "Basic " + base64.b64encode(pair.encode()).decode()
+    status, headers, body = await http_request(endpoint, urllib.parse.urlencode(form).encode(), headers)
+    try:
+        return status, headers, json.loads(body)
+    except ValueError:
+        return status, headers, None
+
+
+@check("ext:oauth", "metadata at /.well-known/oauth-authorization-server gives the server's endpoints", needs=oauth_needs)
+async def _(run):
+    doc, _ = await oauth_metadata(run)
+    origin, page = origin_of(run), (await external_page(run))["url"]
+    must(doc.get("issuer") == origin, f"issuer is {doc.get('issuer')!r}, not {origin} (RFC 8414 §3.3)")
+    endpoint = urllib.parse.urlunsplit(urllib.parse.urlsplit(page)._replace(query="", fragment=""))
+    must(doc.get("authorization_endpoint") == endpoint,
+         f"authorization_endpoint is {doc.get('authorization_endpoint')!r}, not the begin's {endpoint}")
+    problem = unopenable(doc.get("token_endpoint"), "token_endpoint")
+    must(not problem, problem)
+    must("code" in doc.get("response_types_supported", []), "response_types_supported lacks code")
+    should("S256" in doc.get("code_challenge_methods_supported", []), "code_challenge_methods_supported lacks S256")
+
+
+@check("ext:oauth", "the metadata and the token endpoint allow cross-origin requests, HTTP Basic included", needs=oauth_needs)
+async def _(run):
+    allows = lambda headers: headers.get("Access-Control-Allow-Origin", "").strip() in ("*", FOREIGN)
+    _, headers = await oauth_metadata(run)
+    must(allows(headers), "the metadata lacks Access-Control-Allow-Origin")
+    endpoint = await token_endpoint(run)
+    _, headers, _ = await token_request(endpoint, {"grant_type": "authorization_code", **made_up(run)})
+    must(allows(headers), "the token endpoint's answer lacks Access-Control-Allow-Origin")
+    status, headers, _ = await http_request(endpoint, method="OPTIONS", headers={
+        "Origin": FOREIGN, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization"})
+    methods = {m.strip().upper() for m in headers.get("Access-Control-Allow-Methods", "").split(",")}
+    allowed = {h.strip().lower() for h in headers.get("Access-Control-Allow-Headers", "").split(",")}
+    must(200 <= status < 300 and allows(headers) and methods & {"POST", "*"},
+         f"a preflight for POST got HTTP {status}, Allow-Origin {headers.get('Access-Control-Allow-Origin')!r}, "
+         f"Allow-Methods {headers.get('Access-Control-Allow-Methods')!r}")
+    must("authorization" in allowed, "a preflight does not allow the Authorization header, so a web client cannot "
+                                     "send its client_id by HTTP Basic")
+
+
+@check("ext:oauth", "the token endpoint answers a made-up code with invalid_grant, with client_id in the body or by "
+                    "HTTP Basic", needs=oauth_needs)
+async def _(run):
+    endpoint = await token_endpoint(run)
+    fields = {"grant_type": "authorization_code", **made_up(run), "resource": origin_of(run)}
+    status, _, doc = await token_request(endpoint, fields)
+    must(status == 400 and (doc or {}).get("error") == "invalid_grant",
+         f"client_id in the body: HTTP {status}, {json.dumps(doc)} (RFC 6749 §5.2)")
+    status, _, doc = await token_request(endpoint, {k: v for k, v in fields.items() if k != "client_id"}, CLIENT_ID)
+    must(status == 400 and (doc or {}).get("error") == "invalid_grant",
+         f"client_id by HTTP Basic with an empty password: HTTP {status}, {json.dumps(doc)}")
+
+
+@check("ext:oauth", "protected resource metadata, where published, gives the server and its authorization server",
+       needs=oauth_needs)
+async def _(run):
+    external, origin = await external_page(run), origin_of(run)
+    issuer = external.get("issuer", origin)
+    url = origin + "/.well-known/oauth-protected-resource"
+    status, _, body = await http_request(url, headers={"Accept": "application/json"})
+    if status == 404:
+        must(issuer == origin, f"GET {url}: HTTP 404, but issuer {issuer} is another authorization server")
+        raise Skip("not published, which a server that is its own authorization server need not do")
+    must(status == 200, f"GET {url}: HTTP {status}")
+    try:
+        doc = json.loads(body)
+    except ValueError:
+        raise Fail(f"GET {url}: not JSON") from None
+    must(doc.get("resource") == origin, f"resource is {doc.get('resource')!r}, not {origin} (RFC 9728 §3.3)")
+    must(issuer in doc.get("authorization_servers", []), f"authorization_servers lacks {issuer}")
+
+
+# Sign-in with a person (--sign-in): each code comes from a page that a person goes through.
+
+class Person:
+    """A person who signs in on the server's pages. Each redirect comes back to a loopback redirect URI, which
+    §4.12.3 says servers SHOULD accept with any port."""
+
+    def __init__(self):
+        self.hits, self.changed, self.skip = [], threading.Condition(), threading.Event()
+        self.count, self.total = 0, None
+        person = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                parts = urllib.parse.urlsplit(self.path)
+                body = b"<!doctype html><meta charset=utf-8><title>conform.py</title><p>Done. Go back to conform.py.\n"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                if parts.path == "/cb":
+                    with person.changed:
+                        person.hits.append(dict(urllib.parse.parse_qsl(parts.query)))
+                        person.changed.notify_all()
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.redirect_uri = f"http://127.0.0.1:{self.server.server_address[1]}/cb"
+        self.other_redirect_uri = self.redirect_uri[:-len("/cb")] + "/other"
+
+    def hit(self, index, seconds):
+        """The redirect at index, waiting up to seconds for it, or None."""
+        with self.changed:
+            self.changed.wait_for(lambda: len(self.hits) > index or self.skip.is_set(), seconds)
+            return self.hits[index] if len(self.hits) > index else None
+
+
+def wait_for_enter(event):
+    try:
+        if sys.stdin.readline():  # "" at end of file: no one can press Enter
+            event.set()
+    except (OSError, ValueError):
+        pass
+
+
+def open_browser(url):
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+async def sign_ins(run):
+    """How many sign-ins --sign-in plans for this server, before failed tries that use up codes: for each page, one
+    that redeems, and one for the tries that must fail (chain); one for ext:oauth's token endpoint; one declined."""
+    total = 0
+    if offers("external")(run.server):
+        total += 2
+        try:
+            await own_issuer(run)
+            total += oauth_needs(run.server)
+        except (Skip, Fail):
+            pass
+    try:
+        await passkey_page(run)
+        total += 2
+    except (Skip, Fail):
+        pass
+    return total + 1 if total else 0  # and a declined one
+
+
+async def sign_in(run, page, why, decline=False, keep=None):
+    """Send the person to page with a new authorization request, and return its Grant with the redirect's query."""
+    person = run.person
+    if person.total is None:
+        person.total = await sign_ins(run)
+        print(f"-- --sign-in: {person.total} sign-ins in a browser, and more if a failed try uses up a code. "
+              f"Redirects come back to {person.redirect_uri}.", flush=True)
+    person.count += 1
+    person.total = max(person.total, person.count)
+    grant = Grant(run, page, person.redirect_uri)
+    index = len(person.hits)
+    print(f"-- sign-in {person.count} of {person.total}: {why}", flush=True)
+    print(f"   {'Decline it there, or press Enter here to skip it' if decline else 'Sign in and allow'}, at:", flush=True)
+    print(f"   {grant.url}", flush=True)
+    asyncio.get_running_loop().run_in_executor(None, open_browser, grant.url)
+    if decline:
+        person.skip.clear()
+        threading.Thread(target=wait_for_enter, args=(person.skip,), daemon=True).start()
+    deadline = time.monotonic() + SIGN_IN_WAIT
+    while True:
+        query = await asyncio.to_thread(person.hit, index, 10)
+        if query is not None:
+            break
+        if person.skip.is_set():
+            person.skip.clear()
+            raise Skip("the person skipped it")
+        if time.monotonic() > deadline:
+            raise Skip(f"no redirect came back within {SIGN_IN_WAIT // 60} minutes")
+        if keep and not keep.closed and "ping" in run.server:
+            await keep.notify("ping")  # the connection outlives a sign-in that takes longer than the ping interval
+    grant.query, grant.code = query, query.get("code")
+    if not decline and not grant.code:
+        if query.get("error") == "access_denied":
+            raise Skip("the person declined: run again, and allow")
+        raise Fail(f"the page redirected with {json.dumps(query)}, and no code")
+    return grant
+
+
+async def flow(run, name, compute):
+    """Run a sign-in flow once, and return its outcome to every check that reads it."""
+    if run.person is None:
+        raise Skip("needs a person to sign in: run with --sign-in")
+    if name not in run.flows:
+        try:
+            run.flows[name] = await compute(run)
+        except (Fail, Skip) as error:
+            run.flows[name] = error
+            raise
+        except Exception as error:
+            run.flows[name] = Fail(f"{type(error).__name__}: {error}")
+            raise
+    outcome = run.flows[name]
+    if isinstance(outcome, Exception):
+        raise Skip(f"the sign-in did not finish: {outcome}")
+    return outcome
+
+
+async def redeeming_origin(run):
+    """The Origin of the connections that redeem codes: the server's own origin, or none if it refuses that."""
+    if "origin" not in run.flows:
+        conn = await open_from(run, origin_of(run))
+        run.flows["origin"] = origin_of(run) if conn else None
+    return run.flows["origin"]
+
+
+async def attempt_auth(run, origin, params, conn=None):
+    """Send auth with params on conn, or on a new connection from origin, and return the reply."""
+    conn = conn or await open_from(run, origin)
+    must(conn, f"the server refused the handshake of {from_origin(origin)}, which it took before")
+    return (await conn.request("auth", params))[1]
+
+
+async def chain(run, fresh, negatives, redeem):
+    """Get codes from fresh(why): one that redeems, then codes for the negative tries, until each try has a
+    conclusive answer. negatives are (key, attempt, optional).
+
+    The first code redeems at once, as the sign-in that it ends may create the account, and tells whether
+    redemptions work at all. A refusal proves something only on a code that was still usable: a fresh one, or one
+    that a later right redemption redeems, since a failed redemption MAY use up the code (§4.12.4). So the second
+    code takes every negative try, then the right redemption. If that fails, failed tries use up codes (burned), and
+    each remaining try takes a fresh code, except optional ones, which are left out to save the person a sign-in.
+    Later flows start from what earlier ones learned."""
+    person = run.person
+    out = {"first": None, "negatives": {}, "skipped": {}, "redeemed": None, "reuse": None, "burned": None,
+           "broken": False}
+    grant = out["first"] = await fresh(None)
+    reply = await redeem(grant)
+    out["redeemed"] = (grant, reply)
+    out["broken"] = not signed_in(reply)
+    out["reuse"] = None if out["broken"] else await redeem(grant)
+    if out["broken"] or not negatives:
+        person.total -= 1  # the planned code for the tries that must fail (sign_ins)
+        return out
+    pending, again = list(negatives), "sign in to the same account as before"
+    required = lambda: sum(1 for _, _, optional in pending if not optional)
+    if run.burned is True:
+        person.total += required() - 1
+    else:
+        grant = await fresh(f"{again}, for the tries that must fail")
+        tried = [(key, await attempt(grant)) for key, attempt, _ in pending]
+        if signed_in(await redeem(grant)):
+            out["negatives"].update(tried)
+            if all("error" in r for _, r in tried):
+                run.burned = out["burned"] = False
+            return out
+        out["negatives"][tried[0][0]] = tried[0][1]
+        pending = pending[1:]
+        run.burned = True
+        person.total += required()
+    out["burned"] = run.burned
+    for key, attempt, optional in pending:
+        if optional:
+            out["skipped"][key] = "left out to save a sign-in, since a failed try uses up a code on this server"
+            continue
+        grant = await fresh(f"{again}. A failed try uses up a code here, so each try that must fail takes its own")
+        out["negatives"][key] = await attempt(grant)
+    return out
+
+
+async def external_flow(run):
+    page = (await external_page(run))["url"]
+    origin = await redeeming_origin(run)
+    redeem = lambda grant, **change: attempt_auth(run, origin, {"scheme": "external", **grant.redemption(**change)})
+    negatives = [("code_verifier", lambda g: redeem(g, code_verifier=secrets.token_urlsafe(48)), False),
+                 ("redirect_uri", lambda g: redeem(g, redirect_uri=run.person.other_redirect_uri), False),
+                 ("client_id", lambda g: redeem(g, client_id=CLIENT_ID + "-other"), False)]
+    try:
+        await passkey_page(run)
+        negatives.append(("webauthn", lambda g: attempt_auth(run, origin, {
+            "scheme": "webauthn", "action": "login", "step": "finish", **g.redemption()}), False))
+    except Skip:
+        pass
+    why = ("external sign-in. Checks the redirect, that the code redeems once and only with its code_verifier, "
+           "redirect_uri, client_id, and scheme, and the token.")
+    fresh = lambda again: sign_in(run, page, f"external sign-in again: {again}." if again else why)
+    return {**await chain(run, fresh, negatives, redeem), "origin": origin}
+
+
+async def passkey_flow(run):
+    """The passkey page. The first code is a registration from a new connection, else one as a guest (an addition,
+    whose code redeems only on the guest's connection), else a login. Later codes are logins, with the passkey that
+    the first one made."""
+    origin = await redeeming_origin(run)
+    register = {"scheme": "webauthn", "action": "register", "step": "begin", "name": "Conformance"}
+
+    async def begin_register(as_guest):
+        conn = await open_from(run, origin)
+        must(conn, f"the server refused the handshake of {from_origin(origin)}, which it took before")
+        if as_guest and not signed_in(await attempt_auth(run, origin, {"scheme": "guest", "name": "Conformance"}, conn)):
+            return None, None
+        url = (await attempt_auth(run, origin, register, conn)).get("result", {}).get("external", {}).get("url")
+        return url, conn
+
+    page, conn = await begin_register(False)
+    guest = False
+    if not page and offers("guest")(run.server):
+        page, conn = await begin_register(True)
+        guest = bool(page)
+    first = "register" if page else "login"
+    why = ("passkey page: create a passkey, and allow." if page else
+           "passkey page: sign in with a passkey that you have on this server, and allow.")
+    why += " Checks the redirect, that the code redeems once and only for its scheme and action, and the token."
+
+    async def fresh(again):
+        if again:
+            grant = await sign_in(run, (await passkey_page(run))["url"], f"passkey page again: {again}.")
+            grant.action = "login"
+            return grant
+        grant = await sign_in(run, page or (await passkey_page(run))["url"], why, keep=conn if guest else None)
+        grant.action, grant.conn = first, conn if guest else None
+        return grant
+
+    other = lambda g: "login" if g.action == "register" else "register"
+    params = lambda g, act=None, **change: {"scheme": "webauthn", "action": act or g.action, "step": "finish",
+                                            **g.redemption(**change)}
+    finish = lambda g, **change: attempt_auth(run, origin, params(g, **change), g.conn)
+    negatives = [("external", lambda g: attempt_auth(run, origin, {"scheme": "external", **g.redemption()}, g.conn), False),
+                 ("action", lambda g: attempt_auth(run, origin, params(g, other(g)), g.conn), False),
+                 ("code_verifier", lambda g: finish(g, code_verifier=secrets.token_urlsafe(48)), True)]
+    if oauth_needs(run.server):
+        try:
+            endpoint = await token_endpoint(run)
+
+            async def at_token_endpoint(g):
+                status, _, doc = await token_request(endpoint, {"grant_type": "authorization_code", **g.redemption()})
+                return {"error": {"status": status, "body": doc}} if status != 200 else {"result": doc}
+            negatives.append(("token endpoint", at_token_endpoint, True))
+        except Skip:
+            pass
+    return {**await chain(run, fresh, negatives, finish), "action": first, "origin": origin, "guest": guest}
+
+
+async def token_flow(run):
+    """ext:oauth's token endpoint, with a code from the external page."""
+    await own_issuer(run)
+    endpoint = await token_endpoint(run)
+    grant = await sign_in(run, (await external_page(run))["url"],
+                          "external sign-in again, for ext:oauth's token endpoint. Checks HTTP Basic, and its token.")
+    form = {"grant_type": "authorization_code", "resource": origin_of(run),
+            **{k: v for k, v in grant.redemption().items() if k != "client_id"}}
+    refused = await token_request(endpoint, {**form, "grant_type": "urn:conformance:unknown", "client_id": CLIENT_ID})
+    redeemed = await token_request(endpoint, form, CLIENT_ID)
+    reuse = await token_request(endpoint, form, CLIENT_ID)
+    return {"refused": refused, "redeemed": redeemed, "reuse": reuse}
+
+
+def redirect_checks(run, grant, issuer):
+    query = grant.query
+    must(query.get("state") == grant.state, f"the redirect's state is {query.get('state')!r}, not the request's")
+    must("iss" in query, "the redirect has no iss")
+    must(query["iss"] == issuer, f"the redirect's iss is {query['iss']!r}, not {issuer}")
+
+
+def negative(out, key, what):
+    """The reply to a negative try, which must be denied."""
+    if key in out["skipped"]:
+        raise Skip(out["skipped"][key])
+    if key not in out["negatives"]:
+        if out["broken"]:
+            raise Skip("no code redeemed, so a refusal proves nothing")
+        raise Skip("not tried")
+    reply = out["negatives"][key]
+    must(not signed_in(reply), f"{what} signed in")
+    expect_error(reply, "denied", what)
+
+
+def burn_note(run, out):
+    if out["burned"] is not None:
+        run.info("a failed try used up the code, which servers MAY do (§4.12.4)" if out["burned"] else
+                 "a failed try left the code usable")
+
+
+async def token_elsewhere(run, token, used=""):
+    """The token signs in with scheme token on connections with no Origin or another Origin than used (§4.12.4)."""
+    if "token" not in run.server.get("auth", []):
+        raise Skip("the server does not offer token")
+    tried = []
+    for origin in (None, origin_of(run), FOREIGN):
+        if origin == used:
+            continue
+        conn = await open_from(run, origin)
+        if not conn:
+            run.info(f"the server refused the handshake of {from_origin(origin)}: origin policy, not the token")
+            continue
+        _, reply = await conn.request("auth", {"scheme": "token", "token": token})
+        must(signed_in(reply), f"the token on {from_origin(origin)}: {describe(reply)}")
+        token = reply["result"].get("token", token)  # a server may rotate it (§3.2.1)
+        tried.append(origin)
+    if not tried:
+        raise Skip("the server refused the handshake of every other Origin")
+
+
+@check("4.12.3", "external sign-in: the page redirects with the request's state, and iss", needs=offers("external"))
+async def _(run):
+    out = await flow(run, "external", external_flow)
+    redirect_checks(run, out["first"], (await external_page(run)).get("issuer", origin_of(run)))
+
+
+@check("4.12.4", "external sign-in: a code signs in once, with you and a token", needs=offers("external"))
+async def _(run):
+    out = await flow(run, "external", external_flow)
+    grant, reply = out["redeemed"]
+    must(signed_in(reply), f"a fresh code: {describe(reply)}")
+    must(isinstance(reply["result"].get("token"), str), "the result has no token")
+    must(not signed_in(out["reuse"]), "the code signed in again")
+    expect_error(out["reuse"], "denied", "a used code")
+
+
+@check("4.12.3", "external sign-in: a code redeems only with its code_verifier", needs=offers("external"))
+async def _(run):
+    out = await flow(run, "external", external_flow)
+    burn_note(run, out)
+    negative(out, "code_verifier", "a code with another code_verifier")
+
+
+@check("4.12.3", "external sign-in: a code redeems only with its redirect_uri", needs=offers("external"))
+async def _(run):
+    negative(await flow(run, "external", external_flow), "redirect_uri", "a code with another redirect_uri")
+
+
+@check("4.12.3", "external sign-in: a code redeems only with its client_id", needs=offers("external"))
+async def _(run):
+    negative(await flow(run, "external", external_flow), "client_id", "a code with another client_id")
+
+
+@check("4.10.1", "external sign-in: its code does not finish webauthn", needs=offers("external", "webauthn"))
+async def _(run):
+    negative(await flow(run, "external", external_flow), "webauthn", "an external code in a webauthn finish")
+
+
+@check("4.12.4", "external sign-in: the token works from a connection with another Origin", needs=offers("external"))
+async def _(run):
+    out = await flow(run, "external", external_flow)
+    _, reply = out["redeemed"]
+    if not isinstance(reply.get("result", {}).get("token"), str):
+        raise Skip("no token")
+    await token_elsewhere(run, reply["result"]["token"], out["origin"])
+
+
+@check("ext:oauth", "the token endpoint redeems a code by HTTP Basic, after a request that it refused",
+       needs=oauth_needs)
+async def _(run):
+    out = await flow(run, "token", token_flow)
+    status, _, doc = out["refused"]
+    must(status >= 400, f"an unknown grant_type got HTTP {status}")
+    should((doc or {}).get("error") == "unsupported_grant_type",
+           f"an unknown grant_type got {json.dumps(doc)}, not unsupported_grant_type (RFC 6749 §5.2)")
+    status, _, doc = out["redeemed"]
+    must(status == 200 and isinstance((doc or {}).get("access_token"), str),
+         f"HTTP {status}, {json.dumps(doc)}: either the refused request used up the code, or HTTP Basic with an "
+         "empty password is not accepted")
+    must(str(doc.get("token_type", "")).lower() == "bearer", f"token_type is {doc.get('token_type')!r}")
+
+
+@check("ext:oauth", "the token endpoint redeems a code once, and its access token works with scheme token",
+       needs=oauth_needs)
+async def _(run):
+    out = await flow(run, "token", token_flow)
+    status, _, doc = out["redeemed"]
+    if status != 200 or not isinstance((doc or {}).get("access_token"), str):
+        raise Skip("no access token")
+    reuse_status, _, reuse = out["reuse"]
+    must(reuse_status == 400 and (reuse or {}).get("error") == "invalid_grant",
+         f"a used code got HTTP {reuse_status}, {json.dumps(reuse)}")
+    await token_elsewhere(run, doc["access_token"])
+
+
+@check("4.10.1", "passkey page: the page redirects with the request's state, and iss", needs=offers("webauthn"))
+async def _(run):
+    await passkey_page(run)
+    out = await flow(run, "passkey", passkey_flow)
+    redirect_checks(run, out["first"], origin_of(run))
+
+
+@check("4.10.1", "passkey page: a code finishes webauthn once, with you", needs=offers("webauthn"))
+async def _(run):
+    await passkey_page(run)
+    out = await flow(run, "passkey", passkey_flow)
+    run.info(f"the person used {'a registration' if out['action'] == 'register' else 'a login'}"
+             + (", as a guest, redeemed on that connection" if out["guest"] else ""))
+    _, reply = out["redeemed"]
+    must(signed_in(reply), f"a fresh code: {describe(reply)}")
+    if "token" not in reply["result"]:
+        run.info("the result has no token, which a finish MAY leave out")
+    must(not signed_in(out["reuse"]), "the code finished again")
+    expect_error(out["reuse"], "denied", "a used code")
+
+
+@check("4.10.1", "passkey page: its code finishes neither external nor the other action", needs=offers("webauthn"))
+async def _(run):
+    await passkey_page(run)
+    out = await flow(run, "passkey", passkey_flow)
+    negative(out, "external", "a passkey page code in an external redemption")
+    negative(out, "action", "a passkey page code in a finish with the other action")
+
+
+@check("4.12.3", "passkey page: a code redeems only with its code_verifier", needs=offers("webauthn"))
+async def _(run):
+    await passkey_page(run)
+    out = await flow(run, "passkey", passkey_flow)
+    burn_note(run, out)
+    negative(out, "code_verifier", "a code with another code_verifier")
+
+
+@check("ext:oauth", "the token endpoint does not redeem a passkey page code",
+       needs=lambda s: oauth_needs(s) and offers("webauthn")(s))
+async def _(run):
+    await passkey_page(run)
+    out = await flow(run, "passkey", passkey_flow)
+    if "token endpoint" not in out["negatives"]:
+        raise Skip(out["skipped"].get("token endpoint")
+                   or ("no code redeemed, so a refusal proves nothing" if out["broken"] else "not tried"))
+    must("error" in out["negatives"]["token endpoint"],
+         f"it returned {json.dumps(out['negatives']['token endpoint'].get('result'))[:120]}")
+
+
+@check("4.10.1", "passkey page: the token works from a connection with another Origin", needs=offers("webauthn"))
+async def _(run):
+    await passkey_page(run)
+    out = await flow(run, "passkey", passkey_flow)
+    _, reply = out["redeemed"]
+    if not isinstance(reply.get("result", {}).get("token"), str):
+        raise Skip("the finish returned no token")
+    await token_elsewhere(run, reply["result"]["token"], out["origin"])
+
+
+@check("4.12.3", "a sign-in that the person declines redirects with error=access_denied",
+       needs=lambda s: offers("external")(s) or offers("webauthn")(s))
+async def _(run):
+    if run.person is None:
+        raise Skip("needs a person to sign in: run with --sign-in")
+    kind = "external" if offers("external")(run.server) else "passkey"
+    page = await page_of(run, kind)
+    grant = await sign_in(run, page, f"{PAGES[kind][0]}, to decline. Checks error=access_denied.", decline=True)
+    must(grant.query.get("state") == grant.state, f"the redirect's state is {grant.query.get('state')!r}, not the request's")
+    must("code" not in grant.query, "the redirect has a code")
+    must(grant.query.get("error") == "access_denied", f"the redirect has error {grant.query.get('error')!r}")
+
+
 # Rules checked on every frame along the way.
 
 def seen(key):
@@ -1436,6 +2492,8 @@ async def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("url", help="WebSocket URL, such as ws://127.0.0.1:8765")
     parser.add_argument("--token", help="sign in with scheme token instead of guest")
+    parser.add_argument("--sign-in", action="store_true",
+                        help="also run the checks that need a person to sign in on the server's pages, in a browser")
     parser.add_argument("-v", "--verbose", action="store_true", help="print tracebacks of crashed checks")
     args = parser.parse_args()
     run, counts = Run(args), {}
@@ -1465,7 +2523,11 @@ async def main():
             await conn.ws.close()
         run.conns.clear()
         counts[status] = counts.get(status, 0) + 1
-        print(f"{status}  §{ref:<6} {title}" + (f": {detail}" if detail else ""), flush=True)
+        label = f"§{ref}" if ref[:1].isdigit() else ref
+        print(f"{status}  {label:<7} {title}" + (f": {detail}" if detail else ""), flush=True)
+        for note in run.notes:
+            print(f"      note: {note}", flush=True)
+        run.notes.clear()
     if run.server:
         print(f"{run.server.get('agent', 'server')}: {', '.join(run.server.get('capabilities', [])) or 'core only'}")
     print(", ".join(f"{counts.get(s, 0)} {s.lower()}" for s in ("PASS", "FAIL", "WARN", "SKIP")))
