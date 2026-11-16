@@ -27,23 +27,23 @@ give it only the rooms and rights that it needs.
 
 | Thing | How the mirror handles it |
 |---|---|
-| Messages | A new snapshot with the mirror's own `message_id`, `log_id`, and `embed_id`s ([§2](../PROTOCOL.md#2-identifiers), [§4.8.2](../PROTOCOL.md#482-embed-identity)). The mirror keeps a two-way map of these IDs. The copy carries its origin in `ext`, such as `"ext": {"peer": {"origin": "b.example", "message_id": "…"}}` ([§4.13](../PROTOCOL.md#413-ext)). |
+| Messages | A new snapshot with the mirror's own `message_id`, `log_id`, and `embed_id`s ([§2](../PROTOCOL.md#2-identifiers), [§4.8.2](../PROTOCOL.md#482-embed-identity)). The mirror keeps a two-way map of these IDs. The copy carries the original's IDs in [`ext.peer`](../extensions/ext_peer.md). |
 | Replies, mentions, and text | Map `reply_to.message_id` and the IDs in `mentions`. Rewrite each `@id` and `#id` in `body.text` to the mapped ID ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A link without `server` in the text refers to the origin, so add the origin's `server` to it ([Appendix A.4](../PROTOCOL.md#a4-links)). |
 | Edits, moves, and deletes | The origin publishes a new snapshot, and the mirror saves its copy the same way ([§4.4](../PROTOCOL.md#44-edit)). A move into a room that the mirror does not share deletes the copy. The origin does not announce a redaction ([§4.4](../PROTOCOL.md#44-edit)), so a delete on the origin can also redact the copy. |
 | Reactions and memberships | Map both parts of the key: `(message_id, user_id)` and `(room_id, user_id)`. |
-| Remote users | Ordinary users on the mirror, with IDs that it assigns, such as `carol@b.example`, which stays mentionable ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). The mirror never gives a local user an ID in a peer's form, and never reuses a retired ID ([§3.3.3](../PROTOCOL.md#333-changes)). IDs are opaque, so clients read the origin from `ext.peer.origin` on the user object, not from the ID. The mirror's server drops `ext.peer` from `me` requests, as [`ext:permissions`](../extensions/ext_permissions.md) does for its key (otherwise a local user could claim another origin). |
+| Remote users | Ordinary users on the mirror, with IDs that it assigns, such as `carol@b.example`, which stays mentionable ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). The mirror never gives a local user an ID in a peer's form, and never reuses a retired ID ([§3.3.3](../PROTOCOL.md#333-changes)). IDs are opaque, so clients read the origin from [`ext.peer`](../extensions/ext_peer.md) on the user object, not from the ID. |
 | Profiles | Copy them from `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)), such as `name`, `avatar`, and a [`bio`](../extensions/ext_bio.md). `roles` stay the mirror's own, because a peer's `"admin"` is not the mirror's admin. |
 | Custom emoji | Keys in reactions and text belong to the origin's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The mirror adds the ones that it sees to its own catalog as `hidden` keys, unless it already has the key. |
 | Uploads, avatars, emoji images, and live text | Copy or proxy them. Clients load `og` media and live text only from the server's own origins ([§4.8.1](../PROTOCOL.md#481-opengraph-metadata-og), [§4.8.5](../PROTOCOL.md#485-embedappend), [`ext:media`](../extensions/ext_media.md)). Live text can also wait until it ends, when the origin's snapshot holds it in `body.text` or `output`. |
-| Loops | Never mirror a copy that the mirror wrote, a record by a remote user, or a record by the other server's mirror, such as its joins. The ID map tells these apart, so loops need no mark in `ext`, which clients can write. |
+| Loops | Never mirror a copy that the mirror wrote, a record by a remote user, or a record by the other server's mirror, such as its joins. The ID map tells these apart. |
 | Sign-in | Optional: a server's sign-in page can let the other server's users sign in with their account there, with that server as an OpenID Connect provider ([§4.12](../PROTOCOL.md#412-external-sign-in), with [`ext:oauth`](../extensions/ext_oauth.md#identity-provider-optional)). Such an account is a local user, separate from the mirror's copy of the same person. |
 
 ## Limits
 
 - **Times.** A `log_id` is the commit time on its server, and only increases.
   A record that is mirrored late, such as after an outage, shows the time it
-  was mirrored, at the end of the room. The original time can travel in
-  `ext.peer`, which clients ignore.
+  was mirrored, at the end of the room. Clients with
+  [`ext:peer`](../extensions/ext_peer.md) can show the original time.
 - **Order.** Concurrent messages can appear in a different order on each
   server.
 - **Moderation.** Deleting a remote user's message on one server deletes only
