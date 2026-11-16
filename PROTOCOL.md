@@ -2565,6 +2565,7 @@ approves the proposal:
   link's `server` is the server that it proposed to (otherwise a server could
   pass a client's `state` on to another server, and receive the token that the
   other server sends).
+- A link without `server` is not for the server that the client proposed to.
 
 #### 4.11.3 Approval
 
