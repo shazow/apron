@@ -2667,6 +2667,7 @@ sign-in pages: the page at `url`, and its passkey page
 
 - The server SHOULD accept any `client_id`, and any `redirect_uri` that is
   `https`, a scheme with a `.`, or `http` on a loopback address with any port.
+- The server MUST refuse any other `redirect_uri`.
 - The server MUST require PKCE `S256`, and MUST refuse a request without
   `resource`, or with one other than its origin.
 - The page MUST show the error of an invalid request itself (any `https` address
@@ -2878,6 +2879,10 @@ server.
 - Clients open only an `https` or loopback `url` ([§4.12.1](#4121-begin)).
   Otherwise a server could run its own script in a web client, such as with a
   `javascript:` URL.
+- A sign-in page redirects only to an `https`, app scheme, or loopback
+  `redirect_uri` ([§4.12.3](#4123-authorization-server)). Otherwise a link
+  could run its own script on the server's origin, such as with a
+  `javascript:` address, or send the code unencrypted over plain `http`.
 
 ### 5.3 Identity and access control
 
