@@ -2661,7 +2661,9 @@ class External {
 
 #### 4.12.3 Authorization server
 
-These rules apply to a server that is its own authorization server:
+These rules apply to a server that is its own authorization server, and to its
+sign-in pages: the page at `url`, and its passkey page
+([§4.10.1](#4101-passkey-page)):
 
 - The server SHOULD accept any `client_id`, and any `redirect_uri` that is
   `https`, a scheme with a `.`, or `http` on a loopback address with any port.
@@ -2677,6 +2679,11 @@ These rules apply to a server that is its own authorization server:
   `redirect_uri` at each sign-in.
 - The page redirects with `code`, `state`, and `iss` when the user confirms,
   or with `error=access_denied` when the user declines.
+- The page MUST NOT send `Cross-Origin-Opener-Policy` other than `unsafe-none`
+  (web clients open the page in a popup, and lose track of it if it is cut off
+  from them).
+- The page SHOULD send `Referrer-Policy: no-referrer` (its URL carries `state`
+  and the PKCE challenge).
 - The server MUST make each code unguessable and single use, and MUST bind it
   to `client_id`, `redirect_uri`, the PKCE challenge, and `resource`. A code
   expires within minutes.
