@@ -139,21 +139,12 @@ Without the extension, clients redeem codes on the connection
 
 ## References
 
-- [OAuth 2.1](https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/)
-- [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749#section-2.3.1): OAuth 2.0,
-  client authentication (§2.3.1)
-- [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636): PKCE
-- [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414): Authorization Server
-  Metadata
-- [RFC 8628](https://www.rfc-editor.org/rfc/rfc8628): Device Authorization
-  Grant
-- [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707): Resource Indicators
-- [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068): JWT Profile for Access
-  Tokens
-- [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207): Authorization Server
-  Issuer Identification
-- [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728): Protected Resource
-  Metadata
+- [RFC 6749 §2.3.1](https://www.rfc-editor.org/rfc/rfc6749#section-2.3.1):
+  how a `client_id` is sent with HTTP Basic
+- [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414): the server's metadata
+- [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068): JWT access tokens
+- [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728): protected resource
+  metadata
 - [OAuth Client ID Metadata Document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
 - [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html):
   ID Token (§2), UserInfo (§5.3)
