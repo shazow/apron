@@ -1,6 +1,6 @@
 # Implementation feedback: §4.12 `external` and the passkey page
 
-Status: 2026-11-15. This file collects what three implementations taught us about the spec:
+Status: 2026-11-16. This file collects what three implementations taught us about the spec:
 
 - PROTOCOL.md §4.10.1 and §4.12 on [shazow/apron#115](https://github.com/shazow/apron/pull/115);
 - [PLAN_WEBAUTHN_EXTERNAL.md](PLAN_WEBAUTHN_EXTERNAL.md), now drafted into §4.10.1.
@@ -49,6 +49,10 @@ The design held:
 | Passkey page return | By redirect and code, not a back channel to the begin connection (PLAN_WEBAUTHN_EXTERNAL.md, decision 8). | `a5c88f3` |
 | Dependencies | apron-server-go replaces its hand-written foreign-issuer JOSE and OAuth code with go-jose v4 and x/oauth2. go-oidc is left out: it only does OpenID Connect discovery, refetches keys on every unknown key ID, and reads responses without size caps. Code lines in the foreign-issuer files: 483 → 354; 2 direct modules; binary +1.4%. | Go `5c42dc9`…`7102d21` |
 | Extensions layout | One file per extension in `extensions/`, EXTENSIONS.md as the index, and `extensions/AGENTS.md` for style. `ext_oauth.md` ends with the references it relies on. | `52ef121`, `2cfea2d`, `ac6beba` |
+| S15. Failed redemption | A failed redemption MAY use up the code. Both servers burn a code on some failures (apron-server-go's `Codes.Redeem` on any mismatch; apron-server-cloudflare on any failure), so clients don't retry a code. | §4.12.4, `659f52b` |
+| S11. Codes and `resource` | A code whose `resource` is not the server's origin is invalid. This replaces "wrongly addressed", and stops codes from crossing between hosts that share one backend. | §4.12.4, `659f52b` |
+| S12. Client ID metadata documents and many origins | A client uses its document's URL as `client_id` only when the document lists the `redirect_uri` that it sends. Elsewhere, such as Previews or localhost, it sends a plain `client_id`, as apron-web does. | §4.12.2, `659f52b` |
+| S16. Email `state` details | Left to the server. A client whose approval is `denied` proposes again with a new `state`. apron-server-go lets the newest proposal own a `state`, and denies a `state` that matches no proposal. | no change |
 | apron-web's startup budget | Raised for the startup JS size only, `a4f9220` | apron-web#278 |
 
 Implementations brought in line:
@@ -67,7 +71,13 @@ Under M1 this is the server's policy, so the fix belongs in apron-server-go. Eit
 
 ## Should clarify
 
-These are small, and none made two implementations disagree. S1–S4, S17 and S18 are resolved (see "Decisions").
+These are small, and none made two implementations disagree. S1–S4, S11, S12, S14–S18 are resolved (see "Decisions"). The rest stay out of PROTOCOL.md:
+
+- S5 and S6 are client hints, for RECIPES.md.
+- S7, S9 and S10 are about the plan's internals, and have no wire effect.
+- S8 is about what the user sees, which §5.2 already covers.
+- S13 needs building in both servers first. Then we decide whether a SHOULD in §4.10.1 is worth adding.
+
 
 - **S5. Popups and user activation.** [web F3] Begin answers after the tap, so `window.open` may be blocked. Informative note: "A web client can open a window during the tap, before begin answers, and send it to `url` afterwards."
 - **S6. An addition after a full-page redirect needs the session back.** [web F12] It works only with a resumable `token`. Informative note.
@@ -79,23 +89,16 @@ These are small, and none made two implementations disagree. S1–S4, S17 and S1
   - "Not you?" starts the page's sign-in again. Whether that prompts depends on the identity provider.
 - **S9. The State table undercounts the page.** [cf F4] The page's own ceremony spans two HTTP requests. A login code MAY be issued before Allow, if only the page holds it until Allow.
 - **S10. "No passkey page" message.** [web F14] "Shows `server.welcome`" fits only screens that render it. Proposed: "points to `server.welcome`, where the client shows it".
-- **S11. Optional extra binding.** [cf F10] "A server redeems a code only for the origin in its `resource`." This stops codes from crossing between hosts that share one backend.
-- **S12. Client ID metadata documents and many origins.** [web F7] A client served from many origins (Previews, localhost, self-hosted) can use a document on only one of them. Informative note: "such a client sends a plain `client_id`".
 - **S13. Orphan passkeys.** [interop F3] The plan calls a stray passkey harmless. In the browser it was not:
   - A passkey made on the page whose code is never redeemed stays on the device. This happens after a failed or burned code, or a closed tab.
   - The next "Continue with passkey" can pick it, and the page then fails with a generic error.
 
   Proposed: "When a login presents an unknown credential, the page SHOULD call `PublicKeyCredential.signalUnknownCredential`, and say that the passkey is not for an account here."
-- **S15. A failed redemption may burn the code.** [interop F7] apron-server-cloudflare burns a code on any failed try; apron-server-go does not. Proposed: "A server MAY invalidate a code after a failed redemption."
-
-- **S16. Email `state` on approval: details.** [email-state F1, F2] The new rule ("An approval MAY carry the proposal's `state`") works in apron-server-go (`f2e44a8`) and apron-web (`60a1960`). Two cases are open:
-  - **Two pending proposals with one `state`.** apron-server-go lets the newest proposal own it. Proposed: "Clients use a new `state` for each proposal."
-  - **A `state` that matches no pending proposal.** apron-server-go treats it as `denied`, and the attempt counts against nothing. Proposed: "A `state` that matches no pending proposal is ignored."
 
 ## Housekeeping
 
 - **H1.** Drop the `workers-oauth-provider` note from PLAN_WEBAUTHN_EXTERNAL.md and PLAN_LOOSE.md. [cf F1] It needs its own KV binding, mints its own tokens, refuses unknown `client_id`s, and cannot redeem a code on a WebSocket.
-- **H2.** List the renumbering in #115's description: §4.11 email, §4.12 external, §4.13 `ext`. Implementations cite v10 numbers. [cf F9]
+- **H2.** Done: #115's description lists the renumbering (§4.11 email, §4.12 external, §4.13 `ext`). [cf F9]
 
 ## Worked well
 
