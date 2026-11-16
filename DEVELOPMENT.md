@@ -131,6 +131,30 @@ uv run apron/tests/conformance/conform.py ws://localhost:8787/ \
   --portal "node apron/tests/conformance/portals/passkey.cjs" --json conformance.json
 ```
 
+### Client driver
+
+`tests/conformance/conform_client.py` checks a client's sign-in. It plays two
+Apron servers, on two ports and so two origins, with their sign-in pages, and
+an issuer with a token endpoint on a third port. It runs normal and hostile
+scenarios, such as a redirect with another `state`, a begin `url` that is
+`javascript:`, a passkey ceremony for another RP ID, and an email link that
+names the other server. It checks what the client sends, such as whether one
+server's token reaches the other. It prints and writes results like conform.py, with
+`--only`, `--list`, and `--json`.
+
+An adapter drives the client. It is a program that the client's author
+writes: the driver sends it commands as JSON lines on standard input
+(`reset`, `connect`, `sign_in`, `open_link`, and `redirect`), and it reports
+events on standard output, such as `open_url` when the client wants a
+browser. The script's docstring defines the protocol. Without an adapter,
+`--interactive` tells a person what to do in the client, and its sign-in page
+shows Approve and Decline buttons:
+
+```sh
+uv run tests/conformance/conform_client.py --adapter "node my-client/conformance-adapter.js"
+uv run tests/conformance/conform_client.py --interactive
+```
+
 ## Schema
 
 `schema/apron.schema.json` describes every frame in PROTOCOL.md. A protocol

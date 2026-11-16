@@ -54,7 +54,8 @@ stdout (stderr is free for logs; -v shows it). The driver's pages approve at onc
                                                      carries "email", the address to type;
                                                      webauthn signs in with a passkey
     {"cmd": "type_code", "id": "d4", "code": "418092"}
-                                                     type an emailed code
+                                                     type an emailed code (no scenario
+                                                     uses it yet)
     {"cmd": "open_link", "id": "d5", "url": "https://link.apron.chat/#token=…&state=…&server=…"}
                                                      open an emailed sign-in link (§4.11.2,
                                                      A.4) in the client
@@ -80,7 +81,9 @@ stdout (stderr is free for logs; -v shows it). The driver's pages approve at onc
     {"event": "error", "message": "…"}              something went wrong in the adapter
     {"event": "log", "message": "…"}                a note, shown with -v
   A browser client may also let its browser load the driver's pages over HTTP:
-  in adapter mode they approve at once, with a 302 to redirect_uri.
+  in adapter mode they approve at once, with a 302 to redirect_uri. An adapter for
+  a web client can intercept every navigation to another origin, in popups and in
+  its own tab, report it as open_url, and answer it with a 302 to the redirect.
 
 Interactive mode: no adapter. The driver prints what to do, such as ">>> Sign in to
 ws://127.0.0.1:38765/ws with external now", and a person uses the client's real UI.
@@ -103,7 +106,8 @@ Scenarios (ID, section, what passes):
   external.A1.resource       §4.12.2  resource is the origin the client connected to, also
                                       when the begin names an issuer elsewhere
   external.A4.wrong-state    §4.12.2  does not redeem after a redirect with another state
-  external.shape.declined    §4.12.2  after error=access_denied, sends nothing and stops
+  external.shape.declined    §4.12.2  after error=access_denied, redeems nothing, and stops
+                                      (WARN: it sends any auth)
   external.shape.reconnect   §4.12.2  after the driver drops the connection mid-sign-in,
                                       reconnects and redeems
   external.A2.url-scheme     §4.12.1  does not open a begin url that is not https or
@@ -922,7 +926,8 @@ async def external_flow(d, mode="approve", begin=default_begin, on_page=None, hi
     d.page_hint = hint or ("Press Approve." if mode != "decline" else "Press Decline.")
     await d.connect("A", start)
     await d.do("sign_in", scheme="external",
-               say=f"Sign in to {d.sites['A'].address} with external now. On the sign-in page, {d.page_hint.lower()}")
+               say=f"Sign in to {d.sites['A'].address} with external now. On the sign-in page, "
+                   f"{d.page_hint[0].lower()}{d.page_hint[1:]}")
     flow = Flow()
     flow.begin = await d.until(lambda e: is_begin(auth_params(e, "A")), start)
     if not flow.begin:
@@ -1171,8 +1176,10 @@ async def _(d):
 async def _(d):
     flow = await negative_flow(d, "decline")
     sent = [e for e in flow.after if auth_params(e) is not None]
-    if sent:
-        raise Fail(f"after the decline, the client sent {short(sent[0].frame, 160)}")
+    if any("code" in auth_params(e) for e in sent):
+        raise Fail(f"after the decline, the client redeemed a code: {short(sent[0].frame, 160)}")
+    # No rule forbids a new begin after a decline, but the user declined: a client that starts again loops.
+    should(not sent, f"after the decline, the client sent {short(sent[0].frame if sent else '', 160)}")
     if flow.stopped:
         d.note(f"the adapter reported that the client stopped: {flow.stopped.event.get('reason')}")
     elif d.adapter:
