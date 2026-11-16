@@ -507,7 +507,7 @@
         "labels": {
           "description": "A label for each sign-in scheme, such as {\"external\": \"Acme SSO\"} (§3.2).",
           "type": "object",
-          "additionalProperties": {"type": "string", "maxLength": 64}
+          "additionalProperties": {"type": "string"}
         },
         "ping": {
           "type": "number",

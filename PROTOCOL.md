@@ -438,11 +438,11 @@ class AuthResult {
   as "Join as a guest. Your client keeps a token to sign you back in." Clients
   show it on the sign-in screen as CommonMark ([§3.5.2](#352-rendering)), and
   never parse it.
-- `server.labels` maps a scheme to a label: a short name for what the user
-  signs in with, such as `{"external": "Acme SSO", "token": "Invite code"}`.
-- A label is plain text, at most 64 characters.
-- Clients show a scheme's label when available, such as "Sign in with Acme
-  SSO".
+- `server.labels` maps a scheme to a label, such as `{"external": "Acme SSO",
+  "token": "Invite code"}`.
+- A label is a short plain-text noun that fits on one button, such as
+  "Acme SSO" or "Pocket ID".
+- Clients MAY put "Sign in with" before a label, or shorten the label.
 - `name` and `user_id` are optional requests, and work with any scheme. `you`
   is what the server assigned.
 - Servers SHOULD NOT assign a `user_id` that was used before, unless they
