@@ -47,7 +47,7 @@ The design held:
 | Popups and referrer (S1) | The sign-in pages MUST NOT send `Cross-Origin-Opener-Policy` other than `unsafe-none`, and SHOULD send `Referrer-Policy: no-referrer`. §4.12.3's lead-in now says that "the page" means the page at `url` and the passkey page. | `25eba8c` |
 | Email | An approval MAY carry the proposal's `state`, so a short code works after a reconnect. Servers that list `email` or `external` MUST list `token`. | `b4dfef2`; Go `f2e44a8`, apron-web `60a1960` |
 | Passkey page return | By redirect and code, not a back channel to the begin connection (PLAN_WEBAUTHN_EXTERNAL.md, decision 8). | `a5c88f3` |
-| Dependencies | apron-server-go replaces its hand-written foreign-issuer JOSE and OAuth code with go-jose v4 and x/oauth2. go-oidc is left out: it only does OpenID Connect discovery, refetches keys on every unknown key ID, and reads responses without size caps. | in progress |
+| Dependencies | apron-server-go replaces its hand-written foreign-issuer JOSE and OAuth code with go-jose v4 and x/oauth2. go-oidc is left out: it only does OpenID Connect discovery, refetches keys on every unknown key ID, and reads responses without size caps. Code lines in the foreign-issuer files: 483 → 354; 2 direct modules; binary +1.4%. | Go `5c42dc9`…`7102d21` |
 | Extensions layout | One file per extension in `extensions/`, EXTENSIONS.md as the index, and `extensions/AGENTS.md` for style. `ext_oauth.md` ends with the references it relies on. | `52ef121`, `2cfea2d`, `ac6beba` |
 | apron-web's startup budget | Raised for the startup JS size only, `a4f9220` | apron-web#278 |
 
@@ -119,7 +119,7 @@ These are small, and none made two implementations disagree. S1–S4, S17 and S1
 | apron-server-go, shared OAuth helpers | ~520 lines | request parsing, redirect rules, client naming, codes, confirmation |
 | apron-server-go, `external` page + token endpoint | ~430 lines | |
 | apron-server-go, passkey page | ~560 lines + ~80-line script | the script includes ~40 lines of WebAuthn JSON fallback |
-| apron-server-go, foreign issuer | ~500 lines | hand-written JOSE: discovery, JWKS, verification. Being replaced with go-jose + x/oauth2 (the prototype: ~305 code lines, 2 modules) |
+| apron-server-go, foreign issuer | ~500 lines | now go-jose + x/oauth2: 354 code lines, with discovery, the `typ`/`cnf` checks, the key throttle and Ed25519 still hand-written |
 | apron-server-cloudflare, code store + redemption | ~250 lines | Durable Object storage, with an expiry index |
 | apron-server-cloudflare, page ceremony + page | ~450 lines | two same-origin JSON endpoints |
 
