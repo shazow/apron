@@ -105,6 +105,7 @@ These are small, and none made two implementations disagree. S1–S4, S11–S18 
 - **S26. `user.name` in a register begin.** [conformance] §4.10's SHOULD (the begin's `name` for `user.name`) is in tension with WebAuthn, where `user.name` identifies the account. apron-server-cloudflare uses its own handle there, which gives a WARN.
 - **S27. Sending a bearer token only to its own server.** [client driver] No rule says that a client sends a token only to the server that issued it; §5.2 only explains copied tokens. Proposed for §3.2.1: "Clients send a bearer token only to the server that issued it."
 - **S28. Client rules without key words.** [client driver] Many client rules are plain sentences ("A client drops a link…", "Clients reject any other `url`"). The drivers treat them as requirements, as the server rules are. Worth a line in AGENTS.md, or key words where a rule guards against an attack.
+- **S29. A trusted native app's token from its own ceremony.** [recipe review] §4.10 accepts a `token` from a finish with `credential` only on a connection whose `Origin` is the ceremony's origin, but a native app sends no `Origin`, and the spec doesn't say what a native ceremony's origin is (Apple uses the associated domain; Android `android:apk-key-hash:…`). A first-party app that runs the ceremony itself may not be able to resume with that token. Options: say that a native app sends the ceremony's origin as `Origin`, or that such an app uses the passkey page's code (which works from any `Origin`).
 
 ## Housekeeping
 
