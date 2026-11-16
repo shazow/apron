@@ -2243,6 +2243,10 @@ def page_checks(kind):
     @check(ident("A1", "resource"), "4.12.3", f"{name} shows the error of a request without resource, or with "
                                               "another resource, and never redirects it", needs=needs)
     async def _(run):
+        status, _, _ = await http_request(origin_of(run) + "/.well-known/openid-configuration")
+        if 200 <= status < 300:
+            raise Skip("the server publishes OpenID Connect discovery, so it is an identity provider for other sites, "
+                       "and its policy decides which other requests are valid (§4.12.3)")
         await refused(run, {"without resource": {"resource": None}, "with another resource": {"resource": FOREIGN}})
 
     @check(ident("A2", "redirect-uri"), "4.12.3", f"{name} refuses a javascript:, data:, dotless-scheme, or non-loopback http redirect_uri, and "

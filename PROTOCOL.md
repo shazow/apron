@@ -2678,8 +2678,11 @@ sign-in pages: the page at `url`, and its passkey page
 - The server MUST refuse any other `redirect_uri` (such as `javascript:` or
   `data:`).
 - The server MUST require PKCE `S256`.
-- The server MUST refuse a request without `resource`, or with a `resource`
-  other than its origin.
+- A server that is not an identity provider for other sites MUST refuse a
+  request without `resource`, or with a `resource` other than the server's
+  origin.
+- For an identity provider, server policy decides which other requests are
+  valid.
 - The page MUST show the error of an invalid request itself (any `https` address
   is a valid `redirect_uri`, so redirecting errors would make the page an open
   redirector).
@@ -2858,9 +2861,9 @@ server.
   user's address, get the token from the user or the client, and sign in to
   the other server as the user (mix-up).
 - Clients send `resource` for the server that they are connected to, never
-  one that a server names ([§4.12.2](#4122-signing-in)), and a server's page
-  refuses any other ([§4.12.3](#4123-authorization-server)). So a server that
-  points its `url` at another server's page gets no code that the other
+  one that a server names ([§4.12.2](#4122-signing-in)), and a server redeems
+  only a code for its own origin ([§4.12.4](#4124-redemption)). So a server
+  that points its `url` at another server's page gets no code that the other
   server would redeem. Servers on one host and port share an origin, so they
   trust each other.
 - A client gives a code only to the server that it is connected to, which
