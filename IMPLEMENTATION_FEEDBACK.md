@@ -29,7 +29,7 @@ The design held:
 
 | Item | Decision | Where |
 |---|---|---|
-| M1. Guests and additions | Whether a guest counts as signed in is server policy. "Guests included" is gone from §4.11.1 and §4.12.4. | §3.2, `8837756` |
+| M1. Guests and additions | On a guest connection, server policy decides whether signing in with another scheme adds it to the guest's account. "Guests included" is gone from §4.11.1 and §4.12.4. | §3.2, `8837756`, `7489bc3` |
 | M2. Begin without `public_key` | A begin result carries `challenge_id` and `public_key`, `external`, or both. Without `public_key`, there is no `challenge_id`. A finish with a code sends none. | §4.10, §4.10.1, `a475c07` |
 | M3. Origin of a `ws://` address | The origin is `http://` for a `ws://` address on a loopback host. | §4.12.1, `a475c07` |
 | M4. Which `url` a client opens | Only `https`, or `http` on a loopback host. | §4.12.1, `a475c07` |
@@ -38,13 +38,23 @@ The design held:
 | S14. Tokens from codes and `Origin` | The rules now say what servers check, instead of "binding" a token to an origin. A passkey token from a ceremony in the client is accepted only on a connection with the ceremony's `Origin`. Servers never refuse a token from a code, or any token of `external`, because of `Origin`. §5.2 says that rotation limits a copy. | §4.10, §4.10.1, §4.12.4, §5.2, `347ebd4` |
 | Offering the passkey page to old clients | Servers offer `webauthn` with `external.url` to every connection, and the begin result has no `public_key` where the origin can't use the RP ID. There is no rollout switch: clients that predate §4.10.1 see a passkey option they can't complete, and they update. `token` and `guest` keep working for them. | apron-server-cloudflare#97, as is |
 | Confirmation screens (trimmed) | The page redirects only to a client that the user allowed. A user allows an `https` `redirect_uri` once per account, and any other at each sign-in. The `external` page shows one screen after its sign-in; the passkey page shows one screen before the passkey. Repeat sign-ins through Pocket ID cost 1 tap instead of 3. | §4.12.3 `72a6e2b`; Go `9265022`, `44aef05`; Cloudflare `e1d1500` |
-| Another authorization server | Only with client ID metadata documents, JWT access tokens (`typ: at+jwt`), and a userinfo lookup for new accounts' names. | `dee3bde`; Go `19403b8`, `a8d4ea1` |
+| Another authorization server | Kept, as an optional server feature in `ext:oauth`, not core. Only with client ID metadata documents, JWT access tokens (`typ: at+jwt`), `resource` bound to `aud`, and a userinfo lookup for new accounts' names. Built in apron-server-go only. | `dee3bde`, `3ae073f`; Go `19403b8`, `a8d4ea1` |
+| PLAN_LOOSE over PLAN_MINIMAL | Kept. Without foreign-issuer mode the difference is PKCE, `resource` and `client_id`, which let any client get a redirect safely; PLAN_MINIMAL would type codes instead. | session decision |
+| Core and extension split | §4.12 keeps only what every client and server needs: begin, the authorization request, the server's own page, and redemption on the connection. `issuer` stays in core, as the authorization server of `url`. A client with a client ID metadata document SHOULD use its URL as `client_id`. Everything else moves to `ext:oauth`: metadata, the token endpoint, CORS, fetching metadata documents, another authorization server, and library clients. §4.12.4 is now "Redemption". | `39d44e6`, `3ae073f`, `0707b1b` |
+| Token endpoint client authentication | `client_id` in the body or as HTTP Basic with an empty password; a request refused before redemption keeps the code usable (x/oauth2's default tries Basic first). | `ext:oauth`; Go `3dc4f6c`, Cloudflare `9b7e828` |
+| Protected resource metadata | RFC 9728, naming the authorization server, for MCP-style clients. | `ext:oauth`; Go `627de97` |
+| Identity provider | Optional part of `ext:oauth`: another site signs users in through OpenID Connect (`scope=openid`, no `resource`), and gets an ID token and userinfo but no Apron session. A server opts in by publishing its discovery document. Core now refuses a request without `resource`, so a server without it never treats such a request as a sign-in. Not built. | `d049193` |
+| Popups and referrer (S1) | The sign-in pages MUST NOT send `Cross-Origin-Opener-Policy` other than `unsafe-none`, and SHOULD send `Referrer-Policy: no-referrer`. §4.12.3's lead-in now says that "the page" means the page at `url` and the passkey page. | `25eba8c` |
+| Email | An approval MAY carry the proposal's `state`, so a short code works after a reconnect. Servers that list `email` or `external` MUST list `token`. | `b4dfef2`; Go `f2e44a8`, apron-web `60a1960` |
+| Passkey page return | By redirect and code, not a back channel to the begin connection (PLAN_WEBAUTHN_EXTERNAL.md, decision 8). | `a5c88f3` |
+| Dependencies | apron-server-go replaces its hand-written foreign-issuer JOSE and OAuth code with go-jose v4 and x/oauth2. go-oidc is left out: it only does OpenID Connect discovery, refetches keys on every unknown key ID, and reads responses without size caps. | in progress |
+| Extensions layout | One file per extension in `extensions/`, EXTENSIONS.md as the index, and `extensions/AGENTS.md` for style. `ext_oauth.md` ends with the references it relies on. | `52ef121`, `2cfea2d`, `ac6beba` |
 | apron-web's startup budget | Raised for the startup JS size only, `a4f9220` | apron-web#278 |
 
 Implementations brought in line:
 
-- **apron-server-go** shows errors on the page (`e773491`), and doesn't refuse tokens from codes because of `Origin` (`b5a2f3c`).
-- **apron-server-cloudflare** and **apron-web** already matched.
+- **apron-server-go** shows errors on the page (`e773491`), and doesn't refuse tokens from codes because of `Origin` (`b5a2f3c`). It leaves `webauthn` out of `signup` with guests off (S17, `135b9c0`), and names new accounts from userinfo (S18, `19403b8`).
+- **apron-server-cloudflare** and **apron-web** already matched. apron-web says when a server has the older `external` (`d1888cc`), and hints when a code is refused off its connection (`309aed8`).
 
 ### Follow-up: apron-server-go and guests
 
@@ -57,32 +67,14 @@ Under M1 this is the server's policy, so the fix belongs in apron-server-go. Eit
 
 ## Should clarify
 
-These are small, and none made two implementations disagree.
+These are small, and none made two implementations disagree. S1–S4, S17 and S18 are resolved (see "Decisions").
 
-- **S1. The page must not cut off its opener.** [cf F12, web F13] Both implementers found this independently.
-  - `Cross-Origin-Opener-Policy: same-origin` on a sign-in page breaks popup clients: `popup.closed` reads true at once, and `window.opener` is gone.
-  - Proposed: "The page does not send `Cross-Origin-Opener-Policy: same-origin`: web clients open it in a popup."
-  - Also proposed: a SHOULD for `Referrer-Policy: no-referrer`.
-- **S2. `url`'s `client_id` is the client's `client_id`.** [go F14] The Go test client kept `url`'s `client_id`, then redeemed with its own, and a foreign issuer correctly refused. The two rules sit in different bullets. Proposed, in §4.12.2: "If `url` carries `client_id`, clients use it in the request and the redemption."
-- **S3. The server sends `resource` at the token endpoint.** [go F12] Some issuers pick the audience there.
-- **S4. Foreign issuer requirements, stated plainly.** [go F11, go F13, go F20]
-  - §4.12.4's `aud` MUST makes binding to `resource` a MUST in effect.
-  - Introspection needs credentials that the server lacks with a public `client_id`.
-  - Proposal: require JWT access tokens (RFC 9068) from a foreign issuer, or say that introspection needs the server's own credentials.
-  - **Pocket ID checked (main, e22f0b6).** It works with configuration:
-    - its access tokens are RFC 9068 JWTs;
-    - `resource` becomes `aud` when the Apron server is registered as an API and the client is allowed to reach it;
-    - its callback URL patterns accept wildcards;
-    - client ID metadata documents are allowed by an operator URL allowlist.
-
-    SERVER.md should list these settings.
 - **S5. Popups and user activation.** [web F3] Begin answers after the tap, so `window.open` may be blocked. Informative note: "A web client can open a window during the tap, before begin answers, and send it to `url` afterwards."
 - **S6. An addition after a full-page redirect needs the session back.** [web F12] It works only with a resumable `token`. Informative note.
 - **S7. `request` handle lifetime.** [cf F13] The plan's handle is made before the user reads the page. "Expires with the codes" is too short for that. Proposed: "expires within minutes, like a code". apron-server-cloudflare uses 10 minutes for the handle and 5 for a code.
 - **S8. Confirmation wording.** [cf F11, go F7, go F8, interop F5, F6, F9, F13] The screens read word for word the same on both servers. Proposed changes:
   - Give "Only continue if you just started signing in on …" its own column. "on An app on this device (com.example.myapp)" reads badly.
   - Let a server's configured first-party origins count as "recognised". apron-server-cloudflare already omits the "not verified" line for them; apron-server-go always shows it.
-  - New-identity screen: "…wants to sign in to chat.example as you". That is true whether the code makes an account or is added to one. Today, "Add external sign-in" shows apron-server-go's "wants to create an account for you", then adds the identity.
   - A local web app on `http://127.0.0.1:5173/…` reads as "An app on this device". Showing the host and port would be more useful. Low priority.
   - "Not you?" starts the page's sign-in again. Whether that prompts depends on the identity provider.
 - **S9. The State table undercounts the page.** [cf F4] The page's own ceremony spans two HTTP requests. A login code MAY be issued before Allow, if only the page holds it until Allow.
@@ -99,9 +91,6 @@ These are small, and none made two implementations disagree.
 - **S16. Email `state` on approval: details.** [email-state F1, F2] The new rule ("An approval MAY carry the proposal's `state`") works in apron-server-go (`f2e44a8`) and apron-web (`60a1960`). Two cases are open:
   - **Two pending proposals with one `state`.** apron-server-go lets the newest proposal own it. Proposed: "Clients use a new `state` for each proposal."
   - **A `state` that matches no pending proposal.** apron-server-go treats it as `denied`, and the attempt counts against nothing. Proposed: "A `state` that matches no pending proposal is ignored."
-
-- **S17. apron-server-go lists `webauthn` in `signup` with guests off.** [real-screens run] `server.signup` is `auth` minus `token` (`apron/server.go:1160`), so with `--disable-guests` it still offers passkey sign-up. But a passkey registration needs a guest or an invitation, so apron-web shows "Create account" and the server refuses it. The bug is already on main, not from #39. Fix: leave `webauthn` out of `signup` when guests are off.
-- **S18. Pocket ID as issuer creates nameless accounts.** [real-screens run, go F15] Pocket ID's access token carries no profile claims, so mode A creates `user_1` with no name. Keeping foreign-issuer mode needs a userinfo lookup in apron-server-go, or another source for the name.
 
 ## Housekeeping
 
@@ -130,7 +119,7 @@ These are small, and none made two implementations disagree.
 | apron-server-go, shared OAuth helpers | ~520 lines | request parsing, redirect rules, client naming, codes, confirmation |
 | apron-server-go, `external` page + token endpoint | ~430 lines | |
 | apron-server-go, passkey page | ~560 lines + ~80-line script | the script includes ~40 lines of WebAuthn JSON fallback |
-| apron-server-go, foreign issuer | ~500 lines | hand-written JOSE: discovery, JWKS, verification |
+| apron-server-go, foreign issuer | ~500 lines | hand-written JOSE: discovery, JWKS, verification. Being replaced with go-jose + x/oauth2 (the prototype: ~305 code lines, 2 modules) |
 | apron-server-cloudflare, code store + redemption | ~250 lines | Durable Object storage, with an expiry index |
 | apron-server-cloudflare, page ceremony + page | ~450 lines | two same-origin JSON endpoints |
 
