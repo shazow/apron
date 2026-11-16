@@ -82,11 +82,11 @@ class Remote {                  // user.ext.remote, message.ext.remote
   `room_id` and `message_id` from the request, or from the saved message when
   the request leaves them out.
 - A link acts only in rooms that it has joined. A remote user's first write in
-  a room joins it to the room ([§4.2.2](../PROTOCOL.md#422-membership)). A
-  remote user who left or was removed is not joined again.
+  a room joins it to the room ([§4.2.2](../PROTOCOL.md#422-membership)), also
+  after it left. A remote user that another user removed is not joined again.
 - The result of a `me` request from a link carries the remote user as `you`.
 - A create from a link whose `room_id` and `message_id` match a message that
-  the link already wrote is a duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)):
+  the link already wrote, also one deleted since, is a duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)):
   its result carries that message's `message_id`.
 - A link's own requests, without `ext.remote.user_id`, act as the link.
 
