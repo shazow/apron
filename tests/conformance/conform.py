@@ -92,6 +92,7 @@ ids = (f"conf{n}" for n in itertools.count(1))
 class Fail(Exception): pass
 class Warn(Exception): pass
 class Skip(Exception): pass
+class Manual(Exception): pass  # a rule that a machine cannot check: a checklist item for a person
 
 
 def must(condition, why):
@@ -118,6 +119,35 @@ def describe(reply):
 
 def expect_error(reply, name, what):
     must(code(reply) == CODES[name], f"{what}: expected error/{name}, got {describe(reply)}")
+
+
+def offers(*schemes):
+    return lambda s: all(name in s.get("auth", []) + s.get("signup", []) for name in schemes)
+
+
+def signed_in(reply):
+    return isinstance(reply, dict) and isinstance(reply.get("result", {}).get("you"), dict)
+
+
+def policy(reply):
+    """Skip the check when the server's policy refused a request with retry_after."""
+    if code(reply) == CODES["retry_after"]:
+        raise Skip(f"the server's policy refused it: {describe(reply)}")
+
+
+async def unless_policy(reply, what, control=None):
+    """Skip the check when the server's policy refused the request: retry_after, or denied, which §1.1 allows for a
+    well-formed request that the user or the server does not allow, such as a guest who may only read.
+
+    control, if given, is a function that sends a request that the same policy treats alike, but that the rule
+    under test allows, such as the same request for a room that exists. Then denied is policy only if control is
+    denied too; otherwise the check goes on, and fails on the denied reply."""
+    policy(reply)
+    if code(reply) != CODES["denied"]:
+        return
+    if control is not None and code(await control()) != CODES["denied"]:
+        return
+    raise Skip(f"the server's policy refused {what}: {describe(reply)}")
 
 
 class Schema:
@@ -320,6 +350,11 @@ class Conn:
 
     def since(self, start, match):
         return [f for f in self.frames[start:] if isinstance(f, dict) and match(f)]
+
+
+async def reply_to(conn, method, params):
+    """Send a request, and return its reply."""
+    return (await conn.request(method, params))[1]
 
 
 def snapshot_of(message_id, room_id=None):
@@ -571,10 +606,56 @@ async def _(run):
         expect_error((await conn.request("auth", {"scheme": scheme, **params[scheme]}))[1], "unsupported", f"auth {scheme}")
 
 
+@check("1.2", "auth runs on each connection, also when it repeats an id")
+async def _(run):
+    id = "conformance-auth-" + secrets.token_hex(4)
+    first = await run.open(auth=False)
+    _, reply = await first.request("auth", run.auth("Conformance"), id=id)
+    policy(reply)
+    must(signed_in(reply), f"auth: {describe(reply)}")
+    # The same request on a new connection signs that connection in, and not from a cache.
+    second = await run.open(auth=False)
+    _, again = await second.request("auth", run.auth("Conformance"), id=id)
+    policy(again)
+    must(signed_in(again), f"the same auth, with the same id, on a new connection: {describe(again)}")
+    _, me = await second.request("me", {})
+    must("result" in me, f"me after it got {describe(me)}: the auth was answered without signing the connection in")
+    must(me["result"].get("you", {}).get("user_id") == again["result"]["you"]["user_id"],
+         "me runs as another user than the auth's you")
+    if not offers("token")(run.server):
+        return run.info("the server does not offer token, so a repeat without credentials was not tried")
+    # A repeat with a made-up token is answered for that token, as a request with a new id is.
+    made_up_token = {"scheme": "token", "token": "conformance-" + secrets.token_urlsafe(24)}
+    third = await run.open(auth=False)
+    _, repeat = await third.request("auth", made_up_token, id=id)
+    policy(repeat)
+    _, me = await third.request("me", {})
+    if signed_in(repeat):
+        must("result" in me, f"a repeat with a made-up token returned you, then me got {describe(me)}: a cached result")
+        return run.info("the server's policy accepts a made-up token")
+    must(code(me) == CODES["denied"], f"a repeat with a made-up token was refused, then me got {describe(me)}")
+    if code(repeat) != CODES["denied"]:
+        fresh = await run.open(auth=False)
+        _, control = await fresh.request("auth", made_up_token)
+        must(code(control) == code(repeat), f"a repeat with a made-up token got {describe(repeat)}, but the same "
+                                            f"request with a new id got {describe(control)}: the id was deduplicated")
+
+
+@check("3.2.1", "a made-up token is denied", needs=offers("token"))
+async def _(run):
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "token", "token": "conformance-" + secrets.token_urlsafe(24)})
+    policy(reply)
+    if signed_in(reply):
+        raise Skip(f"the server's policy accepts any token (§3.2): {describe(reply)}")
+    expect_error(reply, "denied", "a made-up token")
+
+
 @check("3.6.3", "accepts message without room_id into its default room")
 async def _(run):
     conn = await run.open()
     i, reply = await conn.request("message", {"body": {"text": "conformance: default room"}})
+    await unless_policy(reply, "a post")
     must("result" in reply and isinstance(reply["result"].get("message_id"), str), f"got {describe(reply)}")
     message_id = reply["result"]["message_id"]
     _, snapshot = await conn.wait(snapshot_of(message_id))
@@ -671,6 +752,8 @@ async def _(run):
 async def _(run):
     conn = await run.open()
     reply = (await conn.request("message", {"room_id": "conformance-no-such-room", "body": {"text": "x"}}))[1]
+    control = lambda: reply_to(conn, "message", {"room_id": run.room, "body": {"text": "conformance: a room that exists"}})
+    await unless_policy(reply, "a post", control if run.room else None)
     expect_error(reply, "invalid_params", "posting to an unknown room")
 
 
@@ -705,8 +788,15 @@ async def _(run):
 @check("3.3.2", "me returns the user's complete object")
 async def _(run):
     conn = await run.open()
-    you = (await conn.call("me", {"name": "Conformance Renamed"})).get("you", {})
-    must(you.get("user_id") == conn.you["user_id"], "you.user_id changed")
+    you = (await conn.call("me", {})).get("you", {})
+    must(you.get("user_id") == conn.you["user_id"], "me's you.user_id is not the auth's")
+    _, reply = await conn.request("me", {"name": "Conformance Renamed"})
+    try:
+        await unless_policy(reply, "a new name")
+    except Skip as refusal:
+        return run.info(str(refusal))
+    must("result" in reply, f"me with a new name: {describe(reply)}")
+    must(reply["result"].get("you", {}).get("user_id") == conn.you["user_id"], "a new name changed you.user_id")
 
 
 # §4 capabilities
@@ -931,6 +1021,7 @@ async def _(run):
     conn = await run.open()
     start = len(conn.frames)
     i, reply = await conn.request("room_set", {"title": "Conformance"})
+    await unless_policy(reply, "a new room")
     must(isinstance(reply.get("result", {}).get("room_id"), str), f"room_set got {describe(reply)}")
     room_id = reply["result"]["room_id"]
     j, update = await conn.wait(room_update("joined", room_id), start)
@@ -991,7 +1082,10 @@ async def _(run):
 @check("4.2.2", "joining an unknown room is error/invalid_params", needs="rooms")
 async def _(run):
     conn = await run.open()
-    expect_error((await conn.request("room_join", {"room_id": "conformance-no-such-room"}))[1], "invalid_params", "room_join")
+    _, reply = await conn.request("room_join", {"room_id": "conformance-no-such-room"})
+    control = lambda: reply_to(conn, "room_join", {"room_id": run.room})
+    await unless_policy(reply, "room_join", control if run.room else None)
+    expect_error(reply, "invalid_params", "room_join")
 
 
 @check("4.2.4", "a private room is kept private or refused as error/unsupported", needs="rooms")
@@ -1001,6 +1095,7 @@ async def _(run):
     _, reply = await a.request("room_set", {"title": "Conformance private", "private": True})
     if code(reply) == CODES["unsupported"]:
         return
+    await unless_policy(reply, "a new room")
     must("result" in reply, f"got {describe(reply)}")
     room_id = reply["result"]["room_id"]
     _, update = await a.wait(room_update("joined", room_id), start)
@@ -1118,6 +1213,8 @@ async def _(run):
 async def _(run):
     conn = await run.open()
     ext = lambda params: conn.call("me", params)
+    _, reply = await conn.request("me", {"ext": {"conformance": {"a": 1}}})
+    await unless_policy(reply, "ext on the user")
     you = (await ext({"ext": {"conformance": {"a": 1}}}))["you"]
     must(you.get("ext", {}).get("conformance") == {"a": 1}, "ext.conformance was not kept")
     you = (await ext({"ext": {"conformance2": "x"}}))["you"]
@@ -1468,25 +1565,15 @@ async def _(run):
 SIGN_IN_PARAMS = {"response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state", "resource"}
 CLIENT_ID = "apron-conformance"  # a plain client ID: an https one may make the server fetch a metadata document
 FOREIGN = "https://conformance.example"  # an origin that is not the server's
+# redirect_uris that a sign-in page MUST refuse (§4.12.3): a script, a document, a scheme without a ".", and plain http
+# on a host that is not loopback.
+BAD_REDIRECTS = ["javascript:alert(document.domain)//", "data:text/html,<script>alert(document.domain)</script>",
+                 "conformance:/signed-in", "http://conformance.example/signed-in"]
 SIGN_IN_WAIT = 300  # seconds a person has for each sign-in
-
-
-def offers(*schemes):
-    return lambda s: all(name in s.get("auth", []) + s.get("signup", []) for name in schemes)
 
 
 def oauth_needs(s):
     return "ext:oauth" in s.get("capabilities", []) and offers("external")(s)
-
-
-def policy(reply):
-    """Skip the check when the server's policy refused a request with retry_after."""
-    if code(reply) == CODES["retry_after"]:
-        raise Skip(f"the server's policy refused it: {describe(reply)}")
-
-
-def signed_in(reply):
-    return isinstance(reply, dict) and isinstance(reply.get("result", {}).get("you"), dict)
 
 
 def loopback(host):
@@ -1858,6 +1945,22 @@ def page_checks(kind):
                                           "showing its error")
             if status < 300:
                 run.info(f"a request {case} got HTTP {status}: make sure that the page shows an error")
+
+    @check("4.12.3", f"{name} refuses a javascript:, data:, dotless-scheme, or non-loopback http redirect_uri, and "
+                     "never redirects it", needs=needs)
+    async def _(run):
+        page = await page_of(run, kind)
+        shown = []
+        for redirect_uri in BAD_REDIRECTS:
+            request = Grant(run, page, redirect_uri)
+            status, headers, _ = await http_request(request.url)
+            must(not redirects_to(status, headers, page, redirect_uri), f"it redirected to {redirect_uri}")
+            must(not 300 <= status < 400, f"a request with redirect_uri {redirect_uri} redirected to "
+                                          f"{headers.get('Location')} instead of showing its error")
+            if status < 300:
+                shown.append(f"{redirect_uri} (HTTP {status})")
+        if shown:
+            raise Manual(f"it answered {', '.join(shown)}: check that the page shows an error, and offers no sign-in")
 
     @check("4.12.3", f"{name} takes any client_id, and an https or private-use redirect_uri", needs=needs)
     async def _(run):
@@ -2518,6 +2621,8 @@ async def main():
             status, detail = "WARN", str(e)
         except Skip as e:
             status, detail = "SKIP", str(e)
+        except Manual as e:
+            status, detail = "MANUAL", str(e)
         except Exception as e:  # a crash in a check is the server's failure to answer as expected
             status, detail = "FAIL", f"{type(e).__name__}: {e}"
             if args.verbose:
@@ -2533,7 +2638,7 @@ async def main():
         run.notes.clear()
     if run.server:
         print(f"{run.server.get('agent', 'server')}: {', '.join(run.server.get('capabilities', [])) or 'core only'}")
-    print(", ".join(f"{counts.get(s, 0)} {s.lower()}" for s in ("PASS", "FAIL", "WARN", "SKIP")))
+    print(", ".join(f"{counts.get(s, 0)} {s.lower()}" for s in ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")))
     return 1 if counts.get("FAIL") else 0
 
 
