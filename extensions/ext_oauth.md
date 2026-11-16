@@ -18,6 +18,8 @@ This extension is for what goes beyond that flow:
   one that a company already runs. One provider then serves many servers, and
   controls the users' sessions
   ([Another authorization server](#another-authorization-server)).
+- Other sites that sign users in with their account on this server, where the
+  server offers it ([Identity provider](#identity-provider-optional)).
 
 ```jsonc
 // <- begin, when the server uses another authorization server
@@ -84,6 +86,53 @@ These rules apply to a server that is its own authorization server:
   [device authorization grant](https://www.rfc-editor.org/rfc/rfc8628), where
   the issuer offers it.
 
+## Identity provider (optional)
+
+Lets another site, such as another Apron server, sign users in with their
+account on this server, without access to their messages. The server acts as
+an OpenID Connect provider.
+
+```jsonc
+// another server sends the user to
+//   https://chat.example/oauth/authorize?response_type=code&scope=openid%20profile
+//   &client_id=https://other.example/client.json&redirect_uri=https://other.example/signed-in
+//   &code_challenge=E9Mel…&code_challenge_method=S256&state=q8Rz…&nonce=n-0S6…
+// the page asks, and redirects with a code; the other server redeems it at the token endpoint
+// <- the token endpoint's answer
+{"token_type": "Bearer", "access_token": "ui_7Hd…", "id_token": "eyJhbGciOiJFUzI1NiJ9…", "expires_in": 300}
+// the ID token's claims
+{
+  "iss": "https://chat.example", "sub": "u_8Fq2…", "aud": "https://other.example/client.json",
+  "nonce": "n-0S6…", "iat": 1763258400, "exp": 1763258700,
+  "name": "Ada", "preferred_username": "ada"
+}
+```
+
+- A server MAY act as an identity provider. It then publishes its OpenID
+  Connect discovery document, with `openid` in `scopes_supported`. A server
+  without that document is not an identity provider.
+- An authorization request with `scope` `openid` and no `resource` asks only
+  for who the user is. A server that is not an identity provider refuses it
+  ([§4.12.3](../PROTOCOL.md#4123-authorization-server)).
+- The server accepts such a request only from a client with a client ID
+  metadata document (otherwise the page cannot name the client).
+- The page asks, such as "other.example wants to know who you are on
+  chat.example. It will see your name and user ID, and cannot read or send
+  messages." The user's choice is kept as §4.12.3 says.
+- The token endpoint returns an ID token, signed with a key from the server's
+  `jwks_uri`. The ID token carries `iss` (the server's origin), `sub`, `aud`
+  (the `client_id`), and the request's `nonce`. With `profile`, it also
+  carries `name` and `preferred_username` (the `user_id`).
+- `sub` never changes for an account, and is never its `user_id` (otherwise
+  a renamed or reused `user_id` would sign in to another account).
+- The access token works only at the userinfo endpoint. It is not a bearer
+  token for `scheme: "token"`.
+- A code from such a request finishes neither `external` nor `webauthn`.
+- The discovery document also gives `userinfo_endpoint`, `jwks_uri`, and
+  `subject_types_supported` `["public"]`.
+- The other site uses the server as any OpenID Connect provider, behind its
+  own sign-in page, and identifies the account by `iss` and `sub`.
+
 Without the extension, clients redeem codes on the connection
 ([§4.12.2](../PROTOCOL.md#4122-signing-in)), and an `external` request with
 `token` is `denied`.
@@ -106,6 +155,6 @@ Without the extension, clients redeem codes on the connection
 - [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728): Protected Resource
   Metadata
 - [OAuth Client ID Metadata Document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
-- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo):
-  UserInfo (§5.3)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html):
+  ID Token (§2), UserInfo (§5.3)
 - [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
