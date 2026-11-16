@@ -32,8 +32,9 @@ client's author writes, and talks to it in JSON lines over the adapter's stdin a
 stdout (stderr is free for logs; -v shows it). The driver's pages approve at once.
 
   The adapter starts by writing:
-    {"event": "ready", "schemes": ["guest", "external", "webauthn", "email"],
+    {"event": "ready", "name": "my-client", "schemes": ["guest", "external", "webauthn", "email"],
      "token_endpoint": false, "rp_id": "localhost"}
+      name: optional; how the driver names the client.
       schemes: the sign-in schemes the adapter can drive.
       token_endpoint: true for a library client that redeems codes at the
         issuer's token endpoint instead of on the connection; it enables
@@ -70,6 +71,8 @@ stdout (stderr is free for logs; -v shows it). The driver's pages approve at onc
     {"cmd": "quit"}                                  exit
   The adapter answers each command with {"event": "done", "id": …} once it has
   carried it out, or {"event": "error", "id": …, "message": "…"} if it cannot.
+  For redirect, done means that the client has been handed the URL: a refusal's
+  wait starts there.
   Other events, at any time:
     {"event": "open_url", "url": "…"}               the client wants to open url in a
                                                      browser or sign-in session; the
@@ -1448,7 +1451,8 @@ async def main():
             print(f"{status:<6} {tid:<26} {label:<9} {title}" + (f": {detail}" if detail else ""), flush=True)
             for note in d.notes:
                 print(f"       note: {note}", flush=True)
-            results.append({"id": tid, "section": section, "status": status, "message": detail, "notes": list(d.notes)})
+            results.append({"id": tid, "section": section, "status": status,
+                            "message": title + (f": {detail}" if detail else ""), "notes": list(d.notes)})
             d.notes.clear()
     finally:
         if d.adapter:
