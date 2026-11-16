@@ -203,12 +203,7 @@ class SlowSocket:
         parts = urllib.parse.urlsplit(url)
         tls = ssl.create_default_context() if parts.scheme == "wss" else None
         loop = asyncio.get_running_loop()
-        family, kind, proto, _, address = (await loop.getaddrinfo(parts.hostname, parts.port or (443 if tls else 80),
-                                                                   type=socket.SOCK_STREAM))[0]
-        sock = socket.socket(family, kind, proto)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
-        sock.setblocking(False)
-        await asyncio.wait_for(loop.sock_connect(sock, address), WAIT)
+        sock = await cls.connect(loop, parts.hostname, parts.port or (443 if tls else 80))
         reader, writer = await asyncio.open_connection(sock=sock, ssl=tls, server_hostname=parts.hostname if tls else None,
                                                        limit=16384)
         conn = cls(ClientProtocol(parse_uri(url), max_size=None), reader, writer)
@@ -226,6 +221,27 @@ class SlowSocket:
                         raise OSError(f"handshake answered {event.status_code}")
                     conn.pending = events[i + 1:]  # frames that came with the handshake's answer
                     return conn
+
+    @staticmethod
+    async def connect(loop, host, port):
+        """A connected socket with a small receive buffer, to the first of host's addresses that answers, as other
+        clients try them: localhost can resolve to ::1 first while a server listens on 127.0.0.1 only."""
+        error = OSError(f"no address for {host}")
+        for family, kind, proto, _, address in await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+            try:
+                sock = socket.socket(family, kind, proto)
+            except OSError as failed:
+                error = failed
+                continue
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
+                sock.setblocking(False)
+                await asyncio.wait_for(loop.sock_connect(sock, address), WAIT)
+                return sock
+            except (OSError, asyncio.TimeoutError) as failed:
+                sock.close()
+                error = failed if isinstance(failed, OSError) else OSError(f"timed out connecting to {address}")
+        raise error
 
     async def flush(self):
         for data in self.protocol.data_to_send():
