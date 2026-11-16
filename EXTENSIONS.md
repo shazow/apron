@@ -41,6 +41,6 @@ Each extension has its own file in [extensions/](extensions/):
   server's external sign-in ([§4.12](PROTOCOL.md#412-external-sign-in)) can go,
   such as "GitHub" and "Google", and lets a client send the user's choice with
   the begin.
-- [`ext:peer`](extensions/ext_peer.md): Adds where a user or a message comes
+- [`ext:remote`](extensions/ext_remote.md): Adds where a user or a message comes
   from, for a server that copies another Apron server's rooms into its own
   log.
