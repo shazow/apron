@@ -2740,8 +2740,8 @@ def redirect_checks(run, grant, issuer):
     must(query["iss"] == issuer, f"the redirect's iss is {query['iss']!r}, not {issuer}")
 
 
-def negative(out, key, what):
-    """The reply to a negative try, which must be denied."""
+def negative(out, key, what, offered=True):
+    """The reply to a negative try, which must be denied, or unsupported for a scheme the server does not offer (§3.2)."""
     if key in out["skipped"]:
         raise Skip(out["skipped"][key])
     if key not in out["negatives"]:
@@ -2750,7 +2750,7 @@ def negative(out, key, what):
         raise Skip("not tried")
     reply = out["negatives"][key]
     must(not signed_in(reply), f"{what} signed in")
-    expect_error(reply, "denied", what)
+    expect_error(reply, "denied" if offered else "unsupported", what)
 
 
 def burn_note(run, out):
@@ -2981,7 +2981,8 @@ async def _(run):
 async def _(run):
     await passkey_page(run)
     out = await flow(run, "passkey", passkey_flow)
-    negative(out, "external", "a passkey page code in an external redemption")
+    negative(out, "external", "a passkey page code in an external redemption",
+             offered="external" in run.server.get("auth", []) + run.server.get("signup", []))
     negative(out, "action", "a passkey page code in a finish with the other action")
 
 
