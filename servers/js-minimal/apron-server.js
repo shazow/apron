@@ -63,7 +63,7 @@ function readHistory(params) {
 function createMessage(you, params) {
   check(params.body && typeof params.body === "object", "Missing body");
   check(!params.deleted, "Cannot create a deleted message");
-  if (!params.body.text && !params.body.embeds?.length) return {}; // Nothing to show: neither logged nor broadcast.
+  check(params.body.text || params.body.embeds?.length, "Empty message");
   const replyTo = params.reply_to?.message_id;
   // The new ID is minted below, so a known target can never be the message itself.
   if ("reply_to" in params) {
@@ -85,8 +85,7 @@ function createMessage(you, params) {
 // Keep this synchronous: history reads, commits, and broadcasts must stay ordered.
 function dispatch(ws, method, params) {
   if (method === "auth") {
-    check(!["token", "webauthn", "email", "external"].includes(params.scheme), "Unsupported scheme", -32601);
-    check(params.scheme === "guest", "Unknown scheme");
+    check(params.scheme === "guest", "Unsupported scheme", -32601);
     ws.data.you ??= { user_id: "guest_" + crypto.randomUUID() };
   }
   check(ws.data.you, "Authenticate first", -32001);

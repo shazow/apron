@@ -77,8 +77,7 @@ class ApronServer:
     def create_message(self, you, p):
         require(isinstance(p.get("body"), dict), "Missing body")
         require(not p.get("deleted"), "Cannot create a deleted message")
-        if not p["body"].get("text") and not p["body"].get("embeds"):
-            return {}  # Nothing to show: neither logged nor broadcast.
+        require(p["body"].get("text") or p["body"].get("embeds"), "Empty message")
         reply_to = p.get("reply_to")
         # The new ID is minted below, so a known target can never be the message itself.
         if "reply_to" in p:
@@ -98,9 +97,7 @@ class ApronServer:
         # No awaits: mutation, history selection, and live delivery are atomic
         # with respect to other connections on this event loop.
         if method == "auth":
-            scheme = p.get("scheme")
-            require(scheme not in ("token", "webauthn", "email", "external"), "Unsupported scheme", -32601)
-            require(scheme == "guest", "Unknown scheme")
+            require(p.get("scheme") == "guest", "Unsupported scheme", -32601)
             self.clients.setdefault(ws, {"user_id": "guest_" + uuid4().hex})
 
         require(ws in self.clients, "Authenticate first", -32001)

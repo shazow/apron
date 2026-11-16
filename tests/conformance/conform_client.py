@@ -165,7 +165,6 @@ WAIT = 20.0  # adapter mode: seconds to wait for something the client should do
 PERSON_WAIT = 300.0  # interactive mode: the same, for a person
 QUIET = 4.0  # seconds to wait for a frame that should not come
 READY_WAIT = 60.0  # seconds for an adapter to start
-SCHEMES = {"guest", "token", "webauthn", "email", "external"}
 CODES = {"unsupported": -32601, "invalid_params": -32602, "denied": -32001}
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema/apron.schema.json"
 UNRESERVED = re.compile(r"[A-Za-z0-9._~-]+")
@@ -426,9 +425,7 @@ class Site:
     def auth(self, conn, params):
         scheme = params.get("scheme")
         if scheme not in self.config.auth:
-            if scheme in SCHEMES:
-                return failure("unsupported", f"This server does not offer {scheme} now")
-            return failure("invalid_params", f"Unknown scheme {scheme!r}")
+            return failure("unsupported", f"This server does not offer {scheme!r} now")
         if scheme == "guest":
             n = next(self.d.user_ids)
             return self.signed_in(conn, {"user_id": f"guest_{n}", "name": params.get("name") or f"Guest {n}"}, scheme)

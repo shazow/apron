@@ -653,10 +653,10 @@ async def _(run):
          "me ran as a different user than auth")
 
 
-@check("auth.shape.unknown", "1", "an unknown auth scheme is error/invalid_params")
+@check("auth.shape.unknown", "3.2", "an unknown auth scheme is error/unsupported")
 async def _(run):
     conn = await run.open(auth=False)
-    expect_error((await conn.request("auth", {"scheme": "ext:conformance-unknown"}))[1], "invalid_params", "auth with an unknown scheme")
+    expect_error((await conn.request("auth", {"scheme": "ext:conformance-unknown"}))[1], "unsupported", "auth with an unknown scheme")
 
 
 @check("auth.shape.unsupported", "3.2", "a defined scheme the server does not offer is error/unsupported")
@@ -755,14 +755,14 @@ async def _(run):
     run.message = p
 
 
-@check("core.message.empty", "3.5.1", "a message with no text and no embeds is not logged")
+@check("core.message.empty", "3.5.1", "a message with no text and no embeds is error/invalid_params")
 async def _(run):
     a, b = await run.joined(), await run.joined()
     start = len(b.frames)
-    result = await a.call("message", {"room_id": run.room, "body": {"text": ""}})
+    reply = (await a.request("message", {"room_id": run.room, "body": {"text": ""}}))[1]
     await asyncio.sleep(QUIET)
-    should(result == {}, f"result is {json.dumps(result)}")
-    should(not b.since(start, lambda f: f.get("method") == "message"), "it was broadcast")
+    expect_error(reply, "invalid_params", "an empty message")
+    must(not b.since(start, lambda f: f.get("method") == "message"), "it was broadcast")
 
 
 @check("core.message.reply-to", "3.5.4", "reply_to must refer to an existing message")
@@ -1102,6 +1102,13 @@ async def _(run):
     j, update = await conn.wait(room_update("updated", room_id), start)
     must(update and j < i, "no room_update updated before the result")
     must(records(update, "updated", room_id)[0].get("title") == "Conformance 2", "the new title is missing")
+    for description in ("About", ""):
+        start = len(conn.frames)
+        await conn.call("room_set", {"room_id": room_id, "description": description})
+        _, update = await conn.wait(room_update("updated", room_id), start)
+        record = records(update, "updated", room_id)[0] if update else {}
+        must(record.get("title") == "Conformance 2", "an edit without title did not keep the title")
+        must(record.get("description", "") == description, f"description is {record.get('description')!r}, not {description!r}")
     run.new_room = room_id
 
 
