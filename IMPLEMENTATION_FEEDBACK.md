@@ -53,6 +53,9 @@ The design held:
 | S11. Codes and `resource` | A code whose `resource` is not the server's origin is invalid. This replaces "wrongly addressed", and stops codes from crossing between hosts that share one backend. | §4.12.4, `659f52b` |
 | S12. Client ID metadata documents and many origins | A client uses its document's URL as `client_id` only when the document lists the `redirect_uri` that it sends. Elsewhere, such as Previews or localhost, it sends a plain `client_id`, as apron-web does. | §4.12.2, `659f52b` |
 | S16. Email `state` details | Left to the server. A client whose approval is `denied` proposes again with a new `state`. apron-server-go lets the newest proposal own a `state`, and denies a `state` that matches no proposal. | no change |
+| S13. Orphan passkeys | Both passkey pages can call `signalUnknownCredential` for a passkey that no account has and no unexpired registration holds, behind a switch that is **off by default**. With it off, the page gives the usual error, so it reveals nothing about which passkeys exist. FIXME: keep it off until WebKit [302624](https://bugs.webkit.org/show_bug.cgi?id=302624) and [322267](https://bugs.webkit.org/show_bug.cgi?id=322267) are fixed (on iOS and macOS 26 the call can delete other accounts' passkeys); check again on 2027-02-16; turn it on only where the server is the sole user of its RP ID. Not in PROTOCOL.md. | Go `--webauthn.signal-unknown` (`60f4a72`…`ed1877f`); Cloudflare `SIGNAL_UNKNOWN_PASSKEYS` (`6aae3cc`…`6f6f689`) |
+| `redirect_uri` refusal | The server MUST refuse a `redirect_uri` that is not `https`, a scheme with a `.`, or loopback `http`. Before, the spec only said which ones to accept. | §4.12.3, §5.2, `fcfed7e` |
+| Conformance | `conform.py` checks sign-in: the passkey page, external, email basics and ext:oauth, without a person, and after sign-in with `--sign-in`. A client driver and stable test IDs are in progress (PLAN_CONFORMANCE.md). | `3b282cf`, `a31ae82` |
 | apron-web's startup budget | Raised for the startup JS size only, `a4f9220` | apron-web#278 |
 
 Implementations brought in line:
@@ -71,13 +74,11 @@ Under M1 this is the server's policy, so the fix belongs in apron-server-go. Eit
 
 ## Should clarify
 
-These are small, and none made two implementations disagree. S1–S4, S11, S12, S14–S18 are resolved (see "Decisions"). The rest stay out of PROTOCOL.md:
+These are small, and none made two implementations disagree. S1–S4, S11–S18 are resolved (see "Decisions"). The rest stay out of PROTOCOL.md:
 
 - S5 and S6 are client hints, for RECIPES.md.
 - S7, S9 and S10 are about the plan's internals, and have no wire effect.
 - S8 is about what the user sees, which §5.2 already covers.
-- S13 needs building in both servers first. Then we decide whether a SHOULD in §4.10.1 is worth adding.
-
 
 - **S5. Popups and user activation.** [web F3] Begin answers after the tap, so `window.open` may be blocked. Informative note: "A web client can open a window during the tap, before begin answers, and send it to `url` afterwards."
 - **S6. An addition after a full-page redirect needs the session back.** [web F12] It works only with a resumable `token`. Informative note.
@@ -89,11 +90,13 @@ These are small, and none made two implementations disagree. S1–S4, S11, S12, 
   - "Not you?" starts the page's sign-in again. Whether that prompts depends on the identity provider.
 - **S9. The State table undercounts the page.** [cf F4] The page's own ceremony spans two HTTP requests. A login code MAY be issued before Allow, if only the page holds it until Allow.
 - **S10. "No passkey page" message.** [web F14] "Shows `server.welcome`" fits only screens that render it. Proposed: "points to `server.welcome`, where the client shows it".
-- **S13. Orphan passkeys.** [interop F3] The plan calls a stray passkey harmless. In the browser it was not:
-  - A passkey made on the page whose code is never redeemed stays on the device. This happens after a failed or burned code, or a closed tab.
-  - The next "Continue with passkey" can pick it, and the page then fails with a generic error.
 
-  Proposed: "When a login presents an unknown credential, the page SHOULD call `PublicKeyCredential.signalUnknownCredential`, and say that the passkey is not for an account here."
+- **S19. "The page" when `url` redirects at once.** [conformance] apron-server-go's `url` answers a well-formed request with a 302 to its identity provider. It is unclear whether that response is "the page" that sends `Referrer-Policy` and shows errors.
+- **S20. A listed scheme whose every begin is refused.** [conformance] apron-server-go at `127.0.0.1` lists `webauthn` but denies every begin, because the origin is not configured for passkeys. Nothing says whether that breaks "MUST use this exchange". A policy refusal (§1) probably covers it.
+- **S21. A new account's code burned by a failed try.** [conformance] A failed redemption MAY use up the code, and a new account is created when its code redeems. A client bug or a retry can then leave a passkey that belongs to no account, which is the S13 case. Clients should redeem a new account's code once, and correctly.
+- **S22. Adding `external` when the page's own sign-in makes a new account.** [interop 2026-11-16 #2] On apron-server-cloudflare, a signed-in user who chooses "Create an account" on `/oauth/authorize` gets "That sign-in belongs to another account". §4.12.4 adds an identity that belongs to no account. It is unclear what a new identity means when the authorization server's sign-in is the server's own passkey. The new passkey is then an orphan.
+- **S23. A wrong `resource` at the token endpoint.** [interop 2026-11-16 #5] apron-server-go answers `invalid_target` and uses up the code; apron-server-cloudflare keeps it. `ext:oauth` says a request refused "before it redeems the code" leaves the code usable, but not on which side a `resource` mismatch falls. Proposed: a `resource` mismatch is refused before redemption.
+- **S24. Origin and tokens from email.** [interop 2026-11-16 #6] apron-server-go refuses an email token from an `Origin` other than the one that got it. §3.2.1 and §4.11 say nothing, unlike §4.10.1 and §4.12.4 for tokens from codes. Possibly fine as policy, but a native client that signs in by email and a web client that resumes would see different results per server.
 
 ## Housekeeping
 
@@ -152,6 +155,8 @@ The harness is in [feedback/interop/](feedback/interop/), and the log in [feedba
 | Codes across servers, across schemes, login→register, wrong verifier, reuse, passkey code at `/oauth/token` | all `denied` | all `denied` |
 | Token endpoint (CORS `*`), then `scheme: "token"` from any `Origin` | ✅ since `b5a2f3c` | ✅ |
 | Wrong `resource` | page error since `e773491` | page error |
+
+A second run on 2026-11-16 found no regressions, and the orphan-passkey signal worked on both servers. Logs are in the session scratchpad. It ran apron-server-go at `de63fcf`, before the signal became a switch and before passkeys pended from code issue (`ed1877f`), so Go's "signalled at once after a burned code" is now "after up to 7 minutes", like Cloudflare. Still failing: Go's guest registration by full-page redirect (see "Follow-up"). Not run: the https topology with distinct hosts.
 
 Commits from the run:
 
