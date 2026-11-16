@@ -49,10 +49,14 @@ import ipaddress
 import itertools
 import json
 import re
+import os
 import secrets
+import shlex
 import socket
 import ssl
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -2169,6 +2173,7 @@ class Person:
             def log_message(self, *args):
                 pass
 
+        self.state = tempfile.mkdtemp(prefix="conform-portal-")  # a portal's own state, for the whole run
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.redirect_uri = f"http://127.0.0.1:{self.server.server_address[1]}/cb"
@@ -2218,19 +2223,23 @@ async def sign_ins(run):
     return total + 1 if total else 0  # and a declined one
 
 
-async def sign_in(run, page, why, decline=False, keep=None):
-    """Send the person to page with a new authorization request, and return its Grant with the redirect's query."""
+async def sign_in(run, page, why, decline=False, keep=None, identity="default"):
+    """Send the person, or the portal, to page with a new authorization request, and return its Grant with the
+    redirect's query. identity names who signs in, for a portal: the same name, the same account."""
     person = run.person
     if person.total is None:
         person.total = await sign_ins(run)
-        print(f"-- --sign-in: {person.total} sign-ins in a browser, and more if a failed try uses up a code. "
-              f"Redirects come back to {person.redirect_uri}.", flush=True)
+        print(f"-- --sign-in: {person.total} sign-ins {'by the portal' if run.args.portal else 'in a browser'}, and "
+              f"more if a failed try uses up a code. Redirects come back to {person.redirect_uri}.", flush=True)
     person.count += 1
     person.total = max(person.total, person.count)
     grant = Grant(run, page, person.redirect_uri)
     index, stale = len(person.hits), set(person.states)
     person.states.add(grant.state)
     print(f"-- sign-in {person.count} of {person.total}: {why}", flush=True)
+    if run.args.portal:
+        query = await portal(run, grant, decline, identity, keep, index)
+        return redeemable(grant, query, decline)
     print(f"   {'Decline it there, or press Enter here to skip it' if decline else 'Sign in and allow'}, at:", flush=True)
     print(f"   {grant.url}", flush=True)
     asyncio.get_running_loop().run_in_executor(None, open_browser, grant.url)
@@ -2249,12 +2258,51 @@ async def sign_in(run, page, why, decline=False, keep=None):
             raise Skip(f"no redirect came back within {SIGN_IN_WAIT // 60} minutes")
         if keep and not keep.closed and "ping" in run.server:
             await keep.notify("ping")  # the connection outlives a sign-in that takes longer than the ping interval
+    return redeemable(grant, query, decline)
+
+
+def redeemable(grant, query, decline):
     grant.query, grant.code = query, query.get("code")
     if not decline and not grant.code:
         if query.get("error") == "access_denied":
             raise Skip("the person declined: run again, and allow")
         raise Fail(f"the page redirected with {json.dumps(query)}, and no code")
     return grant
+
+
+async def portal(run, grant, decline, identity, keep, index):
+    """Run the --portal command for one sign-in, and return the redirect's query (DEVELOPMENT.md, Conformance)."""
+    person = run.person
+    env = {**os.environ, "APRON_PORTAL_REDIRECT_URI": grant.redirect_uri, "APRON_PORTAL_IDENTITY": identity,
+           "APRON_PORTAL_DECISION": "decline" if decline else "allow", "APRON_PORTAL_STATE": person.state}
+    try:
+        child = await asyncio.create_subprocess_exec(*shlex.split(run.args.portal), grant.url, env=env,
+                                                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except OSError as error:
+        raise Skip(f"cannot run the portal: {error}") from None
+    reading = asyncio.ensure_future(child.communicate())
+    deadline = time.monotonic() + SIGN_IN_WAIT
+    while not reading.done():
+        await asyncio.wait([reading], timeout=10)
+        if time.monotonic() > deadline:
+            child.kill()
+            raise Skip(f"the portal did not finish within {SIGN_IN_WAIT // 60} minutes")
+        if keep and not keep.closed and "ping" in run.server:
+            await keep.notify("ping")
+    out, err = (part.decode("utf-8", "replace") for part in reading.result())
+    if run.args.verbose and err.strip():
+        print("\n".join("   portal: " + line for line in err.strip().splitlines()), flush=True)
+    if child.returncode != 0:
+        why = (err.strip().splitlines() or [f"exit status {child.returncode}"])[-1]
+        raise Skip(f"the portal could not finish the sign-in: {why}")
+    # The redirect that the portal printed, or else the one that reached the loopback listener.
+    landed = (out.strip().splitlines() or [""])[-1].strip()
+    if landed.split("?")[0] == grant.redirect_uri:
+        return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(landed).query))
+    query = await asyncio.to_thread(person.hit, index, set(person.states) - {grant.state}, 1)
+    if query is None:
+        raise Skip(f"the portal ended without a redirect to {grant.redirect_uri}: it printed {landed[:200]!r}")
+    return query
 
 
 async def flow(run, name, compute):
@@ -2299,7 +2347,8 @@ async def chain(run, fresh, negatives, redeem):
     redemptions work at all. A refusal proves something only on a code that was still usable: a fresh one, or one
     that a later right redemption redeems, since a failed redemption MAY use up the code (§4.12.4). So the second
     code takes every negative try, then the right redemption. If that fails, failed tries use up codes (burned), and
-    each remaining try takes a fresh code, except optional ones, which are left out to save the person a sign-in.
+    each remaining try takes a fresh code, except optional ones, which are left out to save the person a sign-in
+    (a portal takes them too).
     Later flows start from what earlier ones learned."""
     person = run.person
     out = {"first": None, "negatives": {}, "skipped": {}, "redeemed": None, "reuse": None, "burned": None,
@@ -2313,6 +2362,8 @@ async def chain(run, fresh, negatives, redeem):
         person.total -= 1  # the planned code for the tries that must fail (sign_ins)
         return out
     pending, again = list(negatives), "sign in to the same account as before"
+    if run.args.portal:  # a portal's sign-ins cost no one's time
+        pending = [(key, attempt, False) for key, attempt, _ in pending]
     required = lambda: sum(1 for _, _, optional in pending if not optional)
     if run.burned is True:
         person.total += required() - 1
@@ -2384,10 +2435,12 @@ async def passkey_flow(run):
 
     async def fresh(again):
         if again:
-            grant = await sign_in(run, (await passkey_page(run))["url"], f"passkey page again: {again}.")
+            grant = await sign_in(run, (await passkey_page(run))["url"], f"passkey page again: {again}.",
+                                  identity="passkey")
             grant.action = "login"
             return grant
-        grant = await sign_in(run, page or (await passkey_page(run))["url"], why, keep=conn if guest else None)
+        grant = await sign_in(run, page or (await passkey_page(run))["url"], why, keep=conn if guest else None,
+                              identity="passkey")
         grant.action, grant.conn = first, conn if guest else None
         return grant
 
@@ -2726,6 +2779,9 @@ async def main():
     parser.add_argument("--token", help="sign in with scheme token instead of guest")
     parser.add_argument("--sign-in", action="store_true",
                         help="also run the checks that need someone to sign in on the server's pages")
+    parser.add_argument("--portal", metavar="COMMAND",
+                        help="with --sign-in, run COMMAND to sign in on each page instead of a person, such as "
+                             "'node tests/conformance/portals/passkey.cjs'")
     parser.add_argument("--json", metavar="PATH", help="write the results to PATH as JSON")
     parser.add_argument("--only", metavar="PATTERN", action="append",
                         help="run only the checks whose ID matches this glob, such as 'external.A3.*'; repeatable")
@@ -2741,6 +2797,7 @@ async def main():
         return 0
     if not args.url:
         parser.error("the url is required")
+    args.sign_in = args.sign_in or bool(args.portal)
     run, counts, results = Run(args), dict.fromkeys(STATUSES, 0), []
     started = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     if not run.schema.schema:
@@ -2773,6 +2830,8 @@ async def main():
             item = next(c for c in CHECKS if c.id == r["id"])
             print(f"  [ ] {item.id}: {item.title}")
     print(", ".join(f"{counts[s]} {s.lower()}" for s in STATUSES))
+    if run.person:
+        shutil.rmtree(run.person.state, ignore_errors=True)
     if args.json:
         report = {"tool": "conform.py", "version": VERSION, "target": args.url, "started": started,
                   "results": results, "summary": counts}
