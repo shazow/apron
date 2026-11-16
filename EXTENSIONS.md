@@ -345,9 +345,23 @@ class Editors {                 // message.ext.editors
 ## `ext:oauth`
 
 Adds the standard OAuth 2.1 and OpenID Connect parts that external sign-in
-([§4.12](PROTOCOL.md#412-external-sign-in)) leaves out, so that clients can
-use an OAuth library, and a server can sign users in with another
-authorization server.
+([§4.12](PROTOCOL.md#412-external-sign-in)) leaves out.
+
+External sign-in and the passkey page
+([§4.10.1](PROTOCOL.md#4101-passkey-page)) work without this extension. Both
+use the authorization code grant with PKCE. Any client, with no
+registration, sends the user to the server's sign-in page, and redeems the
+code on its connection. Clients need no OAuth library, and no endpoint other
+than the sign-in page.
+
+This extension is for what goes beyond that flow:
+
+- Clients that use an OAuth library, which expects metadata and a token
+  endpoint ([Endpoints](#endpoints)).
+- Servers that let another authorization server sign their users in, such as
+  one that a company already runs. One provider then serves many servers, and
+  controls the users' sessions
+  ([Another authorization server](#another-authorization-server)).
 
 ```jsonc
 // <- begin, when the server uses another authorization server
