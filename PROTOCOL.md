@@ -2494,6 +2494,7 @@ that finishes the exchange, as in external sign-in
   account.
 - A code from the page finishes only `webauthn`, with the action of its begin.
   No other code finishes `webauthn`.
+- A finish with an invalid, expired, or used code is `denied`.
 - Servers MUST NOT refuse the `token` of a finish with `code` because of a
   connection's `Origin` (the ceremony ran on the server's page, and an app
   sends no `Origin`).
