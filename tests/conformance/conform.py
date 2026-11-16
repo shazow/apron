@@ -41,6 +41,8 @@ import argparse
 import asyncio
 import base64
 import codecs
+import datetime
+import fnmatch
 import hashlib
 import http.server
 import ipaddress
@@ -386,6 +388,10 @@ class Run:
     def violate(self, key, text):
         self.violations.setdefault(key, set()).add(text)
 
+    def profile(self, scheme):
+        """Whether --scheme selects the scheme's profile (every profile runs without --scheme)."""
+        return not self.args.scheme or scheme in self.args.scheme
+
     def has(self, capability):
         return capability in self.server.get("capabilities", [])
 
@@ -530,18 +536,41 @@ class Run:
 
 
 CHECKS = []
+# The first part of a check's ID that makes it part of a scheme's profile (--scheme); other checks are core.
+PROFILES = {"guest": {"guest"}, "token": {"token"}, "webauthn": {"webauthn"}, "email": {"email"},
+            "external": {"external"}, "oauth": {"external"}}
 
 
-def check(ref, title, needs=None):
+class Check:
+    def __init__(self, id, ref, title, needs, fn, schemes, setup):
+        self.id, self.ref, self.title, self.needs, self.fn, self.setup = id, ref, title, needs, fn, setup
+        self.schemes = schemes if schemes is not None else PROFILES.get(id.split(".")[0], set())
+
+
+def check(id, ref, title, needs=None, schemes=None, setup=False):
+    """Register a check. id is stable: <scheme or area>.<area>.<name>, where the middle area is an attacker of the
+    threat model (A1 to A5) or a plain area such as shape. ref is the PROTOCOL.md section. schemes overrides the
+    profiles (--scheme) that the check belongs to. A setup check learns what later checks use, such as the default
+    room, so it also runs, unreported, when --only or --scheme leaves it out."""
+    assert re.fullmatch(r"[a-z0-9:]+\.[A-Za-z0-9-]+\.[a-z0-9-]+", id), id
+    assert all(c.id != id for c in CHECKS), id
+
     def wrap(fn):
-        CHECKS.append((ref, title, needs, fn))
+        CHECKS.append(Check(id, ref, title, needs, fn, schemes, setup))
         return fn
     return wrap
 
 
+def manual(id, ref, title, needs=None, how=None, schemes=None):
+    """Register a rule that a machine cannot check: a MANUAL item, for a person to check."""
+    async def fn(run):
+        raise Manual(how(run) if callable(how) else how or "check it by hand")
+    check(id, ref, title, needs, schemes)(fn)
+
+
 # §3.6 core checklist, with the rules of §1 and §2 it points to.
 
-@check("3.1", "sends a server frame on connect")
+@check("core.shape.server-frame", "3.1", "sends a server frame on connect", setup=True)
 async def _(run):
     await run.open(auth=False)
     s = run.server
@@ -554,27 +583,27 @@ async def _(run):
     must("server-first" not in run.violations, "; ".join(run.violations.get("server-first", [])))
 
 
-@check("3.2.2", "requests before auth get error/denied")
+@check("auth.order.before-auth", "3.2.2", "requests before auth get error/denied")
 async def _(run):
     conn = await run.open(auth=False)
     expect_error((await conn.request("me", {}))[1], "denied", "me before auth")
 
 
-@check("1", "ping before auth gets pong", needs=lambda s: "ping" in s)
+@check("core.shape.ping", "1", "ping before auth gets pong", needs=lambda s: "ping" in s)
 async def _(run):
     conn = await run.open(auth=False)
     await conn.notify("ping")
     must((await conn.wait(lambda f: f == {"method": "pong"}))[1], "no exact {\"method\":\"pong\"}")
 
 
-@check("3.2", "auth replies with you")
+@check("auth.shape.you", "3.2", "auth replies with you")
 async def _(run):
     conn = await run.open(auth=False)
     you = (await conn.call("auth", run.auth("Conformance"))).get("you")
     must(isinstance(you, dict) and isinstance(you.get("user_id"), str), "result has no you.user_id")
 
 
-@check("3.2.2", "auth finishes before later frames")
+@check("auth.order.barrier", "3.2.2", "auth finishes before later frames")
 async def _(run):
     conn = await run.open(auth=False)
     await conn.send({"method": "auth", "id": "barrier-auth", "params": run.auth("Conformance")})
@@ -587,13 +616,13 @@ async def _(run):
          "me ran as a different user than auth")
 
 
-@check("1", "an unknown auth scheme is error/invalid_params")
+@check("auth.shape.unknown", "1", "an unknown auth scheme is error/invalid_params")
 async def _(run):
     conn = await run.open(auth=False)
     expect_error((await conn.request("auth", {"scheme": "ext:conformance-unknown"}))[1], "invalid_params", "auth with an unknown scheme")
 
 
-@check("3.2", "a defined scheme the server does not offer is error/unsupported")
+@check("auth.shape.unsupported", "3.2", "a defined scheme the server does not offer is error/unsupported")
 async def _(run):
     offered = run.server.get("auth", []) + run.server.get("signup", [])
     params = {"guest": {}, "token": {"token": "conformance"}, "webauthn": {"action": "login", "step": "begin"},
@@ -606,7 +635,7 @@ async def _(run):
         expect_error((await conn.request("auth", {"scheme": scheme, **params[scheme]}))[1], "unsupported", f"auth {scheme}")
 
 
-@check("1.2", "auth runs on each connection, also when it repeats an id")
+@check("auth.order.no-dedup", "1.2", "auth runs on each connection, also when it repeats an id")
 async def _(run):
     id = "conformance-auth-" + secrets.token_hex(4)
     first = await run.open(auth=False)
@@ -641,7 +670,7 @@ async def _(run):
                                             f"request with a new id got {describe(control)}: the id was deduplicated")
 
 
-@check("3.2.1", "a made-up token is denied", needs=offers("token"))
+@check("token.shape.denied", "3.2.1", "a made-up token is denied", needs=offers("token"))
 async def _(run):
     conn = await run.open(auth=False)
     _, reply = await conn.request("auth", {"scheme": "token", "token": "conformance-" + secrets.token_urlsafe(24)})
@@ -651,7 +680,7 @@ async def _(run):
     expect_error(reply, "denied", "a made-up token")
 
 
-@check("3.6.3", "accepts message without room_id into its default room")
+@check("core.message.default-room", "3.6.3", "accepts message without room_id into its default room", setup=True)
 async def _(run):
     conn = await run.open()
     i, reply = await conn.request("message", {"body": {"text": "conformance: default room"}})
@@ -667,7 +696,8 @@ async def _(run):
         raise Warn("the poster got no broadcast and the room is unknown; later checks skip")
 
 
-@check("3.6.4", "message creation replies with message_id and broadcasts the snapshot first")
+@check("core.message.broadcast-first", "3.6.4", "message creation replies with message_id and broadcasts the snapshot first",
+       setup=True)
 async def _(run):
     a, b = await run.joined("Conformance A"), await run.joined("Conformance B")
     start = len(a.frames)
@@ -688,7 +718,7 @@ async def _(run):
     run.message = p
 
 
-@check("3.5.1", "a message with no text and no embeds is not logged")
+@check("core.message.empty", "3.5.1", "a message with no text and no embeds is not logged")
 async def _(run):
     a, b = await run.joined(), await run.joined()
     start = len(b.frames)
@@ -698,7 +728,7 @@ async def _(run):
     should(not b.since(start, lambda f: f.get("method") == "message"), "it was broadcast")
 
 
-@check("3.5.4", "reply_to must refer to an existing message")
+@check("core.message.reply-to", "3.5.4", "reply_to must refer to an existing message")
 async def _(run):
     if not run.message:
         raise Skip("no message to reply to")
@@ -712,13 +742,13 @@ async def _(run):
     expect_error(reply, "invalid_params", "reply_to an unknown message")
 
 
-@check("3.6.5", "unknown requests are error/unsupported")
+@check("core.shape.unknown-method", "3.6.5", "unknown requests are error/unsupported")
 async def _(run):
     conn = await run.open()
     expect_error((await conn.request("ext:conformance-unknown", {}))[1], "unsupported", "unknown method")
 
 
-@check("3.6.5", "message with message_id is error/unsupported without edit", needs=lambda s: "edit" not in s.get("capabilities", []))
+@check("core.shape.save-without-edit", "3.6.5", "message with message_id is error/unsupported without edit", needs=lambda s: "edit" not in s.get("capabilities", []))
 async def _(run):
     if not run.message:
         raise Skip("no message to save")
@@ -728,7 +758,7 @@ async def _(run):
     expect_error(reply, "unsupported", "a save")
 
 
-@check("3.6.5", "unknown notifications are ignored")
+@check("core.shape.unknown-notification", "3.6.5", "unknown notifications are ignored")
 async def _(run):
     conn = await run.open()
     start = len(conn.frames)
@@ -740,7 +770,7 @@ async def _(run):
     must(not errors, errors and f"got {describe(errors[0])}")
 
 
-@check("1", "unknown keys are ignored")
+@check("core.shape.unknown-keys", "1", "unknown keys are ignored")
 async def _(run):
     conn = await run.joined()
     reply = (await conn.request("message", {"room_id": run.room, "conformance_unknown": True,
@@ -748,7 +778,7 @@ async def _(run):
     must("result" in reply, describe(reply))
 
 
-@check("1.1", "a request for a room that does not exist is error/invalid_params")
+@check("core.shape.unknown-room", "1.1", "a request for a room that does not exist is error/invalid_params")
 async def _(run):
     conn = await run.open()
     reply = (await conn.request("message", {"room_id": "conformance-no-such-room", "body": {"text": "x"}}))[1]
@@ -757,7 +787,7 @@ async def _(run):
     expect_error(reply, "invalid_params", "posting to an unknown room")
 
 
-@check("1", "frames up to 256 KiB are accepted")
+@check("core.shape.large-frame", "1", "frames up to 256 KiB are accepted")
 async def _(run):
     conn = await run.joined()
     try:
@@ -767,7 +797,7 @@ async def _(run):
     should("result" in reply, f"a 250 kB message: {describe(reply)}")
 
 
-@check("1.2", "retries are deduplicated by (user_id, id)")
+@check("core.retry.dedup", "1.2", "retries are deduplicated by (user_id, id)")
 async def _(run):
     a, b = await run.joined(), await run.joined()
     start = len(b.frames)
@@ -785,7 +815,7 @@ async def _(run):
     should(code(expect) == CODES["invalid_params"], f"an id reused with other params got {describe(expect)}")
 
 
-@check("3.3.2", "me returns the user's complete object")
+@check("core.identity.me", "3.3.2", "me returns the user's complete object")
 async def _(run):
     conn = await run.open()
     you = (await conn.call("me", {})).get("you", {})
@@ -801,7 +831,7 @@ async def _(run):
 
 # §4 capabilities
 
-@check("4.3", "history pages the log", needs="history")
+@check("history.shape.page", "4.3", "history pages the log", needs="history")
 async def _(run):
     conn = await run.open()
     page = await conn.call("history", {"room_id": run.room} if run.room else {})
@@ -817,7 +847,7 @@ async def _(run):
              "the newest page lacks a recent message")
 
 
-@check("4.3", "history without room_id pages every room the connection receives, or is error/unsupported",
+@check("history.shape.all-rooms", "4.3", "history without room_id pages every room the connection receives, or is error/unsupported",
        needs=lambda s: {"history", "rooms"} <= set(s.get("capabilities", [])))
 async def _(run):
     conn = await run.joined()
@@ -880,7 +910,7 @@ def delivered(conn, start, room_id):
     return live
 
 
-@check("3.5.3", "live delivery brings every record of a burst once, in log order", needs="history")
+@check("core.delivery.burst", "3.5.3", "live delivery brings every record of a burst once, in log order", needs="history")
 async def _(run):
     a, b = await run.joined("Conformance burst A"), await run.joined("Conformance burst B")
     start = len(b.frames)
@@ -907,7 +937,7 @@ async def _(run):
     should(every == sorted(every), "the room's reaction sets and message snapshots arrived out of log order between them")
 
 
-@check("3.5.3", "a reader that falls behind gets every record, or loses its connection", needs="history")
+@check("core.delivery.slow-reader", "3.5.3", "a reader that falls behind gets every record, or loses its connection", needs="history")
 async def _(run):
     a, b = await run.joined("Conformance flood A"), await run.joined("Conformance flood B", small_buffers=True)
     start = len(b.frames)
@@ -928,7 +958,7 @@ async def _(run):
     must(live == logged_ids, "a reader that fell behind got records out of log order or twice (§3.5.3)")
 
 
-@check("4.3.2", "after and before are inclusive bounds", needs="history")
+@check("history.bounds.inclusive", "4.3.2", "after and before are inclusive bounds", needs="history")
 async def _(run):
     if not run.message:
         raise Skip("no message")
@@ -939,7 +969,7 @@ async def _(run):
     must(page.get("first_log_id") == log_id == page.get("last_log_id"), "first_log_id and last_log_id are not the record")
 
 
-@check("4.3.2", "limit takes the oldest with after and the newest without", needs="history")
+@check("history.bounds.limit", "4.3.2", "limit takes the oldest with after and the newest without", needs="history")
 async def _(run):
     conn = await run.joined()
     posted = [(await run.post(conn, f"conformance: page {n}"))[1] for n in range(3)]
@@ -953,7 +983,7 @@ async def _(run):
     must(any(m.get("message_id") == posted[2] for m in rest.get("messages", [])), "continuing forward skipped a message")
 
 
-@check("4.3.2", "an empty slice has more: false and no bounds", needs="history")
+@check("history.bounds.empty", "4.3.2", "an empty slice has more: false and no bounds", needs="history")
 async def _(run):
     conn = await run.open()
     page = await conn.call("history", {"after": MISSING, **({"room_id": run.room} if run.room else {})})
@@ -961,7 +991,7 @@ async def _(run):
     must("first_log_id" not in page and "last_log_id" not in page, "the result has bounds")
 
 
-@check("4.4", "a save is a new snapshot at a later log_id", needs="edit")
+@check("edit.shape.save", "4.4", "a save is a new snapshot at a later log_id", needs="edit")
 async def _(run):
     a, b = await run.joined(), await run.joined()
     _, message_id = await run.post(a, "conformance: before")
@@ -976,7 +1006,7 @@ async def _(run):
     must(p.get("from", {}).get("user_id") == a.you["user_id"], "from changed")
 
 
-@check("4.4", "delete is a tombstone without body or ext", needs="edit")
+@check("edit.shape.delete", "4.4", "delete is a tombstone without body or ext", needs="edit")
 async def _(run):
     a, b = await run.joined(), await run.joined()
     _, message_id = await run.post(a, "conformance: delete me")
@@ -988,21 +1018,21 @@ async def _(run):
     must("body" not in tomb["params"] and "ext" not in tomb["params"], "the tombstone has body or ext")
 
 
-@check("4.4", "deleted: true on creation is error/invalid_params", needs="edit")
+@check("edit.shape.deleted-on-create", "4.4", "deleted: true on creation is error/invalid_params", needs="edit")
 async def _(run):
     conn = await run.joined()
     reply = (await conn.request("message", {"room_id": run.room, "body": {"text": "x"}, "deleted": True}))[1]
     expect_error(reply, "invalid_params", "creating a deleted message")
 
 
-@check("4.4", "saving an unknown message is error/invalid_params", needs="edit")
+@check("edit.shape.unknown-message", "4.4", "saving an unknown message is error/invalid_params", needs="edit")
 async def _(run):
     conn = await run.joined()
     reply = (await conn.request("message", {"message_id": MISSING, "room_id": run.room, "body": {"text": "x"}}))[1]
     expect_error(reply, "invalid_params", "saving an unknown message")
 
 
-@check("4.2.1", "room_list returns the arrays its filter asks for", needs="rooms")
+@check("rooms.list.filter", "4.2.1", "room_list returns the arrays its filter asks for", needs="rooms")
 async def _(run):
     conn = await run.open()
     joined = await conn.call("room_list", {"filter": "joined", "members": True})
@@ -1016,7 +1046,7 @@ async def _(run):
         should(isinstance(joined.get("users"), list), "members: true has no users")
 
 
-@check("4.2.4", "room_set creates a room, joins the creator, and edits it", needs="rooms")
+@check("rooms.set.create", "4.2.4", "room_set creates a room, joins the creator, and edits it", needs="rooms", setup=True)
 async def _(run):
     conn = await run.open()
     start = len(conn.frames)
@@ -1038,7 +1068,7 @@ async def _(run):
     run.new_room = room_id
 
 
-@check("4.2.2", "room_join and room_leave update the user and the room", needs="rooms")
+@check("rooms.membership.join-leave", "4.2.2", "room_join and room_leave update the user and the room", needs="rooms")
 async def _(run):
     room_id = getattr(run, "new_room", None)
     if not room_id:
@@ -1064,7 +1094,7 @@ async def _(run):
     must(update and j < i, "no room_update left before the result")
 
 
-@check("4.2.1", "a room that a sign-in joins is in room_list joined", needs="rooms")
+@check("rooms.list.sign-in-joined", "4.2.1", "a room that a sign-in joins is in room_list joined", needs="rooms")
 async def _(run):
     conn = await run.open()
     you = conn.you["user_id"]
@@ -1079,7 +1109,7 @@ async def _(run):
     must(rooms <= listed, f"room_list joined lacks {', '.join(sorted(rooms - listed))}")
 
 
-@check("4.2.2", "joining an unknown room is error/invalid_params", needs="rooms")
+@check("rooms.membership.unknown-room", "4.2.2", "joining an unknown room is error/invalid_params", needs="rooms")
 async def _(run):
     conn = await run.open()
     _, reply = await conn.request("room_join", {"room_id": "conformance-no-such-room"})
@@ -1088,7 +1118,7 @@ async def _(run):
     expect_error(reply, "invalid_params", "room_join")
 
 
-@check("4.2.4", "a private room is kept private or refused as error/unsupported", needs="rooms")
+@check("rooms.set.private", "4.2.4", "a private room is kept private or refused as error/unsupported", needs="rooms")
 async def _(run):
     a = await run.open()
     start = len(a.frames)
@@ -1105,7 +1135,7 @@ async def _(run):
     must(all(r.get("room_id") != room_id for r in listing.get("not_joined", [])), "a non-member sees it")
 
 
-@check("4.7", "reactions are logged and broadcast before the result", needs="reactions")
+@check("reactions.shape.broadcast", "4.7", "reactions are logged and broadcast before the result", needs="reactions")
 async def _(run):
     a, b = await run.joined(), await run.joined()
     _, message_id = await run.post(a, "conformance: react to me")
@@ -1124,7 +1154,7 @@ async def _(run):
     expect_error((await a.request("reactions", {"message_id": MISSING, "emojis": ["👍"]}))[1], "invalid_params", "an unknown message")
 
 
-@check("4.6", "activity is a notification and gets no reply", needs="activity")
+@check("activity.shape.notification", "4.6", "activity is a notification and gets no reply", needs="activity")
 async def _(run):
     conn = await run.joined()
     start = len(conn.frames)
@@ -1134,7 +1164,7 @@ async def _(run):
     must(not conn.since(start, lambda f: "error" in f and "id" not in f), "activity got an error")
 
 
-@check("4.5.3", "status reports idle, and sends mutes to the user's connections", needs="status")
+@check("status.shape.request", "4.5.3", "status reports idle, and sends mutes to the user's connections", needs="status")
 async def _(run):
     conn = await run.open()
     must(await conn.call("status", {"idle": 300}) == {}, "idle did not reply {}")
@@ -1147,7 +1177,7 @@ async def _(run):
         must(sent, f"no status notification with mute: {json.dumps(mute)}")
 
 
-@check("4.5.1", "me sets a listed status", needs=lambda s: "status" in s.get("capabilities", []) and s.get("status"))
+@check("status.shape.me", "4.5.1", "me sets a listed status", needs=lambda s: "status" in s.get("capabilities", []) and s.get("status"))
 async def _(run):
     conn = await run.open()
     value = run.server["status"][0]
@@ -1156,7 +1186,7 @@ async def _(run):
     await conn.call("me", {"status": "online"})
 
 
-@check("4.5.2", "a chosen invisible is shown offline, and its connections leave seen as it is",
+@check("status.seen.invisible", "4.5.2", "a chosen invisible is shown offline, and its connections leave seen as it is",
        needs=lambda s: "status" in s.get("capabilities", []) and "invisible" in s.get("status", []))
 async def _(run):
     if run.args.token:
@@ -1191,7 +1221,7 @@ async def _(run):
     should(hidden, "no user notification when the subject chose invisible")
 
 
-@check("4.1", "/help replies with a ~private notice", needs="command")
+@check("command.shape.help", "4.1", "/help replies with a ~private notice", needs="command")
 async def _(run):
     conn = await run.joined()
     start = len(conn.frames)
@@ -1202,14 +1232,14 @@ async def _(run):
     must("message_id" not in notice["params"], "the notice has a message_id")
 
 
-@check("4.1", "a command with message_id is error/invalid_params", needs="command")
+@check("command.shape.message-id", "4.1", "a command with message_id is error/invalid_params", needs="command")
 async def _(run):
     conn = await run.joined()
     reply = (await conn.request("command", {"room_id": run.room, "message_id": MISSING, "body": {"text": "/help"}}))[1]
     expect_error(reply, "invalid_params", "command with message_id")
 
 
-@check("4.13", "me merges ext one level deep", needs="ext")
+@check("ext.merge.me", "4.13", "me merges ext one level deep", needs="ext")
 async def _(run):
     conn = await run.open()
     ext = lambda params: conn.call("me", params)
@@ -1223,7 +1253,7 @@ async def _(run):
     must("conformance" not in you.get("ext", {}), "an empty value did not clear the key")
 
 
-@check("4.13", "messages keep ext, and saves merge it", needs="ext")
+@check("ext.merge.message", "4.13", "messages keep ext, and saves merge it", needs="ext")
 async def _(run):
     conn = await run.joined()
     _, message_id = await run.post(conn, "conformance: ext", ext={"conformance": {"a": 1}})
@@ -1394,7 +1424,7 @@ def upload_file(run):
     raise Skip("ext.media.upload takes neither text/plain nor image/png")
 
 
-@check("4.8.4", "an upload gets a write_url and completes after the PUT", needs="embed:upload")
+@check("embed.upload.put", "4.8.4", "an upload gets a write_url and completes after the PUT", needs="embed:upload")
 async def _(run):
     conn = await run.joined()
     title, kind, body = upload_file(run)
@@ -1407,7 +1437,7 @@ async def _(run):
     must((embed_in(done, written["embed_id"]) or {}).get("url"), "the upload failed: the snapshot has no embed")
 
 
-@check("4.8.5", "append text is live at its url, then moves into body.text", needs="embed:append")
+@check("embed.append.live", "4.8.5", "append text is live at its url, then moves into body.text", needs="embed:append")
 async def _(run):
     conn = await run.joined()
     opening, chunks = "conformance: append\n\n", [b"live ", "*text* \u00e9\n".encode()]
@@ -1428,7 +1458,7 @@ async def _(run):
         expect_error((await conn.request("message", stale))[1], "invalid_params", "a save with the embed_id of ended live text")
 
 
-@check("4.8.5", "backspace and form feed revise append text, for a late reader and in body.text", needs="embed:append")
+@check("embed.append.edits", "4.8.5", "backspace and form feed revise append text, for a late reader and in body.text", needs="embed:append")
 async def _(run):
     conn = await run.joined()
     opening = "conformance: revised\n\n"
@@ -1469,7 +1499,7 @@ async def _(run):
     must(got == text, f"body.text is {got!r}, not {text!r}")
 
 
-@check("4.8.6", "terminal output is live at its url, then kept as output", needs="embed:terminal")
+@check("embed.terminal.live", "4.8.6", "terminal output is live at its url, then kept as output", needs="embed:terminal")
 async def _(run):
     conn = await run.joined()
     chunks = [b"conformance \x1b[1;31mred\x1b[0m\r\n", "caf\u00e9\x1b[K done\n".encode()]
@@ -1493,7 +1523,7 @@ async def _(run):
              "a save that sends output changed the server's output (§4.8.2)")
 
 
-@check("4.8.5", "a save that removes an append's embed ends its text, and its PUT gets a 2xx status",
+@check("embed.append.save-ends", "4.8.5", "a save that removes an append's embed ends its text, and its PUT gets a 2xx status",
        needs=lambda s: {"embed:append", "edit"} <= set(s.get("capabilities", [])))
 async def _(run):
     conn = await run.joined()
@@ -1530,7 +1560,7 @@ async def _(run):
     must(not later, "a snapshot after the save changed body.text: the text ended twice?")
 
 
-@check("4.8.5", "an append that reaches a limit keeps whole characters", needs="embed:append")
+@check("embed.append.limit", "4.8.5", "an append that reaches a limit keeps whole characters", needs="embed:append")
 async def _(run):
     conn = await run.joined()
     # Last of the live text checks, as servers limit how many a user starts. An opening of odd length, and
@@ -1554,7 +1584,7 @@ async def _(run):
     must(not extra, f"body.text has {sorted(extra)!r} after the opening text, not only whole é: a cut inside a character?")
 
 
-@check("4.9.1", "unregistering an unknown push url succeeds", needs=lambda s: "push" in s)
+@check("push.shape.unregister", "4.9.1", "unregistering an unknown push url succeeds", needs=lambda s: "push" in s)
 async def _(run):
     conn = await run.open()
     must(await conn.call("push_unregister", {"url": "https://push.example.invalid/conformance"}) == {}, "result is not {}")
@@ -1729,17 +1759,17 @@ async def page_of(run, kind):
     return (await (external_page if kind == "external" else passkey_page)(run))["url"]
 
 
-@check("4.11", "a server that offers email also lists token", needs=offers("email"))
+@check("email.shape.lists-token", "4.11", "a server that offers email also lists token", needs=offers("email"))
 async def _(run):
     must("token" in run.server.get("auth", []), "server.auth lists email but not token")
 
 
-@check("4.12", "a server that offers external also lists token", needs=offers("external"))
+@check("external.shape.lists-token", "4.12", "a server that offers external also lists token", needs=offers("external"))
 async def _(run):
     must("token" in run.server.get("auth", []), "server.auth lists external but not token")
 
 
-@check("4.11.1", "an email proposal returns {} and authenticates nothing", needs=offers("email"))
+@check("email.A5.no-enumeration", "4.11.1", "an email proposal returns {} and authenticates nothing", needs=offers("email"))
 async def _(run):
     conn = await run.open(auth=False)
     _, reply = await conn.request("auth", {"scheme": "email", "email": f"conformance-{secrets.token_hex(4)}@example.invalid",
@@ -1751,7 +1781,7 @@ async def _(run):
     expect_error((await conn.request("me", {}))[1], "denied", "me after a proposal")
 
 
-@check("4.11.3", "an email approval with a made-up token is denied", needs=offers("email"))
+@check("email.A5.bad-token", "4.11.3", "an email approval with a made-up token is denied", needs=offers("email"))
 async def _(run):
     conn = await run.open(auth=False)
     _, reply = await conn.request("auth", {"scheme": "email", "token": "conformance-" + secrets.token_urlsafe(24)})
@@ -1759,7 +1789,7 @@ async def _(run):
     expect_error(reply, "denied", "an approval with a made-up token")
 
 
-@check("4.12.1", "an external begin returns an https or loopback url, and authenticates nothing", needs=offers("external"))
+@check("external.shape.begin", "4.12.1", "an external begin returns an https or loopback url, and authenticates nothing", needs=offers("external"))
 async def _(run):
     conn = await run.open(auth=False)
     _, reply = await conn.request("auth", {"scheme": "external"})
@@ -1777,7 +1807,7 @@ async def _(run):
     expect_error((await conn.request("me", {}))[1], "denied", "me after a begin")
 
 
-@check("4.12.1", "an external request with a made-up token is denied", needs=offers("external"))
+@check("external.shape.made-up-token", "4.12.1", "an external request with a made-up token is denied", needs=offers("external"))
 async def _(run):
     conn = await run.open(auth=False)
     _, reply = await conn.request("auth", {"scheme": "external", "token": "conformance-" + secrets.token_urlsafe(24)})
@@ -1785,7 +1815,7 @@ async def _(run):
     expect_error(reply, "denied", "external with a made-up token")
 
 
-@check("4.12.4", "an external redemption of a made-up code is denied", needs=offers("external"))
+@check("external.A5.bad-code", "4.12.4", "an external redemption of a made-up code is denied", needs=offers("external"))
 async def _(run):
     conn = await run.open(auth=False)
     _, reply = await conn.request("auth", {"scheme": "external", **made_up(run)})
@@ -1825,7 +1855,7 @@ def check_begin(run, result, action, where):
     return key
 
 
-@check("4.10", "a login begin returns a ceremony, a passkey page, or both, for any login", needs=offers("webauthn"))
+@check("webauthn.shape.begin", "4.10", "a login begin returns a ceremony, a passkey page, or both, for any login", needs=offers("webauthn"))
 async def _(run):
     tried = 0
     for origin in (None, origin_of(run)):
@@ -1846,7 +1876,7 @@ async def _(run):
         raise Skip("the server refused every handshake or login begin")
 
 
-@check("4.10", "a register begin requires a discoverable credential and user verification", needs=offers("webauthn"))
+@check("webauthn.shape.register-begin", "4.10", "a register begin requires a discoverable credential and user verification", needs=offers("webauthn"))
 async def _(run):
     keys = []
     params = {"scheme": "webauthn", "action": "register", "step": "begin", "name": "Conformance"}
@@ -1878,7 +1908,7 @@ async def _(run):
                "begin's name 'Conformance'")
 
 
-@check("4.10.1", "a webauthn finish with a made-up code is denied", needs=offers("webauthn"))
+@check("webauthn.A5.bad-code", "4.10.1", "a webauthn finish with a made-up code is denied", needs=offers("webauthn"))
 async def _(run):
     await passkey_page(run)
     conn = await run.open(auth=False)
@@ -1904,7 +1934,11 @@ async def well_formed(run, kind):
 def page_checks(kind):
     name, needs = PAGES[kind]
 
-    @check("4.12.3", f"{name} answers a well-formed request without a redirect to redirect_uri", needs=needs)
+    def ident(area, name):
+        """external.<area>.<name> for the external page, and webauthn.<area>.page-<name> for the passkey page."""
+        return f"external.{area}.{name}" if kind == "external" else f"webauthn.{area}.page-{name}"
+
+    @check(f"{'external' if kind == 'external' else 'webauthn'}.shape.page-answer", "4.12.3", f"{name} answers a well-formed request without a redirect to redirect_uri", needs=needs)
     async def _(run):
         page, request, status, headers = await well_formed(run, kind)
         must(not redirects_to(status, headers, page, request.redirect_uri),
@@ -1914,14 +1948,14 @@ def page_checks(kind):
         else:
             should(200 <= status < 300, f"a request with a loopback redirect_uri got HTTP {status} (§4.12.3)")
 
-    @check("4.12.3", f"{name} sends no Cross-Origin-Opener-Policy other than unsafe-none", needs=needs)
+    @check(ident("A2", "opener-policy"), "4.12.3", f"{name} sends no Cross-Origin-Opener-Policy other than unsafe-none", needs=needs)
     async def _(run):
         _, _, _, headers = await well_formed(run, kind)
         opener = headers.get("Cross-Origin-Opener-Policy")
         must(opener is None or opener.split(";")[0].strip().lower() == "unsafe-none",
              f"it sends Cross-Origin-Opener-Policy: {opener}")
 
-    @check("4.12.3", f"{name} sends Referrer-Policy: no-referrer", needs=needs)
+    @check(ident("A2", "referrer-policy"), "4.12.3", f"{name} sends Referrer-Policy: no-referrer", needs=needs)
     async def _(run):
         _, _, status, headers = await well_formed(run, kind)
         if 300 <= status < 400:
@@ -1929,13 +1963,8 @@ def page_checks(kind):
         tokens = [t.strip().lower() for t in headers.get("Referrer-Policy", "").split(",") if t.strip()]
         should(tokens and tokens[-1] == "no-referrer", f"Referrer-Policy is {headers.get('Referrer-Policy')!r}")
 
-    @check("4.12.3", f"{name} shows the error of a request without resource, with another resource, without PKCE, "
-                     "or with plain PKCE, and never redirects it", needs=needs)
-    async def _(run):
+    async def refused(run, cases):
         page = await page_of(run, kind)
-        cases = {"without resource": {"resource": None}, "with another resource": {"resource": FOREIGN},
-                 "without PKCE": {"code_challenge": None, "code_challenge_method": None},
-                 "with plain PKCE": {"code_challenge_method": "plain"}}
         for case, change in cases.items():
             request = Grant(run, page, loopback_redirect(), **change)
             status, headers, _ = await http_request(request.url)
@@ -1946,7 +1975,18 @@ def page_checks(kind):
             if status < 300:
                 run.info(f"a request {case} got HTTP {status}: make sure that the page shows an error")
 
-    @check("4.12.3", f"{name} refuses a javascript:, data:, dotless-scheme, or non-loopback http redirect_uri, and "
+    @check(ident("A3", "pkce-required"), "4.12.3", f"{name} shows the error of a request without PKCE, or with plain "
+                                                   "PKCE, and never redirects it", needs=needs)
+    async def _(run):
+        await refused(run, {"without PKCE": {"code_challenge": None, "code_challenge_method": None},
+                            "with plain PKCE": {"code_challenge_method": "plain"}})
+
+    @check(ident("A1", "resource"), "4.12.3", f"{name} shows the error of a request without resource, or with "
+                                              "another resource, and never redirects it", needs=needs)
+    async def _(run):
+        await refused(run, {"without resource": {"resource": None}, "with another resource": {"resource": FOREIGN}})
+
+    @check(ident("A2", "redirect-uri"), "4.12.3", f"{name} refuses a javascript:, data:, dotless-scheme, or non-loopback http redirect_uri, and "
                      "never redirects it", needs=needs)
     async def _(run):
         page = await page_of(run, kind)
@@ -1962,7 +2002,7 @@ def page_checks(kind):
         if shown:
             raise Manual(f"it answered {', '.join(shown)}: check that the page shows an error, and offers no sign-in")
 
-    @check("4.12.3", f"{name} takes any client_id, and an https or private-use redirect_uri", needs=needs)
+    @check(ident("shape", "any-client"), "4.12.3", f"{name} takes any client_id, and an https or private-use redirect_uri", needs=needs)
     async def _(run):
         page = await page_of(run, kind)
         refused = []
@@ -1980,7 +2020,7 @@ page_checks("external")
 page_checks("passkey")
 
 
-@check("4.10.1", "the passkey page refuses to be shown in a frame", needs=offers("webauthn"))
+@check("webauthn.A2.page-frame", "4.10.1", "the passkey page refuses to be shown in a frame", needs=offers("webauthn"))
 async def _(run):
     _, _, status, headers = await well_formed(run, "passkey")
     frame_options = headers.get("X-Frame-Options", "").strip().lower()
@@ -2036,7 +2076,7 @@ async def token_request(endpoint, form, basic=None):
         return status, headers, None
 
 
-@check("ext:oauth", "metadata at /.well-known/oauth-authorization-server gives the server's endpoints", needs=oauth_needs)
+@check("oauth.shape.metadata", "ext:oauth", "metadata at /.well-known/oauth-authorization-server gives the server's endpoints", needs=oauth_needs)
 async def _(run):
     doc, _ = await oauth_metadata(run)
     origin, page = origin_of(run), (await external_page(run))["url"]
@@ -2050,7 +2090,7 @@ async def _(run):
     should("S256" in doc.get("code_challenge_methods_supported", []), "code_challenge_methods_supported lacks S256")
 
 
-@check("ext:oauth", "the metadata and the token endpoint allow cross-origin requests, HTTP Basic included", needs=oauth_needs)
+@check("oauth.shape.cors", "ext:oauth", "the metadata and the token endpoint allow cross-origin requests, HTTP Basic included", needs=oauth_needs)
 async def _(run):
     allows = lambda headers: headers.get("Access-Control-Allow-Origin", "").strip() in ("*", FOREIGN)
     _, headers = await oauth_metadata(run)
@@ -2069,7 +2109,7 @@ async def _(run):
                                      "send its client_id by HTTP Basic")
 
 
-@check("ext:oauth", "the token endpoint answers a made-up code with invalid_grant, with client_id in the body or by "
+@check("oauth.A5.bad-code", "ext:oauth", "the token endpoint answers a made-up code with invalid_grant, with client_id in the body or by "
                     "HTTP Basic", needs=oauth_needs)
 async def _(run):
     endpoint = await token_endpoint(run)
@@ -2082,7 +2122,7 @@ async def _(run):
          f"client_id by HTTP Basic with an empty password: HTTP {status}, {json.dumps(doc)}")
 
 
-@check("ext:oauth", "protected resource metadata, where published, gives the server and its authorization server",
+@check("oauth.shape.resource-metadata", "ext:oauth", "protected resource metadata, where published, gives the server and its authorization server",
        needs=oauth_needs)
 async def _(run):
     external, origin = await external_page(run), origin_of(run)
@@ -2162,7 +2202,7 @@ async def sign_ins(run):
     """How many sign-ins --sign-in plans for this server, before failed tries that use up codes: for each page, one
     that redeems, and one for the tries that must fail (chain); one for ext:oauth's token endpoint; one declined."""
     total = 0
-    if offers("external")(run.server):
+    if offers("external")(run.server) and run.profile("external"):
         total += 2
         try:
             await own_issuer(run)
@@ -2170,8 +2210,9 @@ async def sign_ins(run):
         except (Skip, Fail):
             pass
     try:
-        await passkey_page(run)
-        total += 2
+        if run.profile("webauthn"):
+            await passkey_page(run)
+            total += 2
     except (Skip, Fail):
         pass
     return total + 1 if total else 0  # and a declined one
@@ -2430,45 +2471,52 @@ async def token_elsewhere(run, token, used=""):
         raise Skip("the server refused the handshake of every other Origin")
 
 
-@check("4.12.3", "external sign-in: the page redirects with the request's state, and iss", needs=offers("external"))
+@check("external.shape.redirect", "4.12.3", "external sign-in: the page redirects with the request's state, and iss", needs=offers("external"))
 async def _(run):
     out = await flow(run, "external", external_flow)
     redirect_checks(run, out["first"], (await external_page(run)).get("issuer", origin_of(run)))
 
 
-@check("4.12.4", "external sign-in: a code signs in once, with you and a token", needs=offers("external"))
+@check("external.shape.redeem", "4.12.4", "external sign-in: a code signs in, with you and a token", needs=offers("external"))
 async def _(run):
     out = await flow(run, "external", external_flow)
     grant, reply = out["redeemed"]
     must(signed_in(reply), f"a fresh code: {describe(reply)}")
     must(isinstance(reply["result"].get("token"), str), "the result has no token")
+
+
+@check("external.A3.single-use", "4.12.3", "external sign-in: a code signs in once", needs=offers("external"))
+async def _(run):
+    out = await flow(run, "external", external_flow)
+    if out["broken"]:
+        raise Skip("no code redeemed, so a refusal proves nothing")
     must(not signed_in(out["reuse"]), "the code signed in again")
     expect_error(out["reuse"], "denied", "a used code")
 
 
-@check("4.12.3", "external sign-in: a code redeems only with its code_verifier", needs=offers("external"))
+@check("external.A3.verifier", "4.12.3", "external sign-in: a code redeems only with its code_verifier", needs=offers("external"))
 async def _(run):
     out = await flow(run, "external", external_flow)
     burn_note(run, out)
     negative(out, "code_verifier", "a code with another code_verifier")
 
 
-@check("4.12.3", "external sign-in: a code redeems only with its redirect_uri", needs=offers("external"))
+@check("external.A3.redirect-bound", "4.12.3", "external sign-in: a code redeems only with its redirect_uri", needs=offers("external"))
 async def _(run):
     negative(await flow(run, "external", external_flow), "redirect_uri", "a code with another redirect_uri")
 
 
-@check("4.12.3", "external sign-in: a code redeems only with its client_id", needs=offers("external"))
+@check("external.A3.client-bound", "4.12.3", "external sign-in: a code redeems only with its client_id", needs=offers("external"))
 async def _(run):
     negative(await flow(run, "external", external_flow), "client_id", "a code with another client_id")
 
 
-@check("4.10.1", "external sign-in: its code does not finish webauthn", needs=offers("external", "webauthn"))
+@check("external.A3.scheme-bound", "4.10.1", "external sign-in: its code does not finish webauthn", needs=offers("external", "webauthn"))
 async def _(run):
     negative(await flow(run, "external", external_flow), "webauthn", "an external code in a webauthn finish")
 
 
-@check("4.12.4", "external sign-in: the token works from a connection with another Origin", needs=offers("external"))
+@check("external.shape.token-origin", "4.12.4", "external sign-in: the token works from a connection with another Origin", needs=offers("external"))
 async def _(run):
     out = await flow(run, "external", external_flow)
     _, reply = out["redeemed"]
@@ -2477,7 +2525,7 @@ async def _(run):
     await token_elsewhere(run, reply["result"]["token"], out["origin"])
 
 
-@check("ext:oauth", "the token endpoint redeems a code by HTTP Basic, after a request that it refused",
+@check("oauth.shape.token-basic", "ext:oauth", "the token endpoint redeems a code by HTTP Basic, after a request that it refused",
        needs=oauth_needs)
 async def _(run):
     out = await flow(run, "token", token_flow)
@@ -2492,7 +2540,7 @@ async def _(run):
     must(str(doc.get("token_type", "")).lower() == "bearer", f"token_type is {doc.get('token_type')!r}")
 
 
-@check("ext:oauth", "the token endpoint redeems a code once, and its access token works with scheme token",
+@check("oauth.shape.token-endpoint", "ext:oauth", "the token endpoint redeems a code once, and its access token works with scheme token",
        needs=oauth_needs)
 async def _(run):
     out = await flow(run, "token", token_flow)
@@ -2505,14 +2553,14 @@ async def _(run):
     await token_elsewhere(run, doc["access_token"])
 
 
-@check("4.10.1", "passkey page: the page redirects with the request's state, and iss", needs=offers("webauthn"))
+@check("webauthn.shape.page-redirect", "4.10.1", "passkey page: the page redirects with the request's state, and iss", needs=offers("webauthn"))
 async def _(run):
     await passkey_page(run)
     out = await flow(run, "passkey", passkey_flow)
     redirect_checks(run, out["first"], origin_of(run))
 
 
-@check("4.10.1", "passkey page: a code finishes webauthn once, with you", needs=offers("webauthn"))
+@check("webauthn.shape.page-redeem", "4.10.1", "passkey page: a code finishes webauthn, with you", needs=offers("webauthn"))
 async def _(run):
     await passkey_page(run)
     out = await flow(run, "passkey", passkey_flow)
@@ -2522,11 +2570,19 @@ async def _(run):
     must(signed_in(reply), f"a fresh code: {describe(reply)}")
     if "token" not in reply["result"]:
         run.info("the result has no token, which a finish MAY leave out")
+
+
+@check("webauthn.A3.page-single-use", "4.12.3", "passkey page: a code finishes webauthn once", needs=offers("webauthn"))
+async def _(run):
+    await passkey_page(run)
+    out = await flow(run, "passkey", passkey_flow)
+    if out["broken"]:
+        raise Skip("no code redeemed, so a refusal proves nothing")
     must(not signed_in(out["reuse"]), "the code finished again")
     expect_error(out["reuse"], "denied", "a used code")
 
 
-@check("4.10.1", "passkey page: its code finishes neither external nor the other action", needs=offers("webauthn"))
+@check("webauthn.A3.page-scheme-bound", "4.10.1", "passkey page: its code finishes neither external nor the other action", needs=offers("webauthn"))
 async def _(run):
     await passkey_page(run)
     out = await flow(run, "passkey", passkey_flow)
@@ -2534,7 +2590,7 @@ async def _(run):
     negative(out, "action", "a passkey page code in a finish with the other action")
 
 
-@check("4.12.3", "passkey page: a code redeems only with its code_verifier", needs=offers("webauthn"))
+@check("webauthn.A3.page-verifier", "4.12.3", "passkey page: a code redeems only with its code_verifier", needs=offers("webauthn"))
 async def _(run):
     await passkey_page(run)
     out = await flow(run, "passkey", passkey_flow)
@@ -2542,7 +2598,7 @@ async def _(run):
     negative(out, "code_verifier", "a code with another code_verifier")
 
 
-@check("ext:oauth", "the token endpoint does not redeem a passkey page code",
+@check("oauth.A3.passkey-code", "ext:oauth", "the token endpoint does not redeem a passkey page code",
        needs=lambda s: oauth_needs(s) and offers("webauthn")(s))
 async def _(run):
     await passkey_page(run)
@@ -2554,7 +2610,7 @@ async def _(run):
          f"it returned {json.dumps(out['negatives']['token endpoint'].get('result'))[:120]}")
 
 
-@check("4.10.1", "passkey page: the token works from a connection with another Origin", needs=offers("webauthn"))
+@check("webauthn.shape.page-token-origin", "4.10.1", "passkey page: the token works from a connection with another Origin", needs=offers("webauthn"))
 async def _(run):
     await passkey_page(run)
     out = await flow(run, "passkey", passkey_flow)
@@ -2564,17 +2620,49 @@ async def _(run):
     await token_elsewhere(run, reply["result"]["token"], out["origin"])
 
 
-@check("4.12.3", "a sign-in that the person declines redirects with error=access_denied",
-       needs=lambda s: offers("external")(s) or offers("webauthn")(s))
+@check("external.shape.declined", "4.12.3", "a sign-in that the person declines redirects with error=access_denied",
+       needs=lambda s: offers("external")(s) or offers("webauthn")(s), schemes={"external", "webauthn"})
 async def _(run):
     if run.person is None:
         raise Skip("needs a person to sign in: run with --sign-in")
-    kind = "external" if offers("external")(run.server) else "passkey"
+    kind = "external" if offers("external")(run.server) and run.profile("external") else "passkey"
     page = await page_of(run, kind)
     grant = await sign_in(run, page, f"{PAGES[kind][0]}, to decline. Checks error=access_denied.", decline=True)
     must(grant.query.get("state") == grant.state, f"the redirect's state is {grant.query.get('state')!r}, not the request's")
     must("code" not in grant.query, "the redirect has a code")
     must(grant.query.get("error") == "access_denied", f"the redirect has error {grant.query.get('error')!r}")
+
+
+# Rules that a machine cannot check: a person checks them, on the page or in the email.
+
+def try_page(kind):
+    def how(run):
+        _, request, _, _ = run.pages.get(kind, (None, None, None, None))
+        return ("open a sign-in, such as " + request.url if request else "open a sign-in") + ", and check it"
+    return how
+
+
+manual("external.A2.consent", "4.12.3", "the external sign-in page shows the server, and the host or scheme of "
+       "redirect_uri, before it redirects", needs=offers("external"), how=try_page("external"))
+manual("webauthn.A2.page-consent", "4.12.3", "the passkey page shows the server, and the host or scheme of "
+       "redirect_uri, before it redirects", needs=offers("webauthn"), how=try_page("passkey"))
+manual("external.A2.confirm-signed-in", "5.2", "the sign-in page confirms before it redirects, also when the user is "
+       "already signed in there", needs=lambda s: offers("external")(s) or offers("webauthn")(s),
+       schemes={"external", "webauthn"}, how="sign in once, then open a new sign-in in the same browser: the page asks again before it redirects")
+manual("external.A2.allowed-once", "4.12.3", "the sign-in page keeps a user's choice only for an exact https "
+       "redirect_uri, and asks again at each sign-in for an app's scheme or a loopback redirect_uri",
+       needs=lambda s: offers("external")(s) or offers("webauthn")(s),
+       schemes={"external", "webauthn"}, how="allow a loopback redirect_uri, then sign in again with the same one: the page asks again")
+manual("external.A2.client-named", "5.2", "the sign-in page names the client by the host of redirect_uri, marks "
+       "clients that the server does not know, and says that the client will act as the user",
+       needs=lambda s: offers("external")(s) or offers("webauthn")(s),
+       schemes={"external", "webauthn"}, how="guidance (§5.2), not a rule: check that a user can recognize the client and refuse one they do not know")
+manual("webauthn.A4.page-addition-account", "4.10.1", "for an addition, the passkey page shows the account before it "
+       "creates the passkey", needs=offers("webauthn"),
+       how="on a connection signed in to an account, register a passkey through the page: it shows the account first")
+manual("email.A1.code-names-server", "4.11.2", "an email with a code gives the server's address, and tells the user to "
+       "type the code only in a client that is connected to that server", needs=offers("email"),
+       how="propose a sign-in to an address that you read, and check the email")
 
 
 # Rules checked on every frame along the way.
@@ -2586,60 +2674,110 @@ def seen(key):
     return fn
 
 
-check("1", "every frame matches schema/apron.schema.json")(seen("schema"))
-check("1.1", "every request gets exactly one reply")(seen("replies"))
-check("2", "IDs are well formed")(seen("ids"))
-check("3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order"))
-check("4.3.3", "listed room records carry log_id, latest_log_id, and history_log_id", needs="history")(seen("listed-rooms"))
-check("4.5.2", "seen stays the same while the shown status stays offline, and arrives where it must", needs="status")(seen("shown-seen"))
+check("core.shape.schema", "1", "every frame matches schema/apron.schema.json")(seen("schema"))
+check("core.shape.one-reply", "1.1", "every request gets exactly one reply")(seen("replies"))
+check("core.shape.ids", "2", "IDs are well formed")(seen("ids"))
+check("core.delivery.order", "3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order"))
+check("history.shape.room-records", "4.3.3", "listed room records carry log_id, latest_log_id, and history_log_id", needs="history")(seen("listed-rooms"))
+check("status.seen.offline", "4.5.2", "seen stays the same while the shown status stays offline, and arrives where it must", needs="status")(seen("shown-seen"))
+
+
+STATUSES = ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")
+
+
+async def run_check(run, item):
+    """Run one check, and return (status, detail)."""
+    try:
+        if run.server is None and item is not CHECKS[0]:
+            raise Skip("no server frame")
+        if isinstance(item.needs, str) and not run.has(item.needs):
+            raise Skip(f"no capability {item.needs}")
+        if callable(item.needs) and not item.needs(run.server):
+            raise Skip("not advertised")
+        await item.fn(run)
+        return "PASS", ""
+    except Fail as e:
+        return "FAIL", str(e)
+    except Warn as e:
+        return "WARN", str(e)
+    except Skip as e:
+        return "SKIP", str(e)
+    except Manual as e:
+        return "MANUAL", str(e)
+    except Exception as e:  # a crash in a check is the server's failure to answer as expected
+        if run.args.verbose:
+            traceback.print_exc()
+        return "FAIL", f"{type(e).__name__}: {e}"
+    finally:
+        for conn in run.conns:
+            await conn.ws.close()
+        run.conns.clear()
+
+
+def selected(args, item):
+    if args.scheme and item.schemes and not item.schemes & set(args.scheme):
+        return False
+    return not args.only or any(fnmatch.fnmatchcase(item.id, pattern) for pattern in args.only)
 
 
 async def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("url", help="WebSocket URL, such as ws://127.0.0.1:8765")
+    parser.add_argument("url", nargs="?", help="WebSocket URL, such as ws://127.0.0.1:8765")
     parser.add_argument("--token", help="sign in with scheme token instead of guest")
     parser.add_argument("--sign-in", action="store_true",
-                        help="also run the checks that need a person to sign in on the server's pages, in a browser")
+                        help="also run the checks that need someone to sign in on the server's pages")
+    parser.add_argument("--json", metavar="PATH", help="write the results to PATH as JSON")
+    parser.add_argument("--only", metavar="PATTERN", action="append",
+                        help="run only the checks whose ID matches this glob, such as 'external.A3.*'; repeatable")
+    parser.add_argument("--scheme", metavar="NAME", action="append", choices=sorted(KNOWN["auth scheme"]),
+                        help="run only this sign-in scheme's profile, and the core checks; repeatable")
+    parser.add_argument("--list", action="store_true", help="list the checks, and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="print tracebacks of crashed checks")
     args = parser.parse_args()
-    run, counts = Run(args), {}
+    if args.list:
+        for item in CHECKS:
+            if selected(args, item):
+                print(f"{item.id:<36} {('§' if item.ref[:1].isdigit() else '') + item.ref:<9} {item.title}")
+        return 0
+    if not args.url:
+        parser.error("the url is required")
+    run, counts, results = Run(args), dict.fromkeys(STATUSES, 0), []
+    started = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     if not run.schema.schema:
         print(f"note: {SCHEMA_PATH} not found; frames are not validated against the schema")
-    for ref, title, needs, fn in CHECKS:
-        status, detail = "PASS", ""
-        try:
-            if run.server is None and fn is not CHECKS[0][3]:
-                raise Skip("no server frame")
-            if isinstance(needs, str) and not run.has(needs):
-                raise Skip(f"no capability {needs}")
-            if callable(needs) and not needs(run.server):
-                raise Skip("not advertised")
-            await fn(run)
-        except Fail as e:
-            status, detail = "FAIL", str(e)
-        except Warn as e:
-            status, detail = "WARN", str(e)
-        except Skip as e:
-            status, detail = "SKIP", str(e)
-        except Manual as e:
-            status, detail = "MANUAL", str(e)
-        except Exception as e:  # a crash in a check is the server's failure to answer as expected
-            status, detail = "FAIL", f"{type(e).__name__}: {e}"
-            if args.verbose:
-                traceback.print_exc()
-        for conn in run.conns:
-            await conn.ws.close()
-        run.conns.clear()
-        counts[status] = counts.get(status, 0) + 1
-        label = f"§{ref}" if ref[:1].isdigit() else ref
-        print(f"{status}  {label:<7} {title}" + (f": {detail}" if detail else ""), flush=True)
+    chosen = [item for item in CHECKS if selected(args, item)]
+    if not chosen:
+        parser.error("no check matches --only and --scheme")
+    last = CHECKS.index(chosen[-1])
+    for index, item in enumerate(CHECKS):
+        if item not in chosen:
+            if item.setup and index < last:
+                await run_check(run, item)  # learns what later checks use, such as the default room
+                run.notes.clear()
+            continue
+        status, detail = await run_check(run, item)
+        counts[status] += 1
+        label = f"§{item.ref}" if item.ref[:1].isdigit() else item.ref
+        print(f"{status:<6} {item.id:<36} {label:<9} {item.title}" + (f": {detail}" if detail else ""), flush=True)
         for note in run.notes:
-            print(f"      note: {note}", flush=True)
+            print(f"       note: {note}", flush=True)
+        results.append({"id": item.id, "section": item.ref, "status": status,
+                        "message": item.title + (f": {detail}" if detail else ""), "notes": list(run.notes)})
         run.notes.clear()
     if run.server:
         print(f"{run.server.get('agent', 'server')}: {', '.join(run.server.get('capabilities', [])) or 'core only'}")
-    print(", ".join(f"{counts.get(s, 0)} {s.lower()}" for s in ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")))
-    return 1 if counts.get("FAIL") else 0
+    checklist = [r for r in results if r["status"] == "MANUAL"]
+    if checklist:
+        print("For a person to check:")
+        for r in checklist:
+            item = next(c for c in CHECKS if c.id == r["id"])
+            print(f"  [ ] {item.id}: {item.title}")
+    print(", ".join(f"{counts[s]} {s.lower()}" for s in STATUSES))
+    if args.json:
+        report = {"tool": "conform.py", "version": VERSION, "target": args.url, "started": started,
+                  "results": results, "summary": counts}
+        Path(args.json).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    return 1 if counts["FAIL"] else 0
 
 
 if __name__ == "__main__":
