@@ -441,10 +441,8 @@ class AuthResult {
 - `server.labels` maps a scheme to a label: a short name for what the user
   signs in with, such as `{"external": "Acme SSO", "token": "Invite code"}`.
 - A label is plain text, at most 64 characters.
-- Clients show a scheme's label instead of their own name for the scheme,
-  such as "Sign in with Acme SSO".
-- Without a label, clients use their own name for the scheme, such as
-  "Sign in on chat.example" for `external`.
+- Clients show a scheme's label when available, such as "Sign in with Acme
+  SSO".
 - `name` and `user_id` are optional requests, and work with any scheme. `you`
   is what the server assigned.
 - Servers SHOULD NOT assign a `user_id` that was used before, unless they
