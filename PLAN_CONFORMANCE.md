@@ -1,8 +1,41 @@
 # Plan: conformance drivers
 
-Status: proposal, local and not committed. Written for
-[PLAN_LOOSE.md](PLAN_LOOSE.md)'s `external`; most of it applies to any plan.
-Each safety condition in [EVALUATIONS.md](EVALUATIONS.md) becomes a test.
+Status: phases 1 to 4 built on [shazow/apron#115](https://github.com/shazow/apron/pull/115)
+(2026-11-16); phase 5 and proof of possession are not. Written for
+[PLAN_LOOSE.md](PLAN_LOOSE.md)'s `external`, before the core and `ext:oauth`
+split. Each safety condition in [EVALUATIONS.md](EVALUATIONS.md) becomes a test.
+
+## What was built (2026-11-16)
+
+- **Server driver** (`tests/conformance/conform.py`): 119 checks with stable
+  IDs (`--list`), PASS/FAIL/WARN/SKIP/MANUAL, `--json`, `--only`, `--scheme`.
+  Sign-in checks run without a person; checks after the sign-in run with
+  `--sign-in`, which catches each code on a loopback `redirect_uri`. A person
+  clicks through, or a portal does.
+- **Portal drivers:** `--portal "<command>"`, with one committed driver,
+  `tests/conformance/portals/passkey.cjs` (Playwright and a virtual
+  authenticator). Its interface is in DEVELOPMENT.md. The plan's `manual`
+  portal became the person path of `--sign-in`.
+- **Client driver** (`tests/conformance/conform_client.py`): two servers, their
+  sign-in pages and an issuer, an adapter over JSON lines, and an interactive
+  mode. Against apron-web: 12 pass, 1 fail (`email.A1.link-server`, a real
+  apron-web bug), 1 skip, 1 manual.
+- **Results:** apron-server-go 109 pass, 0 fail; apron-server-cloudflare 66
+  pass, 0 fail, 1 warn; the minimal servers 29 pass, 0 fail.
+- **Differences from this plan:**
+  - Metadata, CORS and token-endpoint tests are `oauth.*`, since those parts
+    are now `ext:oauth`.
+  - `external.shape.begin` no longer requires `url` on the server's origin.
+  - `webauthn.shape.page` is `webauthn.shape.page-redeem` and
+    `webauthn.A3.page-scheme-bound`.
+  - The passkey page has its own copies of the authorization endpoint tests
+    (`webauthn.A2.page-*`, `webauthn.A3.page-*`).
+- **Not built:** phase 5 (`email` with an inbox, the foreign-issuer profile),
+  proof of possession (not in the spec), and wiring into each
+  implementation's CI.
+- **Open questions:** 1 and 2 are decided (the client driver is in
+  shazow/apron; the adapter uses JSON lines over stdin and stdout). 3 and 4
+  stay open.
 
 ## Summary
 

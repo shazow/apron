@@ -55,13 +55,17 @@ The design held:
 | S16. Email `state` details | Left to the server. A client whose approval is `denied` proposes again with a new `state`. apron-server-go lets the newest proposal own a `state`, and denies a `state` that matches no proposal. | no change |
 | S13. Orphan passkeys | Both passkey pages can call `signalUnknownCredential` for a passkey that no account has and no unexpired registration holds, behind a switch that is **off by default**. With it off, the page gives the usual error, so it reveals nothing about which passkeys exist. FIXME: keep it off until WebKit [302624](https://bugs.webkit.org/show_bug.cgi?id=302624) and [322267](https://bugs.webkit.org/show_bug.cgi?id=322267) are fixed (on iOS and macOS 26 the call can delete other accounts' passkeys); check again on 2027-02-16; turn it on only where the server is the sole user of its RP ID. Not in PROTOCOL.md. | Go `--webauthn.signal-unknown` (`60f4a72`…`ed1877f`); Cloudflare `SIGNAL_UNKNOWN_PASSKEYS` (`6aae3cc`…`6f6f689`) |
 | `redirect_uri` refusal | The server MUST refuse a `redirect_uri` that is not `https`, a scheme with a `.`, or loopback `http`. Before, the spec only said which ones to accept. | §4.12.3, §5.2, `fcfed7e` |
-| Conformance | `conform.py` checks sign-in: the passkey page, external, email basics and ext:oauth, without a person, and after sign-in with `--sign-in`. A client driver and stable test IDs are in progress (PLAN_CONFORMANCE.md). | `3b282cf`, `a31ae82` |
+| Conformance | `conform.py` checks sign-in: the passkey page, external, email basics and ext:oauth, without a person, and after sign-in with `--sign-in`. Stable IDs, `--json`, a passkey portal driver, and a client driver followed (PLAN_CONFORMANCE.md, "What was built"). | `3b282cf`…`0dfdebc` |
 | apron-web's startup budget | Raised for the startup JS size only, `a4f9220` | apron-web#278 |
 
 Implementations brought in line:
 
 - **apron-server-go** shows errors on the page (`e773491`), and doesn't refuse tokens from codes because of `Origin` (`b5a2f3c`). It leaves `webauthn` out of `signup` with guests off (S17, `135b9c0`), and names new accounts from userinfo (S18, `19403b8`).
 - **apron-server-cloudflare** and **apron-web** already matched. apron-web says when a server has the older `external` (`d1888cc`), and hints when a code is refused off its connection (`309aed8`).
+
+### Follow-up: apron-web and email links
+
+apron-web uses an email link with its own proposal's `state` whatever the link's `server` says (`src/lib/ui/sign-in-link.ts`). §4.11.2 says to drop it unless `server` is the server it proposed to; otherwise a server can get another server's token (mix-up). The client driver's `email.A1.link-server` found it. HISTORY.md now lists the rule (`1db9e57`).
 
 ### Follow-up: apron-server-go and guests
 
@@ -97,6 +101,10 @@ These are small, and none made two implementations disagree. S1–S4, S11–S18 
 - **S22. Adding `external` when the page's own sign-in makes a new account.** [interop 2026-11-16 #2] On apron-server-cloudflare, a signed-in user who chooses "Create an account" on `/oauth/authorize` gets "That sign-in belongs to another account". §4.12.4 adds an identity that belongs to no account. It is unclear what a new identity means when the authorization server's sign-in is the server's own passkey. The new passkey is then an orphan.
 - **S23. A wrong `resource` at the token endpoint.** [interop 2026-11-16 #5] apron-server-go answers `invalid_target` and uses up the code; apron-server-cloudflare keeps it. `ext:oauth` says a request refused "before it redeems the code" leaves the code usable, but not on which side a `resource` mismatch falls. Proposed: a `resource` mismatch is refused before redemption.
 - **S24. Origin and tokens from email.** [interop 2026-11-16 #6] apron-server-go refuses an email token from an `Origin` other than the one that got it. §3.2.1 and §4.11 say nothing, unlike §4.10.1 and §4.12.4 for tokens from codes. Possibly fine as policy, but a native client that signs in by email and a web client that resumes would see different results per server.
+- **S25. Policy limits on additions.** [conformance] apron-server-go allows one `external` identity per account. §1.1's policy refusals probably cover it, but §4.12.4 states additions without a word on policy.
+- **S26. `user.name` in a register begin.** [conformance] §4.10's SHOULD (the begin's `name` for `user.name`) is in tension with WebAuthn, where `user.name` identifies the account. apron-server-cloudflare uses its own handle there, which gives a WARN.
+- **S27. Sending a bearer token only to its own server.** [client driver] No rule says that a client sends a token only to the server that issued it; §5.2 only explains copied tokens. Proposed for §3.2.1: "Clients send a bearer token only to the server that issued it."
+- **S28. Client rules without key words.** [client driver] Many client rules are plain sentences ("A client drops a link…", "Clients reject any other `url`"). The drivers treat them as requirements, as the server rules are. Worth a line in AGENTS.md, or key words where a rule guards against an attack.
 
 ## Housekeeping
 
