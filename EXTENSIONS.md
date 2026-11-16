@@ -1,9 +1,9 @@
 # Apron Extensions
 
-Extensions add features that [PROTOCOL.md](PROTOCOL.md) does not define. This
-index lists extensions in common use, so that clients and servers that
-do not know each other can agree on them. PROTOCOL.md wins where the two
-disagree.
+Extensions add optional features beyond what [PROTOCOL.md](PROTOCOL.md)
+defines. This page lists extensions in common use, so that clients and
+servers who do not know about each other can benefit from implementing the
+same extensions.
 
 - Each extension's heading is the capability that the server advertises.
 - Clients use an extension only while the latest `server` frame lists its

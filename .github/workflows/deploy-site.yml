@@ -5,7 +5,7 @@ name: deploy-site
 on:
   push:
     branches: [main]
-    paths: [PROTOCOL.md, HISTORY.md, FAQ.md]
+    paths: [PROTOCOL.md, HISTORY.md, FAQ.md, EXTENSIONS.md, 'extensions/ext_*.md']
   workflow_dispatch:
 
 jobs:
