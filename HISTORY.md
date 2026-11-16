@@ -2,10 +2,10 @@
 
 Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first. Each point says briefly what changed on the wire and where, so that readers can decide what to read in PROTOCOL.md.
 
-## v10 (2026-11-15)
+## v10 (2026-11-16)
 
 - A `webauthn` begin may carry `external`: a passkey page on the server's domain (§4.10.1). A client that cannot use the RP ID, or whose platform refuses it, opens `external.url` and finishes `webauthn` with the code that comes back. A server may send `external` alone, without `challenge_id` and `public_key`, such as to a connection whose origin cannot use the RP ID; clients written before this change cannot complete that begin, and should update. A token from a code works from any `Origin`.
-- Scheme `external` (§4.12) is a profile of OAuth 2.1, and replaces the proposal-based sign-in and `return_url`. Begin returns `external` (`url`, `issuer`). The client sends the user to `url` with PKCE and `resource`, and redeems the code on any connection. By default the server is its own authorization server, and accepts any client; `issuer` names another one, which extensions can add. A client with a client ID metadata document uses its URL as `client_id`. Its sign-in page shows request errors itself, redirects only with a code or `access_denied`, and only to a client that the user allowed: an `https` `redirect_uri` once per account, any other at each sign-in.
+- Scheme `external` (§4.12) is a profile of OAuth 2.1, and replaces the proposal-based sign-in and `return_url`. Begin returns `external` (`url`, `issuer`). The client sends the user to `url` with PKCE and `resource`, and redeems the code on any connection. By default the server is its own authorization server, and accepts any client; `issuer` refers to another one, which an extension can add, such as `ext:oauth`. A client whose client ID metadata document lists its `redirect_uri` uses the document's URL as `client_id`. A failed redemption may use up the code. Its sign-in page shows request errors itself, redirects only with a code or `access_denied`, and only to a client that the user allowed: an `https` `redirect_uri` once per account, any other at each sign-in.
 - Servers that list `email` or `external` MUST also list `token` (§4.11, §4.12).
 - An email approval may carry the proposal's `state`, so that a short code works on a connection other than the one that proposed (§4.11.3).
 - On a guest connection, whether signing in with another scheme adds it to the guest's account is server policy (§3.2).

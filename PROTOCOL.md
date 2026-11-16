@@ -1,6 +1,6 @@
 ---
 version: 10
-updated: 2026-11-15
+updated: 2026-11-16
 license: CC0-1.0
 ---
 
@@ -2642,11 +2642,11 @@ class External {
 - Clients send the user to `url` with the authorization code grant
   (`response_type`, `client_id`, `redirect_uri`), PKCE `S256`
   (`code_challenge`, `code_challenge_method`), and an unguessable `state`.
-- Clients add their own `client_id`, such as their app ID. A client that
-  publishes a
+- Clients add their own `client_id`, such as their app ID.
+- If a client's
   [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
-  SHOULD use its `https` URL, and list in it every `redirect_uri` that it
-  sends.
+  lists the `redirect_uri` that the client sends, the client SHOULD use the
+  document's `https` URL as `client_id`.
 - Clients send the server's origin as
   [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
   from the address that they connected to (otherwise a server could get a
@@ -2694,7 +2694,9 @@ sign-in pages: the page at `url`, and its passkey page
   server that issued it.
 - Servers MUST NOT pass a client's code on, except to the authorization server
   that issued it.
-- An invalid, expired, used, or wrongly addressed code is `denied`.
+- An invalid, expired, or used code is `denied`. A code whose `resource` is
+  not the server's origin is invalid.
+- A failed redemption MAY use up the code.
 - A successful sign-in returns `you` and a bearer `token`
   ([§3.2.1](#321-bearer-tokens)).
 - Servers MUST NOT refuse that `token` because of a connection's `Origin` (an
