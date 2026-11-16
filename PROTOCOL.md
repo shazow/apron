@@ -2583,9 +2583,9 @@ and ends in a bearer `token` ([§3.2.1](#321-bearer-tokens)). It is a profile of
 [OAuth 2.1](https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/): the
 client sends the user to an authorization endpoint with PKCE, and redeems the
 code that comes back. By default, the server is its own authorization server,
-and any client can use it without registration. A server can name another
-authorization server instead, such as an OpenID Connect provider. Clients can
-use an OAuth library, or a few lines of their own.
+and any client can use it without registration. Extensions can add more of
+OAuth and OpenID Connect, such as another authorization server. Clients need
+only a few lines of their own.
 
 Servers that list `external` in `server.auth` MUST also list `token`.
 
@@ -2618,12 +2618,13 @@ Servers that list `external` in `server.auth` MUST also list `token`.
 ```ts
 class External {
   url: string;                  // the sign-in page: the authorization endpoint
-  issuer?: string;              // for clients that redeem at its token endpoint; absent: the server's origin
+  issuer?: string;              // the authorization server of url; absent: the server's origin
 }
 ```
 
 - An `external` request with neither `code` nor `token` is a begin. It
-  authenticates nothing, and returns `external`.
+  authenticates nothing, and returns `external`. A request with `token` is for
+  extensions; without one, it is `denied`.
 - `url` is an absolute `https` URL, or `http` on a loopback host. Clients
   reject any other `url`, such as `javascript:…`.
 - `url` MAY carry a query, such as `scope` or a provider hint. Clients keep it,
@@ -2632,17 +2633,20 @@ class External {
 - The server's origin is `https://` plus the host and any port of its address
   ([§1](#1-transport--framing)), such as `https://chat.example`. For a `ws://`
   address on a loopback host, it is `http://` instead.
-- Without `issuer`, the server is its own authorization server, and the issuer
-  is its origin.
+- `issuer` refers to the authorization server of `url`. Without it, the server
+  is its own authorization server, and the issuer is its origin. Clients that
+  redeem on the connection need not read it.
 
 #### 4.12.2 Signing in
 
 - Clients send the user to `url` with the authorization code grant
   (`response_type`, `client_id`, `redirect_uri`), PKCE `S256`
   (`code_challenge`, `code_challenge_method`), and an unguessable `state`.
-- Clients add their own `client_id`, such as their app ID. With `issuer`, it
-  is the `https` URL of the client's
-  [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/).
+- Clients add their own `client_id`, such as their app ID. A client that
+  publishes a
+  [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/)
+  SHOULD use its `https` URL, and list in it every `redirect_uri` that it
+  sends.
 - Clients send the server's origin as
   [`resource`](https://www.rfc-editor.org/rfc/rfc8707), which they work out
   from the address that they connected to (otherwise a server could get a
@@ -2654,17 +2658,6 @@ class External {
   `error` as a failed sign-in.
 - Clients redeem the code with `code`, `code_verifier`, `redirect_uri`, and
   the `client_id` that they sent, on any connection.
-- Clients MAY instead redeem the code at the issuer's token endpoint, such as
-  with an OAuth library. They then find the endpoint from the issuer's
-  metadata, and MUST check that
-  [`iss`](https://www.rfc-editor.org/rfc/rfc9207) in the authorization
-  response is the issuer.
-- When the server is its own authorization server, the access token is a
-  bearer token for `scheme: "token"` ([§3.2.1](#321-bearer-tokens)).
-  Otherwise clients present it with `scheme: "external"` and `token`.
-- Clients without a browser MAY use the
-  [device authorization grant](https://www.rfc-editor.org/rfc/rfc8628), where
-  the issuer offers it.
 
 #### 4.12.3 Authorization server
 
@@ -2672,11 +2665,6 @@ These rules apply to a server that is its own authorization server:
 
 - The server SHOULD accept any `client_id`, and any `redirect_uri` that is
   `https`, a scheme with a `.`, or `http` on a loopback address with any port.
-- The server MAY fetch a client ID metadata document when `client_id` is an
-  `https` URL. It then accepts only a `redirect_uri`
-  that the document lists, and shows the document's `client_name` only beside
-  the host of `client_id` (otherwise a client could borrow another client's
-  name for its own `redirect_uri`).
 - The server MUST require PKCE `S256`, and MUST refuse a `resource` other than
   its origin.
 - The page MUST show the error of an invalid request itself (any `https` address
@@ -2692,41 +2680,23 @@ These rules apply to a server that is its own authorization server:
 - The server MUST make each code unguessable and single use, and MUST bind it
   to `client_id`, `redirect_uri`, the PKCE challenge, and `resource`. A code
   expires within minutes.
-- The server SHOULD publish its
-  [metadata](https://www.rfc-editor.org/rfc/rfc8414) at its origin.
-- The server MUST allow cross-origin requests to its metadata and token
-  endpoint.
 
-A server that names another authorization server MUST use one that binds
-codes and tokens to `resource`, sends `iss`, and issues
-[JWT access tokens](https://www.rfc-editor.org/rfc/rfc9068). It MUST accept
-clients only by their client ID metadata documents, and ask the user to
-confirm each client by the host of its document (otherwise clients that share
-one `client_id` share the user's consent, and any site can get a code without
-a click).
+#### 4.12.4 Redemption
 
-#### 4.12.4 Token checks
-
-- With `code`, the server redeems the code: itself, or at the issuer's token
-  endpoint, which it finds from the issuer's metadata.
-- Servers MUST NOT pass a client's code or token on, except to the issuer.
-- Servers MUST accept only access tokens from the issuer, with an `aud` that
-  includes their origin. They check the signature against the issuer's keys,
-  and check `typ` (`at+jwt`), `iss`, and `exp` (an ID token is not an access
-  token, even when its `aud` matches).
-- Servers MUST reject a token that is bound to a key, such as by a `cnf`
-  claim. This document defines no proof for one.
-- An invalid, expired, used, or wrongly addressed code or token is `denied`.
-- Servers MUST NOT refuse the bearer token that an `external` sign-in returns,
-  or an access token from their own token endpoint, because of a connection's
-  `Origin` (an app sends no `Origin`).
-- Servers identify an account by the issuer and the token's `sub`, never by a
-  claim that can change, such as a user name.
+- With `code`, the server redeems the code: itself, or at the authorization
+  server that issued it.
+- Servers MUST NOT pass a client's code on, except to the authorization server
+  that issued it.
+- An invalid, expired, used, or wrongly addressed code is `denied`.
 - A successful sign-in returns `you` and a bearer `token`
   ([§3.2.1](#321-bearer-tokens)).
+- Servers MUST NOT refuse that `token` because of a connection's `Origin` (an
+  app sends no `Origin`).
 - On a connection that is signed in, an `external` request adds the identity
   to that account, and returns `you`. An identity that belongs to another
   account is `denied`.
+- Servers identify an account by the issuer and a subject that the issuer
+  assigns, never by a claim that can change, such as a user name.
 - Account creation for new identities is server policy.
 
 ### 4.13 `ext`
@@ -2832,7 +2802,7 @@ server.
   copied token does not work from another website.
 - A bearer `token` works for anyone who copies it, such as from storage or a
   log ([§3.2.1](#321-bearer-tokens)), and a token from a code works from any
-  origin ([§4.10.1](#4101-passkey-page), [§4.12.4](#4124-token-checks)).
+  origin ([§4.10.1](#4101-passkey-page), [§4.12.4](#4124-redemption)).
   Rotation limits this, as an optional server policy. A server that replaces
   the token at each sign-in, and treats a replaced token that comes back as a
   copy, can revoke the tokens that followed it. The copy then works only until
@@ -2856,7 +2826,7 @@ server.
   else's link into that person's account (login cross-site request forgery).
 - A signed-in connection cannot approve a sign-in ([§4.11.3](#4113-approval)),
   and `external` on a signed-in connection only adds an identity
-  ([§4.12.4](#4124-token-checks)). So a link or a token cannot silently switch
+  ([§4.12.4](#4124-redemption)). So a link or a token cannot silently switch
   a session to another account.
 - An addition works only on a connection of the account that proposed it
   ([§4.11.3](#4113-approval)). Otherwise someone could lead a victim to link the
@@ -2867,22 +2837,15 @@ server.
   user's address, get the token from the user or the client, and sign in to
   the other server as the user (mix-up).
 - Clients send `resource` for the server that they are connected to, never
-  one that a server names ([§4.12.2](#4122-signing-in)), and servers accept
-  only tokens whose `aud` includes their own origin
-  ([§4.12.4](#4124-token-checks)). So a server that names another server's
-  authorization server gets tokens addressed to itself, which the other server
-  rejects. Servers on one host and port share an origin, so they trust each
-  other.
-- An authorization server that lets clients share one `client_id` cannot tell
-  them apart, so the user's consent for one is consent for all. Any site could
-  then send the user there and get a code without a click. A client ID
-  metadata document gives each client its own identity and consent
-  ([§4.12.3](#4123-authorization-server)).
-- A client that redeems on the connection gives a code only to the server that
-  it is connected to, which redeems it only at its own issuer
-  ([§4.12.4](#4124-token-checks)). A client that redeems at a token endpoint
-  checks `iss` first ([§4.12.2](#4122-signing-in)). So an authorization
-  server cannot take a code that another one issued (mix-up).
+  one that a server names ([§4.12.2](#4122-signing-in)), and a server's page
+  refuses any other ([§4.12.3](#4123-authorization-server)). So a server that
+  points its `url` at another server's page gets no code that the other
+  server would redeem. Servers on one host and port share an origin, so they
+  trust each other.
+- A client gives a code only to the server that it is connected to, which
+  passes it on only to the authorization server that issued it
+  ([§4.12.4](#4124-redemption)). So an authorization server cannot take a code
+  that another one issued (mix-up).
 - PKCE binds an authorization code to the client that started the sign-in
   ([§4.12.2](#4122-signing-in)). So an app that claims the same redirect URI
   cannot redeem the code.

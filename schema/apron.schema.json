@@ -941,7 +941,7 @@
           "pattern": "^(https://|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])([:/?]|$))"
         },
         "issuer": {
-          "description": "For clients that redeem at the issuer's token endpoint; absent: the server's origin (§4.12.1).",
+          "description": "The authorization server of url; absent: the server's origin. Clients that redeem on the connection need not read it (§4.12.1).",
           "type": "string"
         }
       },
