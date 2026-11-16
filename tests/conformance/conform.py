@@ -3152,11 +3152,14 @@ async def main():
     last = CHECKS.index(chosen[-1])
     for index, item in enumerate(CHECKS):
         if item not in chosen:
-            if item.setup and index < last:
-                await run_check(run, item)  # learns what later checks use, such as the default room
+            if not item.setup or index > last:
+                continue
+            status, detail = await run_check(run, item)  # learns what later checks use, such as the default room
+            if status != "FAIL":  # a failure, such as no server frame, is reported all the same
                 run.notes.clear()
-            continue
-        status, detail = await run_check(run, item)
+                continue
+        else:
+            status, detail = await run_check(run, item)
         counts[status] += 1
         label = f"§{item.ref}" if item.ref[:1].isdigit() else item.ref
         print(f"{status:<6} {item.id:<36} {label:<9} {item.title}" + (f": {detail}" if detail else ""), flush=True)
