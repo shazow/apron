@@ -71,15 +71,15 @@ the server offers one, and gets a code back
    practice, that app is the server operator's own app.
    - Apple: Associated Domains (`webcredentials:`).
    - Android: Digital Asset Links (`assetlinks.json`).
-   - Linux and other desktops: no platform API yet, so no app is trusted.
-     Don't talk to a security key directly, such as with libfido2. Such an
-     app can claim any RP ID and origin, so passkeys lose their phishing
-     protection.
+   - Linux, and other desktops without a platform passkey API: no app is
+     trusted. Don't talk to a security key directly, such as with libfido2.
+     Such an app can claim any RP ID and origin, so passkeys lose their
+     phishing protection.
 2. **A trusted app runs the ceremony** with `public_key`, after the RP ID check
-   ([§4.10](PROTOCOL.md#410-webauthn-authentication)). If the platform refuses
-   the RP ID, and the begin result has `external`, the app continues at step 3
-   ([§4.10.1](PROTOCOL.md#4101-passkey-page)). A cancel by the user is not a
-   refusal.
+   ([§4.10](PROTOCOL.md#410-webauthn-authentication)). If the begin result has
+   `external` and no `public_key`, or the platform refuses the RP ID, the app
+   continues at step 3 ([§4.10.1](PROTOCOL.md#4101-passkey-page)). A cancel by
+   the user is not a refusal.
    - Apple: `ASAuthorizationPlatformPublicKeyCredentialProvider`. A cancel is
      `ASAuthorizationError.canceled`.
    - Android: Credential Manager (`androidx.credentials`).
@@ -87,8 +87,9 @@ the server offers one, and gets a code back
    an `https` `redirect_uri` once for their account, and any other
    `redirect_uri` at each sign-in
    ([§4.12.3](PROTOCOL.md#4123-authorization-server)).
-   - Apple: an `https` address (from iOS 17.4 and macOS 14.4), or else a
-     scheme with a `.`, such as `com.example.app:/signed-in`.
+   - Apple: an `https` address on a domain that lists the app (from iOS 17.4
+     and macOS 14.4), or else a scheme with a `.`, such as
+     `com.example.app:/signed-in`.
    - Android: an `https` App Link, or else a scheme with a `.`.
    - Linux and other desktops: a loopback address, such as
      `http://127.0.0.1:53682/signed-in`. The app listens there until the code
@@ -110,8 +111,8 @@ the server offers one, and gets a code back
    the begin step, `code`, `code_verifier`, `redirect_uri`, and `client_id`,
    on any connection ([§4.10.1](PROTOCOL.md#4101-passkey-page)). If the result
    has a bearer `token`, the app keeps it in the platform's secure storage,
-   such as the Keychain, Android Keystore, or Secret Service. The app signs in
-   with it on later connections ([§3.2.1](PROTOCOL.md#321-bearer-tokens)).
+   such as the Keychain, Secret Service, or on Android, encrypted with an
+   Android Keystore key. The app signs in with it on later connections ([§3.2.1](PROTOCOL.md#321-bearer-tokens)).
 
 ### Limits
 
@@ -120,11 +121,6 @@ the server offers one, and gets a code back
 - **Passkey autofill.** In a sign-in session, some platform versions offer
   passkeys only from a button, not as autofill. A passkey page can start the
   ceremony from a button instead.
-- **Tokens from a trusted app's ceremony.** A server accepts a bearer `token`
-  from a finish with `credential` only on a connection whose `Origin` is the
-  ceremony's origin ([§4.10](PROTOCOL.md#410-webauthn-authentication)). An
-  app sends no `Origin`. So a trusted app can need a new ceremony at each
-  sign-in, or can use the passkey page instead.
 - **Platform details change.** Check each platform's current documentation,
   such as for the error when the domain does not list the app, and for an
   `https` `redirect_uri`.
