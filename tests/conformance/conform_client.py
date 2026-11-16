@@ -106,6 +106,8 @@ Scenarios (ID, section, what passes):
   external.A3.pkce           §4.12.2  S256, a verifier of 43+ unreserved characters that
                                       matches the challenge
   external.A4.state          §4.12.2  state is present, and differs on each sign-in
+  external.A3.own-client-id  §4.12.2  sends its own client_id, not one that external.url's
+                                      query carries
   external.A1.resource       §4.12.2  resource is the origin the client connected to, also
                                       when the begin names an issuer elsewhere
   external.A4.wrong-state    §4.12.2  does not redeem after a redirect with another state
@@ -121,6 +123,7 @@ Scenarios (ID, section, what passes):
                                       server's host or above it, and uses the passkey page
   email.A1.link-server       §4.11.2  drops a link with its proposal's state whose server
                                       is not the server it proposed to
+  email.A1.link-no-server    §4.11.2  drops a link with its proposal's state and no server
   external.A2.webview        §4.12.2  MANUAL: the page opens in the system browser or a
                                       sign-in session, not an embedded web view
   core.shape.schema          §1       every client frame matches the schema
@@ -1137,6 +1140,26 @@ async def _(d):
     must(len(verifiers) < 2 or verifiers[0] != verifiers[1], "both sign-ins used the same code_verifier")
 
 
+SERVER_CLIENT_ID = "server-chosen"
+
+
+@test("external.A3.own-client-id", "4.12.2", "sends its own client_id, not one that external.url's query carries")
+async def _(d):
+    # The server breaks §4.12.1 here: its query sets a parameter that §4.12.2 sets.
+    def begin(site, conn):
+        return {"external": {"url": f"{conn.page_base}/authorize?scope=apron&client_id={SERVER_CLIENT_ID}"}}
+
+    flow = await external_flow(d, begin=begin)
+    sent = [v for k, v in d.requests[flow.page.req].pairs if k == "client_id"]
+    must(sent, "the request has no client_id")
+    must(SERVER_CLIENT_ID not in sent,
+         f"the request carries the client_id {SERVER_CLIENT_ID!r} that the server put in external.url"
+         + (f", beside {', '.join(repr(v) for v in sent if v != SERVER_CLIENT_ID)}" if len(sent) > 1 else ""))
+    if flow.redeem and flow.redeem.kind == "frame":
+        redeemed = auth_params(flow.redeem).get("client_id")
+        must(redeemed != SERVER_CLIENT_ID, f"the client redeemed with the client_id {SERVER_CLIENT_ID!r} of the server")
+
+
 @test("external.A1.resource", "4.12.2", "sends the connected server's origin as resource, also with a foreign issuer")
 async def _(d):
     flow = await baseline(d)
@@ -1313,47 +1336,66 @@ async def _(d):
         d.note("the driver refused the finish: " + "; ".join(problems))
 
 
-@test("email.A1.link-server", "4.11.2", "drops a link with its proposal's state whose server is another server")
-async def _(d):
+EMAIL_ADDRESS = "conformance@example.com"
+
+
+async def email_proposal(d):
+    """The client proposes an email sign-in on server A; returns the proposal event, which carries a state."""
     if not d.can("email"):
         raise Skip("the adapter cannot drive email")
-    address = "conformance@example.com"
+    start = await d.fresh(A=offering("email"), B=offering("email"))
+    await d.connect("A", start)
+    await d.do("sign_in", scheme="email", email=EMAIL_ADDRESS,
+               say=f"Sign in to {d.sites['A'].address} with email, as {EMAIL_ADDRESS}")
+    proposal = await d.until(lambda e: e.kind == "proposal" and e.site == "A", start)
+    if not proposal:
+        raise Skip("the client sent no email proposal")
+    if not proposal.state:
+        raise Skip("the proposal carried no state, so the rule for links with a proposal's state does not apply")
+    return proposal
 
-    async def propose():
-        start = await d.fresh(A=offering("email"), B=offering("email"))
-        await d.connect("A", start)
-        await d.do("sign_in", scheme="email", email=address,
-                   say=f"Sign in to {d.sites['A'].address} with email, as {address}")
-        proposal = await d.until(lambda e: e.kind == "proposal" and e.site == "A", start)
-        if not proposal:
-            raise Skip("the client sent no email proposal")
-        if not proposal.state:
-            raise Skip("the proposal carried no state, so the rule for links with a proposal's state does not apply")
-        return proposal
 
-    def link(token, state, key):
-        server = d.sites[key].address
-        return "https://link.apron.chat/#" + urllib.parse.urlencode(
-            {"token": token, "state": state, "server": server}, safe=":/")
+def email_link(d, token, state, key):
+    """A sign-in link (A.4) with token and state, and the address of server key as server; key None leaves it out."""
+    pairs = {"token": token, "state": state}
+    if key:
+        pairs["server"] = d.sites[key].address
+    return "https://link.apron.chat/#" + urllib.parse.urlencode(pairs, safe=":/")
 
-    proposal = await propose()
+
+async def email_link_used(d, key, issuer, timeout=None):
+    """A new proposal on A, then a link with its state whose server is key (None: no server), with a token that
+    server issuer knows. Returns the first frame that carries the token, or None after timeout."""
+    proposal = await email_proposal(d)
     token = "em_" + secrets.token_urlsafe(24)
-    d.sites["B"].email_tokens[token] = {"user_id": "email_b", "name": "Conformance"}
+    d.sites[issuer].email_tokens[token] = {"user_id": f"email_{issuer.lower()}", "name": "Conformance"}
     mark = len(d.log)
-    await d.do("open_link", url=link(token, proposal.state, "B"))
-    used = await d.until(lambda e: e.kind == "frame" and token in e.raw, mark, timeout=d.quiet_window(), stop=True)
+    await d.do("open_link", url=email_link(d, token, proposal.state, key))
+    return await d.until(lambda e: e.kind == "frame" and token in e.raw, mark, timeout=timeout, stop=timeout is not None)
+
+
+async def email_control(d, refused):
+    """The control of a dropped link: the same kind of link, with the server the client proposed to, is used."""
+    if await email_link_used(d, "A", "A") is None:
+        raise Skip(f"the client did not use a link that names the server it proposed to either, so dropping {refused} "
+                   "proves nothing")
+
+
+@test("email.A1.link-server", "4.11.2", "drops a link with its proposal's state whose server is another server")
+async def _(d):
+    used = await email_link_used(d, "B", "B", timeout=d.quiet_window())
     must(used is None, f"the client sent the token of a link that names B, with the state of its proposal to A, to "
                        f"{used.site if used else ''}: {short(used.frame if used else '', 120)}")
-    # The control: the same kind of link, naming the server it proposed to, is used.
-    proposal = await propose()
-    token = "em_" + secrets.token_urlsafe(24)
-    d.sites["A"].email_tokens[token] = {"user_id": "email_a", "name": "Conformance"}
-    mark = len(d.log)
-    await d.do("open_link", url=link(token, proposal.state, "A"))
-    used = await d.until(lambda e: e.kind == "frame" and token in e.raw, mark)
-    if used is None:
-        raise Skip("the client did not use a link that names the server it proposed to either, so dropping the other "
-                   "proves nothing")
+    await email_control(d, "the link that names B")
+
+
+@test("email.A1.link-no-server", "4.11.2", "drops a link with its proposal's state and no server")
+async def _(d):
+    # As if B had received A's state, and emailed its own token in a link without server.
+    used = await email_link_used(d, None, "B", timeout=d.quiet_window())
+    must(used is None, f"the client sent the token of a link without server, with the state of its proposal to A, to "
+                       f"{used.site if used else ''}: {short(used.frame if used else '', 120)}")
+    await email_control(d, "the link without server")
 
 
 @test("external.A2.webview", "4.12.2", "opens the sign-in page in the system browser or a sign-in session")
