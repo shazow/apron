@@ -377,6 +377,11 @@ class Site:
                     await self.send(conn, reply)
         except ConnectionClosed:
             pass
+        except Exception as e:  # a driver bug: say so, rather than fail the client
+            self.d.log.add("driver-error", site=self.key, conn=n, error=f"{type(e).__name__}: {e}")
+            self.d.note(f"driver error on {self.key}: {type(e).__name__}: {e}")
+            if self.d.args.verbose:
+                traceback.print_exc()
         finally:
             self.conns.pop(n, None)
             self.d.log.add("close", site=self.key, conn=n)
@@ -466,7 +471,7 @@ class Site:
         else:
             problems = grant_problems(grant, params, conn.origin, kind)
             grant.used = True
-        self.d.log.add("redeem", site=self.key, conn=conn.n, code=code, kind=kind, problems=problems)
+        self.d.log.add("redeem", site=self.key, conn=conn.n, code=code, scheme=kind, problems=problems)
         if problems:
             return failure("denied", "Code refused: " + "; ".join(problems))
         user = {"user_id": f"{kind}_{next(self.d.user_ids)}", "name": "Conformance"}
@@ -944,6 +949,9 @@ async def external_flow(d, mode="approve", begin=default_begin, on_page=None, hi
     good = mode == "approve"
     window = d.wait if good else d.quiet_window()
     flow.redeem = await d.until(uses_code, flow.delivered.i, timeout=window, stop=not good)
+    if not good and not flow.redeem and d.latencies:
+        d.note(f"waited up to {window:.1f} s after the redirect; a good answer was redeemed within "
+               f"{max(d.latencies):.1f} s")
     if good and flow.redeem:
         d.latencies.append(flow.redeem.t - flow.delivered.t)
     elif not good:
@@ -1406,7 +1414,7 @@ async def main():
         for tid, section, title, fn in TESTS:
             if not selected(tid, patterns):
                 continue
-            status, detail = "PASS", ""
+            status, detail, mark = "PASS", "", len(d.log)
             try:
                 if d.adapter and d.adapter.gone:
                     raise Skip(d.adapter.gone)
@@ -1425,6 +1433,9 @@ async def main():
                 status, detail = "FAIL", f"{type(e).__name__}: {e}"
                 if args.verbose:
                     traceback.print_exc()
+            errors = [e.error for e in d.since(mark) if e.kind == "driver-error"]
+            if errors and status in ("PASS", "WARN"):
+                status, detail = "SKIP", f"the driver failed, so the result is unknown: {errors[0]}"
             counts[status] = counts.get(status, 0) + 1
             label = f"§{section}" if section[:1].isdigit() else section
             print(f"{status:<6} {tid:<26} {label:<9} {title}" + (f": {detail}" if detail else ""), flush=True)
