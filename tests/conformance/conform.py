@@ -7,34 +7,51 @@
 
 Connects to a WebSocket URL, runs the core checklist (§3.6) and checks for each
 capability and sign-in scheme that the server advertises, and prints one line
-per check: PASS, FAIL (a rule the server breaks), WARN (a SHOULD it does not
-follow), or SKIP, with notes on some lines. Every server frame is also
-validated against schema/apron.schema.json. Exits 1 if any check fails.
+per check, with its stable ID and section: PASS, FAIL (a rule the server
+breaks), WARN (a SHOULD it does not follow), SKIP (with the reason), or MANUAL
+(a rule a machine cannot check, listed again at the end for a person). Every
+server frame is also validated against schema/apron.schema.json. Exits 1 if
+any check fails; MANUAL never fails.
+
+IDs are <scheme or area>.<area>.<name>, where the middle area is an attacker of
+the threat model (A1 to A5) or a plain area such as shape: external.A3.verifier,
+core.shape.server-frame. --list prints them. --only runs the checks whose IDs
+match a glob, --scheme one sign-in scheme's profile and the core checks, and
+--json writes a report for CI. A refusal by the server's policy, such as a
+guest who may only read, skips a check with the server's message.
 
 It signs in as a guest, or with --token. Guests are created and messages
 posted, so point it at a test server.
 
 Most sign-in checks need no person: what webauthn and external begins return, how
 the sign-in pages (§4.10.1, §4.12.3) answer well-formed and invalid requests,
-their headers, made-up codes and tokens, email proposals, and ext:oauth's
-metadata and token endpoint. With --sign-in, a person also signs in on each
-page, in a browser. conform.py listens on a loopback redirect URI, prints each
-page's address, tries to open a browser, and catches the redirect. It then
-checks the redirect, that a code redeems once and only with its code_verifier,
-redirect_uri, client_id, and scheme, that the token works from another Origin,
-and a declined sign-in. That is six sign-ins, and up to four more on a server
-where a failed try uses up a code. On the passkey page, the person first
-creates a passkey where the server lets a new connection or a guest register,
-and else signs in with one. Set BROWSER=true to only print the addresses.
+their headers, made-up codes and tokens, email proposals, ext:oauth's metadata
+and token endpoint, and a WebAuthn ceremony in the client with a software
+authenticator, from --origin (default: the server's own origin).
 
-Not covered: completing an email sign-in, a WebAuthn ceremony in the client,
-another authorization server's tokens, ext:oauth's identity provider, push
-registration, token rotation, compaction, and redaction.
+With --sign-in, someone also signs in on each page. conform.py listens on a
+loopback redirect URI and sends each sign-in there. A person signs in in a
+browser: conform.py prints each page's address, tries to open a browser
+(BROWSER=true only prints), and catches the redirect. With --portal COMMAND, a
+program signs in instead, such as portals/passkey.cjs, which drives Chromium
+with a virtual passkey authenticator (DEVELOPMENT.md, Conformance, for the
+interface). It then checks the redirect, that a code redeems once and only with
+its code_verifier, redirect_uri, client_id, and scheme, that the token works
+from another Origin, that a code for a new identity adds it to a signed-in
+account and one for another account's identity is denied, and a declined
+sign-in. That is about ten sign-ins, and more on a server where a failed try
+uses up a code.
+
+Not covered: completing an email sign-in, another authorization server's
+tokens, ext:oauth's identity provider, push registration, token rotation,
+compaction, and redaction.
 
 Run from the repository root:
   uv run tests/conformance/conform.py ws://127.0.0.1:8765
   uv run tests/conformance/conform.py wss://chat.example/ws --token SECRET
   uv run tests/conformance/conform.py wss://chat.example/ws --sign-in
+  uv run tests/conformance/conform.py wss://chat.example/ws --portal "node tests/conformance/portals/passkey.cjs" \\
+      --json report.json
 """
 
 import argparse
