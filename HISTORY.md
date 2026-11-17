@@ -1,6 +1,6 @@
 # Protocol History
 
-Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first. Each version sorts its changes by what implementers must do: Breaking, New, Changed, and Clarified. Each entry says briefly what changed on the wire and where, so that readers can decide what to read in PROTOCOL.md. Versions before v10 are not sorted yet.
+Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`).
 
 <!--
 Prompt: how to keep this file.
