@@ -12,11 +12,13 @@ commit names it: an editorial pass can change the wire.
 
 Sort each version's entries into these subsections, in this order, and leave
 out empty ones. An entry that fits more than one goes in the first that fits.
-- `### Breaking`: implementations that worked together under the previous
-  version stop working together until one of them changes, such as after a
-  removed or renamed field, a changed meaning or error code, or a new MUST that
-  the other side relies on. A change that touches only cases that already
-  failed, or that conforming implementations already met, is not breaking.
+- `### Breaking`: an implementation of the previous version, left unchanged,
+  now fails against one of this version: a request it sends is refused, a field
+  it reads is gone or means something else, or it loses data. Not breaking: a
+  new rule that the other side may adopt or not, an old form that is still
+  accepted, a case that already failed, or a change after which an old
+  implementation only misses something new or works less well, such as getting
+  more pushes.
 - `### New`: an addition that implementations MAY ignore, such as a field,
   capability, scheme, or appendix.
 - `### Changed`: a rule is different, and implementations of the previous
