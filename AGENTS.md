@@ -70,10 +70,16 @@ fixtures, or implementations from it.
 
 ### Changes
 
-- Every change to the wire goes in HISTORY.md under the current protocol
-  version, briefly: enough for a reader to decide whether to read the change
-  in PROTOCOL.md. Editorial changes don't, including moved or renumbered
-  sections.
+- If a change touches the wire, even one called editorial, add it to HISTORY.md
+  in the same PR by following the prompt at the top of that file. If you can
+  start a subagent, give the task to a fresh one: pass it the prompt,
+  `git diff origin/main -- PROTOCOL.md`, and the PR's description, but not your
+  own summary, then review what it writes. A fresh reader judges the change by
+  its diff, as implementers will. Moved or renumbered sections alone don't
+  touch the wire.
+- We squash-merge, so a PR's title and description become its commit on main.
+  Keep them true to what the branch does, including changes made in review,
+  until it merges.
 - PROTOCOL.md's front matter (`version`, `updated`) matches the newest
   HISTORY.md entry (`## vN (YYYY-MM-DD)`); the schema check enforces it.
 - When sections are renumbered, update every link, the schema, and the

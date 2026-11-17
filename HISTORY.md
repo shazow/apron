@@ -1,31 +1,85 @@
 # Protocol History
 
-Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`), latest first. Each point says briefly what changed on the wire and where, so that readers can decide what to read in PROTOCOL.md.
+Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.apron`).
+
+<!--
+Prompt: how to keep this file.
+
+Readers implement the protocol. Every change to the wire goes here, under the
+current protocol version, in the same PR. Editorial changes, such as moved or
+renumbered sections, don't. Judge by the diff of PROTOCOL.md, not by how a
+commit names it: an editorial pass can change the wire.
+
+Sort each version's entries into these subsections, in this order, and leave
+out empty ones. An entry that fits more than one goes in the first that fits.
+- `### Breaking`: implementations that worked together under the previous
+  version stop working together until one of them changes, such as after a
+  removed or renamed field, a changed meaning or error code, or a new MUST that
+  the other side relies on. A change that touches only cases that already
+  failed, or that conforming implementations already met, is not breaking.
+- `### New`: an addition that implementations MAY ignore, such as a field,
+  capability, scheme, or appendix.
+- `### Changed`: a rule is different, and implementations of the previous
+  version still interoperate, such as a new rule that the other side does not
+  rely on, a loosened MUST, or a rule left to server policy.
+- `### Clarified`: the wording now states what the rule already meant.
+- `### Under consideration`: proposals that are not yet rules.
+
+Each entry is one arc: related changes together, such as a reworked sign-in,
+and unrelated changes apart. An entry has three parts:
+- A bold headline of a few plain words that names the subject, ending with a
+  colon inside the bold: **Sign-in speaks OAuth 2.1:**. Whoever made the change
+  recognizes it from the headline alone; "Four rules, now in writing" fails.
+- One or two sentences: who is affected (clients, servers, or both, and which
+  ones), what they do differently, and why it matters. Leave the details to
+  PROTOCOL.md.
+- Links to the sections to read more, then to the PRs:
+  `[§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))`.
+
+Write as AGENTS.md says for PROTOCOL.md: short sentences, an explicit subject,
+and the same word for the same thing. Put the most consequential entry first in
+each subsection.
+
+When a later PR in the same version extends an arc, update its entry. A feature
+that is added and removed in the same version has no entry. A conflict with
+another PR keeps both entries, merged if they are about the same arc.
+
+To check or catch up a version, compare its entries with
+`git diff <last commit of the previous version> HEAD -- PROTOCOL.md`, not with
+commit messages, which can describe plans that changed. Add what is missing,
+and fix what is wrong.
+
+A new version gets a level-2 heading `vN (YYYY-MM-DD)` above the others, and
+PROTOCOL.md's front matter (`version`, `updated`) matches it.
+-->
 
 ## v10 (2026-11-16)
 
-- A `webauthn` begin may carry `external`: a passkey page on the server's domain (§4.10.1). A client that cannot use the RP ID, or whose platform refuses it, opens `external.url` and finishes `webauthn` with the code that comes back. A server may send `external` alone, without `challenge_id` and `public_key`, such as to a connection whose origin cannot use the RP ID; clients written before this change cannot complete that begin, and should update. A token from a code works from any `Origin`.
-- Scheme `external` (§4.12) is a profile of OAuth 2.1, and replaces the proposal-based sign-in and `return_url`. Begin returns `external` (`url`, `issuer`). The client sends the user to `url` with PKCE and `resource`, and redeems the code on any connection. By default the server is its own authorization server, and accepts any client; `issuer` refers to another one, which an extension can add, such as `ext:oauth`. A client whose client ID metadata document lists its `redirect_uri` uses the document's URL as `client_id`. A failed redemption may use up the code. The server refuses a `redirect_uri` that is not `https`, a scheme with a `.`, or loopback `http`. Its sign-in page shows request errors itself, redirects only with a code or `access_denied`, and only to a client that the user allowed: an `https` `redirect_uri` once per account, any other at each sign-in.
-- Servers that list `email` or `external` MUST also list `token` (§4.11, §4.12).
-- The `server` frame may carry `labels`: a short plain-text noun for each sign-in scheme, such as `{"external": "Acme SSO"}`, that fits on one button (§3.2).
-- An email approval may carry the proposal's `state`, so that a short code works on a connection other than the one that proposed (§4.11.3). The approval of an addition returns `you`, not `{}`.
-- A client drops an email link with the `state` of its own proposal unless the link's `server` is the server that it proposed to. A link without `server` is dropped too. An email with a code gives the server's address (§4.11.2). Otherwise a server could get another server's token (mix-up).
-- On a guest connection, whether signing in with another scheme adds it to the guest's account is server policy (§3.2).
-- `embed:stream` is removed, with the embed fields `format` and `text`. Capabilities `embed:append` and `embed:terminal` replace it.
-- Live text (§4.8.5): rules that both new kinds share for writing with `PUT` to `write_url` and reading `GET url`, limits, disconnects, how `url` is served, a redirect for browsers to a page that shows the text, and UTF-8 decoding. A live embed has no `url` until its write starts, when a snapshot adds it. A writer that disconnects ends the text.
-- A write's `PUT` (§4.8.3) is allowed from any origin. The server answers it when the write finishes: an error status with a plain-text reason when it fails or reaches a limit, and 2xx otherwise.
-- `embed:append` (§4.8.5): text streamed onto the end of a message's body, such as an LLM reply, which backspace and form feed can revise. The server merges it into `body.text` when it ends, and a sender that edits in place, such as a composer, should end it with a save of its text.
-- `embed:terminal` (§4.8.6): live program output for an 80×40 terminal, kept as `output` when it ends.
-- A save that sends back an `embed_id` the message no longer has is `invalid_params` (§4.8.2).
-- The fallback card for an unknown embed kind shows its `title` and a link to its `url` (§3.5.2).
-- Clients check that a passkey ceremony's RP ID is the host of the server's address, or a domain above it (§4.10).
-- Appendix A.3 adds the prefix `@&` to mention everyone in the room with a role.
-- Any auth scheme that the server does not offer is `unsupported` (§3.2), also one that PROTOCOL.md does not define. It was `invalid_params`.
-- Clients no longer have to render both text formats (§3.5.2).
-- Clients that render CommonMark render a soft line break as a hard break (§3.5.2), so a newline that the sender types shows as one. It was optional.
-- A new message with no `text` and no `embeds` is `invalid_params` (§3.5.1). Its result was `{}`, so the result of a new message now always has `message_id`.
-- `room_set` with `room_id` merges (§4.2.4): a field that is present replaces the kept value, an empty value clears it, and an absent field stays. An edit used to clear every field that it left out.
-- Clarified: clients warn on a version mismatch and continue (§3.1), reactions keep the order in which they first appeared (§4.7), a room `mute` may let mentions through (§4.5.3), and how mutes change `unread` is up to the server (§4.9.3).
+### Breaking
+
+- **Sign-in speaks OAuth 2.1:** Clients and servers that use `external` move to its OAuth 2.1 profile, which replaces proposal-based sign-in, so that a server can hand sign-in to an existing authorization server with PKCE's protections. Servers that list `email` or `external` also list `token`, and refuse any scheme that they don't offer with `unsupported`. [§4.12](PROTOCOL.md#412-external-sign-in), [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115), [#120](https://github.com/shazow/apron/pull/120))
+- **Live text replaces `embed:stream`:** Clients and servers that use `embed:stream` move to `embed:append`, for text added to a message such as an LLM reply, or `embed:terminal`, for program output. Each kind keeps what fits its use when it ends: text merges into the message, and a terminal keeps its screen. [§4.8.5](PROTOCOL.md#485-embedappend), [§4.8.6](PROTOCOL.md#486-embedterminal) ([#101](https://github.com/shazow/apron/pull/101), [#103](https://github.com/shazow/apron/pull/103), [#104](https://github.com/shazow/apron/pull/104), [#106](https://github.com/shazow/apron/pull/106), [#108](https://github.com/shazow/apron/pull/108))
+- **Edits merge, and empty messages bounce:** Clients that cleared a field by leaving it out of `room_set` send an empty value instead, since a missing field now keeps its value. Servers refuse a new message with no `text` and no `embeds`, so that every new message's result has `message_id`. [§4.2.4](PROTOCOL.md#424-creating-and-editing), [§3.5.1](PROTOCOL.md#351-creating) ([#101](https://github.com/shazow/apron/pull/101), [#120](https://github.com/shazow/apron/pull/120))
+
+### New
+
+- **Passkeys go anywhere:** Clients on any domain can use a server's passkeys through its passkey page, which the `webauthn` begin refers to. Before, only clients on the server's domain or a related one could. [§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))
+- **Sign-in buttons, in the server's own words:** Servers can name each sign-in scheme for their users, such as "Acme SSO", in the `server` frame's `labels`. [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115))
+- **One mention for a whole role:** Clients can mention everyone in a room who has a role, with the prefix `@&`. [A.3](PROTOCOL.md#a3-prefixes-in-text) ([#101](https://github.com/shazow/apron/pull/101))
+
+### Changed
+
+- **Passkeys answer only to their own domain:** Clients check that a passkey ceremony's RP ID belongs to the server, so that a server cannot pass on another server's challenge and sign in there as the user. A server's own passkeys already pass. [§4.10](PROTOCOL.md#410-webauthn-authentication) ([#101](https://github.com/shazow/apron/pull/101))
+- **Email links carry a return address:** Clients drop an email link unless its `server` is the server that they proposed to, so that one server cannot collect another server's token. Servers' links already carry `server`. [§4.11.2](PROTOCOL.md#4112-temporary-tokens) ([#115](https://github.com/shazow/apron/pull/115))
+- **Embed writes open to every origin, and report back:** Servers accept a write's `PUT` from any origin, and answer it when the write finishes, so that web clients can write directly and learn whether the write worked. [§4.8.3](PROTOCOL.md#483-writes) ([#106](https://github.com/shazow/apron/pull/106))
+- **Fewer rendering duties, firmer line breaks:** Clients no longer have to render both text formats. Clients that render CommonMark show a soft line break as a hard one, so that a typed newline looks the same everywhere. [§3.5.2](PROTOCOL.md#352-rendering) ([#101](https://github.com/shazow/apron/pull/101), [#120](https://github.com/shazow/apron/pull/120))
+- **Guest upgrades are the server's call:** Servers decide whether signing in on a guest connection adds the scheme to the guest's account. [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115))
+
+### Clarified
+
+- **Mutes and unread counts follow the server:** Servers may let mentions through a room mute, and decide how mutes change `unread`. [§4.5.3](PROTOCOL.md#453-the-status-request), [§4.9.3](PROTOCOL.md#493-payload) ([#112](https://github.com/shazow/apron/pull/112))
+- **Version mismatches warn, and carry on:** Clients that see another protocol version warn, and continue. [§3.1](PROTOCOL.md#31-server-frame) ([#105](https://github.com/shazow/apron/pull/105))
+- **Reactions keep their first order:** Servers keep reactions in the order in which they first appeared. [§4.7](PROTOCOL.md#47-reactions) ([#105](https://github.com/shazow/apron/pull/105))
 
 ## v9 (2026-10-27)
 
