@@ -9,16 +9,18 @@ server, and need no changes.
 
 ## How it works
 
-Each server gives the other a **link**: an account that writes as the other
-server's users ([`ext:remote`](#draft-extension-extremote)).
+Each server gives the other one **link**: an account that writes as the other
+server's users ([`ext:remote`](#draft-extension-extremote)). The rooms that a
+link has joined are the rooms that the two servers share.
 
 1. An admin of A runs `/remote invite wss://b.example/ws` in A's room, also a
-   private one. A joins a new link to the room, and replies with a link that
-   carries the link's `token` ([Appendix A.4](../PROTOCOL.md#a4-links)).
-2. An admin of B runs `/remote connect` with that link in B's room. B keeps
-   it, and makes its own link for A in the same way. Then B connects to A as
-   A's link, and sends B's link back with an `ext:remote` request. Now each
-   server has the other's link, for the room that it shares.
+   private one. A joins its link for B to the room, and makes the link first
+   if it has none. A replies with a link that carries the room and the link's
+   `token` ([Appendix A.4](../PROTOCOL.md#a4-links)).
+2. An admin of B runs `/remote connect` with that link in B's room. B joins
+   its link for A to the room in the same way. Then B connects to A as A's
+   link, and sends B's link and A's room back with an `ext:remote` request.
+   Now the two rooms are a pair, and each server can send to the other.
 3. When a user of A writes in the room, A connects to B, signs in as its link
    with the `token` ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), and sends
    the record with `ext.remote.user_id`. B writes it as a remote user. Carol's
@@ -31,6 +33,11 @@ server's users ([`ext:remote`](#draft-extension-extremote)).
    there.
 6. Each server stays the authority for its own room and log. A server writes
    as the other server's users only for the link that is bound to it.
+
+To share another room, the admins run the same two commands in that room.
+Each admin chooses the rooms on their own server, so neither server can share
+a room for the other. The servers keep using the same links, and one
+connection carries every room that they share.
 
 Each server sends only the changes of its own users, when they happen. Neither
 server keeps a connection open, or waits to hear from the other. So a server
@@ -53,7 +60,7 @@ repeated create through the link returns the copy that exists.
 | Reactions | The user's whole set on the message, sent to its copy, or to the original of a copy. |
 | Memberships | A remote user joins the room with its first write. A leave is a `room_leave` through the link. |
 | Profiles | A `me` request through the link when the sender first sends for a user, and after each change: `name`, and a [`bio`](../extensions/ext_bio.md). Its `you` gives the user's ID on the other server. `roles` stay each server's own, because a remote server's `"admin"` is not this server's admin. |
-| Rooms and threads | Each pair of shared rooms is set up once, with a link on each side. `title` and `description` stay each server's own. A thread of a shared room needs its own pair. |
+| Rooms and threads | Each pair of shared rooms is set up once, with the two commands. `title` and `description` stay each server's own. A thread of a shared room needs its own pair. |
 | System notices | Never sent. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
 | Custom emoji | Keys in reactions and text belong to the sender's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The other server can refuse a key that it does not have. The sender then leaves the key out, or writes it as text. |
 | Uploads, avatars, emoji images, and live text | Copy them with a new `upload` embed ([§4.8.4](../PROTOCOL.md#484-embedupload)), or write a link to the original. Clients load `og` media and live text only from the server's own origins ([§4.8.1](../PROTOCOL.md#481-opengraph-metadata-og), [`ext:media`](../extensions/ext_media.md)). Live text can wait until it ends, when the snapshot holds it in `body.text` or `output`. |
@@ -64,8 +71,9 @@ repeated create through the link returns the copy that exists.
 - Give each record that the sender sends a request `id` of its own, such as
   one made from its `log_id`. A record sent again after a close is then a
   duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)).
-- Send the records in the order of the log, and wait for each result before
-  the place in the log moves past it.
+- Send the records of every shared room from one place in the log, in the
+  order of the log, on one connection. Wait for each result before the place
+  in the log moves past it.
 - Write the sender to fit the other server's limits on frames and requests for
   each connection. A link carries every remote user's writes, so a server can
   give it larger limits.
@@ -79,9 +87,9 @@ repeated create through the link returns the copy that exists.
 - A remote user is an account, so server policies that remove idle accounts,
   or rooms without new records, need to leave remote users, links, and
   shared rooms alone.
-- To stop sharing, either admin revokes the link on their server. That stops
-  the other server's records from arriving. Remote users and their messages
-  stay.
+- To stop sharing one room, either admin removes their server's link from
+  the room. That ends the pair in both directions. To stop sharing every
+  room, either admin revokes the link. Remote users and their messages stay.
 - Copies need no accounts on the other server. People who also want one can
   sign in there with their own server as an OpenID Connect provider
   ([§4.12](../PROTOCOL.md#412-external-sign-in), with
@@ -165,17 +173,24 @@ Links:
   operator makes a link is server policy. Suggested convention: an admin's
   `/remote invite <address>` in a room makes a link, joins it to the room,
   and replies with a link that carries the link's `token`
-  ([Appendix A.4](../PROTOCOL.md#a4-links)). `/remote connect <link>` keeps
-  the other server's link for the room, makes a link of this server for the
-  other server, and sends it back with an `ext:remote` request.
-- An `ext:remote` request from a link carries `link`: a link of the link's
-  server, with `server`, `room`, and `token`. It gives this server the way to
-  send its own records back. The server keeps it for the rooms that the link
-  has joined, and a later one replaces it. The result is `{}`.
-- The server refuses `link` with `invalid_params` when its `server` is not
-  the link's server (otherwise whoever holds the token could make the server
+  ([Appendix A.4](../PROTOCOL.md#a4-links)). `/remote connect <link>` joins
+  this server's link for the other server to the room, and sends it back with
+  an `ext:remote` request. Both commands use the server's one link for that
+  remote server, and make it only if there is none.
+- An `ext:remote` request from a link carries `room_id`, a room of this
+  server, and `link`: a link of the link's server, with `server`, `room`, and
+  `token`. It pairs the two rooms, and gives this server the way to send the
+  records of its room back. A later request for the same room replaces the
+  pair. The result is `{}`.
+- The server refuses the request with `invalid_params` when the link has not
+  joined `room_id` (otherwise the other server could choose which of this
+  server's rooms it receives), or when the `server` of `link` is not the
+  link's server (otherwise whoever holds the token could make the server
   connect elsewhere, or show its users as another server's). A request from
   any other user is `denied`.
+- The server sends the records of a room only while the room has a pair, and
+  the link has joined the room. Removing the link from the room ends the pair
+  in both directions.
 - The server keeps the `token` of `link` secret, such as off every user
   object.
 - A link's connection can close at any time. Nothing that the server keeps
@@ -200,9 +215,10 @@ Links:
 - A link's own requests, without `ext.remote.user_id`, act as the link.
 
 ```jsonc
-// -> from B, signed in as A's link for B: B's link for A, for the shared room on B
+// -> from B, signed in as A's link for B: pair A's room ops with B's room 1724803399000
 {
   "method": "ext:remote", "id": "r1", "params": {
+    "room_id": "ops",
     "link": "https://link.apron.chat/#server=wss://b.example/ws&room=1724803399000&token=apron_invite_Hk41x9…"
   }
 }
