@@ -42,13 +42,13 @@ adding one. A feature that is added and removed in the same version has no
 entry. A conflict here with another PR is resolved by keeping both entries,
 merged into one if they are about the same arc.
 
-Say what changed on the wire and where (§x.y), briefly: enough for a reader to
-decide whether to read the change in PROTOCOL.md. Lead with what a change lets
-implementations do, or what it guards against, when that is not obvious from
-the rule. A reason MAY end the entry in a short parenthesis, as in §5. Write as
-AGENTS.md says for PROTOCOL.md: short sentences, an explicit subject, and the
-same word for the same thing. End each entry with links to its PRs, such as
-([#115](https://github.com/shazow/apron/pull/115)).
+Keep each entry brief. After the headline, say in one or two sentences who is
+affected (clients, servers, or both, and which ones), what they do differently,
+and why it matters. Leave the details to PROTOCOL.md. Then link the sections
+where readers can read more, and the PRs:
+`[§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))`.
+Write as AGENTS.md says for PROTOCOL.md: short sentences, an explicit subject,
+and the same word for the same thing.
 
 To check or catch up a version, compare its entries with
 `git diff <last commit of the previous version> HEAD -- PROTOCOL.md`. Commit
@@ -64,29 +64,29 @@ matches it.
 
 ### Breaking
 
-- **Sign-in speaks OAuth 2.1:** Scheme `external` (§4.12) is a profile of OAuth 2.1, and replaces the proposal-based sign-in and `return_url`. Begin returns `external` with `url` and `issuer`. The client sends the user to `url` with PKCE and `resource`, and redeems the code on any connection. By default the server is its own authorization server and accepts any client, and a client with a client ID metadata document uses its URL as `client_id`. The server refuses unsafe `redirect_uri` values, and redirects only to clients that the user allowed. Servers that list `email` or `external` MUST also list `token`. Any scheme that the server does not offer is `unsupported`, not `invalid_params` (§3.2). ([#115](https://github.com/shazow/apron/pull/115), [#120](https://github.com/shazow/apron/pull/120))
-- **Live text replaces `embed:stream`:** `embed:stream` is removed, with the embed fields `format` and `text`. Two capabilities take its place, on shared rules for writing with `PUT` to `write_url`, reading with `GET url`, limits, and disconnects. `embed:append` streams text onto the end of a message's body, such as an LLM reply, and the server merges it into `body.text` when it ends (§4.8.5). `embed:terminal` streams program output for an 80×40 terminal (§4.8.6). A live embed gets its `url` when its write starts, and a writer that disconnects ends the text. ([#101](https://github.com/shazow/apron/pull/101), [#103](https://github.com/shazow/apron/pull/103), [#104](https://github.com/shazow/apron/pull/104), [#106](https://github.com/shazow/apron/pull/106), [#108](https://github.com/shazow/apron/pull/108))
-- **Edits merge, and empty messages bounce:** `room_set` with `room_id` merges (§4.2.4): a field that is present replaces the kept value, an empty value clears it, and an absent field stays. A client that cleared a field by leaving it out sends an empty value instead. A new message with no `text` and no `embeds` is `invalid_params` (§3.5.1), so its result always has `message_id`. A save that sends back an `embed_id` the message no longer has is `invalid_params` too (§4.8.2). ([#101](https://github.com/shazow/apron/pull/101), [#120](https://github.com/shazow/apron/pull/120))
+- **Sign-in speaks OAuth 2.1:** Clients and servers that use `external` move to its OAuth 2.1 profile, which replaces proposal-based sign-in, so that a server can hand sign-in to an existing authorization server with PKCE's protections. Servers that list `email` or `external` also list `token`, and refuse any scheme that they don't offer with `unsupported`. [§4.12](PROTOCOL.md#412-external-sign-in), [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115), [#120](https://github.com/shazow/apron/pull/120))
+- **Live text replaces `embed:stream`:** Clients and servers that use `embed:stream` move to `embed:append`, for text added to a message such as an LLM reply, or `embed:terminal`, for program output. Each kind keeps what fits its use when it ends: text merges into the message, and a terminal keeps its screen. [§4.8.5](PROTOCOL.md#485-embedappend), [§4.8.6](PROTOCOL.md#486-embedterminal) ([#101](https://github.com/shazow/apron/pull/101), [#103](https://github.com/shazow/apron/pull/103), [#104](https://github.com/shazow/apron/pull/104), [#106](https://github.com/shazow/apron/pull/106), [#108](https://github.com/shazow/apron/pull/108))
+- **Edits merge, and empty messages bounce:** Clients that cleared a field by leaving it out of `room_set` send an empty value instead, since a missing field now keeps its value. Servers refuse a new message with no `text` and no `embeds`, so that every new message's result has `message_id`. [§4.2.4](PROTOCOL.md#424-creating-and-editing), [§3.5.1](PROTOCOL.md#351-creating) ([#101](https://github.com/shazow/apron/pull/101), [#120](https://github.com/shazow/apron/pull/120))
 
 ### New
 
-- **Passkeys go anywhere:** A `webauthn` begin may carry `external`, a passkey page on the server's domain (§4.10.1), so that a client on any domain can use the server's passkeys. A client that cannot use the RP ID opens `external.url`, and finishes with the code that comes back. A server may send `external` alone to such a client, which could not use the passkey before either; a client that wants this path MUST handle that begin. ([#115](https://github.com/shazow/apron/pull/115))
-- **Sign-in buttons, in the server's own words:** The `server` frame may carry `labels`: a short plain-text noun for each sign-in scheme, such as `{"external": "Acme SSO"}` (§3.2). ([#115](https://github.com/shazow/apron/pull/115))
-- **One mention for a whole role:** Appendix A.3 adds the prefix `@&`, which mentions everyone in the room with a role. ([#101](https://github.com/shazow/apron/pull/101))
+- **Passkeys go anywhere:** Clients on any domain can use a server's passkeys through its passkey page, which the `webauthn` begin refers to. Before, only clients on the server's domain or a related one could. [§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))
+- **Sign-in buttons, in the server's own words:** Servers can name each sign-in scheme for their users, such as "Acme SSO", in the `server` frame's `labels`. [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115))
+- **One mention for a whole role:** Clients can mention everyone in a room who has a role, with the prefix `@&`. [A.3](PROTOCOL.md#a3-prefixes-in-text) ([#101](https://github.com/shazow/apron/pull/101))
 
 ### Changed
 
-- **Passkeys answer only to their own domain:** Clients MUST check that a ceremony's RP ID is the host of the server's address, or a domain above it (§4.10). A server's own passkeys already meet this. (Otherwise a server could pass another server's challenge through the client, and sign in there as the user.) ([#101](https://github.com/shazow/apron/pull/101))
-- **Email links carry a return address:** A client drops a link with the `state` of its own proposal unless the link's `server` is the server that it proposed to, and drops a link without `server` (§4.11.2). Links already carried `server`. An email with a code gives the server's address. An approval may carry the proposal's `state`, so that a short code works on another connection, and the approval of an addition returns `you` (§4.11.3). (Otherwise a server could get another server's token.) ([#115](https://github.com/shazow/apron/pull/115))
-- **Embed writes open to every origin, and report back:** A write's `PUT` (§4.8.3) is allowed from any origin. The server answers it when the write finishes: an error status with a plain-text reason when it fails or reaches a limit, and 2xx otherwise. ([#106](https://github.com/shazow/apron/pull/106))
-- **Fewer rendering duties, firmer line breaks:** Clients no longer have to render both text formats. Clients that render CommonMark MUST render a soft line break as a hard break, which was optional. The fallback card for an unknown embed kind shows its `title` and links to its `url` (§3.5.2). ([#101](https://github.com/shazow/apron/pull/101), [#120](https://github.com/shazow/apron/pull/120))
-- **Guest upgrades are the server's call:** On a guest connection, whether signing in with another scheme adds it to the guest's account is server policy (§3.2). ([#115](https://github.com/shazow/apron/pull/115))
+- **Passkeys answer only to their own domain:** Clients check that a passkey ceremony's RP ID belongs to the server, so that a server cannot pass on another server's challenge and sign in there as the user. A server's own passkeys already pass. [§4.10](PROTOCOL.md#410-webauthn-authentication) ([#101](https://github.com/shazow/apron/pull/101))
+- **Email links carry a return address:** Clients drop an email link unless its `server` is the server that they proposed to, so that one server cannot collect another server's token. Servers' links already carry `server`. [§4.11.2](PROTOCOL.md#4112-temporary-tokens) ([#115](https://github.com/shazow/apron/pull/115))
+- **Embed writes open to every origin, and report back:** Servers accept a write's `PUT` from any origin, and answer it when the write finishes, so that web clients can write directly and learn whether the write worked. [§4.8.3](PROTOCOL.md#483-writes) ([#106](https://github.com/shazow/apron/pull/106))
+- **Fewer rendering duties, firmer line breaks:** Clients no longer have to render both text formats. Clients that render CommonMark show a soft line break as a hard one, so that a typed newline looks the same everywhere. [§3.5.2](PROTOCOL.md#352-rendering) ([#101](https://github.com/shazow/apron/pull/101), [#120](https://github.com/shazow/apron/pull/120))
+- **Guest upgrades are the server's call:** Servers decide whether signing in on a guest connection adds the scheme to the guest's account. [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115))
 
 ### Clarified
 
-- **Mutes and unread counts follow the server:** A room `mute` may let mentions through (§4.5.3), and how mutes change `unread` is up to the server (§4.9.3). ([#112](https://github.com/shazow/apron/pull/112))
-- **Version mismatches warn, and carry on:** Clients warn on a version mismatch and continue (§3.1). ([#105](https://github.com/shazow/apron/pull/105))
-- **Reactions keep their first order:** Reactions keep the order in which they first appeared (§4.7). ([#105](https://github.com/shazow/apron/pull/105))
+- **Mutes and unread counts follow the server:** Servers may let mentions through a room mute, and decide how mutes change `unread`. [§4.5.3](PROTOCOL.md#453-the-status-request), [§4.9.3](PROTOCOL.md#493-payload) ([#112](https://github.com/shazow/apron/pull/112))
+- **Version mismatches warn, and carry on:** Clients that see another protocol version warn, and continue. [§3.1](PROTOCOL.md#31-server-frame) ([#105](https://github.com/shazow/apron/pull/105))
+- **Reactions keep their first order:** Servers keep reactions in the order in which they first appeared. [§4.7](PROTOCOL.md#47-reactions) ([#105](https://github.com/shazow/apron/pull/105))
 
 ## v9 (2026-10-27)
 
