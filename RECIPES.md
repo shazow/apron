@@ -7,7 +7,8 @@ within [PROTOCOL.md](PROTOCOL.md) and the [extensions](EXTENSIONS.md).
 - Recipes are informative. Where a recipe and PROTOCOL.md disagree,
   PROTOCOL.md wins.
 - A recipe changes no rule. A recipe that needs a change to the wire becomes
-  a change to PROTOCOL.md, or an extension.
+  a change to PROTOCOL.md, or an extension. Until that change has proved
+  itself, a recipe can carry it as a draft extension, which can still change.
 
 Each recipe has its own file in [recipes/](recipes/):
 

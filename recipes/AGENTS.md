@@ -23,6 +23,13 @@ general notes apply to every recipe.
     leaves to others, such as a platform.
   - Recipes give advice, and state no rules. They use no capitalized key
     words.
+  - A recipe that needs a change to the wire MAY carry it as a draft
+    extension, in a section `## Draft extension: \`ext:<name>\`` before
+    `## Limits`. Write it as an extension file
+    ([../extensions/AGENTS.md](../extensions/AGENTS.md)), with these
+    differences: it states what implementations do without capitalized key
+    words, and it opens by saying that it is a draft. When it has proved
+    itself, move it to its own extension file, and link to that file.
   - Don't restate the general notes of RECIPES.md.
 - Link to PROTOCOL.md as `../PROTOCOL.md#…`, and to an extension as
   `../extensions/ext_<name>.md`.

@@ -41,5 +41,3 @@ Each extension has its own file in [extensions/](extensions/):
   server's external sign-in ([§4.12](PROTOCOL.md#412-external-sign-in)) can go,
   such as "GitHub" and "Google", and lets a client send the user's choice with
   the begin.
-- [`ext:remote`](extensions/ext_remote.md): Adds remote users: users of another
-  Apron server, the remote server, who appear on this server as its own users.
