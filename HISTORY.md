@@ -6,58 +6,51 @@ Summary of changes to [PROTOCOL.md](PROTOCOL.md) by protocol version (`server.ap
 Prompt: how to keep this file.
 
 Readers implement the protocol. Every change to the wire goes here, under the
-current protocol version, in the same PR. Editorial changes don't, including
-moved or renumbered sections. Judge by the diff of PROTOCOL.md, not by how a
+current protocol version, in the same PR. Editorial changes, such as moved or
+renumbered sections, don't. Judge by the diff of PROTOCOL.md, not by how a
 commit names it: an editorial pass can change the wire.
 
-Each version sorts its entries into these subsections, in this order, by what
-implementers must do. Leave out a subsection that has no entries.
+Sort each version's entries into these subsections, in this order, and leave
+out empty ones. An entry that fits more than one goes in the first that fits.
 - `### Breaking`: implementations that worked together under the previous
   version stop working together until one of them changes, such as after a
   removed or renamed field, a changed meaning or error code, or a new MUST that
-  the other side relies on. A change that only touches cases that already
+  the other side relies on. A change that touches only cases that already
   failed, or that conforming implementations already met, is not breaking.
-  Say which side changes, and how.
 - `### New`: an addition that implementations MAY ignore, such as a field,
   capability, scheme, or appendix.
 - `### Changed`: a rule is different, and implementations of the previous
   version still interoperate, such as a new rule that the other side does not
   rely on, a loosened MUST, or a rule left to server policy.
-- `### Clarified`: the wording now states what the rule already meant. No
-  conforming implementation changes.
+- `### Clarified`: the wording now states what the rule already meant.
 - `### Under consideration`: proposals that are not yet rules.
 
-Group related changes into arcs: one entry for a reworked sign-in or a new kind
-of embed, not one entry per rule. An entry opens with a bold headline of a few
-plain words that says what the arc means for implementers, ending with a colon
-inside the bold, such as **Sign-in speaks OAuth 2.1:**. The headline names its
-subject, so that whoever made the change recognizes it: "Four rules, now in
-writing" says nothing. Don't group unrelated changes only to share a
-subsection; give each its own entry. The sentences after the headline state the
-rules. An arc that fits more than one subsection goes in the first
-that fits. Put the most consequential arc first in each subsection.
+Each entry is one arc: related changes together, such as a reworked sign-in,
+and unrelated changes apart. An entry has three parts:
+- A bold headline of a few plain words that names the subject, ending with a
+  colon inside the bold: **Sign-in speaks OAuth 2.1:**. Whoever made the change
+  recognizes it from the headline alone; "Four rules, now in writing" fails.
+- One or two sentences: who is affected (clients, servers, or both, and which
+  ones), what they do differently, and why it matters. Leave the details to
+  PROTOCOL.md.
+- Links to the sections to read more, then to the PRs:
+  `[§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))`.
 
-When a later PR in the same version extends an arc, update its entry instead of
-adding one. A feature that is added and removed in the same version has no
-entry. A conflict here with another PR is resolved by keeping both entries,
-merged into one if they are about the same arc.
-
-Keep each entry brief. After the headline, say in one or two sentences who is
-affected (clients, servers, or both, and which ones), what they do differently,
-and why it matters. Leave the details to PROTOCOL.md. Then link the sections
-where readers can read more, and the PRs:
-`[§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))`.
 Write as AGENTS.md says for PROTOCOL.md: short sentences, an explicit subject,
-and the same word for the same thing.
+and the same word for the same thing. Put the most consequential entry first in
+each subsection.
+
+When a later PR in the same version extends an arc, update its entry. A feature
+that is added and removed in the same version has no entry. A conflict with
+another PR keeps both entries, merged if they are about the same arc.
 
 To check or catch up a version, compare its entries with
-`git diff <last commit of the previous version> HEAD -- PROTOCOL.md`. Commit
-messages can describe plans that changed, so read the diff. Add what is
-missing, and fix what is wrong.
+`git diff <last commit of the previous version> HEAD -- PROTOCOL.md`, not with
+commit messages, which can describe plans that changed. Add what is missing,
+and fix what is wrong.
 
-A new version starts a heading above the others, in the form `vN (YYYY-MM-DD)`
-as a level-2 heading, and PROTOCOL.md's front matter (`version`, `updated`)
-matches it.
+A new version gets a level-2 heading `vN (YYYY-MM-DD)` above the others, and
+PROTOCOL.md's front matter (`version`, `updated`) matches it.
 -->
 
 ## v10 (2026-11-16)
