@@ -16,20 +16,20 @@ server's users ([`ext:remote`](#draft-extension-extremote)).
    private one. A joins a new link to the room, and replies with a link that
    carries the link's `token` ([Appendix A.4](../PROTOCOL.md#a4-links)).
 2. An admin of B runs `/remote connect` with that link in B's room. B keeps
-   it, makes its own link for A in the same way, and replies with that link.
-3. A's admin runs `/remote connect` with B's link in A's room. Now each
+   it, and makes its own link for A in the same way. Then B connects to A as
+   A's link, and sends B's link back with an `ext:remote` request. Now each
    server has the other's link, for the room that it shares.
-4. When a user of A writes in the room, A connects to B, signs in as its link
+3. When a user of A writes in the room, A connects to B, signs in as its link
    with the `token` ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), and sends
    the record with `ext.remote.user_id`. B writes it as a remote user. Carol's
    message on A becomes a message on B from `carol@a.example`. B sends to A
    in the same way.
-5. The side that connects can close the connection at any time, such as after
+4. The side that connects can close the connection at any time, such as after
    a minute without anything to send. It connects again when it has more.
-6. Each server keeps its place in its own log: the last record that the other
+5. Each server keeps its place in its own log: the last record that the other
    server accepted. After a close, a crash, or an outage, it sends again from
    there.
-7. Each server stays the authority for its own room and log. A server writes
+6. Each server stays the authority for its own room and log. A server writes
    as the other server's users only for the link that is bound to it.
 
 Each server sends only the changes of its own users, when they happen. Neither
@@ -166,8 +166,18 @@ Links:
   `/remote invite <address>` in a room makes a link, joins it to the room,
   and replies with a link that carries the link's `token`
   ([Appendix A.4](../PROTOCOL.md#a4-links)). `/remote connect <link>` keeps
-  the other server's link for the room, and replies with a new link of this
-  server for the other server, unless it has one.
+  the other server's link for the room, makes a link of this server for the
+  other server, and sends it back with an `ext:remote` request.
+- An `ext:remote` request from a link carries `link`: a link of the link's
+  server, with `server`, `room`, and `token`. It gives this server the way to
+  send its own records back. The server keeps it for the rooms that the link
+  has joined, and a later one replaces it. The result is `{}`.
+- The server refuses `link` with `invalid_params` when its `server` is not
+  the link's server (otherwise whoever holds the token could make the server
+  connect elsewhere, or show its users as another server's). A request from
+  any other user is `denied`.
+- The server keeps the `token` of `link` secret, such as off every user
+  object.
 - A link's connection can close at any time. Nothing that the server keeps
   depends on it.
 - A `message`, `reactions`, `me`, or `room_leave` request from a link with
@@ -188,6 +198,17 @@ Links:
   that message's `message_id`. (A `message_id` is unique across the remote
   server's rooms, [§2.2](../PROTOCOL.md#22-message_id).)
 - A link's own requests, without `ext.remote.user_id`, act as the link.
+
+```jsonc
+// -> from B, signed in as A's link for B: B's link for A, for the shared room on B
+{
+  "method": "ext:remote", "id": "r1", "params": {
+    "link": "https://link.apron.chat/#server=wss://b.example/ws&room=1724803399000&token=apron_invite_Hk41x9…"
+  }
+}
+// <-
+{"id": "r1", "result": {}}
+```
 
 Without the capability, clients show remote users and their messages as local
 ones, and servers drop `remote` from requests.
