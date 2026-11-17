@@ -62,7 +62,7 @@ repeated create through the link returns the copy that exists.
 | Memberships | A remote user joins the room with its first write. A leave of a user that the sender has sent is a `room_leave` through the link. Leaves that the server makes on its own, such as when it retires a guest, need not be sent. |
 | Profiles | A `me` request through the link when the sender first sends for a user, and after each change: `name`, and a [`bio`](../extensions/ext_bio.md). Profile changes are not in the log, so the sender watches them, such as through `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)). Its `you` gives the user's ID on the other server. A mention of a user who has never written makes that remote user too. `roles` stay each server's own, because a remote server's `"admin"` is not this server's admin. |
 | Rooms | Each pair of shared rooms is set up once, with the two commands. `title` and `description` stay each server's own. |
-| Threads | A thread of a shared room is shared with it ([§4.2](../PROTOCOL.md#42-rooms)). When a user of this server starts one, the sender creates it on the other server with a `room_set` through the link, whose `parent_room_id` is the paired room. The two threads are then a pair, which starts empty and ends with its parent's pair. A save of the thread's `title` or `description` is a `room_set` of the other thread. When the other server refuses the thread, such as one that allows no threads in a private room, the sender posts the thread's messages in the parent room instead, as replies to the message that started the thread, or to the first message of the thread. |
+| Threads | A thread of a shared room is shared with it ([§4.2](../PROTOCOL.md#42-rooms)), also a thread of a thread. A thread that only some members of the room can see is not shared, and neither is one started before its room was shared. When a user of this server starts a thread, the sender creates it on the other server with a `room_set` through the link, whose `parent_room_id` is the paired room. The two threads are then a pair, which starts empty and ends with its parent's pair. A save of the thread's `title` or `description` is a `room_set` of the other thread, as the user who saved it. A server whose room records do not say who saved them sends saves as the thread's creator. When the other server refuses the thread, such as one that allows no threads in a private room, the sender posts the thread's messages in the parent room instead, as replies to the first message of the thread, and sends no leaves of it. |
 | System notices | Never sent. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
 | Custom emoji | Keys in reactions and text belong to the sender's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The other server can refuse a key that it does not have. The sender then leaves the key out, or writes it as text. |
 | Uploads, avatars, emoji images, and live text | Copy them with a new `upload` embed ([§4.8.4](../PROTOCOL.md#484-embedupload)), or write a link to the original. Clients load `og` media and live text only from the server's own origins ([§4.8.1](../PROTOCOL.md#481-opengraph-metadata-og), [`ext:media`](../extensions/ext_media.md)). Live text can wait until it ends, when the snapshot holds it in `body.text` or `output`. |
@@ -89,6 +89,8 @@ repeated create through the link returns the copy that exists.
 - A server that refuses connections from automated clients or cloud
   platforms, such as requests from other Cloudflare Workers, needs to let
   links connect.
+- A sender needs to know who saved each room record, so that it sends its
+  own users' thread saves and not those that arrived through the link.
 - A record that the other server refuses, other than for a limit, is not
   sent again. Log it, so that an admin can see what did not arrive.
 - A copy sends pushes like any message ([§4.9](../PROTOCOL.md#49-push)). After
@@ -219,8 +221,15 @@ Links:
 - A `room_set` from a link creates or saves a thread of a room that the link
   has joined, and nothing else. A thread that it creates is paired with the
   thread on the link's server whose `room_id` its `ext.remote.room_id`
-  carries. Saves of a thread's `title` and `description` follow the rules for
-  the remote user, such as that any member may save a thread.
+  carries, and everyone who can see its parent can see it. Saves of a
+  thread's `title` and `description` follow the rules for the remote user,
+  such as that any member may save a thread.
+- A create from a link whose `ext.remote.room_id` matches a thread that the
+  link already created is a duplicate: its result carries that thread's
+  `room_id`.
+- Threads that remote users create count toward the server's limits on
+  threads. Suggested convention: a limit for each link, below the server's
+  own.
 - These requests follow the rules for that user. For example, only the remote
   user who sent a message can save it ([§4.4](../PROTOCOL.md#44-edit)).
 - The server sets `server` in `remote` to the link's server. It keeps
@@ -277,6 +286,9 @@ ones, and servers drop `remote` from requests.
 - **Shared editing.** Only the origin's users can save a message that
   [`ext:editors`](../extensions/ext_editors.md) shares. The sender leaves the
   grant off its copy, and maps `edited_by`.
+- **Threads that fall back.** A thread that the other server refuses has no
+  copy there. Its messages arrive in the parent room, and its title does not
+  arrive. Replies on the other server stay in the parent room.
 - **Pairs.** A remote user's records are never sent on, so rooms on three
   servers need links between each pair of servers.
 - **One shared log.** Rooms that both servers write in a single order would
