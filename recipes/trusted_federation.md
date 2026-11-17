@@ -3,73 +3,85 @@
 **Status**: Under consideration, untested.
 
 **Can two Apron servers share rooms?** Yes, when their operators trust each
-other. A bridge copies each record of a shared room into the other server's
-room, and writes it there as the user who wrote it. Clients see an ordinary
+other. Each server sends the records of its own users in a shared room to
+the other server, which writes them as those users. Clients see an ordinary
 server, and need no changes.
 
 ## How it works
 
-Server A runs the bridge. Server B gives it a **link**: an account that writes
-as A's users ([`ext:remote`](#draft-extension-extremote)).
+Each server gives the other a **link**: an account that writes as the other
+server's users ([`ext:remote`](#draft-extension-extremote)).
 
-1. An admin of B runs `/remote invite wss://a.example/ws` in B's room, also a
-   private one. B joins a new link to the room, and replies with a link that
+1. An admin of A runs `/remote invite wss://b.example/ws` in A's room, also a
+   private one. A joins a new link to the room, and replies with a link that
    carries the link's `token` ([Appendix A.4](../PROTOCOL.md#a4-links)).
-2. B's admin gives that link to A's operator, as an invitation to the room.
-   A's operator gives it to the bridge, with the room on A that it shares.
-3. The bridge signs in to B with the `token`
-   ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), and keeps that one
-   connection. B sends it the room's records live, and it catches up with
-   `history` after an outage
-   ([§4.3.5](../PROTOCOL.md#435-replay-and-recovery)).
-4. The bridge writes each record of B's room into A's room, inside A, as a
-   remote user of A. Carol's message on B becomes a message on A from
-   `carol@b.example`.
-5. The bridge writes each record of A's room into B through the link, with
-   `ext.remote.user_id`. B writes it as a remote user of B.
-6. Each server stays the authority for its own room and log. B writes as A's
-   users only for the link, and only for the server that the link is bound to.
+2. An admin of B runs `/remote connect` with that link in B's room. B keeps
+   it, makes its own link for A in the same way, and replies with that link.
+3. A's admin runs `/remote connect` with B's link in A's room. Now each
+   server has the other's link, for the room that it shares.
+4. When a user of A writes in the room, A connects to B, signs in as its link
+   with the `token` ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), and sends
+   the record with `ext.remote.user_id`. B writes it as a remote user. Carol's
+   message on A becomes a message on B from `carol@a.example`. B sends to A
+   in the same way.
+5. The side that connects can close the connection at any time, such as after
+   a minute without anything to send. It connects again when it has more.
+6. Each server keeps its place in its own log: the last record that the other
+   server accepted. After a close, a crash, or an outage, it sends again from
+   there.
+7. Each server stays the authority for its own room and log. A server writes
+   as the other server's users only for the link that is bound to it.
 
-Only A connects, and only A needs to write as remote users inside itself. So
-a server that only accepts connections, such as one on a serverless
-platform, is best as B. A bridge that runs outside both servers needs a link
-on each, and a connection to each.
+Each server sends only the changes of its own users, when they happen. Neither
+server keeps a connection open, or waits to hear from the other. So a server
+that sleeps between requests, such as a Cloudflare Durable Object, works on
+either side: its own user's write wakes it, and it can close the connection
+and sleep again. While it is connected, the link also receives the room's
+records ([§3.4](../PROTOCOL.md#34-rooms)), and the sender skips them.
 
-The copies carry the original IDs in `ext.remote`, and a repeated create
-through the link returns the copy that exists. So the bridge keeps only its
-place in each room, not a map of IDs.
+A sender needs no map of the other server's IDs, except to its own messages'
+copies. A copy on this server holds the original's IDs in `ext.remote`, and a
+repeated create through the link returns the copy that exists.
 
 ## Mapping
 
-| Thing | How the bridge handles it |
+| Thing | How the sender handles it |
 |---|---|
-| Messages | A new message with the other server's own `message_id`, `log_id`, and `embed_id`s ([§2](../PROTOCOL.md#2-identifiers), [§4.8.2](../PROTOCOL.md#482-embed-identity)). Its `ext.remote` carries the original's `room_id` and `message_id`. |
-| Replies, mentions, and text | Map `reply_to.message_id` and the IDs in `mentions`. A reply to a message that the bridge never copied, such as one older than the bridge, drops `reply_to`. Rewrite each `@id` in `body.text` whose ID is in `mentions`, outside code ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A remote user maps back to its original user. A link without `server` in the text refers to the origin, so add the origin's `server` to it ([Appendix A.4](../PROTOCOL.md#a4-links)). |
-| Edits, moves, and deletes | A save of the copy, with every client field ([§4.4](../PROTOCOL.md#44-edit)). A move out of the shared room deletes the copy. A move into it copies the message. |
-| Reactions | The user's whole set, as the remote user. A record with several users, such as after a move or in compacted history, is one request for each user who is not a remote user. |
-| Memberships | A remote user joins the room with its first write, and leaves when its user leaves. |
-| Profiles | The remote user's profile, from `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)) and from `from` when the bridge first sees a user: `name`, and a [`bio`](../extensions/ext_bio.md). `roles` stay each server's own, because a remote server's `"admin"` is not this server's admin. |
-| Rooms and threads | Each pair of shared rooms is set up once, with its own link. `title` and `description` stay each server's own. A thread of a shared room needs its own pair. |
-| System notices | Never copied. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
-| Custom emoji | Keys in reactions and text belong to the origin's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). A server can refuse a key that it does not have. The bridge then leaves the key out, or writes it as text. |
-| Uploads, avatars, emoji images, and live text | Copy them with a new `upload` embed ([§4.8.4](../PROTOCOL.md#484-embedupload)), or write a link to the original. Clients load `og` media and live text only from the server's own origins ([§4.8.1](../PROTOCOL.md#481-opengraph-metadata-og), [`ext:media`](../extensions/ext_media.md)). Live text can wait until it ends, when the origin's snapshot holds it in `body.text` or `output`. |
-| Loops | Never copy a record from a remote user of the other server, from a link, or from a system identity. Read the origin from `ext.remote.server` on the user, not from the `user_id`. After it signs in, the bridge reads the address that the other server knows it by from `you.ext.remote.server`. |
+| Messages | A create through the link. Its `ext.remote` carries the original's `room_id` and `message_id`. The result gives the copy's `message_id` on the other server. |
+| Replies, mentions, and text | A reply to this server's own message refers to that message's copy. A reply to a copy refers to the original, from the copy's `ext.remote.message_id`. A reply to a message that was never copied, such as one older than the link, drops `reply_to`. A mention of a remote user refers to its original user, from the user's `ext.remote.user_id`. A mention of this server's own user refers to that user's remote user on the other server, from the result of a `me` request (below). Rewrite each `@id` in `body.text` whose ID is in `mentions`, outside code ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A link without `server` in the text refers to this server, so add its `server` to it ([Appendix A.4](../PROTOCOL.md#a4-links)). |
+| Edits, moves, and deletes | A save of the copy, with every client field ([§4.4](../PROTOCOL.md#44-edit)). A move out of the shared room deletes the copy. A move into it creates one. |
+| Reactions | The user's whole set on the message, sent to its copy, or to the original of a copy. |
+| Memberships | A remote user joins the room with its first write. A leave is a `room_leave` through the link. |
+| Profiles | A `me` request through the link when the sender first sends for a user, and after each change: `name`, and a [`bio`](../extensions/ext_bio.md). Its `you` gives the user's ID on the other server. `roles` stay each server's own, because a remote server's `"admin"` is not this server's admin. |
+| Rooms and threads | Each pair of shared rooms is set up once, with a link on each side. `title` and `description` stay each server's own. A thread of a shared room needs its own pair. |
+| System notices | Never sent. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
+| Custom emoji | Keys in reactions and text belong to the sender's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The other server can refuse a key that it does not have. The sender then leaves the key out, or writes it as text. |
+| Uploads, avatars, emoji images, and live text | Copy them with a new `upload` embed ([§4.8.4](../PROTOCOL.md#484-embedupload)), or write a link to the original. Clients load `og` media and live text only from the server's own origins ([§4.8.1](../PROTOCOL.md#481-opengraph-metadata-og), [`ext:media`](../extensions/ext_media.md)). Live text can wait until it ends, when the snapshot holds it in `body.text` or `output`. |
+| Loops | Send only records of this server's own users: never a record of a remote user, a link, or a system identity. Read the origin from `ext.remote` on the user, not from the `user_id`. |
 
 ## Running it
 
-- Write the bridge to fit B's limits on frames and requests for each
-  connection. A link carries every remote user's writes, so B can give it
-  larger limits.
-- B sends the bridge each copy that it writes through the link, and the
-  bridge skips it.
+- Give each record that the sender sends a request `id` of its own, such as
+  one made from its `log_id`. A record sent again after a close is then a
+  duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)).
+- Send the records in the order of the log, and wait for each result before
+  the place in the log moves past it.
+- Write the sender to fit the other server's limits on frames and requests for
+  each connection. A link carries every remote user's writes, so a server can
+  give it larger limits.
+- A Durable Object can stop while it holds a connection. Keep the place in the
+  log in storage, and set an alarm to send again if records are left.
+- A server that cannot connect out can have a bridge send for it: a process
+  that reads its room, and sends through the other server's link.
 - A copy sends pushes like any message ([§4.9](../PROTOCOL.md#49-push)). After
-  a long outage, the bridge can leave old messages out, or post a summary
+  a long outage, the sender can leave old messages out, or post a summary
   instead.
 - A remote user is an account, so server policies that remove idle accounts,
   or rooms without new records, need to leave remote users, links, and
   shared rooms alone.
-- To stop sharing, B's admin revokes the link. Remote users and their
-  messages stay.
+- To stop sharing, either admin revokes the link on their server. That stops
+  the other server's records from arriving. Remote users and their messages
+  stay.
 - Copies need no accounts on the other server. People who also want one can
   sign in there with their own server as an OpenID Connect provider
   ([§4.12](../PROTOCOL.md#412-external-sign-in), with
@@ -153,7 +165,11 @@ Links:
   operator makes a link is server policy. Suggested convention: an admin's
   `/remote invite <address>` in a room makes a link, joins it to the room,
   and replies with a link that carries the link's `token`
-  ([Appendix A.4](../PROTOCOL.md#a4-links)).
+  ([Appendix A.4](../PROTOCOL.md#a4-links)). `/remote connect <link>` keeps
+  the other server's link for the room, and replies with a new link of this
+  server for the other server, unless it has one.
+- A link's connection can close at any time. Nothing that the server keeps
+  depends on it.
 - A `message`, `reactions`, `me`, or `room_leave` request from a link with
   `ext.remote.user_id` acts as the remote user with that `user_id` on the
   link's server. The server makes the remote user if it does not exist.
@@ -179,23 +195,24 @@ ones, and servers drop `remote` from requests.
 ## Limits
 
 - **Times.** A `log_id` is the commit time on its server, and only increases.
-  A record that is copied late, such as after an outage, shows the time it
-  was copied, at the end of the room. Clients with
+  A record that is sent late, such as after an outage, shows the time it
+  arrived, at the end of the room. Clients with
   [`ext.remote`](#draft-extension-extremote) can show the original time.
 - **Order.** Concurrent messages can appear in a different order on each
   server.
-- **Throughput.** Every record of both rooms goes through the link's one
-  connection. Catching up after a long outage takes as long as that
-  connection's limits allow.
+- **Latency.** The first record after a close waits for a new connection and
+  sign-in.
+- **Throughput.** Each server's records go through one connection at a time.
+  Sending after a long outage takes as long as the link's limits allow.
 - **Moderation.** Each server moderates its own room. Deleting a remote
   user's message on one server deletes only that server's copy, and a
   tombstone has no `ext`, so the copy no longer shows its origin. Removing a
-  remote user from the room stops its copies on that server: the bridge
-  cannot write as it there again.
+  remote user from the room stops its copies on that server: the link cannot
+  write as it there again.
 - **Shared editing.** Only the origin's users can save a message that
-  [`ext:editors`](../extensions/ext_editors.md) shares. The bridge leaves the
+  [`ext:editors`](../extensions/ext_editors.md) shares. The sender leaves the
   grant off its copy, and maps `edited_by`.
-- **Pairs.** A remote user is never copied again, so rooms on
-  three servers need a bridge for each pair of servers.
+- **Pairs.** A remote user's records are never sent on, so rooms on three
+  servers need links between each pair of servers.
 - **One shared log.** Rooms that both servers write in a single order would
   need state resolution, as in Matrix. Copying avoids that by design.
