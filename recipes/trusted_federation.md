@@ -61,7 +61,8 @@ repeated create through the link returns the copy that exists.
 | Reactions | The user's whole set on the message, sent to its copy, or to the original of a copy. |
 | Memberships | A remote user joins the room with its first write. A leave of a user that the sender has sent is a `room_leave` through the link. Leaves that the server makes on its own, such as when it retires a guest, need not be sent. |
 | Profiles | A `me` request through the link when the sender first sends for a user, and after each change: `name`, and a [`bio`](../extensions/ext_bio.md). Profile changes are not in the log, so the sender watches them, such as through `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)). Its `you` gives the user's ID on the other server. A mention of a user who has never written makes that remote user too. `roles` stay each server's own, because a remote server's `"admin"` is not this server's admin. |
-| Rooms and threads | Each pair of shared rooms is set up once, with the two commands. `title` and `description` stay each server's own. A thread of a shared room needs its own pair. |
+| Rooms | Each pair of shared rooms is set up once, with the two commands. `title` and `description` stay each server's own. |
+| Threads | A thread of a shared room is shared with it ([§4.2](../PROTOCOL.md#42-rooms)). When a user of this server starts one, the sender creates it on the other server with a `room_set` through the link, whose `parent_room_id` is the paired room. The two threads are then a pair, which starts empty and ends with its parent's pair. A save of the thread's `title` or `description` is a `room_set` of the other thread. When the other server refuses the thread, such as one that allows no threads in a private room, the sender posts the thread's messages in the parent room instead, as replies to the message that started the thread, or to the first message of the thread. |
 | System notices | Never sent. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
 | Custom emoji | Keys in reactions and text belong to the sender's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The other server can refuse a key that it does not have. The sender then leaves the key out, or writes it as text. |
 | Uploads, avatars, emoji images, and live text | Copy them with a new `upload` embed ([§4.8.4](../PROTOCOL.md#484-embedupload)), or write a link to the original. Clients load `og` media and live text only from the server's own origins ([§4.8.1](../PROTOCOL.md#481-opengraph-metadata-og), [`ext:media`](../extensions/ext_media.md)). Live text can wait until it ends, when the snapshot holds it in `body.text` or `output`. |
@@ -211,17 +212,23 @@ Links:
   object.
 - A link's connection can close at any time. Nothing that the server keeps
   depends on it.
-- A `message`, `reactions`, `me`, or `room_leave` request from a link with
-  `ext.remote.user_id` acts as the remote user with that `user_id` on the
-  link's server. The server makes the remote user if it does not exist.
+- A `message`, `reactions`, `me`, `room_leave`, or `room_set` request from a
+  link with `ext.remote.user_id` acts as the remote user with that `user_id`
+  on the link's server. The server makes the remote user if it does not
+  exist.
+- A `room_set` from a link creates or saves a thread of a room that the link
+  has joined, and nothing else. A thread that it creates is paired with the
+  thread on the link's server whose `room_id` its `ext.remote.room_id`
+  carries. Saves of a thread's `title` and `description` follow the rules for
+  the remote user, such as that any member may save a thread.
 - These requests follow the rules for that user. For example, only the remote
   user who sent a message can save it ([§4.4](../PROTOCOL.md#44-edit)).
 - The server sets `server` in `remote` to the link's server. It keeps
   `room_id` and `message_id` from the request, or from the saved message when
   the request leaves them out.
-- A link acts only in rooms that it has joined. The error for any other room,
-  `denied`, or `invalid_params` for a room that the link cannot see
-  ([§1.1](../PROTOCOL.md#11-envelope-and-replies)), carries
+- A link acts only in rooms that it has joined, and in their threads. The
+  error for any other room, `denied`, or `invalid_params` for a room that the
+  link cannot see ([§1.1](../PROTOCOL.md#11-envelope-and-replies)), carries
   `"data": {"ext": {"remote": "not_joined"}}`. The sender then ends its pair
   for that room.
 - A remote user's first write in a room joins it to the room
