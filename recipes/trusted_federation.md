@@ -30,7 +30,8 @@ link has joined are the rooms that the two servers share.
    a minute without anything to send. It connects again when it has more.
 5. Each server keeps its place in its own log: the last record that the other
    server accepted. After a close, a crash, or an outage, it sends again from
-   there.
+   there. A pair starts where the log was when the pair was made, so older
+   records of its room are never sent.
 6. Each server stays the authority for its own room and log. A server writes
    as the other server's users only for the link that is bound to it.
 
@@ -56,10 +57,10 @@ repeated create through the link returns the copy that exists.
 |---|---|
 | Messages | A create through the link. Its `ext.remote` carries the original's `room_id` and `message_id`. The result gives the copy's `message_id` on the other server. |
 | Replies, mentions, and text | A reply to this server's own message refers to that message's copy. A reply to a copy refers to the original, from the copy's `ext.remote.message_id`. A reply to a message that was never copied, such as one older than the link, drops `reply_to`. A mention of a remote user refers to its original user, from the user's `ext.remote.user_id`. A mention of this server's own user refers to that user's remote user on the other server, from the result of a `me` request (below). Rewrite each `@id` in `body.text` whose ID is in `mentions`, outside code ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A link without `server` in the text refers to this server, so add its `server` to it ([Appendix A.4](../PROTOCOL.md#a4-links)). |
-| Edits, moves, and deletes | A save of the copy, with every client field ([§4.4](../PROTOCOL.md#44-edit)). A move out of the shared room deletes the copy. A move into it creates one. |
+| Edits, moves, and deletes | A save of the copy, with every client field ([§4.4](../PROTOCOL.md#44-edit)). A move between two rooms shared with the same server moves the copy. A move out of the shared rooms deletes the copy. A move into them creates one. When a create returns a copy that exists, also one deleted since, the sender saves it with the message's current state, which restores it. |
 | Reactions | The user's whole set on the message, sent to its copy, or to the original of a copy. |
-| Memberships | A remote user joins the room with its first write. A leave is a `room_leave` through the link. |
-| Profiles | A `me` request through the link when the sender first sends for a user, and after each change: `name`, and a [`bio`](../extensions/ext_bio.md). Its `you` gives the user's ID on the other server. `roles` stay each server's own, because a remote server's `"admin"` is not this server's admin. |
+| Memberships | A remote user joins the room with its first write. A leave of a user that the sender has sent is a `room_leave` through the link. Leaves that the server makes on its own, such as when it retires a guest, need not be sent. |
+| Profiles | A `me` request through the link when the sender first sends for a user, and after each change: `name`, and a [`bio`](../extensions/ext_bio.md). Profile changes are not in the log, so the sender watches them, such as through `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)). Its `you` gives the user's ID on the other server. A mention of a user who has never written makes that remote user too. `roles` stay each server's own, because a remote server's `"admin"` is not this server's admin. |
 | Rooms and threads | Each pair of shared rooms is set up once, with the two commands. `title` and `description` stay each server's own. A thread of a shared room needs its own pair. |
 | System notices | Never sent. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
 | Custom emoji | Keys in reactions and text belong to the sender's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The other server can refuse a key that it does not have. The sender then leaves the key out, or writes it as text. |
@@ -68,9 +69,12 @@ repeated create through the link returns the copy that exists.
 
 ## Running it
 
-- Give each record that the sender sends a request `id` of its own, such as
-  one made from its `log_id`. A record sent again after a close is then a
-  duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)).
+- Make each request `id` from the record's `log_id` and the request's
+  params, such as with a hash. A request sent again after a close is then a
+  duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)), and one
+  whose params changed in between, such as a mention mapped since, is a new
+  request rather than a refused one. A create is safe either way, because
+  the other server finds the copy by its original `message_id`.
 - Send the records of every shared room from one place in the log, in the
   order of the log, on one connection. Wait for each result before the place
   in the log moves past it.
@@ -81,15 +85,23 @@ repeated create through the link returns the copy that exists.
   log in storage, and set an alarm to send again if records are left.
 - A server that cannot connect out can have a bridge send for it: a process
   that reads its room, and sends through the other server's link.
+- A server that refuses connections from automated clients or cloud
+  platforms, such as requests from other Cloudflare Workers, needs to let
+  links connect.
+- A record that the other server refuses, other than for a limit, is not
+  sent again. Log it, so that an admin can see what did not arrive.
 - A copy sends pushes like any message ([§4.9](../PROTOCOL.md#49-push)). After
   a long outage, the sender can leave old messages out, or post a summary
   instead.
 - A remote user is an account, so server policies that remove idle accounts,
   or rooms without new records, need to leave remote users, links, and
   shared rooms alone.
-- To stop sharing one room, either admin removes their server's link from
-  the room. That ends the pair in both directions. To stop sharing every
-  room, either admin revokes the link. Remote users and their messages stay.
+- To stop sharing one room, either admin runs `/remote unshare` in it. The
+  server removes its link from the room, and tells the other server, which
+  removes its link from its room too. To stop sharing every room, either
+  admin revokes the link. Remote users and their messages stay.
+- The other server keeps the key of each copy for as long as the copy
+  exists, also after a delete, so that a create sent again finds it.
 - Copies need no accounts on the other server. People who also want one can
   sign in there with their own server as an OpenID Connect provider
   ([§4.12](../PROTOCOL.md#412-external-sign-in), with
@@ -188,9 +200,13 @@ Links:
   link's server (otherwise whoever holds the token could make the server
   connect elsewhere, or show its users as another server's). A request from
   any other user is `denied`.
+- An `ext:remote` request without `link` ends the pair of `room_id`. The
+  server removes the link from the room. Either server can end a pair, but
+  only the server whose room it is can start one.
 - The server sends the records of a room only while the room has a pair, and
-  the link has joined the room. Removing the link from the room ends the pair
-  in both directions.
+  the link has joined the room. Removing the link from the room ends the
+  pair, and the server tells the other server with an `ext:remote` request
+  without `link`.
 - The server keeps the `token` of `link` secret, such as off every user
   object.
 - A link's connection can close at any time. Nothing that the server keeps
@@ -203,9 +219,14 @@ Links:
 - The server sets `server` in `remote` to the link's server. It keeps
   `room_id` and `message_id` from the request, or from the saved message when
   the request leaves them out.
-- A link acts only in rooms that it has joined. A remote user's first write in
-  a room joins it to the room ([§4.2.2](../PROTOCOL.md#422-membership)), also
-  after it left. A remote user that another user removed is not joined again.
+- A link acts only in rooms that it has joined. The error for any other room,
+  `denied`, or `invalid_params` for a room that the link cannot see
+  ([§1.1](../PROTOCOL.md#11-envelope-and-replies)), carries
+  `"data": {"ext": {"remote": "not_joined"}}`. The sender then ends its pair
+  for that room.
+- A remote user's first write in a room joins it to the room
+  ([§4.2.2](../PROTOCOL.md#422-membership)), also after it left. A remote
+  user that another user removed is not joined again.
 - The result of a `me` request from a link carries the remote user as `you`.
 - A create from a link whose `message_id` in `remote` matches a message that
   the link already wrote, also one moved or deleted since, is a duplicate
