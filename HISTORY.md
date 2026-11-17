@@ -30,8 +30,11 @@ implementers must do. Leave out a subsection that has no entries.
 Group related changes into arcs: one entry for a reworked sign-in or a new kind
 of embed, not one entry per rule. An entry opens with a bold headline of a few
 plain words that says what the arc means for implementers, ending with a colon
-inside the bold, such as **Sign-in speaks OAuth 2.1:**. The sentences after it
-state the rules. An arc that fits more than one subsection goes in the first
+inside the bold, such as **Sign-in speaks OAuth 2.1:**. The headline names its
+subject, so that whoever made the change recognizes it: "Four rules, now in
+writing" says nothing. Don't group unrelated changes only to share a
+subsection; give each its own entry. The sentences after the headline state the
+rules. An arc that fits more than one subsection goes in the first
 that fits. Put the most consequential arc first in each subsection.
 
 When a later PR in the same version extends an arc, update its entry instead of
@@ -75,13 +78,15 @@ matches it.
 
 - **Passkeys answer only to their own domain:** Clients MUST check that a ceremony's RP ID is the host of the server's address, or a domain above it (§4.10). A server's own passkeys already meet this. (Otherwise a server could pass another server's challenge through the client, and sign in there as the user.) ([#101](https://github.com/shazow/apron/pull/101))
 - **Email links carry a return address:** A client drops a link with the `state` of its own proposal unless the link's `server` is the server that it proposed to, and drops a link without `server` (§4.11.2). Links already carried `server`. An email with a code gives the server's address. An approval may carry the proposal's `state`, so that a short code works on another connection, and the approval of an addition returns `you` (§4.11.3). (Otherwise a server could get another server's token.) ([#115](https://github.com/shazow/apron/pull/115))
-- **Writes open to every origin, and report back:** A write's `PUT` (§4.8.3) is allowed from any origin. The server answers it when the write finishes: an error status with a plain-text reason when it fails or reaches a limit, and 2xx otherwise. ([#106](https://github.com/shazow/apron/pull/106))
+- **Embed writes open to every origin, and report back:** A write's `PUT` (§4.8.3) is allowed from any origin. The server answers it when the write finishes: an error status with a plain-text reason when it fails or reaches a limit, and 2xx otherwise. ([#106](https://github.com/shazow/apron/pull/106))
 - **Fewer rendering duties, firmer line breaks:** Clients no longer have to render both text formats. Clients that render CommonMark MUST render a soft line break as a hard break, which was optional. The fallback card for an unknown embed kind shows its `title` and links to its `url` (§3.5.2). ([#101](https://github.com/shazow/apron/pull/101), [#120](https://github.com/shazow/apron/pull/120))
 - **Guest upgrades are the server's call:** On a guest connection, whether signing in with another scheme adds it to the guest's account is server policy (§3.2). ([#115](https://github.com/shazow/apron/pull/115))
 
 ### Clarified
 
-- **Four rules, now in writing:** Clients warn on a version mismatch and continue (§3.1). Reactions keep the order in which they first appeared (§4.7). A room `mute` may let mentions through (§4.5.3), and how mutes change `unread` is up to the server (§4.9.3). ([#105](https://github.com/shazow/apron/pull/105), [#112](https://github.com/shazow/apron/pull/112))
+- **Mutes and unread counts follow the server:** A room `mute` may let mentions through (§4.5.3), and how mutes change `unread` is up to the server (§4.9.3). ([#112](https://github.com/shazow/apron/pull/112))
+- **Version mismatches warn, and carry on:** Clients warn on a version mismatch and continue (§3.1). ([#105](https://github.com/shazow/apron/pull/105))
+- **Reactions keep their first order:** Reactions keep the order in which they first appeared (§4.7). ([#105](https://github.com/shazow/apron/pull/105))
 
 ## v9 (2026-10-27)
 
