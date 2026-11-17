@@ -1,5 +1,7 @@
 # Trusted federation
 
+**Status**: Under consideration, untested.
+
 **Can two Apron servers share rooms?** Yes, when their operators trust each
 other. A bridge copies each record of a shared room into the other server's
 room, and writes it there as the user who wrote it. Clients see an ordinary
