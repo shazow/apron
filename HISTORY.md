@@ -35,6 +35,9 @@ and unrelated changes apart. An entry has three parts:
   PROTOCOL.md.
 - Links to the sections to read more, then to the PRs:
   `[§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))`.
+  The current version links to PROTOCOL.md. An older version links to
+  PROTOCOL.md at its tag, so that section numbers match:
+  `https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#4115-external`.
 
 Write as AGENTS.md says for PROTOCOL.md: short sentences, an explicit subject,
 and the same word for the same thing. Put the most consequential entry first in
@@ -44,12 +47,15 @@ When a later PR in the same version extends an arc, update its entry. A feature
 that is added and removed in the same version has no entry. A conflict with
 another PR keeps both entries, merged if they are about the same arc.
 
-To check or catch up a version, compare its entries with
-`git diff <last commit of the previous version> HEAD -- PROTOCOL.md`, not with
-commit messages, which can describe plans that changed. Add what is missing,
-and fix what is wrong.
+To check or catch up a version, compare its entries with its diff, not with
+commit messages, which can describe plans that changed: for v9,
+`git diff protocol-v8 protocol-v9 -- PROTOCOL.md`, and for the current version,
+`git diff protocol-v<previous> -- PROTOCOL.md`. Add what is missing, and fix
+what is wrong.
 
-A new version gets a level-2 heading `vN (YYYY-MM-DD)` above the others, and
+A new version starts with the annotated tag `protocol-vN` on the last commit of
+the previous version N, and that version's links move to the tag. The new
+version gets a level-2 heading `vN (YYYY-MM-DD)` above the others, and
 PROTOCOL.md's front matter (`version`, `updated`) matches it.
 -->
 
@@ -83,23 +89,36 @@ PROTOCOL.md's front matter (`version`, `updated`) matches it.
 
 ## v9 (2026-10-27)
 
-- A server is identified by its address, the URI that clients connect to (§1), never by its `title` or `avatar`.
-- The `server` frame may carry `title`, `description`, and `avatar` (§3.1).
-- A `reactions` entry is an emoji sequence (UTS #51) or a key for another kind of reaction, such as a custom emoji.
-- Clients isolate the text direction of each user-written string (§3.5.2).
-- `history` without `room_id` queries every room that the connection receives.
-- A user's status has three views: chosen, presence, and shown (§4.5.1).
-- User objects may carry `seen`, when the shown status last became `offline`.
-- A scheme that the server does not offer fails, so that a client can try another.
-- Scheme `external` (§4.11) signs users in through a page of the server. It shares §4.11 with `email`, and proposals may carry `state`.
-- Appendix A.4 defines links that any client opens: `https://link.apron.chat/#` and `apron:?`.
-- Approval takes `scheme: "token"` for the token of a link, such as an invite (Appendix B.3).
-- `room_list` takes a `user_id` filter.
-- At an equal `log_id`, a tombstone wins. Recovery without a checkpoint may start at the newest page.
-- `idle` is `false`, or the seconds since nobody attended the connection.
-- `room_update` `joined` lists only the rooms joined after sign-in.
-- IDs are never empty and contain no whitespace or control characters. Appendix A.3 defines which characters a mention's ID takes.
-- Under consideration: `rtc_join` may carry `refresh_after` in place of `ice_expires`.
+### Breaking
+
+- **`history` without a room reads every room:** Clients that sent `history` without `room_id` to read the default room now pass its `room_id`, since the request now reads every room that the connection receives, as one log. Servers that don't support that reply `unsupported`. [§4.3](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#43-history) ([#92](https://github.com/shazow/apron/pull/92), [#99](https://github.com/shazow/apron/pull/99))
+- **Idle reports seconds, not `true`:** Clients send `idle` as the seconds since attention stopped instead of `true`, so that servers know when the connection went idle. [§4.5.3](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#453-the-status-request) ([#78](https://github.com/shazow/apron/pull/78))
+
+### New
+
+- **Sign in through the server's own page:** Servers can offer scheme `external`, a page that signs users in by any method and returns a temporary token to the client's `return_url`, or shows a code to type. It shares proposals, `state`, and approval with `email`, and servers that offer either also offer `token`. [§4.11.5](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#4115-external), [§4.11.1](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#4111-proposals) ([#78](https://github.com/shazow/apron/pull/78))
+- **Links that any client opens:** Clients can open `https://link.apron.chat/#…` and `apron:?…` links to a server, room, message, user, or invite, and approve a link's token with `scheme: "token"`. [A.4](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#a4-links), [B.3](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#b3-an-invite-token-signs-up-several-people) ([#91](https://github.com/shazow/apron/pull/91), [#93](https://github.com/shazow/apron/pull/93), [#94](https://github.com/shazow/apron/pull/94))
+- **Servers introduce themselves:** Servers can send `title`, `description`, and `avatar` in the `server` frame, so that clients can tell servers apart. Clients still identify a server by its address, never by its title or avatar. [§3.1](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#31-server-frame), [§1](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#1-transport--framing) ([#100](https://github.com/shazow/apron/pull/100))
+- **Last seen:** Servers can send `seen`, when a user's shown status last became `offline`. [§4.5.2](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#452-delivery) ([#96](https://github.com/shazow/apron/pull/96))
+- **Custom reactions:** A `reactions` entry may be a key for another kind of reaction, such as a custom emoji. Clients show a key that they don't support as a placeholder. [§4.7](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#47-reactions) ([#100](https://github.com/shazow/apron/pull/100))
+- **One member at a time:** `room_list` takes a `user_id` filter, which lists only that user in `members`. [§4.2.1](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#421-listing) ([#91](https://github.com/shazow/apron/pull/91))
+
+### Changed
+
+- **Unoffered sign-in schemes fail:** Servers refuse a scheme that they don't offer, so that a client can try another. [§3.2](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#32-authentication) ([#96](https://github.com/shazow/apron/pull/96))
+- **Text can't hijack its direction:** Clients isolate the text direction of each user-written string, and ignore bidi embeddings and overrides in it, so that a name or message can't reorder the text around it. [§3.5.2](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#352-rendering) ([#100](https://github.com/shazow/apron/pull/100))
+- **IDs have firm edges:** Servers never send an empty ID, or one with whitespace or control characters. Clients read a mention as the longest run of the characters that A.3 lists, so `@ada@example.com` is one mention. [§2.4](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#24-opaque-ids), [A.3](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#a3-prefixes-in-text) ([#78](https://github.com/shazow/apron/pull/78))
+- **Sign-in joins can skip `room_update`:** Servers list in `room_update` `joined` only the rooms joined after sign-in. [§4.2.3](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#423-updates) ([#88](https://github.com/shazow/apron/pull/88), [#89](https://github.com/shazow/apron/pull/89))
+- **Ties and recovery in the log:** At an equal `log_id`, a tombstone wins. Clients that recover without a checkpoint may start at the newest page. [§2.3](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#23-records-and-replay), [§4.3.5](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#435-replay-and-recovery) ([#78](https://github.com/shazow/apron/pull/78))
+
+### Clarified
+
+- **Status has three views:** Servers derive the shown status that others see from the user's chosen status and the presence of their connections. [§4.5.1](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#451-values) ([#96](https://github.com/shazow/apron/pull/96))
+- **`history` room records aren't deliveries:** Clients ignore delivery fields in room records from `history`, and a frame that omits a delivery field doesn't change it. [§4.3.3](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#433-availability-and-retention) ([#88](https://github.com/shazow/apron/pull/88), [#89](https://github.com/shazow/apron/pull/89))
+
+### Under consideration
+
+- **ICE refresh by deadline:** `rtc_join` may carry `refresh_after` in place of `ice_expires`. [C.1.1](https://github.com/shazow/apron/blob/protocol-v9/PROTOCOL.md#c11-joining) ([#96](https://github.com/shazow/apron/pull/96))
 
 ## v8 (2026-10-06)
 
@@ -112,7 +131,7 @@ PROTOCOL.md's front matter (`version`, `updated`) matches it.
 - General errors: unknown or hidden IDs are `invalid_params`, size limits `too_large`, and policy and count limits `denied` (§1.1).
 - `markdown` means CommonMark.
 
-Entries for v7 and earlier use the previous section numbers, as in [PROTOCOL.md at v7](https://github.com/shazow/apron/blob/d44564a1e4da7087321ff566fa0d5624c9718566/PROTOCOL.md).
+Entries for v7 and earlier use the previous section numbers, as in [PROTOCOL.md at v7](https://github.com/shazow/apron/blob/protocol-v7/PROTOCOL.md).
 
 ## v7 (2026-09-29)
 
