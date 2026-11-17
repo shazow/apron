@@ -70,9 +70,13 @@ fixtures, or implementations from it.
 
 ### Changes
 
-- If a change touches the wire, even one called editorial, follow the prompt
-  at the top of HISTORY.md to add it there in the same PR. Moved or renumbered
-  sections alone don't touch the wire.
+- If a change touches the wire, even one called editorial, add it to HISTORY.md
+  in the same PR by following the prompt at the top of that file. If you can
+  start a subagent, give the task to a fresh one: pass it the prompt,
+  `git diff origin/main -- PROTOCOL.md`, and the PR's description, but not your
+  own summary, then review what it writes. A fresh reader judges the change by
+  its diff, as implementers will. Moved or renumbered sections alone don't
+  touch the wire.
 - We squash-merge, so a PR's title and description become its commit on main.
   Keep them true to what the branch does, including changes made in review,
   until it merges.
