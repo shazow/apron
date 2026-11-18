@@ -20,8 +20,9 @@ account that reads the room, and writes as the mirror's users
    ([Appendix A.4](../PROTOCOL.md#a4-links)) that carries the room and the
    link's `token`.
 2. An admin of the mirror B runs `/remote connect` with that invite. B makes a
-   **mirror room** for A's room. The mirror room is private when A's room is.
-   B's admin adds B's users to it as to any room.
+   **mirror room** for A's room. The mirror room is private exactly when A's
+   room is, so that its lock tells the truth. B's admin adds B's users to it
+   as to any room.
 3. B signs in to A as the link
    ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), and reads A's room: with
    `history` from where it stopped, and then live
@@ -36,7 +37,7 @@ account that reads the room, and writes as the mirror's users
    wakes it with a push when the room changes
    ([§4.9](../PROTOCOL.md#49-push)).
 6. A is the authority for the room: its order, its threads, and its
-   moderation. B is the authority for who on B can see the mirror room.
+   moderation. B decides which of its users are in the mirror room.
 
 Records flow one way, from the owner to the mirror. Requests flow the other
 way, from the mirror to the owner. So the two servers never disagree about
@@ -57,9 +58,9 @@ users, with the server that `ext.remote` names.
 | Replies, mentions, and text | The mirror maps `reply_to.message_id` and the IDs in `mentions` both ways, through the copies' `ext.remote` and the users' IDs on the owner. It rewrites each `@id` in `body.text` whose ID is in `mentions`, outside code ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A link without `server` in the text refers to the owner, so the mirror adds the owner's `server` to it ([Appendix A.4](../PROTOCOL.md#a4-links)). |
 | Edits, moves, and deletes | A new snapshot from the owner is a new snapshot of the copy. A mirror user's save is a `message` request through the link ([§4.4](../PROTOCOL.md#44-edit)). A move out of the shared rooms deletes the copy. |
 | Reactions | The owner's reactions record replaces the copy's. A mirror user's reaction is a `reactions` request through the link. |
-| Memberships | The mirror room's members are the mirror's own. The mirror writes copies from remote users without making them members, also in a private mirror room. A mirror user's first write joins its remote user to the owner's room. |
+| Memberships | Like messages: the owner's membership records are copied, and the mirror's joins and leaves are requests. When it connects, the mirror joins the owner's members to the mirror room as remote users, from the owner's member list ([§4.2.1](../PROTOCOL.md#421-listing)). It then copies each membership record, except those of links and of its own users' remote users. When a user of the mirror joins or leaves the mirror room, the mirror sends a `room_join` or `room_leave` through the link. So both servers list the same people, and show the same joins and leaves. |
 | Profiles | The mirror updates its remote users from the owner's records and `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)). It sends a `me` request through the link for its own users: when it first sends for a user, and after each change. Its `you` gives the user's ID on the owner. `roles` stay each server's own. |
-| Rooms | The mirror room's `title`, `description`, and members are the mirror's own. |
+| Rooms | The mirror room's `title` and `description` are the mirror's own. Its `private` follows the owner's room, also when the owner's room changes. |
 | Threads | The owner joins the link to each thread of a shared room that every member of the room can see. The mirror makes a thread of the mirror room for each, and writes its records there. A mirror user's new thread, or save of a thread's `title`, is a `room_set` request through the link. |
 | System notices | Never copied. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
 | Custom emoji | Keys in reactions and text belong to the owner's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The owner can refuse a key that it does not have, which the mirror user sees as an error. |
@@ -233,10 +234,11 @@ Links:
 
 Acting as remote users:
 
-- A `message`, `reactions`, `me`, `room_leave`, or `room_set` request from a
-  link with `ext.remote.user_id` acts as the remote user with that `user_id`
-  on the link's server. The server makes the remote user if it does not
-  exist. A link's requests without `ext.remote.user_id` act as the link.
+- A `message`, `reactions`, `me`, `room_join`, `room_leave`, or `room_set`
+  request from a link with `ext.remote.user_id` acts as the remote user with
+  that `user_id` on the link's server. The server makes the remote user if it
+  does not exist. A link's requests without `ext.remote.user_id` act as the
+  link.
 - These requests follow the rules for that user. For example, only the remote
   user who sent a message can save it ([§4.4](../PROTOCOL.md#44-edit)).
 - A link acts only in rooms that it has joined, and in their threads. The
@@ -246,7 +248,8 @@ Acting as remote users:
 - A remote user's first write in a room joins it to the room
   ([§4.2.2](../PROTOCOL.md#422-membership)), also after it left. A remote
   user that another user removed is not joined again: the error for its
-  writes in that room carries `"data": {"ext": {"remote": "removed"}}`.
+  writes and its `room_join` in that room carries
+  `"data": {"ext": {"remote": "removed"}}`.
 - A `room_set` from a link creates or saves a thread of a room that the link
   has joined, and nothing else.
 - The server sets `server` in `remote` to the link's server.
