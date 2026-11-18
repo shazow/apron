@@ -886,7 +886,7 @@ A name that this document does not define is an **extension name**. It starts
 with `ext:`, such as the capability `ext:irc`. This applies to every list of
 names that an extension can add to, such as methods, capabilities, auth schemes,
 and kinds. This document never defines a name with that prefix. Display values,
-such as a status or a role, are free text and take no prefix.
+such as a status or a role, are free text. The prefix does not apply to them.
 
 Five frame patterns cover everything that is logged or announced:
 
@@ -1851,7 +1851,7 @@ Clients render an unknown kind from `og`, or else as the fallback card
 
 - `iframe`: clients render it with `sandbox="allow-scripts"`, and never with
   `allow-same-origin` too (together, they let the embed remove its own sandbox).
-  Clients allow no top navigation and no popups, and use a restrictive
+  Clients do not allow top navigation or popups, and use a restrictive
   Permissions-Policy. Clients clamp the dimensions, because `height` is only a
   suggestion. Clients load iframes lazily, and limit how many are live at one
   time.
@@ -2038,7 +2038,7 @@ moves it into the body, and the message is an ordinary message.
 ```
 
 - Clients show `body.text` followed by the text from `url`, as one text in the
-  format of the body. They show no card for the embed.
+  format of the body. They do not show a card for the embed.
 - After decoding, two control characters edit the text from `url`:
   - U+0008 (backspace) removes the code point before it.
   - U+000C (form feed) removes all the text before it.
@@ -2319,7 +2319,7 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   - Servers SHOULD omit `format`, `embeds`, and `ext`.
   - To fit the limit, servers MAY truncate `body.text`, and leave out any
     field except `message_id`, `room_id`, and `from.user_id`.
-  - A payload without `message` shows no notification.
+  - Clients do not show a notification for a payload without `message`.
 - Clients SHOULD show at most one notification for each `push_id` and
   `message_id`. A later notification for the same pair replaces the earlier
   one, from a push or from the client's own connection.
@@ -2875,7 +2875,7 @@ server.
   choose, or code running in a client, does not get a session without the
   user's action.
 - The user can only refuse a client that they recognize. A page helps when it
-  names the client by the host of `redirect_uri`, marks clients that the
+  identifies the client by the host of `redirect_uri`, marks clients that the
   server does not know, and says that the client will act as the user. The
   account shows on the page, or in the passkey prompt. A user's choice is kept
   only for an exact `https` `redirect_uri`: an app scheme or a loopback address

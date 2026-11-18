@@ -11,6 +11,7 @@ what the user works on.
 - A server with capability `ext` keeps `bio` like any other key, so clients
   also use the extension with `ext`.
 - Clients send at most 250 Unicode code points. `\n` is a line break.
-- Clients send no control characters other than `\n`.
-- Clients show a bio as plain text, never as CommonMark or HTML.
+- The only control character in a bio is `\n`.
+- A bio is plain text, without markup such as CommonMark.
+- Clients MAY turn URLs in a bio into links.
 - Without the extension or capability `ext`, clients send no `bio`.

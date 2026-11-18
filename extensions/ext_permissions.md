@@ -20,7 +20,7 @@ class Permissions {               // you.ext.permissions
 }
 ```
 
-- An absent key takes its default.
+- Clients use the default value for absent keys.
 - Without the extension, clients offer what PROTOCOL.md allows, and handle
   `denied`. They offer to move only the user's own messages.
 - `write` refers to the requests that the `write` row of
