@@ -98,6 +98,9 @@ Writing:
   apart from results first finishes every notification that arrived before
   the result, then answers its user. A `reactions` result carries no ID, so
   only this order ties it to its record.
+- The mirror sends its users' joins and leaves in the background. One that
+  the owner did not answer, such as when the connection closed, is sent
+  again on the next connection.
 - When the owner refuses a request, the mirror answers its user with the
   owner's error. When the owner cannot be reached, the mirror answers with an
   error, such as `retry_after`.
