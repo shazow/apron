@@ -18,15 +18,15 @@ the server offers one, and gets a code back
      Such an app can claim any RP ID and origin, so passkeys lose their
      phishing protection.
 2. **A trusted app runs the ceremony** with `public_key`, after the RP ID check
-   ([§4.10](../PROTOCOL.md#410-webauthn-authentication)). If the begin result has
+   ([§4.10](../PROTOCOL.md#410-webauthn-authentication)). The app sets the
+   `Origin` header of its connection to the origin that its platform writes in
+   the credential's client data. Without it, the server can leave out
+   `public_key`. The server accepts the token from the finish only on a
+   connection with that same origin, so the app sets the same header on each
+   later connection that signs in with that token. If the begin result has
    `external` and no `public_key`, or the platform refuses the RP ID, the app
    continues at step 3 ([§4.10.1](../PROTOCOL.md#4101-passkey-page)). A cancel by
-   the user is not a refusal. The app sets the `Origin` header of its
-   connection to the origin that its platform writes in the credential's
-   client data. Without it, the server can leave out `public_key`. The server
-   accepts the token from the finish only on a connection with that same
-   origin, so the app sets the same header on each later connection that signs
-   in with that token.
+   the user is not a refusal.
    - Apple: `ASAuthorizationPlatformPublicKeyCredentialProvider`. A cancel is
      `ASAuthorizationError.canceled`. The origin is `https://` plus the RP ID,
      such as `https://chat.example`.
