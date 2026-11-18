@@ -21,16 +21,18 @@ the server offers one, and gets a code back
    ([§4.10](../PROTOCOL.md#410-webauthn-authentication)). If the begin result has
    `external` and no `public_key`, or the platform refuses the RP ID, the app
    continues at step 3 ([§4.10.1](../PROTOCOL.md#4101-passkey-page)). A cancel by
-   the user is not a refusal. A server can leave out `public_key` for a
-   connection whose `Origin` it does not allow, and an app's connection sends
-   no `Origin` of its own. So the app sends the origin that its platform puts
-   in the credential's client data, on the begin's connection and on later
-   connections with the token. The server allows that origin.
+   the user is not a refusal. The app sets the `Origin` header of its
+   connection to the origin that its platform writes in the credential's
+   client data. Without it, the server can leave out `public_key`. The server
+   accepts the token from the finish only on a connection with that same
+   origin, so the app sets the same header on each later connection that signs
+   in with that token.
    - Apple: `ASAuthorizationPlatformPublicKeyCredentialProvider`. A cancel is
-     `ASAuthorizationError.canceled`. The origin is `https://` plus the RP ID.
+     `ASAuthorizationError.canceled`. The origin is `https://` plus the RP ID,
+     such as `https://chat.example`.
    - Android: Credential Manager (`androidx.credentials`). The origin is
      `android:apk-key-hash:` plus the base64url SHA-256 hash of the app's
-     signing certificate.
+     signing certificate, such as `android:apk-key-hash:sYUC8p5I…`.
 3. **Any other app chooses a `redirect_uri`.** The page asks the user to allow
    an `https` `redirect_uri` once for their account, and any other
    `redirect_uri` at each sign-in
