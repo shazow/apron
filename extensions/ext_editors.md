@@ -52,5 +52,5 @@ class Editors {                 // message.ext.editors
   (Otherwise the edited text reads as the sender's words.)
 - Clients offer the editing that a grant allows. A key or value that a
   client or server does not know shares nothing.
-- Without the extension, clients send no `editors`, and offer editing only
+- Without the extension, clients do not send `editors`, and offer editing only
   to the sender.

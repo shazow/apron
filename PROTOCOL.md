@@ -128,7 +128,8 @@ Liveness:
 ### 1.1 Envelope and replies
 
 A request carries a string `id` ([§2.4](#24-opaque-ids)), and gets exactly one
-reply. A frame with a `method` and no `id` is a notification, and gets no reply.
+reply. A frame with a `method` and no `id` is a notification. The receiver
+does not reply to it.
 
 Each method is either a request or a notification. A method is a request when
 its sender needs the reply: data, a confirmation that a change was applied, or
@@ -229,8 +230,8 @@ Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated
 How long a server remembers an `id` is implementation-defined. Before
 authentication there is no `user_id`, so a request `id` applies only to its
 connection. The server MUST execute `auth` on each connection, also when it
-repeats an `id` (a deduplicated result would sign in a connection that
-presented no credentials).
+repeats an `id` (a deduplicated result would sign in a connection that did
+not present credentials).
 
 ---
 
@@ -605,7 +606,7 @@ labels such as `"admin"`, `"moderator"`, or `"trusted"`. Suggested convention:
 
 - Clients show roles separately from the name, such as badges. They show
   unknown roles as written.
-- Roles are only for display, and give no permissions on the client.
+- Roles are only for display, and do not give permissions on the client.
 - A role change is a `user` notification, like any profile change.
 
 ```jsonc
@@ -886,7 +887,7 @@ A name that this document does not define is an **extension name**. It starts
 with `ext:`, such as the capability `ext:irc`. This applies to every list of
 names that an extension can add to, such as methods, capabilities, auth schemes,
 and kinds. This document never defines a name with that prefix. Display values,
-such as a status or a role, are free text and take no prefix.
+such as a status or a role, are free text and do not take a prefix.
 
 Five frame patterns cover everything that is logged or announced:
 
@@ -1215,7 +1216,7 @@ has the user as a recorded object ([§3.3.1](#331-user-objects)), and `joined`.
   in `room_update` `joined`. They update it from the memberships that they
   receive, live and in history.
 - A server MAY keep some memberships outside the log, such as for temporary
-  guests. It then sends no membership records for them, and ignores
+  guests. It then does not send membership records for them, and ignores
   `latest_log_id` in `room_list` ([§4.2.1](#421-listing)).
 - Joins and leaves are membership records, not `user` notifications
   ([§3.3](#33-identity)).
@@ -1851,7 +1852,7 @@ Clients render an unknown kind from `og`, or else as the fallback card
 
 - `iframe`: clients render it with `sandbox="allow-scripts"`, and never with
   `allow-same-origin` too (together, they let the embed remove its own sandbox).
-  Clients allow no top navigation and no popups, and use a restrictive
+  Clients do not allow top navigation or popups, and use a restrictive
   Permissions-Policy. Clients clamp the dimensions, because `height` is only a
   suggestion. Clients load iframes lazily, and limit how many are live at one
   time.
@@ -2038,7 +2039,7 @@ moves it into the body, and the message is an ordinary message.
 ```
 
 - Clients show `body.text` followed by the text from `url`, as one text in the
-  format of the body. They show no card for the embed.
+  format of the body. They do not show a card for the embed.
 - After decoding, two control characters edit the text from `url`:
   - U+0008 (backspace) removes the code point before it.
   - U+000C (form feed) removes all the text before it.
@@ -2319,7 +2320,7 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   - Servers SHOULD omit `format`, `embeds`, and `ext`.
   - To fit the limit, servers MAY truncate `body.text`, and leave out any
     field except `message_id`, `room_id`, and `from.user_id`.
-  - A payload without `message` shows no notification.
+  - Clients do not show a notification for a payload without `message`.
 - Clients SHOULD show at most one notification for each `push_id` and
   `message_id`. A later notification for the same pair replaces the earlier
   one, from a push or from the client's own connection.
@@ -2494,7 +2495,7 @@ that finishes the exchange, as in external sign-in
 - A finish with an invalid, expired, or used code is `denied`.
 - Servers MUST NOT refuse the `token` of a finish with `code` because of a
   connection's `Origin` (the ceremony ran on the server's page, and an app
-  sends no `Origin`).
+  does not send `Origin`).
 - The server applies its policy for new accounts when it redeems the code.
 
 ### 4.11 Email sign-in
@@ -2712,7 +2713,7 @@ sign-in pages: the page at `url`, and its passkey page
 - A successful sign-in returns `you` and a bearer `token`
   ([§3.2.1](#321-bearer-tokens)).
 - Servers MUST NOT refuse that `token` because of a connection's `Origin` (an
-  app sends no `Origin`).
+  app does not send `Origin`).
 - On a connection that is signed in, an `external` request adds the identity
   to that account, and returns `you`. An identity that belongs to another
   account is `denied`.
@@ -2799,7 +2800,7 @@ server.
   without authentication, or as an earlier identity.
 - The server executes `auth` on each connection, also when it repeats an `id`
   ([§1.2](#12-retries-and-deduplication)). A deduplicated result would sign in
-  a connection that presented no credentials.
+  a connection that did not present credentials.
 - WebAuthn challenges are bound to their connection, action, RP ID, origin,
   and registration identity ([§4.10](#410-webauthn-authentication)). So one
   ceremony cannot complete another, and a login cannot pass as a
@@ -2812,7 +2813,7 @@ server.
 - A passkey page lets clients that cannot use the RP ID sign in with a passkey
   ([§4.10.1](#4101-passkey-page)). The page's confirmation then decides which
   client receives the session, as for external sign-in. A server that wants
-  passkey sessions only in its own clients offers no passkey page.
+  passkey sessions only in its own clients does not offer a passkey page.
 - A site that shows the passkey page in a frame could trick the user into a
   click on its consent, which also starts the passkey prompt (clickjacking).
   So the page refuses frames, and rejects a ceremony that runs in one
@@ -2840,7 +2841,7 @@ server.
   tokens stay out of server logs.
 - Only servers write links with a token, and never as `apron:` links
   ([A.4](#a4-links)). So a client does not share a token when the user shares
-  a place, and an app that claims the scheme gets no token.
+  a place, and an app that claims the scheme does not get a token.
 - A link carries the `state` of its proposal
   ([§4.11.2](#4112-temporary-tokens)). Without it, a client could follow someone
   else's link into that person's account (login cross-site request forgery).
@@ -2859,9 +2860,9 @@ server.
 - Clients send `resource` for the server that they are connected to, never
   one that a server names ([§4.12.2](#4122-signing-in)), and a server redeems
   only a code for its own origin ([§4.12.4](#4124-redemption)). So a server
-  that points its `url` at another server's page gets no code that the other
-  server would redeem. Servers on one host and port share an origin, so they
-  trust each other.
+  that points its `url` at another server's page does not get a code that the
+  other server would redeem. Servers on one host and port share an origin, so
+  they trust each other.
 - A client gives a code only to the server that it is connected to, which
   passes it on only to the authorization server that issued it
   ([§4.12.4](#4124-redemption)). So an authorization server cannot take a code
@@ -2986,7 +2987,7 @@ server.
   forgery (SSRF) against the server's network.
 - Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
   So stale pushes for a removed account, and forged pushes to a known endpoint,
-  show no notification.
+  do not show a notification.
 - Interactive clients ask the user before they connect to a server that the
   user has not used ([A.4](#a4-links)). So a posted link cannot make its
   readers' clients reveal their IP addresses to any host, or reach services on
@@ -3082,7 +3083,7 @@ A prefix says what kind of ID follows:
 |--------|-------------------------------|--------------------------------------------------------------------------------------|
 | `@`    | a user                        | a mention ([§3.5.5](#355-mentions)), listed in `body.mentions` too                   |
 | `@&`   | a role ([§3.3.4](#334-roles)) | a mention of each user in the room with the role, each listed in `body.mentions` too |
-| `#`    | a room                        | a reference to the room; it mentions no one                                          |
+| `#`    | a room                        | a reference to the room, not a mention                                               |
 | `~`    | a system identity             | never; it appears only as a sender ([A.1](#a1-system-identities-and-scoped-notices)) |
 
 - After `@`, `@&`, or `#`, the ID is the longest run of `[A-Za-z0-9_.+@:-]`
@@ -3169,10 +3170,10 @@ implementations accept them. Each follows from the sections it cites.
 Authentication gates what a client sends, not what it receives
 ([§3.2.2](#322-order)). A server MAY follow its `server` frame with a `~private`
 notice ([Appendix A.1](#a1-system-identities-and-scoped-notices)), such as how
-to sign in. It omits `room_id`, since the client knows no rooms yet. Sent before
-the server reads any frame, it precedes the `auth` result even when the client
-pipelined `auth`. The server sends it on each connection. Clients MAY replace
-the previous one rather than show both.
+to sign in. It omits `room_id`, since the client does not know any rooms yet.
+Sent before the server reads any frame, it precedes the `auth` result even when
+the client pipelined `auth`. The server sends it on each connection. Clients MAY
+replace the previous one rather than show both.
 
 ```jsonc
 // <-
@@ -3192,14 +3193,14 @@ the previous one rather than show both.
 
 ### B.2 A bot connects, posts once, and disconnects
 
-A deploy hook or cron job needs no rooms. It MAY send `auth` and `message`
+A deploy hook or cron job does not need rooms. It MAY send `auth` and `message`
 together without waiting for `server`, since `auth` is a barrier
 ([§3.2.2](#322-order)). Posting does not require joining
-([§3.5.1](#351-creating)), so the bot receives no broadcast. The `message_id`
-result is its confirmation. It closes the connection once that arrives. If the
-connection drops first, it resends the same `id` and `params` on a new
-connection, and the server returns the original result rather than posting twice
-([§1.2](#12-retries-and-deduplication)).
+([§3.5.1](#351-creating)), so the bot does not receive broadcasts. The
+`message_id` result is its confirmation. It closes the connection once that
+arrives. If the connection drops first, it resends the same `id` and `params` on
+a new connection, and the server returns the original result rather than posting
+twice ([§1.2](#12-retries-and-deduplication)).
 
 ```jsonc
 // -> both at once, before server arrives
@@ -3304,12 +3305,12 @@ Clients MAY use relay-only ICE, so servers SHOULD include TURN in `ice`.
 A session outlives a dropped chat connection. `rtc_join` with a `peer_id`
 reclaims that seat for the same user after a reconnect, or refreshes `ice` or
 `transport` after `refresh_after` (with a new request `id`,
-[§1.2](#12-retries-and-deduplication)); the other peers see no change. After
-reclaiming, a client restarts ICE with every peer not connected, using the fresh
-`ice`. Only a client that still holds its peer connections reclaims; otherwise
-it leaves and joins anew. A seat ends with `rtc_leave`, or when its connection
-stays closed past a grace period set by server policy. The session ends with its
-last seat.
+[§1.2](#12-retries-and-deduplication)); the other peers do not see a change.
+After reclaiming, a client restarts ICE with every peer not connected, using the
+fresh `ice`. Only a client that still holds its peer connections reclaims;
+otherwise it leaves and joins anew. A seat ends with `rtc_leave`, or when its
+connection stays closed past a grace period set by server policy. The session
+ends with its last seat.
 
 ```jsonc
 // -> after reconnecting and authenticating
@@ -3324,8 +3325,8 @@ last seat.
 seat in `to`. The server delivers it with the sender's seat in `from`. Only a
 connection holding a seat may send one. Signals from one seat to another arrive
 in order. The server drops signals to a seat whose connection is closed, that
-match no seat, or that exceed its rate or size limits. When a seat ends, the
-server sends each remaining peer a signal from it with `payload: null`.
+do not match a seat, or that exceed its rate or size limits. When a seat ends,
+the server sends each remaining peer a signal from it with `payload: null`.
 
 ```jsonc
 // -> Alice (p1) to Bob's phone (p3)

@@ -41,7 +41,7 @@ class AuthExternalBegin {       // auth params.ext.auth_external, on an external
 
 - The server sends `options` only when it offers two or more ways.
 - A server with one way gives that way a label in `labels.external`
-  ([§3.2](../PROTOCOL.md#32-authentication)), and sends no `options`.
+  ([§3.2](../PROTOCOL.md#32-authentication)), and does not send `options`.
 - Clients show one choice for each option, in order, instead of the one
   `external` choice.
 - Clients MAY show `labels.external` as a heading for the options.

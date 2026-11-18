@@ -43,7 +43,6 @@ class Limits {
   it does not accept with HTTP 415.
 - The server scales a larger image down to `max_side`. Clients MAY scale it
   down before they upload it.
-- Without `upload`, `avatar`, or `emoji`, clients apply no limits to those
-  files.
+- Without `upload`, `avatar`, or `emoji`, clients do not limit those files.
 - Without the extension, clients load media only from the server's origin,
-  and apply no limits.
+  and do not limit it.
