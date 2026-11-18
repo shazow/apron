@@ -105,7 +105,7 @@ Refusals:
   such as "This thread is not shared with b.example." It sends nothing more
   of that thread.
 - When the other server refuses a message because its author was removed
-  from the room there, the server tells the author with a `~private`
+  from the room there (`removed`), the server tells the author with a `~private`
   notice, such as "Not sent to b.example: you were removed from this room
   there."
 
@@ -267,7 +267,8 @@ Acting as remote users:
   for that room.
 - A remote user's first write in a room joins it to the room
   ([§4.2.2](../PROTOCOL.md#422-membership)), also after it left. A remote
-  user that another user removed is not joined again.
+  user that another user removed is not joined again: the error for its
+  writes in that room carries `"data": {"ext": {"remote": "removed"}}`.
 - The server sets `server` in `remote` to the link's server. It keeps
   `room_id` and `message_id` from the request, or from the saved message when
   the request leaves them out.
