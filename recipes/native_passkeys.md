@@ -77,6 +77,28 @@ the server offers one, and gets a code back
    ([§1](../PROTOCOL.md#1-transport--framing)), or a new connection that signs
    in with the guest's `token`, if the server sent one.
 
+## Servers
+
+A server that works well with native apps:
+
+- Lists its operator's apps on the RP ID's domain: `webcredentials` in
+  `apple-app-site-association`, and `delegate_permission/common.get_login_creds`
+  in `assetlinks.json`.
+- Allows each listed app's origin (step 2) as a ceremony's origin, and as a
+  connection's `Origin`.
+- Puts the passkey page in every begin result, also next to `public_key`
+  ([§4.10.1](../PROTOCOL.md#4101-passkey-page)). An app whose platform refuses
+  the RP ID then still has a way to sign in.
+- Keeps a page's code valid after the begin's connection closes, until the
+  code expires. The server can then close a connection that does not sign in
+  soon.
+- Writes spaces in the query of `external.url` as `%20`, not `+`. Some clients
+  encode the query again.
+- Lists `webauthn` in `signup` only where a registration can create an
+  account. If a registration needs a signed-in connection, such as a guest's,
+  the refusal says so.
+- Says in a refusal what it saw, such as the origin that it does not allow.
+
 ## Limits
 
 - **A prompt before the page.** `ASWebAuthenticationSession` asks the user
