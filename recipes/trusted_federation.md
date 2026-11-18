@@ -70,9 +70,13 @@ users, with the server that `ext.remote` names.
 Reading:
 
 - The mirror keeps its place in the owner's log, and reads from there after a
-  close, a crash, or an outage. A mirror room starts where the owner's log
-  was when the mirror connected, so older records of the room are not
+  close, a crash, or an outage. Each mirror room starts where the owner's log
+  was when its `/remote connect` ran, so older records of the room are not
   copied.
+- `history` without `room_id` leaves out the rooms that the link has left,
+  so it never shows the link's own removal. On each connection, the mirror
+  lists the link's joined rooms (`room_list`), and stops the mirror rooms
+  whose room is not among them.
 - A mirror that stays connected receives the room live. A mirror that sleeps
   between requests, such as a Cloudflare Durable Object, registers a `relay`
   push for the link with the wake scope `ext:remote`, closes its connection,
@@ -88,7 +92,10 @@ Writing:
   close is then a duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)).
 - The owner sends the record of a request before its result
   ([§1](../PROTOCOL.md#1-transport--framing)). So when the result arrives,
-  the mirror has the record, and answers its user.
+  the mirror has received the record. A mirror that handles notifications
+  apart from results first finishes every notification that arrived before
+  the result, then answers its user. A `reactions` result carries no ID, so
+  only this order ties it to its record.
 - When the owner refuses a request, the mirror answers its user with the
   owner's error. When the owner cannot be reached, the mirror answers with an
   error, such as `retry_after`.
@@ -106,9 +113,12 @@ Server policies:
   rooms alone.
 - A copy sends pushes like any message ([§4.9](../PROTOCOL.md#49-push)). After
   a long outage, the mirror can leave old messages out of pushes.
-- A mirror can hide a copy, or remove a remote user from the mirror room, for
-  its own users. Its later reads leave the hidden copy and the removed user
-  out.
+- A mirror's admin or moderator who deletes a copy that they did not write
+  hides it for the mirror's users: the mirror does not send the delete to the
+  owner, and its later reads leave the copy hidden. A remote user that the
+  mirror's admin removes from the mirror room is left out the same way.
+- The owner's moderators need to be able to delete any message in the room,
+  because that is the only delete that reaches every mirror.
 
 Sharing:
 
@@ -174,10 +184,11 @@ Remote users and copies:
   writes. Recorded user objects of remote users carry it too.
 - The server ignores `remote` in requests, except from a link (otherwise a
   local user could claim to come from another server).
-- A remote user is an ordinary user. The server assigns its `user_id`, such
-  as `carol@a.example` ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)).
-  It is the same for each pair of `server` and `user_id`, and the server never
-  assigns it to another user.
+- A remote user is an ordinary user. Its `user_id` is the user's ID on the
+  remote server, `@`, and the host of `server` with its port, if any, such as
+  `carol@a.example` ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). The
+  server never assigns it to another user. (A mirror maps a mention of a user
+  that it has not seen yet by this form.)
 - The IDs in `remote` are the remote server's. They refer to nothing on this
   server.
 - `server`, `user_id`, `room_id`, and `message_id` hold the values of the link
@@ -211,6 +222,9 @@ Links:
   ([§4.9.4](../PROTOCOL.md#494-wake)), with a payload without `message`, also
   while one of the link's connections is open. The server can wait a moment,
   and send one push for several records.
+- The server accepts such a registration only when its `url` is on the host
+  of the link's server (otherwise a link could make the server send requests
+  elsewhere). It accepts it also when it offers no other push.
 - A link's connection can close at any time. Nothing that the server keeps
   depends on it.
 
@@ -256,8 +270,10 @@ ones, and servers drop `remote` from requests.
   own users. A tombstone has no `ext`, so a deleted copy no longer shows its
   origin.
 - **Threads.** A thread that only some members of the owner's room can see is
-  not mirrored. A mirror that allows no threads in a private room cannot show
-  the threads of a private shared room.
+  not mirrored. Some servers make each thread of a private room visible only
+  to its members, and some allow no threads in a private room. So the
+  threads of a private shared room are mirrored only where the owner makes
+  them visible to every member, and the mirror allows them.
 - **Shared editing.** Only the owner's rules decide who can save a message
   that [`ext:editors`](../extensions/ext_editors.md) shares. The mirror
   leaves the grant off its copy, and maps `edited_by`.
