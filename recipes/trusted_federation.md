@@ -57,7 +57,7 @@ users, with the server that `ext.remote` names.
 | Replies, mentions, and text | The mirror maps `reply_to.message_id` and the IDs in `mentions` both ways, through the copies' `ext.remote` and the users' IDs on the owner. It rewrites each `@id` in `body.text` whose ID is in `mentions`, outside code ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A link without `server` in the text refers to the owner, so the mirror adds the owner's `server` to it ([Appendix A.4](../PROTOCOL.md#a4-links)). |
 | Edits, moves, and deletes | A new snapshot from the owner is a new snapshot of the copy. A mirror user's save is a `message` request through the link ([§4.4](../PROTOCOL.md#44-edit)). A move out of the shared rooms deletes the copy. |
 | Reactions | The owner's reactions record replaces the copy's. A mirror user's reaction is a `reactions` request through the link. |
-| Memberships | The mirror room's members are the mirror's own. The owner's users appear when they write. A mirror user's first write joins its remote user to the owner's room. |
+| Memberships | The mirror room's members are the mirror's own. The mirror writes copies from remote users without making them members, also in a private mirror room. A mirror user's first write joins its remote user to the owner's room. |
 | Profiles | The mirror updates its remote users from the owner's records and `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)). It sends a `me` request through the link for its own users: when it first sends for a user, and after each change. Its `you` gives the user's ID on the owner. `roles` stay each server's own. |
 | Rooms | The mirror room's `title`, `description`, and members are the mirror's own. |
 | Threads | The owner joins the link to each thread of a shared room that every member of the room can see. The mirror makes a thread of the mirror room for each, and writes its records there. A mirror user's new thread, or save of a thread's `title`, is a `room_set` request through the link. |
@@ -88,8 +88,9 @@ Reading:
 Writing:
 
 - The mirror sends each of its users' requests with a request `id` made from
-  the user and the user's own request `id`. A request sent again after a
-  close is then a duplicate ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)).
+  the user and the user's own request `id`, such as a hash of the two. A
+  request sent again after a close is then a duplicate
+  ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)).
 - The owner sends the record of a request before its result
   ([§1](../PROTOCOL.md#1-transport--framing)). So when the result arrives,
   the mirror has received the record. A mirror that handles notifications
@@ -99,9 +100,9 @@ Writing:
 - When the owner refuses a request, the mirror answers its user with the
   owner's error. When the owner cannot be reached, the mirror answers with an
   error, such as `retry_after`.
-- Write the mirror to fit the owner's limits on frames and requests for each
-  connection. A link carries every remote user's writes, so an owner can give
-  it larger limits.
+- Write the mirror to fit the owner's limits on frames, requests, and
+  `history` pages. A link carries every remote user's writes, and reads the
+  whole room after an outage, so an owner can give it larger limits.
 
 Server policies:
 
@@ -115,7 +116,9 @@ Server policies:
   a long outage, the mirror can leave old messages out of pushes.
 - A mirror's admin or moderator who deletes a copy that they did not write
   hides it for the mirror's users: the mirror does not send the delete to the
-  owner, and its later reads leave the copy hidden. A remote user that the
+  owner, and its later reads leave the copy hidden. The mirror keeps its
+  hides apart from the owner's deletes, so that an owner's later restore of
+  a deleted message still reaches the copy. A remote user that the
   mirror's admin removes from the mirror room is left out the same way.
 - The owner's moderators need to be able to delete any message in the room,
   because that is the only delete that reaches every mirror.
