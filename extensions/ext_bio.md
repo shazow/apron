@@ -14,4 +14,4 @@ what the user works on.
 - The only control character in a bio is `\n`.
 - A bio is plain text, without markup such as CommonMark.
 - Clients MAY turn URLs in a bio into links.
-- Without the extension or capability `ext`, clients do not send `bio`.
+- Without the extension or capability `ext`, clients send no `bio`.

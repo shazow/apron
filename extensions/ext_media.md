@@ -33,7 +33,7 @@ class Limits {
   from `origins`.
 - A pattern is a MIME type, `type/*`, or `*/*`. Patterns and types match
   without regard to case.
-- Only the `Limits` of a file's most specific pattern apply to it. Limits do not
+- A file takes only the `Limits` of its most specific pattern. Limits do not
   combine across patterns.
 - The server accepts only the types that match a pattern. A pattern whose
   `Limits` is `{}` accepts its types without a limit.
@@ -43,6 +43,7 @@ class Limits {
   it does not accept with HTTP 415.
 - The server scales a larger image down to `max_side`. Clients MAY scale it
   down before they upload it.
-- Without `upload`, `avatar`, or `emoji`, clients do not limit those files.
+- Without `upload`, `avatar`, or `emoji`, clients apply no limits to those
+  files.
 - Without the extension, clients load media only from the server's origin,
-  and do not limit it.
+  and apply no limits.
