@@ -887,7 +887,7 @@ A name that this document does not define is an **extension name**. It starts
 with `ext:`, such as the capability `ext:irc`. This applies to every list of
 names that an extension can add to, such as methods, capabilities, auth schemes,
 and kinds. This document never defines a name with that prefix. Display values,
-such as a status or a role, are free text and do not take a prefix.
+such as a status or a role, are free text. The prefix does not apply to them.
 
 Five frame patterns cover everything that is logged or announced:
 
