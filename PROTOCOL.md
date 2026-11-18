@@ -467,6 +467,9 @@ A successful `auth` result MAY carry `token`. The client uses it with
   token that the client sent.
 - Clients save the latest `token`, which replaces any earlier one, and
   reconnect with it.
+- Clients send a token only to the server address that they got it from
+  ([§1](#1-transport--framing)). Otherwise another server could sign in as the
+  user with it.
 - A server MAY reject a token that it replaced. Expired and revoked tokens are
   `denied`.
 - If a token is the only way back into an account, the client SHOULD
@@ -2400,17 +2403,25 @@ creates a credential, and `action: "login"` signs in. Both steps use the same
 login. It uses standard
 [WebAuthn JSON](https://www.w3.org/TR/webauthn-3/#sctn-parseCreationOptionsFromJSON),
 with binary fields as unpadded base64url. Clients pass it to
-`navigator.credentials.create` or `.get`, and return the credential in `finish`.
+`navigator.credentials.create` or `.get`. `credential` in `finish` is the JSON
+that [`toJSON()`](https://www.w3.org/TR/webauthn-3/#dom-publickeycredential-tojson)
+returns.
 
+- `public_key` MUST carry its RP ID, in `rp.id` or `rpId`.
 - Before they pass `public_key` on, clients MUST check that its RP ID is the
   host of the server's address ([§1](#1-transport--framing)), or a domain that
-  the host is under. The RP ID is `rp.id` or `rpId`, or the client's own domain
-  if `public_key` has none.
+  the host is under and that is not a public suffix.
+- Clients SHOULD remove the `prf` and `largeBlob` extensions from
+  `public_key` (their outputs can be secrets of the user's other apps on the
+  RP ID).
 - Registration MUST require discoverable credentials.
+- Servers MUST give each account a random user handle (`user.id`) (an
+  authenticator keeps one passkey for each RP ID and user handle, so a handle
+  that another server on the RP ID also uses replaces the user's passkey).
 - Login omits `allowCredentials`, or sends an empty array.
 - Both actions require user verification.
 - Servers SHOULD use the `name` ([§3.2](#32-authentication)) of a `register`
-  begin step for `user.name` and `user.displayName` in `public_key`.
+  begin step for `user.displayName` in `public_key`.
 
 Challenges MUST be unpredictable, and MUST expire. They MUST be bound to the
 connection, the action, the RP ID, the allowed origin, and any proposed
@@ -2807,8 +2818,14 @@ server.
 - Clients check that the RP ID of a ceremony belongs to the server
   ([§4.10](#410-webauthn-authentication)). Otherwise one server could pass
   another server's challenge through a client that both use, and sign in as the
-  user with the response. A server on a domain under the RP ID can still do
-  this, so servers that share an RP ID trust each other.
+  user with the response. Browsers do not stop this, because they check the
+  RP ID only against the client's own origin. A server on a domain under the
+  RP ID can still do this, so servers that share an RP ID share their users: a
+  user of one can sign in to the others with the same passkey.
+- Clients remove PRF and large blob requests
+  ([§4.10](#410-webauthn-authentication)). So a server that passes the RP ID
+  check cannot collect secrets that the user's other apps keep with the
+  passkey.
 - A passkey page lets clients that cannot use the RP ID sign in with a passkey
   ([§4.10.1](#4101-passkey-page)). The page's confirmation then decides which
   client receives the session, as for external sign-in. A server that wants
