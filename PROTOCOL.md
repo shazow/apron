@@ -127,9 +127,9 @@ Liveness:
 
 ### 1.1 Envelope and replies
 
-A request carries a string `id` ([§2.4](#24-opaque-ids)), and gets exactly one
-reply. A frame with a `method` and no `id` is a notification. The receiver
-does not reply to it.
+A request carries a string `id` ([§2.4](#24-opaque-ids)), and the receiver
+sends exactly one reply to it. A frame with a `method` and no `id` is a
+notification. The receiver does not reply to it.
 
 Each method is either a request or a notification. A method is a request when
 its sender needs the reply: data, a confirmation that a change was applied, or
@@ -199,8 +199,8 @@ These rules apply to every request:
   is for a well-formed request that the user or server does not allow, such as
   one past a count limit that the server sets.
 
-Other application errors MAY use JSON-RPC codes that are not reserved. A valid
-notification never gets an error reply.
+Other application errors MAY use JSON-RPC codes that are not reserved. The
+receiver never sends an error reply to a valid notification.
 
 An error that is not a reply to a request has no `id`. The server MAY close
 the connection after it sends one:
@@ -222,8 +222,8 @@ operation. Deduplication ignores the order of object keys.
 Servers SHOULD deduplicate by `(user_id, id)`, using the authenticated
 `user_id`:
 
-- The server does not execute or broadcast a duplicate again. The result of a
-  duplicate shows the current state ([§1](#1-transport--framing)).
+- The server does not execute or broadcast a duplicate again. The server
+  answers a duplicate with the current state ([§1](#1-transport--framing)).
 - An `id` used again with a different method or params is `invalid_params`.
 - The server handles concurrent duplicates as one request.
 
@@ -484,8 +484,9 @@ any later frame on the connection.
 - Later requests use the authentication that the `auth` left on the
   connection. An `auth` that authenticates nothing, such as a failure, changes
   nothing.
-- Before a successful `auth`, other requests get `denied`. The server ignores
-  other notifications, except `ping` ([§1](#1-transport--framing)).
+- Before a successful `auth`, the server answers other requests with `denied`.
+  The server ignores other notifications, except `ping`
+  ([§1](#1-transport--framing)).
 - The server MAY send notifications before `auth`, such as a `~private`
   welcome ([Appendix A.1](#a1-system-identities-and-scoped-notices),
   [Appendix B](#appendix-b--valid-scenarios-informative)).
@@ -550,7 +551,7 @@ Clients keep one user object for each `user_id`:
 - Clients never merge recorded objects.
 - Clients show each field from the kept object. If the kept object does not
   have a field, they use the recorded object in the frame.
-- An empty or unknown `name` shows as `user_id`.
+- Clients show `user_id` in place of an empty or unknown `name`.
 - Clients SHOULD show a user as `Name (@user_id)` where there is space. They
   MUST do this when they know another `user_id` with the same name.
 
@@ -784,7 +785,7 @@ authoritative **snapshot** at one log position.
 #### 3.5.5 Mentions
 
 A message lists the users that it mentions in `body.mentions`. Usually its
-`body.text` also shows each one ([Appendix A.3](#a3-prefixes-in-text)):
+`body.text` also contains each one ([Appendix A.3](#a3-prefixes-in-text)):
 
 ```json
 "body": {
@@ -846,7 +847,7 @@ capabilities closest to the core. A section whose heading is a capability name
 defines that capability.
 
 `server.capabilities` lists the optional features of the server. A capability
-shows support, not permission. Servers still apply local policy to each
+means support, not permission. Servers still apply local policy to each
 request. Nothing is negotiated. Clients ignore capabilities that they do not
 know ([§1](#1-transport--framing)). If the server does not have a capability,
 the client uses the fallback in this table:
@@ -1108,8 +1109,8 @@ not join. Listing never joins a room.
 Every filter is optional:
 
 - `filter`: `"joined"` lists only `joined`, `"not_joined"` only
-  `not_joined`, and `"all"`, the default, both. An array the filter asks
-  for is present even when empty, and the other is omitted.
+  `not_joined`, and `"all"`, the default, both. An array that the filter
+  selects is present even when empty, and the other is omitted.
 - `parent_room_id` lists only the threads of that room. Without it, `joined`
   holds joined rooms at all depths, threads included, and `not_joined` holds
   only top-level rooms.
@@ -1311,7 +1312,7 @@ the full list:
 - A server MAY also fix `private`.
 - `parent_room_id` MUST refer to an existing visible room.
 - `private: true` makes the room visible only to its members. A thread that is
-  created without `private` takes the value of its parent. Members add other
+  created without `private` has the value of its parent. Members add other
   users by joining them ([§4.2.2](#422-membership)), if the server supports
   it.
 - A server includes `private: true` only on a room that it keeps private. A
@@ -1381,9 +1382,9 @@ by kind:
 A record about a message, such as a snapshot or a reaction set, is in each room
 that the message is in just before or just after the record. Room records and
 memberships are in their own room. The earlier history of a moved message stays
-in the source room, and `prev_room_id` points there.
+in the source room, and `prev_room_id` refers to it.
 
-A record can point to the previous record for its key:
+A record can refer to the previous record for its key:
 
 - Room records and message snapshots MAY carry `prev_log_id`, the `log_id`
   of the previous record for the same key. Other records do not.
@@ -1404,8 +1405,8 @@ A record can point to the previous record for its key:
   runs forward. Without `after`, it ends at the newest and runs back.
 - `first_log_id` and `last_log_id` are the first and last `log_id`s of the
   slice before compaction. The result has both or neither.
-- `more` shows that more changes match in the selected direction. An empty
-  slice returns `more: false` and neither bound.
+- `more` is true when more changes match in the selected direction. For an
+  empty slice, the server returns `more: false` and neither bound.
 - `rooms`, `messages`, `reactions`, and `memberships` MAY each be omitted when
   empty. Clients treat a missing array as empty. Each array is in ascending
   `log_id` order.
@@ -1906,9 +1907,9 @@ each embed. Other servers MAY store embeds as they receive them.
 
 #### 4.8.3 Writes
 
-New `upload`, `append`, and `terminal` embeds get their content over HTTP. The
-result of the `message` or `command` ([§4.1](#41-command)) lists them, in
-request order:
+Clients write the content of new `upload`, `append`, and `terminal` embeds over
+HTTP. The result of the `message` or `command` ([§4.1](#41-command)) lists
+them, in request order:
 
 ```jsonc
 // -> the sender attaches a file
@@ -2263,8 +2264,8 @@ supports. If `server.push` is present, the server accepts `push_register` and
 - Servers SHOULD accept only `https` push endpoints that resolve to addresses
   that are not internal.
 - `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`. Clients
-  choose one for each server and account. It is an opaque value that shows
-  neither the server nor the account.
+  choose one for each server and account. It is an opaque value that does
+  not identify the server or the account.
 - Clients SHOULD register on each connection. Servers MAY drop a registration
   that the client did not renew within a server-defined period. Servers MAY
   also drop the least recently renewed registrations above a server-defined
@@ -2836,7 +2837,7 @@ server.
   proposal's `state`, and failed attempts from any connection count against
   the proposal ([§4.11.2](#4112-temporary-tokens)). This stops brute force
   across connections.
-- Link tokens travel in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
+- Link tokens are in the URL fragment ([§4.11.2](#4112-temporary-tokens)).
   Browsers do not send fragments in request lines or `Referer` headers, so
   tokens stay out of server logs.
 - Only servers write links with a token, and never as `apron:` links
@@ -2876,9 +2877,9 @@ server.
   choose, or code running in a client, does not get a session without the
   user's action.
 - The user can only refuse a client that they recognize. A page helps when it
-  names the client by the host of `redirect_uri`, marks clients that the
+  identifies the client by the host of `redirect_uri`, marks clients that the
   server does not know, and says that the client will act as the user. The
-  account shows on the page, or in the passkey prompt. A user's choice is kept
+  page or the passkey prompt shows the account. A user's choice is kept
   only for an exact `https` `redirect_uri`: an app scheme or a loopback address
   does not identify the client
   ([RFC 8252 §8.6](https://www.rfc-editor.org/rfc/rfc8252#section-8.6)), and
@@ -2916,9 +2917,10 @@ server.
   suggested convention keeps `@` and `:` out of the IDs that users choose
   ([Appendix A.3](#a3-prefixes-in-text)). So no user can pose as the server, a
   room, or a federated user.
-- An ID that the caller cannot see gets the same `invalid_params` as an ID
-  that does not exist ([§1.1](#11-envelope-and-replies)). So callers cannot
-  probe whether private rooms or messages exist.
+- The server answers an ID that the caller cannot see with the same
+  `invalid_params` as an ID that does not exist
+  ([§1.1](#11-envelope-and-replies)). So callers cannot probe whether private
+  rooms or messages exist.
 - A client that asked for a private room checks for `private: true` before it
   posts ([§4.2.4](#424-creating-and-editing)). A server that ignored the field
   would have created a public room.
@@ -3020,7 +3022,7 @@ System identities are server-controlled `user_id`s with the `~` prefix
 ordinary `from` and render like any sender. Clients MAY style them as
 system messages.
 
-Three system identities tell the receiver who else got the message:
+Three system identities define who else got the message:
 
 | `from.user_id` | received by              | logged | for example                                  |
 |----------------|--------------------------|--------|----------------------------------------------|
@@ -3077,7 +3079,7 @@ name. Extensions and future methods should follow the same pattern.
 
 ### A.3 Prefixes in text
 
-A prefix says what kind of ID follows:
+A prefix defines the kind of ID that follows:
 
 | prefix | refers to                     | in `body.text`                                                                       |
 |--------|-------------------------------|--------------------------------------------------------------------------------------|
@@ -3302,7 +3304,7 @@ Clients MAY use relay-only ICE, so servers SHOULD include TURN in `ice`.
 
 #### C.1.2 Reclaiming and leaving
 
-A session outlives a dropped chat connection. `rtc_join` with a `peer_id`
+A session does not end when a chat connection drops. `rtc_join` with a `peer_id`
 reclaims that seat for the same user after a reconnect, or refreshes `ice` or
 `transport` after `refresh_after` (with a new request `id`,
 [§1.2](#12-retries-and-deduplication)); the other peers do not see a change.

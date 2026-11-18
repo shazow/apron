@@ -33,7 +33,7 @@ class Limits {
   from `origins`.
 - A pattern is a MIME type, `type/*`, or `*/*`. Patterns and types match
   without regard to case.
-- A file takes only the `Limits` of its most specific pattern. Limits do not
+- Only the `Limits` of a file's most specific pattern apply to it. Limits do not
   combine across patterns.
 - The server accepts only the types that match a pattern. A pattern whose
   `Limits` is `{}` accepts its types without a limit.

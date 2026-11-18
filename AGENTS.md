@@ -45,8 +45,10 @@ fixtures, or implementations from it.
 - Put a negation before an action verb ("does not send"), not after it
   ("sends no"). Better still, state what is true ("The only control character
   in a bio is `\n`.").
-- Don't use "names" as a verb. A field "refers to" what it points at, and
-  "defines" what it specifies.
+- Use verbs in their literal meaning. Data does not act: a value, field, or
+  record is, has, carries, contains, refers to, or defines something. Write
+  "the prefix does not apply to display values", not "display values take no
+  prefix". Methods take parameters and return results.
 - Requirements use capitalized key words. Lowercase "must" is not a rule.
 
 ### Rules
