@@ -1,0 +1,34 @@
+# Hint: "Clients send no X" reads as an action until "no" reverses it.
+# Keep "no" when it counts something ("no connection") or states absence
+# ("has no", "is no"). Judge each hit; this rule never fails CI.
+extends: existence
+message: "'%s': consider putting the negation on the verb, such as 'does not send'."
+level: suggestion
+ignorecase: false
+tokens:
+  - '[a-z]+ no'
+exceptions:
+  - has no
+  - have no
+  - is no
+  - are no
+  - be no
+  - was no
+  - with no
+  - and no
+  - or no
+  - of no
+  - for no
+  - to no
+  - in no
+  - at no
+  - by no
+  - on no
+  - if no
+  - when no
+  - that no
+  - where no
+  - so no
+  - but no
+  - whose no
+  - so that no

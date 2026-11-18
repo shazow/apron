@@ -1,0 +1,8 @@
+# AGENTS.md: requirements use capitalized key words.
+extends: existence
+message: "Use a capitalized key word (MUST, MUST NOT) for a requirement, or rephrase."
+level: error
+ignorecase: false
+tokens:
+  - must
+  - shall

@@ -1,0 +1,25 @@
+# Lints the style rules in AGENTS.md that a machine can check (.vale.ini).
+# Errors fail the check. Suggestions show as annotations on the lines that the
+# PR changes, for a person to judge.
+name: vale
+
+on:
+  pull_request:
+    paths: [PROTOCOL.md, EXTENSIONS.md, 'extensions/ext_*.md', .vale.ini, '.vale/**']
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  vale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: errata-ai/vale-action@v2.1.1
+        with:
+          version: 3.9.1
+          files: '["PROTOCOL.md", "EXTENSIONS.md", "extensions"]'
+          filter_mode: added
+          reporter: github-pr-check
+          fail_on_error: true

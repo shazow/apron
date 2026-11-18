@@ -1,0 +1,7 @@
+# AGENTS.md: don't use "names" as a verb; a field "refers to" or "defines".
+extends: sequence
+message: "Use 'refers to' or 'defines' rather than 'names' as a verb."
+level: suggestion
+tokens:
+  - tag: VBZ
+    pattern: names

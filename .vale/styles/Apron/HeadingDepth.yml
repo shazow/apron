@@ -1,0 +1,8 @@
+# AGENTS.md: headings go no deeper than x.y.z.
+extends: existence
+message: "Headings go no deeper than x.y.z."
+level: error
+scope: heading.h5
+nonword: true
+tokens:
+  - '.+'

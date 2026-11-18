@@ -86,3 +86,7 @@ fixtures, or implementations from it.
   fixtures in the same change.
 - Keep `schema/apron.schema.json` in step with PROTOCOL.md, and run
   `uv run tests/schema/validate.py` after changing either.
+- Run `vale PROTOCOL.md EXTENSIONS.md extensions` after changing them. It
+  checks the rules above that a machine can check (`.vale.ini`). Fix its
+  errors. Its suggestions are hints: judge each one, and keep the wording when
+  the rule's exception applies.

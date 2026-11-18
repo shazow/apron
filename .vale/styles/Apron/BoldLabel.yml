@@ -1,0 +1,8 @@
+# AGENTS.md: don't open a paragraph with a bold label, such as "**Move.** A save…".
+extends: existence
+message: "Don't open a paragraph with a bold label."
+level: error
+scope: raw
+nonword: true
+tokens:
+  - '(?m)^\*\*[^*\n]+[.:]\*\*'
