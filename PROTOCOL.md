@@ -2413,9 +2413,8 @@ returns.
 - Clients SHOULD remove the `prf` and `largeBlob` extensions from
   `public_key` (their outputs can be secrets of the user's other apps).
 - Registration MUST require discoverable credentials.
-- Servers MUST give each account a random user handle, as `user.id`
-  (otherwise a registration on another server that shares the RP ID could
-  replace the user's passkey).
+- Servers MUST give each account a random user handle (`user.id`), as
+  [WebAuthn recommends](https://www.w3.org/TR/webauthn-3/#sctn-user-handle-privacy).
 - Login omits `allowCredentials`, or sends an empty array.
 - Both actions require user verification.
 - Servers SHOULD use the `name` ([§3.2](#32-authentication)) of a `register`
