@@ -30,10 +30,13 @@ the server offers one, and gets a code back
    refusal.
    - Apple: `ASAuthorizationPlatformPublicKeyCredentialProvider`. A cancel is
      `ASAuthorizationError.canceled`. The origin is `https://` plus the RP ID,
-     such as `https://chat.example`.
+     such as `https://chat.example`. The result has no JSON form, so the app
+     builds `credential` as `toJSON()` would return it.
    - Android: Credential Manager (`androidx.credentials`). The origin is
      `android:apk-key-hash:` plus the base64url SHA-256 hash of the app's
-     signing certificate, such as `android:apk-key-hash:sYUC8p5I…`.
+     signing certificate, such as `android:apk-key-hash:sYUC8p5I…`. Credential
+     Manager takes `public_key` as JSON, so the app removes `prf` and
+     `largeBlob` from it first.
 3. **Any other app chooses a `redirect_uri`.** The page asks the user to allow
    an `https` `redirect_uri` once for their account, and any other
    `redirect_uri` at each sign-in
