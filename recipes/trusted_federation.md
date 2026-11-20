@@ -322,12 +322,15 @@ Acting as remote users:
   `message`, and `room_set` do ([§4.13](../PROTOCOL.md#413-ext)).
 - These requests follow the rules for that user. For example, only the remote
   user who sent a message can save it ([§4.4](../PROTOCOL.md#44-edit)).
-- A link acts only in rooms that it has joined, and in their threads. The
+- A link acts only in rooms that it has joined, threads included, so never
+  in a thread that not every member of its room can see. The
   error for any other room, `denied`, or `invalid_params` for a room that the
   link cannot see ([§1.1](../PROTOCOL.md#11-envelope-and-replies)), carries
   `"data": {"ext": {"remote": "not_joined"}}`.
 - A remote user's first write in a room joins it to the room
-  ([§4.2.2](../PROTOCOL.md#422-membership)), also after it left. A remote
+  ([§4.2.2](../PROTOCOL.md#422-membership)), also after it left. In a thread,
+  it also joins the rooms above that the user needs in order to see the
+  thread. A remote
   user that another user removed is not joined again: the error for its
   writes and its `room_join` in that room carries
   `"data": {"ext": {"remote": "removed"}}`.
