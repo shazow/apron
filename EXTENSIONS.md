@@ -31,6 +31,10 @@ Each extension has its own file in [extensions/](extensions/):
   ([§3.3](PROTOCOL.md#33-identity)), such as what the user works on.
 - [`ext:emoji`](extensions/ext_emoji.md): Adds custom emoji: images that the
   server defines, and that users write as `:name:` in reactions and text.
+- [`ext:markdown`](extensions/ext_markdown.md): Adds a common syntax for
+  extensions to `"markdown"` text ([§3.5.2](PROTOCOL.md#352-rendering)), so
+  that clients that implement the same extension render and write it the same
+  way.
 - [`ext:editors`](extensions/ext_editors.md): Lets the sender of a message share
   the editing of its text with the users that it mentions, such as a list that
   the people in it keep up to date.
