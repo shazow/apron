@@ -19,10 +19,13 @@ account that reads the room, and writes as the mirror's users
    link first if it has none. A replies with an **invite**: a link
    ([Appendix A.4](../PROTOCOL.md#a4-links)) that carries the room and the
    link's `token`.
-2. An admin of the mirror B runs `/remote connect` with that invite. B makes a
-   **mirror room** for A's room. The mirror room is private exactly when A's
-   room is, so that its lock tells the truth. B's admin adds B's users to it
-   as to any room, and is a member too.
+2. An admin of the mirror B runs `/remote connect` with that invite. B signs
+   in with the invite's `token`, and checks that the link is bound to B's own
+   address (`you.ext.remote.server`). B reads A's room record
+   ([§4.2.1](../PROTOCOL.md#421-listing)), and makes a **mirror room** for it,
+   with A's title. The mirror room is private exactly when A's room is, so
+   that its lock tells the truth. B's admin adds B's users to it as to any
+   room, and is a member too.
 3. B signs in to A as the link
    ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), and reads A's room: with
    `history` from where it stopped, and then live
@@ -202,6 +205,8 @@ Remote users and copies:
   `carol@a.example` ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). The
   server never assigns it to another user. (A mirror maps a mention of a user
   that it has not seen yet by this form.)
+- Servers compare addresses, and take the host and port for a `user_id`,
+  after normalization ([§1](../PROTOCOL.md#1-transport--framing)).
 - The IDs in `remote` are the remote server's. They refer to nothing on this
   server.
 - `server`, `user_id`, `room_id`, and `message_id` hold the values of the link
@@ -229,7 +234,8 @@ Links:
   `room`, and the link's `token`.
 - The server keeps a link's `token`, and every invite, off user objects.
 - The server joins the link to each thread of a room that the link has
-  joined, when every member of the room can see the thread.
+  joined, when every member of the room can see the thread: to the threads
+  that exist when the link joins, and to each new one.
 - A link's `push_register` can carry the wake scope `ext:remote`. It wakes the
   link for every record of the rooms that the link has joined
   ([§4.9.4](../PROTOCOL.md#494-wake)), with a payload without `message`, also
@@ -250,6 +256,8 @@ Acting as remote users:
   that `user_id` on the link's server. The server makes the remote user if it
   does not exist. A link's requests without `ext.remote.user_id` act as the
   link.
+- `reactions`, `room_join`, and `room_leave` take `ext` for this, as `me`,
+  `message`, and `room_set` do ([§4.13](../PROTOCOL.md#413-ext)).
 - These requests follow the rules for that user. For example, only the remote
   user who sent a message can save it ([§4.4](../PROTOCOL.md#44-edit)).
 - A link acts only in rooms that it has joined, and in their threads. The
