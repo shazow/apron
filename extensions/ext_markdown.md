@@ -12,28 +12,40 @@ same extension render and write it the same way.
 
 ## Syntax
 
-- A soft line break renders as a hard break
-  ([§3.5.2](../PROTOCOL.md#352-rendering)). A blank line still separates
-  paragraphs.
-- Tables, strikethrough (`~~text~~`), and task list items (`- [ ] task`,
-  `- [x] done`) follow
-  [GitHub Flavored Markdown](https://github.github.com/gfm/).
-- `||text||` is a spoiler. Clients hide its text until the reader reveals it.
-- A run of `||` opens or closes as `~~` does. `a || b`, with a space on each
-  side, is no spoiler.
-- A spoiler is inline, so it ends with its paragraph. In a table cell, its bars
-  are escaped: `\|\|text\|\|`.
-- Where clients show text without rendering it, such as in a notification,
-  they show a placeholder in place of each spoiler.
-- A bare `http://` or `https://` URL is a link. The link leaves out the
-  punctuation at the URL's end.
-- A bare Apron link in its `apron:?` form is a link
-  ([Appendix A.4](../PROTOCOL.md#a4-links)).
-- A fenced code block's info string is its language, for syntax
-  highlighting.
-- Raw HTML shows as text.
-- Where the user may edit a message, checking a task's box edits the
-  message's text. The edit rewrites only that item's marker.
+- Line breaks:
+  - A soft line break renders as a hard break
+    ([§3.5.2](../PROTOCOL.md#352-rendering)).
+  - A blank line still separates paragraphs.
+- Tables:
+  - Tables follow
+    [GitHub Flavored Markdown](https://github.github.com/gfm/#tables-extension-).
+- Strikethrough:
+  - `~~text~~` follows
+    [GitHub Flavored Markdown](https://github.github.com/gfm/#strikethrough-extension-).
+- Task lists:
+  - `- [ ] task` and `- [x] done` follow
+    [GitHub Flavored Markdown](https://github.github.com/gfm/#task-list-items-extension-).
+  - Where the user may edit a message, checking a task's box edits the
+    message's text. The edit rewrites only that item's marker.
+- Spoilers:
+  - `||text||` is a spoiler. Clients hide its text until the reader reveals
+    it.
+  - A run of `||` opens or closes as `~~` does. `a || b`, with a space on each
+    side, is no spoiler.
+  - A spoiler is inline, so it ends with its paragraph.
+  - In a table cell, a spoiler's bars are escaped: `\|\|text\|\|`.
+  - Where clients show text without rendering it, such as in a notification,
+    they show a placeholder in place of each spoiler.
+- Links:
+  - A bare `http://` or `https://` URL is a link. The link leaves out the
+    punctuation at the URL's end.
+  - A bare Apron link in its `apron:?` form is a link
+    ([Appendix A.4](../PROTOCOL.md#a4-links)).
+- Code blocks:
+  - A fenced code block's info string is its language, for syntax
+    highlighting.
+- Raw HTML:
+  - Raw HTML shows as text.
 
 Without the extension, clients render `"markdown"` text as
 [§3.5.2](../PROTOCOL.md#352-rendering) allows. They show the syntax of an
