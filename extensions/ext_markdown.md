@@ -1,14 +1,10 @@
 # `ext:markdown`
 
-Adds a common syntax for extensions to `"markdown"` text
-([§3.5.2](../PROTOCOL.md#352-rendering)), so that clients that implement the
-same extension render and write it the same way.
+Common settings and syntax for `"markdown"` extensions, so that clients who
+implement the same extension render and write it the same way.
 
-- The extension is informative and for clients only. It has no data, and
-  servers don't advertise it. Clients follow it with any server.
-- A client implements any of these extensions that it chooses. For each one,
-  it uses the syntax below.
-- Clients can implement other extensions too. This list can add them later.
+**This extension is informative and for clients only. It has no data, and
+servers don't advertise it. Clients follow it with any server.**
 
 ## Syntax
 
@@ -27,6 +23,9 @@ same extension render and write it the same way.
     [GitHub Flavored Markdown](https://github.github.com/gfm/#task-list-items-extension-).
   - Where the user may edit a message, checking a task's box edits the
     message's text. The edit rewrites only that item's marker.
+- Code blocks:
+  - A fenced code block's info string is its language, for syntax
+    highlighting. Same as [GitHub Flavored Markdown](https://github.github.com/gfm/#example-112).
 - Spoilers:
   - `||text||` is a spoiler. Clients hide its text until the reader reveals
     it.
@@ -41,9 +40,6 @@ same extension render and write it the same way.
     punctuation at the URL's end.
   - A bare Apron link in its `apron:?` form is a link
     ([Appendix A.4](../PROTOCOL.md#a4-links)).
-- Code blocks:
-  - A fenced code block's info string is its language, for syntax
-    highlighting.
 - Raw HTML:
   - Raw HTML shows as text.
 
