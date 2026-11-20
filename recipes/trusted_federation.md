@@ -23,10 +23,10 @@ account that reads the room, and writes as the mirror's users
    in with the invite's `token`, and checks that the link is bound to B's own
    address (`you.ext.remote.server`). B reads A's room record
    ([§4.2.1](../PROTOCOL.md#421-listing)), and makes a **mirror room** for it,
-   with A's title, and a mirror thread for each thread of the room that the
-   link has joined. The mirror room is private exactly when A's room is, so
-   that its lock tells the truth. B's admin adds B's users to it as to any
-   room, and is a member too.
+   with A's title and description, and a mirror thread for each thread of the
+   room that the link has joined. The mirror room is private exactly when A's
+   room is, so that its lock tells the truth. B's admin adds B's users to it
+   as to any room, and is a member too.
 3. B signs in to A as the link
    ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), and reads A's room: with
    `history` from where it stopped, and then live
@@ -64,7 +64,7 @@ users, with the server that `ext.remote` names.
 | Reactions | The owner's reactions record replaces the copy's. A mirror user's reaction is a `reactions` request through the link. |
 | Memberships | Like messages: the owner's membership records are copied, and the mirror's joins and leaves are requests. When it makes the mirror room, the mirror joins the owner's members to it as remote users, from the owner's member list ([§4.2.1](../PROTOCOL.md#421-listing)). It then copies each membership record, except those of links and of its own users' remote users, also after a close, from `history`. A member list that the owner cut short only adds members: the mirror cannot tell who left from it. When a user of the mirror joins or leaves the mirror room, the mirror sends a `room_join` or `room_leave` through the link. So both servers list the same people, admins included, apart from links, and show the same joins and leaves. A mirror with limits on accounts or private rooms can seed fewer members, such as those who wrote recently. |
 | Profiles | The mirror updates its remote users from the owner's records and `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)). It sends a `me` request through the link for its own users: when it first sends for a user, and after each change. Its `you` gives the user's ID on the owner. `roles` stay each server's own. |
-| Rooms | The mirror room's `title` and `description` are the mirror's own. Its `private` is set when the mirror makes it. When the owner's room later becomes private, a public mirror room stops mirroring. When it becomes public, a private mirror room stays private. |
+| Rooms | The mirror room's `title` and `description` start as the owner's, and are then the mirror's own. Its `private` is set when the mirror makes it. When the owner's room later becomes private, a public mirror room stops mirroring. When it becomes public, a private mirror room stays private. |
 | Threads | The owner joins the link to each thread of a shared room that every member of the room can see. The mirror makes a thread of the mirror room for each, and writes its records there. A mirror user's new thread, or save of a thread's `title`, is a `room_set` request through the link. |
 | System notices | Never copied. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
 | Custom emoji | Keys in reactions and text belong to the owner's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The owner can refuse a key that it does not have, which the mirror user sees as an error. |
