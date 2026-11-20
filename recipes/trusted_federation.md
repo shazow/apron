@@ -95,7 +95,9 @@ Reading:
   lists the link's joined rooms (`room_list`), and stops the mirror rooms
   whose room is not among them. It also stops a mirror room when a
   `room_update` lists the room in `left`, when a membership record shows the
-  link's own leave, or when an error carries `not_joined`.
+  link's own leave, or when an error carries `not_joined`. When the room in
+  question is a thread, the mirror stops only that mirror thread, and its
+  threads.
 - A mirror that stays connected receives the room live. A mirror that sleeps
   between requests, such as a Cloudflare Durable Object, registers a `relay`
   push for the link with the wake scope `ext:remote`, closes its connection,
