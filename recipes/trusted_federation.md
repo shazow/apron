@@ -59,13 +59,13 @@ users, with the server that `ext.remote` names.
 |---|---|
 | Messages | The mirror writes a copy with its own `message_id` and `log_id`. The copy's `ext.remote` carries the owner's `room_id` and `message_id`. A mirror user's message is a `message` request through the link. The mirror writes the copy when the owner's record arrives, and answers its user with the copy's `message_id`. |
 | Users | A record of the owner's user, or of another mirror's user, is written as a remote user ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A record of a remote user whose `ext.remote.server` is this mirror is written as the mirror's own user, `ext.remote.user_id`. The mirror keeps each user's ID on the owner, to map requests back. |
-| Replies, mentions, and text | The mirror maps `reply_to.message_id` and the IDs in `mentions` both ways, through the copies' `ext.remote` and the users' IDs on the owner. It rewrites each `@id` in `body.text` whose ID is in `mentions`, outside the code spans and fenced blocks of Markdown text ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A link without `server` in the text refers to the owner, so the mirror adds the owner's `server` to it ([Appendix A.4](../PROTOCOL.md#a4-links)). |
+| Replies, mentions, and text | The mirror maps `reply_to.message_id` and the IDs in `mentions` both ways, through the copies' `ext.remote` and the users' IDs on the owner. It rewrites each `@id` in `body.text` whose ID is in `mentions`, outside the code spans and fenced blocks of Markdown text ([Appendix A.3](../PROTOCOL.md#a3-prefixes-in-text)). A mirror user that has no ID on the owner yet is mentioned as its remote user ID, `<user_id>@<mirror host>`. A link without `server` in the text refers to the owner, so the mirror adds the owner's `server` to it, outside code spans and fenced blocks as for `@id` ([Appendix A.4](../PROTOCOL.md#a4-links)). |
 | Edits, moves, and deletes | A new snapshot from the owner is a new snapshot of the copy. A mirror user's save is a `message` request through the link ([§4.4](../PROTOCOL.md#44-edit)). A move out of the shared rooms deletes the copy. |
 | Reactions | The owner's reactions record replaces the sets of the users that it carries ([§4.7](../PROTOCOL.md#47-reactions)). A mirror that refuses keys it does not know, such as custom emoji, leaves out only those keys. A mirror user's reaction is a `reactions` request through the link. |
-| Memberships | Like messages: the owner's membership records are copied, and the mirror's joins and leaves are requests. When it makes the mirror room, the mirror joins the owner's members to it as remote users, from the owner's member list ([§4.2.1](../PROTOCOL.md#421-listing)). It then copies each membership record, except those of links and of its own users' remote users, also after a close, from `history`. A member list that the owner cut short only adds members: the mirror cannot tell who left from it. When a user of the mirror joins or leaves the mirror room, the mirror sends a `room_join` or `room_leave` through the link. So both servers list the same people, admins included, apart from links, and show the same joins and leaves. A mirror with limits on accounts or private rooms can seed fewer members, such as those who wrote recently. |
+| Memberships | Like messages: the owner's membership records are copied, and the mirror's joins and leaves are requests. When it makes the mirror room, the mirror joins the owner's members to it as remote users, from the owner's member list ([§4.2.1](../PROTOCOL.md#421-listing)). It then copies each membership record, except those of links and of its own users' remote users, also after a close, from `history`. So an owner's removal of a mirror user is not copied: the user stays in the mirror room, and its next write gets `removed`. A member list that the owner cut short only adds members: the mirror cannot tell who left from it. When a user of the mirror joins or leaves the mirror room, the mirror sends a `room_join` or `room_leave` through the link. So both servers list the same people, admins included, apart from links and such removals, and show the same joins and leaves. A mirror with limits on accounts or private rooms can seed fewer members, such as those who wrote recently. |
 | Profiles | The mirror updates its remote users from the owner's records and `user` notifications ([§3.3.3](../PROTOCOL.md#333-changes)). It sends a `me` request with the user's `name` through the link for its own users: when it first sends for a user, and after each change, on the next connection if it is closed. Avatars are not sent. Its `you` gives the user's ID on the owner. `roles` stay each server's own. |
 | Rooms | The mirror room's `title` and `description` start as the owner's, and are then the mirror's own. Its `private` is set when the mirror makes it. When the owner's room later becomes private, a public mirror room stops mirroring. When it becomes public, a private mirror room stays private. |
-| Threads | The owner joins the link to each thread of a shared room that every member of the room can see. The mirror makes a thread of the mirror room for each, and writes its records there. It takes the thread's first members from the `members` of the `room_update` that tells the link about the thread, because the creator joined before the link did. A mirror user's new thread, or save of a thread's `title`, is a `room_set` request through the link, without `private`. Threads of threads are mirrored like threads; a mirror without them leaves them out. |
+| Threads | The owner joins the link to each thread of a shared room that every member of the room can see. The mirror makes a thread of the mirror room for each, and writes its records there. Each later record of the owner's thread sets the mirror thread's `title` and `description`; only the mirror room keeps its own. The mirror takes a new thread's first members from its record in a `room_update` `joined`, which carries `members`, also when an earlier `updated` record already made the mirror thread, because the creator joined before the link did. For the threads that exist at `/remote connect`, it takes them from the member list ([§4.2.1](../PROTOCOL.md#421-listing)). A mirror user's new thread, or save of a thread's `title`, is a `room_set` request through the link, without `private`. Threads of threads are mirrored like threads; a mirror without them leaves them out. |
 | System notices | Never copied. `~server` and `~room` speak for one server ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices)). |
 | Custom emoji | Keys in reactions and text belong to the owner's catalog ([`ext:emoji`](../extensions/ext_emoji.md)). The owner can refuse a key that it does not have, which the mirror user sees as an error. |
 | Uploads, avatars, emoji images, and live text | The mirror copies them with a new `upload` embed ([§4.8.4](../PROTOCOL.md#484-embedupload)), or writes a link to the original. A mirror user's upload goes to the owner as a link to it in the text. Clients load `og` media and live text only from the server's own origins ([§4.8.1](../PROTOCOL.md#481-opengraph-metadata-og), [`ext:media`](../extensions/ext_media.md)). Live text can wait until it ends, when the snapshot holds it in `body.text` or `output`. |
@@ -75,7 +75,10 @@ users, with the server that `ext.remote` names.
 Reading:
 
 - The mirror keeps its place in the owner's log, and reads from there after a
-  close, a crash, or an outage. Each mirror room starts at the
+  close, a crash, or an outage: `history` without `room_id`, with `after` one
+  past its place, so that one place covers every shared room. An owner with
+  `ext:remote` supports `history` without `room_id`
+  ([§4.3](../PROTOCOL.md#43-history)). Each mirror room starts at the
   `latest_log_id` of the owner's room record that `/remote connect` read,
   also when the mirror already reads that owner, so older records of the
   room are not copied. Records of that room that arrive before the mirror
@@ -111,8 +114,7 @@ Writing:
   ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)), and a request sent
   again after a close is a duplicate. A mirror keeps each `id` within 128
   bytes: when `<user_id>:<id>` is longer, it sends a hash of it, which a
-  resend repeats. Its users' joins and leaves keep their `id` when they are
-  sent again.
+  resend repeats.
 - The owner sends the record of a request before its result
   ([§1](../PROTOCOL.md#1-transport--framing)). So when the result arrives,
   the mirror has received the record. A mirror that handles notifications
@@ -123,7 +125,7 @@ Writing:
   the owner did not answer, such as when the connection closed, is sent
   again on the next connection.
 - When the owner refuses a request, the mirror answers its user with the
-  owner's error. When the owner cannot be reached, the mirror answers with an
+  owner's error: its `code`, `message`, and `data`. When the owner cannot be reached, the mirror answers with an
   error, such as `retry_after`.
 - When the owner accepted a request, the mirror answers with the copy, also
   when the record has not arrived yet, such as just after a new connection.
@@ -144,12 +146,9 @@ Writing:
 
 Server policies:
 
-- A server that refuses connections from automated clients or cloud
-  platforms, such as requests from other Cloudflare Workers, needs to let
-  links connect, and to accept their pushes.
-- A remote user is an account, so policies that remove idle accounts, or
-  rooms without new records, need to leave remote users, links, and shared
-  rooms alone.
+- Policies that refuse automated clients, such as other Cloudflare Workers,
+  or that remove idle accounts or quiet rooms, need to leave links, their
+  pushes, remote users, and shared rooms alone.
 - A copy sends pushes like any message ([§4.9](../PROTOCOL.md#49-push)). After
   a long outage, the mirror can leave old messages out of pushes.
 - A mirror's admin or moderator who deletes a copy that they did not write
@@ -278,8 +277,9 @@ Links:
   mirror reads either form of Appendix A.4, with or without the backticks.
 - The server keeps a link's `token`, and every invite, off user objects.
 - The server never rotates a link's token. Each invite can carry a new token,
-  and earlier tokens keep working, up to a number that the server chooses.
-  So a mirror keeps the token from its latest `/remote connect`.
+  and a mirror keeps the token from its latest `/remote connect`. Suggested
+  convention: a few earlier tokens keep working, for invites still on their
+  way.
 - The server joins the link to each thread of a room that the link has
   joined, when every member of the room can see the thread: to the threads
   that exist when the link joins, and to each new one.
@@ -292,20 +292,24 @@ Links:
   `application/json`, with the `token` as a bearer token and the headers of
   [§4.9.2](../PROTOCOL.md#492-kinds), also while one of the link's
   connections is open. The server can wait a moment, and send one push for
-  several records.
+  several records. A push covers every record committed before it is sent,
+  and a record after it gets another push, so no record waits for the
+  mirror's next poll.
 - The server accepts the registration only when its `url` is `https`, or
   `http` on a loopback host, on the host and port of the link's server
   (otherwise a link could make the server send requests elsewhere). A
   registration without `token` is `invalid_params`.
 - The mirror serves this URL on the host and port of its own address,
   `https` for `wss` and `http` for `ws`, at a path of its choosing. It
-  answers 204, or 404 for an unknown URL or token. It registers on each
-  connection. The server removes a registration whose URL answers 404 or 410
+  answers 204, or 404 for an unknown URL or token. A mirror that sleeps
+  registers on each connection. The server removes a registration whose URL answers 404 or 410
   ([§4.9.1](../PROTOCOL.md#491-registration)).
 - A link's connection can close at any time. Nothing that the server keeps
   depends on it.
 - When a link leaves a room, or another user removes it, the server also
-  removes the link's remote users from the room and its threads.
+  removes the link's remote users from the room and its threads. These leaves
+  are not removals: a remote user joins again with its next write or
+  `room_join`.
 
 Acting as remote users:
 
@@ -328,9 +332,10 @@ Acting as remote users:
   writes and its `room_join` in that room carries
   `"data": {"ext": {"remote": "removed"}}`.
 - A `room_set` from a link, with `ext.remote.user_id`, creates or saves a
-  thread of a room that the link has joined, and nothing else. A link's own
-  `room_set` is `denied`, and the server ignores `private` in a link's
-  `room_set`. The server joins the link to a thread that a
+  thread of a room that the link has joined, and nothing else; anything
+  else is `denied`, as is a link's own `room_set`. A thread that a remote
+  user creates is visible to every member of its room, whatever `private`
+  says, or the server refuses it. The server joins the link to a thread that a
   remote user creates before the result, so that the thread's records reach
   the link from its first one.
 - The server sets `server` in `remote` to the link's server.
