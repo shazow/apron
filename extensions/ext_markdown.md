@@ -1,12 +1,14 @@
 # `ext:markdown`
 
-Adds a common set of extensions to `"markdown"` text
-([§3.5.2](../PROTOCOL.md#352-rendering)), so that the same text reads the same
-in every client that renders them.
+Adds a common syntax for extensions to `"markdown"` text
+([§3.5.2](../PROTOCOL.md#352-rendering)), so that clients that implement the
+same extension render and write it the same way.
 
 - The extension is informative and for clients only. It has no data, and
   servers don't advertise it. Clients follow it with any server.
-- Clients write these extensions with the syntax below, and no other.
+- A client implements any of these extensions that it chooses. For each one,
+  it uses the syntax below.
+- Clients can implement other extensions too. This list can add them later.
 
 ## Syntax
 
@@ -14,7 +16,8 @@ in every client that renders them.
   ([§3.5.2](../PROTOCOL.md#352-rendering)). A blank line still separates
   paragraphs.
 - Tables, strikethrough (`~~text~~`), and task list items (`- [ ] task`,
-  `- [x] done`) follow [GFM](https://github.github.com/gfm/).
+  `- [x] done`) follow
+  [GitHub Flavored Markdown](https://github.github.com/gfm/).
 - `||text||` is a spoiler. Clients hide its text until the reader reveals it.
 - A run of `||` opens or closes as `~~` does. `a || b`, with a space on each
   side, is no spoiler.
@@ -31,8 +34,6 @@ in every client that renders them.
 - Raw HTML shows as text.
 - Where the user may edit a message, checking a task's box edits the
   message's text. The edit rewrites only that item's marker.
-- Clients render no other extension, such as footnotes, `==highlight==`, math,
-  or typographic quotes. Its syntax shows as text.
 
 Without the extension, clients render `"markdown"` text as
 [§3.5.2](../PROTOCOL.md#352-rendering) allows. They show the syntax of an
