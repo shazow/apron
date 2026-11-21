@@ -94,7 +94,7 @@ A newcomer sees the lobby before sign-in:
   "method": "server", "params": {
     "apron": 10,
     "capabilities": ["command", "rooms", "history", "edit", "reactions"],
-    "auth": ["webauthn", "token", "guest"], "signup": ["webauthn", "guest"],
+    "auth": ["webauthn", "token", "guest"], "signup": ["webauthn", "token"],
     "title": "Example Chat",
     "description": "**Public Lobby.** Say hello, and tell us why you came. An admin or moderator will welcome you in. Add a passkey to keep your place while you wait."
   }
@@ -121,7 +121,7 @@ introduction:
   "method": "server", "params": {
     "apron": 10,
     "capabilities": ["command", "rooms", "history", "edit", "reactions"],
-    "auth": ["webauthn", "token", "guest"], "signup": ["webauthn", "guest"],
+    "auth": ["webauthn", "token", "guest"], "signup": ["webauthn", "token"],
     "title": "Example Chat",
     "description": "A chat for the Example project: releases, help, and *off-topic*."
   }
@@ -206,7 +206,7 @@ was closed.
   "method": "server", "params": {
     "apron": 10,
     "capabilities": ["command", "rooms", "history", "edit", "reactions"],
-    "auth": ["webauthn", "token"], "signup": [],
+    "auth": ["webauthn", "token"], "signup": ["token"],
     "title": "Example Chat"
   }
 }
