@@ -188,10 +188,10 @@ introduction:
 ## Closing the lobby
 
 An admin or moderator can close the lobby to newcomers, such as during a
-raid, and open it again. Suggested commands: `/toggle lobby close` and
-`/toggle lobby open`. A command that only flips the state is risky: two
-moderators who close the lobby at once open it again. While the lobby is
-closed:
+raid, and open it again. Suggested command: `/lobby close` and `/lobby open`,
+with `/lobby` alone to show whether it is open. A command that only flips the
+state is risky: two moderators who close the lobby at once open it again.
+While the lobby is closed:
 
 - A new connection gets a `server` frame without `guest` in `auth`, and
   without the sign-up schemes that work without an invite. `token` stays in
