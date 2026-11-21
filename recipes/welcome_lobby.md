@@ -77,9 +77,10 @@ handle. One of these frames goes past what §4.2.3 lists (step 8).
    external identity ([§4.12](../PROTOCOL.md#412-external-sign-in)), the
    guest becomes a member account, not a waiting one. The server gives the
    account a new `user_id` that is not a guest's, so that nobody takes the
-   account for a guest. The `user` notification to the others carries `old`
-   ([§3.3.3](../PROTOCOL.md#333-changes)), so that clients show the guest's
-   earlier messages as the account's.
+   account for a guest. As when a guest signs in to an existing account
+   ([§3.3.3](../PROTOCOL.md#333-changes)), the server announces that the guest
+   left, and sends no `old`. The account joins the guest's rooms as a new
+   user. What the guest posted stays the guest's.
 7. **A waiting account becomes a member at once.** The server stores the
    change. It sends `user` notifications whose `roles` no longer hold
    `waiting`, and a new `server` frame if the description changes.
@@ -93,8 +94,8 @@ handle. One of these frames goes past what §4.2.3 lists (step 8).
    records as rooms not joined shows them at once, and nothing reconnects. A
    client that ignores records of rooms that it does not know finds them with
    its next `room_list`. A server can split the records over several frames,
-   or send only the rooms most recently active. A welcomed guest whose
-   `user_id` changes lists its rooms again, as after any sign-in
+   or send only the rooms most recently active. A welcomed guest that becomes
+   an account lists its rooms again, as after any sign-in
    ([§3.3.3](../PROTOCOL.md#333-changes)). A waiting account gets the frame
    with the welcome, and then a `~private` notice, such as "@grace welcomed
    you in."
@@ -254,9 +255,6 @@ from `room_update`. A client can help in these ways:
 - The client shows a guest's `user_id` beside its name, such as
   "Robin (guest_2)". Guests choose their names, so a guest can take a
   member's name. The `user_id` shows that it is a guest.
-- After the user creates an account on a guest's connection, the client shows
-  the guest's earlier messages as the new account's, as it does for others
-  after `old`.
 - The client offers a restricted guest a way to add a passkey, an email
   address, or an external identity to its account.
 - The client adds the records in `updated` of rooms that it does not know as
@@ -269,6 +267,10 @@ from `room_update`. A client can help in these ways:
   welcome, and comes back as a new guest. A welcomed guest who signs in to an
   existing account signs in as that account, which stays as it is: a waiting
   account still waits.
+- **A new account starts without the guest's history.** What the guest posted
+  stays the guest's, and the account cannot edit it. Linking the two with
+  `old` would show it as the account's only to clients that saw the change
+  live, since logged records keep the old `user_id`.
 - **Roles are labels.** `waiting` and `welcomed` are only for display
   ([§3.3.4](../PROTOCOL.md#334-roles)). Clients learn which rooms the user
   sees from `room_list` and `room_update`, not from roles.
