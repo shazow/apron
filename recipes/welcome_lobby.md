@@ -27,6 +27,8 @@ handle. One of these frames goes past what §4.2.3 lists (step 8).
      goes there.
    - They post, edit their own messages, and react in the lobby and its
      threads. They see each other there.
+   - They set a display name with `me` ([§3.3.2](../PROTOCOL.md#332-profile)),
+     so that their introduction carries a name.
    - They start no room or thread, and nobody adds them to another room. The
      server refuses these requests.
    - Admins, moderators, and bots are never restricted.
@@ -73,8 +75,11 @@ handle. One of these frames goes past what §4.2.3 lists (step 8).
    When it adds a passkey ([§4.10](../PROTOCOL.md#410-webauthn-authentication)),
    an email address ([§4.11](../PROTOCOL.md#411-email-sign-in)), or an
    external identity ([§4.12](../PROTOCOL.md#412-external-sign-in)), the
-   guest becomes a member account, not a waiting one. If the server gives the
-   account a new `user_id`, the `user` notification carries `old`.
+   guest becomes a member account, not a waiting one. The server gives the
+   account a new `user_id` that is not a guest's, so that nobody takes the
+   account for a guest. The `user` notification to the others carries `old`
+   ([§3.3.3](../PROTOCOL.md#333-changes)), so that clients show the guest's
+   earlier messages as the account's.
 7. **A waiting account becomes a member at once.** The server stores the
    change. It sends `user` notifications whose `roles` no longer hold
    `waiting`, and a new `server` frame if the description changes.
@@ -246,6 +251,12 @@ from `room_update`. A client can help in these ways:
   Then `/welcome` as a reply works.
 - The client shows roles as badges ([§3.3.4](../PROTOCOL.md#334-roles)).
   Then moderators see who is `waiting` or `welcomed`.
+- The client shows a guest's `user_id` beside its name, such as
+  "Robin (guest_2)". Guests choose their names, so a guest can take a
+  member's name. The `user_id` shows that it is a guest.
+- After the user creates an account on a guest's connection, the client shows
+  the guest's earlier messages as the new account's, as it does for others
+  after `old`.
 - The client offers a restricted guest a way to add a passkey, an email
   address, or an external identity to its account.
 - The client adds the records in `updated` of rooms that it does not know as
