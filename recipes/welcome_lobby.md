@@ -219,10 +219,11 @@ A server can offer the lobby as one of three access modes:
 - **Public**: guests see every room that is not private
   ([§4.2.4](../PROTOCOL.md#424-creating-and-editing)), as usual.
 - **Lobby**: this recipe.
-- **Private**: no guests. New people come in with an invite
-  ([Appendix B.3](../PROTOCOL.md#b3-an-invite-token-signs-up-several-people)),
-  or with a sign-in that the server trusts. Before sign-in, the `server`
-  frame holds only what signing in needs.
+- **Private**: no guests, and no scheme makes an account by itself. New
+  people come in only with an invite
+  ([Appendix B.3](../PROTOCOL.md#b3-an-invite-token-signs-up-several-people)).
+  `/welcome` lets in waiting accounts from an earlier lobby. Before sign-in,
+  the `server` frame holds only what signing in needs.
 
 A closed lobby is private for newcomers, while waiting accounts keep their
 place. Invites work in every mode, and make members.
