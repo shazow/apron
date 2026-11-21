@@ -93,10 +93,10 @@ arguments ([§4.1](../PROTOCOL.md#41-command)), such as `reply_to` and `embeds`.
 
 ## Refreshing
 
-Suggested convention, so that a client's list stays current without many
-requests:
+Suggested convention:
 
-- Clients request the list on a user action that needs it, such as when the
-  user sends `/help`, or first starts to type a command with `/`.
-- A client that has no list kept from before MAY request the list when it
-  connects. It does so at most once a day.
+- Prefer to request the list on a relevant user interaction, such as when the
+  user sends `/help`, or on demand when the user first starts to enter a
+  command with `/`.
+- If there is no cached list, it can make sense to request it on connect.
+  Avoid doing so too often: once a day is fine, if it is needed at all.
