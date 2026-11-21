@@ -27,6 +27,9 @@ Each extension has its own file in [extensions/](extensions/):
 - [`ext:permissions`](extensions/ext_permissions.md): Adds the user's
   permissions to `you` ([§3.3](PROTOCOL.md#33-identity)), so that clients offer
   only the controls that the user may use.
+- [`ext:command_list`](extensions/ext_command_list.md): Adds the
+  `ext:command_list` request, which returns the commands
+  ([§4.1](PROTOCOL.md#41-command)) that the user can use.
 - [`ext:bio`](extensions/ext_bio.md): Adds a short bio to user objects
   ([§3.3](PROTOCOL.md#33-identity)), such as what the user works on.
 - [`ext:emoji`](extensions/ext_emoji.md): Adds custom emoji: images that the
