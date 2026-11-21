@@ -57,9 +57,6 @@ class Command {                 // result.commands[]
   definition, such as `/avatar`
   ([§4.8.7](../PROTOCOL.md#487-avatars)).
 - The result can change when the user's roles or the server's settings change.
-  Clients MAY keep a result until the next `server` frame
-  ([§3.1](../PROTOCOL.md#31-server-frame)), or until `you` changes
-  ([§3.3.3](../PROTOCOL.md#333-changes)).
 
 ## Names
 
@@ -93,3 +90,19 @@ arguments ([§4.1](../PROTOCOL.md#41-command)), such as `reply_to` and `embeds`.
 - A param in `params` is optional. The command uses it when it is present.
 - Clients MAY offer a command only where its `params` fit, such as a command
   with `reply_to` while the user replies to a message.
+
+## Refreshing
+
+Suggested convention, so that a client's list stays current without many
+requests:
+
+- Clients request the list when the user first starts to type a command, such
+  as `/` at the start of the composer, not when they connect.
+- When the user sends `/help`, clients also request the list.
+- After a `server` frame ([§3.1](../PROTOCOL.md#31-server-frame)), or a change
+  to the user's `roles` ([§3.3.4](../PROTOCOL.md#334-roles)), clients request
+  the list again when the user next starts to type a command.
+- When the server refuses a command from the list as `denied`, clients request
+  the list again.
+- Without one of these, clients request the list at most once a day.
+- Clients send at most one `ext:command_list` request at a time.
