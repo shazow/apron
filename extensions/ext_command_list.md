@@ -68,7 +68,8 @@ its own description, hint, and fields.
 - `name` is the words that the user types after `/`. A word is one or more
   characters other than whitespace. One space separates the words.
 - Each name is in the result once.
-- Names are case-sensitive.
+- Names are case-sensitive. Servers match the words of a `command` against the
+  names exactly, so `/Kick` is not `/kick`.
 - A name can be the start of another name, such as `server` and
   `server title`. Each is a command of its own.
 - Servers SHOULD list each form as a command of its own, so that clients can
