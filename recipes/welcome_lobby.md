@@ -32,6 +32,10 @@ handle. One of these frames goes past what §4.2.3 lists (step 8).
    - They start no room or thread, and nobody adds them to another room. The
      server refuses these requests.
    - Admins, moderators, and bots are never restricted.
+   - The server gives every guest a `user_id` such as `guest_<n>`
+     ([§3.2](../PROTOCOL.md#32-authentication)), whatever the guest asks
+     for, and gives no account such an id. So clients can tell guests apart
+     (Clients, below).
    - The server logs a guest's joins and leaves of the lobby as memberships
      ([§4.2.2](../PROTOCOL.md#422-membership)), so that moderators see
      newcomers arrive before they post.
@@ -278,8 +282,7 @@ from `room_update`. A client can help in these ways:
   Then moderators see who is `waiting` or `welcomed`.
 - The client shows a guest's `user_id` beside its name, such as
   "Robin (guest_2)". Guests choose their names, so a guest can take a
-  member's name. The `user_id` shows that it is a guest when guests get ids of
-  their own, such as `guest_<n>`, and nobody else does.
+  member's name. The `user_id` shows that it is a guest (step 2).
 - The client offers a restricted guest a way to add a passkey, an email
   address, or an external identity to its account.
 - The client adds the records in `updated` of rooms that it does not know as
