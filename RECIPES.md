@@ -15,5 +15,7 @@ Each recipe has its own file in [recipes/](recipes/):
 - [Passkeys in native apps](recipes/native_passkeys.md): Can a native app,
   such as one for macOS, iOS, Android, or Linux, sign in with a server's
   passkeys?
+- [Welcome lobby](recipes/welcome_lobby.md): Can a server keep newcomers in a
+  public lobby until someone welcomes them in?
 - [Trusted federation](recipes/trusted_federation.md): Can two Apron servers
   share rooms?
