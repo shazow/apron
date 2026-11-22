@@ -276,6 +276,9 @@ Clients need little. They already show the server's `description` and
 `welcome`, show `~private` notices, merge `user` notifications, and add rooms
 from `room_update`. A client can help in these ways:
 
+- The client offers the commands that the server lists for the user
+  ([`ext:command_list`](../extensions/ext_command_list.md)). A server lists
+  `/welcome` and `/lobby` only to those who may run them.
 - The client keeps `reply_to` on a command that the user sends as a reply.
   Then `/welcome` as a reply works.
 - The client shows roles as badges ([§3.3.4](../PROTOCOL.md#334-roles)).
