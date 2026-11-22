@@ -18,12 +18,12 @@ offer only the commands that they handle themselves.
       {"name": "approve", "group": "member", "description": "Approve the agent's request that you reply to", "uses": ["room_id", "reply_to"], "requires": ["reply_to"]},
       // §4.8.7 defines /avatar
       {"name": "avatar", "group": "member", "description": "Set your avatar from one attached image", "uses": ["body.embeds"], "requires": ["body.embeds"]},
-      {"name": "embed-terminal", "group": "all", "description": "Get a link to stream a terminal into this room, such as a build", "hint": "[<title>]", "uses": ["room_id", "reply_to"]},
+      {"name": "embed-terminal", "group": "all", "description": "Get a link to stream a terminal into this room, such as a build", "hint": "[<title>]", "uses": ["room_id", "reply_to"], "requires": ["room_id"]},
       // ext:emoji defines /emoji add and /emoji remove
       {"name": "emoji add", "group": "role", "description": "Add a custom emoji, or replace its image, from one attached image", "hint": ":<name>:", "uses": ["body.embeds"], "requires": ["body.embeds"]},
       {"name": "emoji remove", "group": "role", "description": "Remove a custom emoji", "hint": ":<name>:"},
       {"name": "help", "group": "all", "description": "List the commands that you can use"},
-      {"name": "kick", "group": "admin", "description": "Remove a user from this room", "hint": "@user [<reason>]", "uses": ["room_id", "body.mentions"], "requires": ["body.mentions"]},
+      {"name": "kick", "group": "admin", "description": "Remove a user from this room", "hint": "@user [<reason>]", "uses": ["room_id", "body.mentions"], "requires": ["room_id", "body.mentions"]},
       {"name": "server", "group": "admin", "description": "Show this server's title, description, and avatar"},
       {"name": "server avatar", "group": "admin", "description": "Set this server's avatar from one attached image, or clear it without one", "uses": ["body.embeds"]},
       {"name": "server title", "group": "admin", "description": "Set this server's title, or clear it", "hint": "[<text>]"}
@@ -103,8 +103,12 @@ Suggested convention, based on the POSIX utility argument syntax:
   `/kick`. A command that does not use it does the same in every room.
 - The room that gets a command's reply does not count as a use of `room_id`.
 - Each field in `requires` is also in `uses`.
-- `requires` does not list `room_id`. A command without it goes to the default
-  room ([§3.5](../PROTOCOL.md#35-messages)).
+- A command that requires `room_id` acts only on a room that the client names,
+  such as `/embed-terminal`. Clients send it with the `room_id` of the room
+  that the user is in.
+- Servers refuse a command that requires `room_id` when it comes without one,
+  rather than run it in the default room
+  ([§3.5](../PROTOCOL.md#35-messages)).
 - Clients MAY offer a command only where its `requires` fits, such as a
   command that requires `reply_to` while the user replies to a message.
 
