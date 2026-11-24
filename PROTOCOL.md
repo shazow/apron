@@ -2485,10 +2485,10 @@ that finishes the exchange, as in external sign-in
   allow.
 - Clients that cannot use the RP ID of `public_key`, or whose platform refuses
   it (such as with `SecurityError`), use `external` if present.
-- After a login in the client that used no passkey (such as with
-  `NotAllowedError`), clients SHOULD offer `external` if present, but not open
-  it (the page can accept passkeys that the client's ceremony cannot find,
-  such as ones for an RP ID that the server used before).
+- After a login ceremony that the client runs ends without a credential (such
+  as with `NotAllowedError`), clients SHOULD let the user choose `external`, if
+  present, without opening it for them (the page can find passkeys that the
+  client cannot, such as ones for an RP ID that the server used before).
 - Clients open `url` as [§4.12.2](#4122-signing-in) says. They finish with the
   action of begin, `code`, `code_verifier`, `redirect_uri`, and `client_id`,
   on any connection.
