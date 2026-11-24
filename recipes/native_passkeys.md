@@ -26,9 +26,11 @@ the server offers one, and gets a code back
    `Origin`. So the app sends that header on each later connection that signs
    in with the token. If the begin result has `external` and no `public_key`,
    or the platform refuses the RP ID, the app continues at step 3
-   ([§4.10.1](../PROTOCOL.md#4101-passkey-page)). A login that ends without a
-   credential, such as a cancel, is not a refusal: the app offers step 3 if the
-   begin result has `external`, and starts it only when the user chooses it.
+   ([§4.10.1](../PROTOCOL.md#4101-passkey-page)). A cancel by the user is not a
+   refusal, so the app doesn't start step 3 by itself. After a login that ends
+   without a credential, though, it can offer step 3 if the begin result has
+   `external`: the page may find a passkey that the platform could not, such
+   as one for an RP ID that the server used before.
    - Apple: `ASAuthorizationPlatformPublicKeyCredentialProvider`. A cancel is
      `ASAuthorizationError.canceled`. The origin is `https://` plus the RP ID,
      such as `https://chat.example`. The result has no JSON form, so the app
