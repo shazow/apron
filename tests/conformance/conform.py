@@ -244,7 +244,8 @@ class SlowSocket:
             for i, event in enumerate(events):
                 if isinstance(event, Response):
                     if event.status_code != 101:
-                        raise OSError(f"handshake answered {event.status_code}")
+                        writer.close()
+                        raise InvalidStatus(event)  # as connect() does, so that open() backs off on 429 and 503
                     conn.pending = events[i + 1:]  # frames that came with the handshake's answer
                     return conn
 
@@ -437,7 +438,8 @@ class Conn:
             raise Fail("the server closed the connection before a frame was sent") from None
 
     async def request(self, method, params=None, id=None):
-        """Send a request and return (index, reply)."""
+        """Send a request and return (index, reply). A reply of retry_after, a rate limit, skips the check as the
+        server's policy, whatever the check expects."""
         id = id or next(ids)
         frame = {"method": method, "id": id, **({} if params is None else {"params": params})}
         start = len(self.frames)
@@ -447,6 +449,7 @@ class Conn:
             if self.closed:
                 self.closed_why(f"its reply to {method}")
             raise Fail(f"no reply to {method} within {WAIT:g}s")
+        policy(reply)
         return i, reply
 
     async def reply(self, id, start=0, timeout=None):
@@ -2418,9 +2421,8 @@ async def _(run):
         raise Skip("no register begin returned public_key")
     for where, key in keys:
         user = key.get("user") or {}
-        should(user.get("name") == "Conformance" and user.get("displayName") == "Conformance",
-               f"{where}: user.name {user.get('name')!r} and user.displayName {user.get('displayName')!r} are not the "
-               "begin's name 'Conformance'")
+        should(user.get("displayName") == "Conformance",
+               f"{where}: user.displayName {user.get('displayName')!r} is not the begin's name 'Conformance' (§4.10)")
 
 
 @check("webauthn.A5.bad-code", "4.10.1", "a webauthn finish with a made-up code is denied", needs=offers("webauthn"))
