@@ -203,7 +203,8 @@ class Schema:
             wrapper = {k: v for k, v in self.schema.items() if k != "anyOf"}
             wrapper["$ref"] = f"#/$defs/{name}"
             self.validators[name] = Draft202012Validator(wrapper)
-        return [f"{name} at /{'/'.join(map(str, e.absolute_path))}: {e.message}"
+        return [("/" + "/".join(map(str, e.absolute_path)), e.validator,
+                 e.message if len(e.message) <= 160 else e.message[:160] + "…")
                 for e in self.validators[name].iter_errors(instance)]
 
 
@@ -466,7 +467,9 @@ class Run:
     def __init__(self, args):
         self.args, self.schema = args, Schema()
         self.server, self.room, self.message, self.new_room = None, None, None, None  # learned along the way
-        self.violations = {}  # check key -> set of descriptions, from inspect
+        self.violations = {}  # rule key -> {group: [first description, count, first check ID]}, from inspect
+        self.judged = {}  # rule key -> [things judged, set of check IDs], for the rules checked along the way
+        self.check_violations = []  # descriptions of the running check's violations
         self.server_delays = []  # (check ID, seconds or None for none) of each connection's server frame
         self.check = None  # the ID of the running check
         self.order = {}  # (conn, room_id) -> greatest message log_id delivered
@@ -481,8 +484,18 @@ class Run:
         self.begun, self.pages, self.oauth, self.flows = {}, {}, {}, {}  # sign-in answers, kept for later checks
         self.burned = None  # whether a failed redemption used up a code on this server, once a sign-in tells
 
-    def violate(self, key, text):
-        self.violations.setdefault(key, set()).add(text)
+    def violate(self, key, text, group=None):
+        """Record a broken rule. Violations of one group, such as one field of one schema, count as one, with the
+        check where the first came."""
+        entry = self.violations.setdefault(key, {}).setdefault(group or text, [text, 0, self.check])
+        entry[1] += 1
+        self.check_violations.append(text)
+
+    def judge(self, key, count=1):
+        """Count what a rule checked along the way has judged, and in which checks."""
+        entry = self.judged.setdefault(key, [0, set()])
+        entry[0] += count
+        entry[1].add(self.check)
 
     def profile(self, scheme):
         """Whether --scheme selects the scheme's profile (every profile runs without --scheme)."""
@@ -575,25 +588,34 @@ class Run:
 
     # Every frame from the server passes through here.
     def inspect(self, conn, frame, raw):
+        self.judge("schema")
+        self.judge("ids")
         if not isinstance(frame, dict):
-            return self.violate("schema", f"not a JSON object: {raw[:80]!r}")
+            return self.violate("schema", f"not a JSON object: {raw[:80]!r}", "not a JSON object")
         if not conn.frames and frame.get("method") != "server":
             self.violate("server-first", f"first frame was {raw[:80]!r}")
-        for error in self.schema.errors(frame, "ServerFrame"):
-            self.violate("schema", f"{frame.get('method', 'reply')}: {error}")
+        # The definition for the frame's kind, rather than ServerFrame, whose oneOf hides the path of an error.
+        kind = "ServerNotification" if "method" in frame else "ErrorResponse" if "error" in frame else "Response"
+        what = frame.get("method") or ("error" if "error" in frame else "reply")
+        for path, validator, message in self.schema.errors(frame, kind):
+            self.violate("schema", f"{what} at {path}: {message}",
+                         f"{kind} {what} {re.sub(r'/[0-9]+', '/*', path)} {validator}")
         if "method" not in frame and "id" in frame:
+            self.judge("replies")
             rid = frame["id"]
             conn.answered[rid] = conn.answered.get(rid, 0) + 1
             if conn.answered[rid] > conn.asked.get(rid, 0):
-                self.violate("replies", f"unexpected reply to id {rid!r}")
+                self.violate("replies", f"unexpected reply to id {rid!r}", "unexpected reply")
             method = conn.methods.get(rid, "")
             name = "".join(p.capitalize() for p in method.split("_")) + "Result"
             if "result" in frame:
-                for error in self.schema.errors(frame["result"], name):
-                    self.violate("schema", f"{method} result: {error}")
+                for path, validator, message in self.schema.errors(frame["result"], name):
+                    self.violate("schema", f"{method} result at {path}: {message}",
+                                 f"{name} {re.sub(r'/[0-9]+', '/*', path)} {validator}")
         self.check_ids(frame)
         params = frame.get("params", {})
         if frame.get("method") == "message" and isinstance(params, dict) and "log_id" in params:
+            self.judge("order")
             key = (conn, params.get("room_id"))
             if key in self.order and int(params["log_id"]) <= self.order[key]:
                 self.violate("order", f"room {params.get('room_id')}: {params['log_id']} after {self.order[key]}")
@@ -614,6 +636,7 @@ class Run:
         for user, notification in users:
             if "status" not in user or "user_id" not in user:
                 continue
+            self.judge("shown-seen")
             before = conn.shown.get(user["user_id"])
             status, seen = user["status"], user.get("seen")
             if status == "offline" and before and before[0] == "offline":
@@ -637,10 +660,11 @@ class Run:
         elif key and isinstance(value, str):
             if key.endswith("room_id") or key == "user_id":
                 if not value or re.search(r"[\s\x00-\x1f\x7f]", value):
-                    self.violate("ids", f"{key} {value!r} is empty or has whitespace or control characters")
+                    self.violate("ids", f"{key} {value!r} is empty or has whitespace or control characters",
+                                 f"{key} blank")
             elif key.endswith("log_id") or key.endswith("message_id"):
                 if not re.fullmatch(r"[1-9][0-9]*", value) or int(value) >= 2**53:
-                    self.violate("ids", f"{key} {value!r} is not a positive decimal below 2^53")
+                    self.violate("ids", f"{key} {value!r} is not a positive decimal below 2^53", f"{key} decimal")
 
     def check_room_records(self, frame):
         """room_list and room_update records carry log_id and the delivery fields of §4.3.3."""
@@ -651,9 +675,11 @@ class Run:
         if frame.get("method") == "room_update" and isinstance(params, dict):
             rooms += params.get("joined", []) + params.get("updated", [])
         for room in rooms:
+            self.judge("listed-rooms")
             missing = [k for k in ("log_id", "latest_log_id", "history_log_id") if k not in room]
             if isinstance(room, dict) and missing:
-                self.violate("listed-rooms", f"room {room.get('room_id')} lacks {', '.join(missing)}")
+                self.violate("listed-rooms", f"room {room.get('room_id')} lacks {', '.join(missing)}",
+                             f"lacks {', '.join(missing)}")
 
     async def open(self, auth=True, name="Conformance", small_buffers=False, origin=None):
         """Open a connection, wait for its server frame, and sign in. With small_buffers, its socket's receive
@@ -711,9 +737,10 @@ class Run:
             await conn.call("room_join", {"room_id": self.room})
         return conn
 
-    async def post(self, conn, text, **params):
+    async def post(self, conn, text, mentions=None, **params):
         """Post a message, and return (result index, message_id)."""
-        i, reply = await conn.request("message", {"room_id": self.room, "body": {"text": text}, **params})
+        body = {"text": text, **({} if mentions is None else {"mentions": mentions})}
+        i, reply = await conn.request("message", {"room_id": self.room, "body": body, **params})
         must("result" in reply and isinstance(reply["result"].get("message_id"), str),
              f"posting: {describe(reply)}")
         return i, reply["result"]["message_id"]
@@ -764,7 +791,7 @@ async def _(run):
                         ("auth scheme", s.get("auth", []) + s.get("signup", []))):
         for name in names:
             must(name in KNOWN[kind] or name.startswith("ext:"), f"unknown {kind} {name!r} lacks ext: (§4)")
-    must("server-first" not in run.violations, "; ".join(run.violations.get("server-first", [])))
+    must("server-first" not in run.violations, "; ".join(v[0] for v in run.violations.get("server-first", {}).values()))
 
 
 @check("auth.order.before-auth", "3.2.2", "requests before auth get error/denied")
@@ -885,7 +912,7 @@ async def _(run):
 async def _(run):
     a, b = await run.joined("Conformance A"), await run.joined("Conformance B")
     start = len(a.frames)
-    i, message_id = await run.post(a, "conformance: hello *world*", mentions=[])
+    i, message_id = await run.post(a, "conformance: hello *world*", mentions=[])  # body.mentions
     j, mine = await a.wait(snapshot_of(message_id), start)
     _, theirs = await b.wait(snapshot_of(message_id))
     must(theirs, "no broadcast to another member")
@@ -3281,14 +3308,22 @@ manual("email.A1.code-names-server", "4.11.2", "an email with a code gives the s
 
 # Rules checked on every frame along the way.
 
-def seen(key):
+def seen(key, what):
+    """A check of a rule that inspect judged on every frame of the checks that ran before it. It covers only those
+    frames: it skips if there were none, and says how many there were."""
     async def fn(run):
-        found = sorted(run.violations.get(key, []))
-        must(not found, "; ".join(found[:3]) + (f" (+{len(found) - 3} more)" if len(found) > 3 else ""))
+        count, checks = run.judged.get(key, (0, ()))
+        if not count:
+            raise Skip(f"no {what} arrived in the checks that ran")
+        run.info(f"judged {count} {what} from {len(checks)} check{'s' if len(checks) > 1 else ''}")
+        found = list(run.violations.get(key, {}).values())
+        must(not found, "; ".join(f"{text} (in {check}" + (f", and {n - 1} more like it" if n > 1 else "") + ")"
+                                  for text, n, check in found[:3])
+             + (f"; and {len(found) - 3} more kinds" if len(found) > 3 else ""))
     return fn
 
 
-check("core.shape.schema", "1", "every frame matches schema/apron.schema.json")(seen("schema"))
+check("core.shape.schema", "1", "every frame matches schema/apron.schema.json")(seen("schema", "frames"))
 
 
 @check("core.shape.server-frame-prompt", "3.1", "sends the server frame immediately on every connection")
@@ -3310,11 +3345,12 @@ async def _(run):
         run.info(f"the slowest server frame came {slowest:.1f}s after connecting")
 
 
-check("core.shape.one-reply", "1.1", "every request gets exactly one reply")(seen("replies"))
-check("core.shape.ids", "2", "IDs are well formed")(seen("ids"))
-check("core.delivery.order", "3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order"))
-check("history.shape.room-records", "4.3.3", "listed room records carry log_id, latest_log_id, and history_log_id", needs="history")(seen("listed-rooms"))
-check("status.seen.offline", "4.5.2", "seen stays the same while the shown status stays offline, and arrives where it must", needs="status")(seen("shown-seen"))
+# A missing reply fails the check that waited for it; this one catches the replies that no check waits for.
+check("core.shape.one-reply", "1.1", "no request gets a second reply, and no reply answers an id that was not sent")(seen("replies", "replies"))
+check("core.shape.ids", "2", "IDs are well formed")(seen("ids", "frames"))
+check("core.delivery.order", "3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order", "message snapshots"))
+check("history.shape.room-records", "4.3.3", "listed room records carry log_id, latest_log_id, and history_log_id", needs="history")(seen("listed-rooms", "room records"))
+check("status.seen.offline", "4.5.2", "seen stays the same while the shown status stays offline, and arrives where it must", needs="status")(seen("shown-seen", "user objects with a status"))
 
 
 STATUSES = ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")
@@ -3323,6 +3359,7 @@ STATUSES = ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")
 async def run_check(run, item):
     """Run one check, and return (status, detail). A failure's hints are in run.hints."""
     run.check, run.miss, run.hints, run.trace, run.cause = item.id, None, [], [], None
+    run.check_violations = []
     try:
         if item is not CHECKS[0]:
             run.learned(run.server, "no server frame", CHECKS[0].id)
@@ -3344,6 +3381,11 @@ async def run_check(run, item):
     except Exception as e:  # a crash in a check is the server's failure to answer as expected
         if run.args.verbose:
             traceback.print_exc()
+        if run.check_violations:
+            run.hint(f"conform.py could not read a frame of this check, and its frames broke rules, such as: "
+                     f"{run.check_violations[0]}. Fix those first; core.shape.schema lists them.")
+        else:
+            run.hint("conform.py could not read a frame of the shape that it got; run with -v for where.")
         run.hints, run.trace = run.failure_hints(), run.transcript()
         return "FAIL", f"{type(e).__name__}: {e}"
     finally:
@@ -3362,6 +3404,7 @@ def remember(run, item, status, detail):
 async def run_checks(run, chosen, last, counts, results, number):
     """Run the chosen checks once, and the setup checks before the last of them, and print and collect the results."""
     for index, item in enumerate(CHECKS):
+        began = time.monotonic()
         if item not in chosen:
             if not item.setup or index > last:
                 continue
@@ -3386,7 +3429,7 @@ async def run_checks(run, chosen, last, counts, results, number):
             print("       trace: " + "\n              ".join(trace), flush=True)
         result = {"id": item.id, "section": item.ref, "status": status, "run": number,
                   "message": item.title + (f": {detail}" if detail else ""), "notes": list(run.notes),
-                  "hints": list(hints)}
+                  "hints": list(hints), "seconds": round(time.monotonic() - began, 3)}
         if run.args.trace:
             result["trace"] = list(trace)
         results.append(result)
@@ -3423,6 +3466,10 @@ async def main():
                         help="run the checks N times, and list the checks whose results differ between runs")
     parser.add_argument("--trace", action="store_true",
                         help="print the frames that each connection of a failed check sent and received")
+    parser.add_argument("--require", metavar="NAMES", action="append", default=[],
+                        help="fail unless the server advertises these capabilities or sign-in schemes, such as "
+                             "'history,rooms'; repeatable")
+    parser.add_argument("--strict", action="store_true", help="exit 1 on a WARN, as on a FAIL")
     parser.add_argument("--list", action="store_true", help="list the checks, and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="print tracebacks of crashed checks")
     args = parser.parse_args()
@@ -3436,6 +3483,7 @@ async def main():
     if args.wait <= 0 or args.repeat < 1:
         parser.error("--wait must be positive, and --repeat at least 1")
     WAIT, QUIET, SERVER_WAIT = args.wait, args.wait / 4, max(args.wait, PROMPT) * 5
+    args.require = [name.strip() for names in args.require for name in names.split(",") if name.strip()]
     args.sign_in = args.sign_in or bool(args.portal)
     run, counts, results = Run(args), dict.fromkeys(STATUSES, 0), []
     started = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -3450,8 +3498,20 @@ async def main():
             print(f"Run {number} of {args.repeat}:", flush=True)
             # Each run learns afresh, and the checks of seen rules report only what this run saw.
             run.server = run.room = run.message = run.new_room = None
-            run.setups, run.violations, run.order, run.server_delays = {}, {}, {}, []
+            run.setups, run.violations, run.judged, run.order, run.server_delays = {}, {}, {}, {}, []
         await run_checks(run, chosen, last, counts, results, number)
+        if args.require:
+            advertised = set(run.server.get("capabilities", []) + run.server.get("auth", []) + run.server.get("signup", [])
+                             if run.server else [])
+            missing = [name for name in args.require if name not in advertised]
+            status = "FAIL" if missing else "PASS"
+            detail = f"the server does not advertise {', '.join(missing)}" if missing else ""
+            counts[status] += 1
+            print(f"{status:<6} {'conform.require':<36} {'--require':<9} advertises {', '.join(args.require)}"
+                  + (f": {detail}" if detail else ""), flush=True)
+            results.append({"id": "conform.require", "section": "--require", "status": status, "run": number,
+                            "message": f"advertises {', '.join(args.require)}" + (f": {detail}" if detail else ""),
+                            "notes": [], "hints": [], "seconds": 0})
     if run.server:
         print(f"{run.server.get('agent', 'server')}: {', '.join(run.server.get('capabilities', [])) or 'core only'}")
     checklist = list(dict.fromkeys(r["id"] for r in results if r["status"] == "MANUAL"))
@@ -3474,9 +3534,9 @@ async def main():
         shutil.rmtree(run.person.state, ignore_errors=True)
     if args.json:
         report = {"tool": "conform.py", "version": VERSION, "target": args.url, "started": started,
-                  "runs": args.repeat, "results": results, "summary": counts}
+                  "runs": args.repeat, "server": run.server, "results": results, "summary": counts}
         Path(args.json).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-    return 1 if counts["FAIL"] else 0
+    return 1 if counts["FAIL"] or (args.strict and counts["WARN"]) else 0
 
 
 if __name__ == "__main__":

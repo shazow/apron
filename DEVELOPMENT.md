@@ -83,11 +83,22 @@ seconds before its check fails.
   2), such as for a server across a slow link. Longer waits scale with it. A
   server frame that comes after 2 seconds still fails
   `core.shape.server-frame-prompt`.
+- `--require NAMES` fails the run unless the server advertises these
+  capabilities or sign-in schemes, such as `history,rooms`. Without it, a
+  capability that a server stops advertising only turns its checks into SKIPs.
+  It repeats.
+- `--strict` exits 1 on a WARN, as on a FAIL.
 - `--json PATH` writes a report: `{"tool", "version", "target", "started",
-  "runs", "results": [{"id", "section", "status", "run", "message", "notes",
-  "hints"}], "summary"}`, with a count for each status in `summary`. `run`
-  counts from 1. `hints` is empty unless the check failed. With `--trace`, each
-  result also has `trace`, its lines.
+  "runs", "server", "results": [{"id", "section", "status", "run", "message",
+  "notes", "hints", "seconds"}], "summary"}`, with a count for each status in
+  `summary`. `server` is the server frame's `params`. `run` counts from 1.
+  `hints` is empty unless the check failed. With `--trace`, each result also
+  has `trace`, its lines.
+
+Some checks, such as `core.shape.schema`, judge every frame of the checks that
+ran before them. They say how many they judged, and skip if there were none, so
+with `--only` they cover only the frames of the chosen checks. A violation
+names the check where it first came.
 - `--token` signs in with a token instead of as a guest. It posts messages and
   creates users, so point it at a test server.
 - `--origin` sets the `Origin` of a WebAuthn ceremony that conform.py runs
