@@ -549,8 +549,10 @@ class Run:
         self.notes.append(text)
 
     def hint(self, text):
-        """Suggest to an implementer what may have gone wrong, if the running check fails."""
-        self.hints.append(text)
+        """Suggest to an implementer what may have gone wrong, if the running check fails. Each hint is given once,
+        as connections opened at once can fail alike."""
+        if text not in self.hints:
+            self.hints.append(text)
 
     def found(self, conn):
         """A wait on conn found its frame: an earlier miss on conn did not end the check, so it hints nothing."""
@@ -727,8 +729,10 @@ class Run:
         buffer and the frames queued unread are small, so a connection that stops reading backs up the server's
         writes after little traffic. With origin, the handshake sends that Origin header."""
         waited = 0
-        if self.conns:
-            already = f"This check already had {len(self.conns)} connection{'s' if len(self.conns) > 1 else ''} open."
+
+        def already():
+            """The check's other connections, as they are when this one fails: those opened at the same time count."""
+            return f"This check already had {len(self.conns)} connection{'s' if len(self.conns) > 1 else ''} open."
         for attempt in itertools.count():
             try:
                 if small_buffers:
@@ -740,14 +744,14 @@ class Run:
                 status = error.response.status_code
                 if status not in (429, 503):
                     if self.conns:
-                        self.hint(f"{already} The server may limit the connections of one client or one user.")
+                        self.hint(f"{already()} The server may limit the connections of one client or one user.")
                     raise
                 waited += await back_off(error.response.headers.get("Retry-After"), waited,
                                          f"the server's policy refused a connection: HTTP {status}")
             except (OSError, asyncio.TimeoutError) as error:
                 if attempt >= 20:
                     if self.conns:
-                        self.hint(f"{already} The server may limit the connections of one client or one user, or "
+                        self.hint(f"{already()} The server may limit the connections of one client or one user, or "
                                   "stop accepting while it serves another connection.")
                     raise Fail(f"cannot connect: {error}") from None
                 await asyncio.sleep(0.25)
@@ -3636,11 +3640,15 @@ async def run_check(run, item):
     except Exception as e:  # a crash in a check is the server's failure to answer as expected
         if run.args.verbose:
             traceback.print_exc()
+        if isinstance(e, InvalidStatus):  # a refused handshake that the check did not expect
+            run.hints, run.trace = run.failure_hints(), run.transcript()
+            return "FAIL", f"the server refused a connection: HTTP {e.response.status_code}"
         if run.check_violations:
             run.hint(f"conform.py could not read a frame of this check, and its frames broke rules, such as: "
                      f"{run.check_violations[0]}. Fix those first; core.shape.schema lists them.")
         else:
-            run.hint("conform.py could not read a frame of the shape that it got; run with -v for where.")
+            run.hint("conform.py stopped on an exception, such as on a frame of a shape that it did not expect; "
+                     "run with -v for where.")
         run.hints, run.trace = run.failure_hints(), run.transcript()
         return "FAIL", f"{type(e).__name__}: {e}"
     finally:

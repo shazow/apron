@@ -98,15 +98,15 @@ seconds before its check fails.
   `summary`. `server` is the server frame's `params`. `run` counts from 1.
   `hints` is empty unless the check failed. With `--trace`, each result also
   has `trace`, its lines.
-
-Some checks, such as `core.shape.schema`, judge every frame of the checks that
-ran before them. They say how many they judged, and skip if there were none, so
-with `--only` they cover only the frames of the chosen checks. A violation
-names the check where it first came.
 - `--token` signs in with a token instead of as a guest. It posts messages and
   creates users, so point it at a test server.
 - `--origin` sets the `Origin` of a WebAuthn ceremony that conform.py runs
   itself, with a software authenticator. It defaults to the server's own origin.
+
+Some checks, such as `core.shape.schema`, judge every frame of the checks that
+ran before them. They say how many they judged, and skip if there were none, so
+with `--only` they cover only the frames of the chosen checks and of the setup
+checks those need. A violation names the check where it first came.
 
 Most sign-in checks need no one to sign in: begins, the sign-in pages' answers
 and headers, made-up codes and tokens, and `ext:oauth`'s endpoints. With
