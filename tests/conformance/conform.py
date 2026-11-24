@@ -409,7 +409,14 @@ class Conn:
             raise Fail(f"the server closed the connection before {frame.get('method')}") from None
 
     async def send_raw(self, text):
-        """Send text as one frame as it is, such as a frame that is not valid JSON."""
+        """Send text as one frame as it is, such as a frame that is not valid JSON. An id in it counts as sent, so
+        that a reply to it fails only the check that sent it, not core.shape.one-reply too."""
+        try:
+            frame = json.loads(text)
+        except ValueError:
+            frame = None
+        if isinstance(frame, dict) and isinstance(frame.get("id"), (str, int, float)):
+            self.asked[frame["id"]] = self.asked.get(frame["id"], 0) + 1
         self.log.append((time.monotonic() - self.started, "->", text))
         try:
             await self.ws.send(text)
@@ -656,12 +663,12 @@ class Run:
             status, seen = user["status"], user.get("seen")
             if status == "offline" and before and before[0] == "offline":
                 if seen is not None and before[1] is not None and seen != before[1]:
-                    self.violate("shown-seen", f"seen of {user['user_id']} changed from {before[1]} to {seen} while the shown status stayed offline")
+                    self.violate("shown-seen", f"seen of {user['user_id']} changed from {before[1]} to {seen} while the shown status stayed offline", "seen changed")
                 seen = seen or before[1]
             elif status == "offline" and notification and seen is None and any(v[1] for v in conn.shown.values()):
-                self.violate("shown-seen", f"the user notification that changed {user['user_id']} to offline carries no seen")
+                self.violate("shown-seen", f"the user notification that changed {user['user_id']} to offline carries no seen", "notification no seen")
             if status == "offline" and not notification and "seen" not in user and any(v[1] for v in conn.shown.values()):
-                self.violate("shown-seen", f"the complete user object of {user['user_id']} has a shown offline and no seen")
+                self.violate("shown-seen", f"the complete user object of {user['user_id']} has a shown offline and no seen", "complete no seen")
             conn.shown[user["user_id"]] = (status, seen)
 
     def check_ids(self, value, key=None):
@@ -1629,12 +1636,19 @@ async def _(run):
 @check("status.shape.request", "4.5.3", "status reports idle, and sends mutes to the user's connections", needs="status")
 async def _(run):
     conn = await run.open()
-    must(await conn.call("status", {"idle": 300}) == {}, "idle did not reply {}")
+    _, reply = await conn.request("status", {"idle": 300})
+    await unless_policy(reply, "status")
+    must(reply.get("result") == {}, f"idle got {describe(reply)}, not result {{}}")
     must(await conn.call("status", {"idle": False}) == {}, "idle: false did not reply {}")
     expect_error((await conn.request("status", {"room_id": run.room or "general"}))[1], "invalid_params", "room_id without mute")
     for mute in (True, False):
         start = len(conn.frames)
-        await conn.call("status", {"mute": mute})
+        _, reply = await conn.request("status", {"mute": mute})
+        try:
+            await unless_policy(reply, "a mute")
+        except Skip as refusal:
+            return run.info(str(refusal))
+        must("result" in reply, f"mute: {json.dumps(mute)} got {describe(reply)}")
         _, sent = await conn.wait(lambda f, m=mute: f.get("method") == "status" and f["params"].get("mute") == m, start)
         must(sent, f"no status notification with mute: {json.dumps(mute)}")
 
@@ -2049,7 +2063,9 @@ async def _(run):
 @check("push.shape.unregister", "4.9.1", "unregistering an unknown push url succeeds", needs=lambda s: "push" in s)
 async def _(run):
     conn = await run.open()
-    must(await conn.call("push_unregister", {"url": "https://push.example.invalid/conformance"}) == {}, "result is not {}")
+    _, reply = await conn.request("push_unregister", {"url": "https://push.example.invalid/conformance"})
+    await unless_policy(reply, "push_unregister")
+    must(reply.get("result") == {}, f"push_unregister got {describe(reply)}, not result {{}}")
 
 
 # §4.10–§4.12 sign-in, without a person: begins, the sign-in pages' answers, and made-up codes and tokens.
