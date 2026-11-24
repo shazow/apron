@@ -17,6 +17,9 @@ Each check opens its own connections to the WebSocket URL, and each connection
 waits for its server frame (§3.1). core.shape.server-frame-prompt fails if one
 took more than 2 seconds. Under a failed check, hint lines say which connection
 waited, for what, and what it received instead, and suggest what may be wrong.
+--trace also prints the frames of a failed check, --repeat N runs the checks N
+times and lists those whose results differ, and --wait SECONDS waits longer for
+a server across a slow link.
 
 IDs are <scheme or area>.<area>.<name>, where the middle area is an attacker of
 the threat model (A1 to A5) or a plain area such as shape: external.A3.verifier,
@@ -97,11 +100,13 @@ from websockets.http11 import Response
 from websockets.uri import parse_uri
 
 VERSION = 10
-WAIT = 2.0  # seconds to wait for an expected frame
-# Seconds to wait for each connection's server frame. One later than WAIT breaks §3.1's "immediately", and
-# core.shape.server-frame-prompt reports it once, but the check that opened the connection still goes on.
-SERVER_WAIT = WAIT * 5
-QUIET = 0.5  # seconds to wait for a frame that should not come
+WAIT = 2.0  # seconds to wait for an expected frame (--wait)
+QUIET = WAIT / 4  # seconds to wait for a frame that should not come
+# Seconds after which a server frame breaks §3.1's "immediately". It does not scale with --wait.
+# core.shape.server-frame-prompt reports late ones once, and the check that opened the connection goes on.
+PROMPT = 2.0
+SERVER_WAIT = max(WAIT, PROMPT) * 5  # seconds to wait for each connection's server frame
+TRACE_LINE = 200  # characters of a frame that --trace prints
 MISSING = "9007199254740991"  # a log_id no test server has reached (2^53 - 1)
 BURST = 12  # messages a burst posts at once, without waiting for each result
 # Messages of SLOW_TEXT bytes posted to a reader that has stopped reading: 8 MiB, past what the kernel buffers
@@ -313,6 +318,7 @@ class Conn:
     def __init__(self, run, ws, number=1, name=None):
         self.run, self.ws, self.number, self.name = run, ws, number, name
         self.frames, self.closed, self.you = [], False, None
+        self.started, self.log = time.monotonic(), []  # log: (seconds since started, "->" or "<-", frame text)
         self.shown = {}  # user_id -> (shown status, seen), as this connection last received them
         self.methods = {}  # request id -> method
         self.asked, self.answered = {}, {}
@@ -325,6 +331,7 @@ class Conn:
         try:
             async for raw in self.ws:
                 await self.reading.wait()
+                self.log.append((time.monotonic() - self.started, "<-", raw if isinstance(raw, str) else repr(raw)))
                 try:
                     frame = json.loads(raw)
                 except ValueError:
@@ -355,18 +362,20 @@ class Conn:
         method = self.methods.get(frame.get("id"), repr(frame.get("id")))
         return f"reply to {method}" + (f" ({describe(frame).split()[0]})" if "error" in frame else "")
 
-    async def wait(self, match, start=0, timeout=WAIT, what=None):
+    async def wait(self, match, start=0, timeout=None, what=None):
         """Return (index, frame) of the first frame from start that matches, or (None, None). what says in a few
         words what the frame is, for the hints of a failure."""
+        timeout = WAIT if timeout is None else timeout
         deadline = time.monotonic() + timeout
         async with self.changed:
             while True:
                 for i in range(start, len(self.frames)):
                     if isinstance(self.frames[i], dict) and match(self.frames[i]):
+                        self.run.found(self)
                         return i, self.frames[i]
                 left = deadline - time.monotonic()
                 if self.closed or left <= 0:
-                    if self.closed or timeout >= WAIT:  # a shorter wait is for a frame that should not come
+                    if self.closed or timeout > QUIET:  # a QUIET wait is for a frame that should not come
                         self.run.missed(self, match, start, timeout, what)
                     return None, None
                 try:
@@ -374,7 +383,7 @@ class Conn:
                 except asyncio.TimeoutError:
                     pass
 
-    async def expect(self, match, why, start=0, timeout=WAIT):
+    async def expect(self, match, why, start=0, timeout=None):
         """Like wait, but fail with why if no frame matches."""
         i, frame = await self.wait(match, start, timeout)
         must(frame, why)
@@ -384,8 +393,10 @@ class Conn:
         if "id" in frame:
             self.methods[frame["id"]] = frame["method"]
             self.asked[frame["id"]] = self.asked.get(frame["id"], 0) + 1
+        text = json.dumps(frame)
+        self.log.append((time.monotonic() - self.started, "->", text))
         try:
-            await self.ws.send(json.dumps(frame))
+            await self.ws.send(text)
         except ConnectionClosed:
             raise Fail(f"the server closed the connection before {frame.get('method')}") from None
 
@@ -400,7 +411,7 @@ class Conn:
             raise Fail(f"no reply to {method}" + (" (connection closed)" if self.closed else f" within {WAIT:g}s"))
         return i, reply
 
-    async def reply(self, id, start=0, timeout=WAIT):
+    async def reply(self, id, start=0, timeout=None):
         return await self.wait(lambda f: f.get("id") == id and "method" not in f, start, timeout,
                                what=f"the reply to {self.methods.get(id, 'its request')}")
 
@@ -444,7 +455,7 @@ def records(frame, key, room_id):
 class Run:
     def __init__(self, args):
         self.args, self.schema = args, Schema()
-        self.server, self.room, self.message = None, None, None  # learned along the way
+        self.server, self.room, self.message, self.new_room = None, None, None, None  # learned along the way
         self.violations = {}  # check key -> set of descriptions, from inspect
         self.server_delays = []  # (check ID, seconds or None for none) of each connection's server frame
         self.check = None  # the ID of the running check
@@ -453,6 +464,9 @@ class Run:
         self.notes = []  # of the running check, printed under its line
         self.hints = []  # of the running check, printed under its line if it fails
         self.miss = None  # the running check's last wait that timed out, or that its connection's close ended
+        self.trace = []  # lines of the running check's frames, kept if it fails with --trace
+        self.setups = {}  # setup check ID -> (ID, status, detail) of it or of the setup check that made it skip
+        self.cause = None  # the setup check result of the running check's last learned() that skipped
         self.person = Person() if args.sign_in else None  # --sign-in
         self.begun, self.pages, self.oauth, self.flows = {}, {}, {}, {}  # sign-in answers, kept for later checks
         self.burned = None  # whether a failed redemption used up a code on this server, once a sign-in tells
@@ -473,6 +487,38 @@ class Run:
     def hint(self, text):
         """Suggest to an implementer what may have gone wrong, if the running check fails."""
         self.hints.append(text)
+
+    def found(self, conn):
+        """A wait on conn found its frame: an earlier miss on conn did not end the check, so it hints nothing."""
+        if self.miss and self.miss["conn"] is conn:
+            self.miss = None
+
+    def learned(self, value, what, setup):
+        """Return value, which the setup check with ID setup learns, or skip with what and the setup check that
+        did not learn it. If that check skipped for want of another's, the skip gives the first one."""
+        if value:
+            return value
+        self.cause = self.setups.get(setup)
+        if self.cause and self.cause[1] != "PASS":
+            setup, status, detail = self.cause
+            what += f", because {setup} {dict(FAIL='failed', WARN='warned', SKIP='skipped')[status]}"
+            what += f": {detail[:100]}{'…' if len(detail) > 100 else ''}" if detail else ""
+        raise Skip(what)
+
+    def transcript(self):
+        """Lines of every frame that the running check's connections sent and received, with times."""
+        lines = []
+        for conn in self.conns:
+            lines.append(f"{conn.label()}:")
+            log = conn.log if len(conn.log) <= 40 else conn.log[:10] + [None] + conn.log[-25:]
+            for entry in log:
+                if entry is None:
+                    lines.append(f"  … {len(conn.log) - 35} more frames …")
+                    continue
+                at, arrow, text = entry
+                cut = text if len(text) <= TRACE_LINE else f"{text[:TRACE_LINE]}… ({len(text)} characters)"
+                lines.append(f"  +{at:.3f}s {arrow} {cut}")
+        return lines
 
     def missed(self, conn, match, start, timeout, what):
         got = [conn.summary(f) for f in conn.frames[start:]]
@@ -647,8 +693,7 @@ class Run:
 
     async def joined(self, name="Conformance", small_buffers=False):
         """Open a signed-in connection that receives the deliveries of the default room."""
-        if not self.room:
-            raise Skip("the default room is unknown")
+        self.learned(self.room, "the default room is unknown", "core.message.default-room")
         conn = await self.open(name=name, small_buffers=small_buffers)
         if self.has("rooms"):
             await conn.call("room_join", {"room_id": self.room})
@@ -857,8 +902,7 @@ async def _(run):
 
 @check("core.message.reply-to", "3.5.4", "reply_to must refer to an existing message")
 async def _(run):
-    if not run.message:
-        raise Skip("no message to reply to")
+    run.learned(run.message, "no message to reply to", "core.message.broadcast-first")
     a = await run.joined()
     target = run.message["message_id"]
     _, message_id = await run.post(a, "conformance: reply", reply_to={"message_id": target})
@@ -877,8 +921,7 @@ async def _(run):
 
 @check("core.shape.save-without-edit", "3.6.5", "message with message_id is error/unsupported without edit", needs=lambda s: "edit" not in s.get("capabilities", []))
 async def _(run):
-    if not run.message:
-        raise Skip("no message to save")
+    run.learned(run.message, "no message to save", "core.message.broadcast-first")
     conn = await run.joined()
     reply = (await conn.request("message", {"message_id": run.message["message_id"], "room_id": run.room,
                                             "body": {"text": "conformance: edited"}}))[1]
@@ -1087,8 +1130,7 @@ async def _(run):
 
 @check("history.bounds.inclusive", "4.3.2", "after and before are inclusive bounds", needs="history")
 async def _(run):
-    if not run.message:
-        raise Skip("no message")
+    run.learned(run.message, "no message", "core.message.broadcast-first")
     conn = await run.open()
     log_id = run.message["log_id"]
     page = await conn.call("history", {"room_id": run.room, "after": log_id, "before": log_id})
@@ -1204,9 +1246,7 @@ async def _(run):
 
 @check("rooms.membership.join-leave", "4.2.2", "room_join and room_leave update the user and the room", needs="rooms")
 async def _(run):
-    room_id = getattr(run, "new_room", None)
-    if not room_id:
-        raise Skip("no room was created")
+    room_id = run.learned(run.new_room, "no room was created", "rooms.set.create")
     # With --token every connection is the same user, so there is no other member to tell.
     two_users = not run.args.token
     a = await run.open()
@@ -3192,7 +3232,7 @@ check("core.shape.schema", "1", "every frame matches schema/apron.schema.json")(
 
 @check("core.shape.server-frame-prompt", "3.1", "sends the server frame immediately on every connection")
 async def _(run):
-    late = [(id, delay) for id, delay in run.server_delays if delay is not None and delay > WAIT]
+    late = [(id, delay) for id, delay in run.server_delays if delay is not None and delay > PROMPT]
     missing = [id for id, delay in run.server_delays if delay is None]
     if late or missing:
         run.hint("Send the server frame as soon as the server accepts a connection, from state that it already "
@@ -3200,12 +3240,12 @@ async def _(run):
         found = []
         if late:
             id, delay = max(late, key=lambda item: item[1])
-            found.append(f"{len(late)} waited more than {WAIT:g}s for their server frame, up to {delay:.1f}s (in {id})")
+            found.append(f"{len(late)} waited more than {PROMPT:g}s for their server frame, up to {delay:.1f}s (in {id})")
         if missing:
             found.append(f"{len(missing)} got none within {SERVER_WAIT:g}s (first in {missing[0]})")
         raise Fail(f"of {len(run.server_delays)} connections, " + ", and ".join(found))
     slowest = max((delay for _, delay in run.server_delays if delay is not None), default=0)
-    if slowest >= QUIET:
+    if slowest >= PROMPT / 4:
         run.info(f"the slowest server frame came {slowest:.1f}s after connecting")
 
 
@@ -3221,10 +3261,10 @@ STATUSES = ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")
 
 async def run_check(run, item):
     """Run one check, and return (status, detail). A failure's hints are in run.hints."""
-    run.check, run.miss, run.hints = item.id, None, []
+    run.check, run.miss, run.hints, run.trace, run.cause = item.id, None, [], [], None
     try:
-        if run.server is None and item is not CHECKS[0]:
-            raise Skip("no server frame")
+        if item is not CHECKS[0]:
+            run.learned(run.server, "no server frame", CHECKS[0].id)
         if isinstance(item.needs, str) and not run.has(item.needs):
             raise Skip(f"no capability {item.needs}")
         if callable(item.needs) and not item.needs(run.server):
@@ -3232,7 +3272,7 @@ async def run_check(run, item):
         await item.fn(run)
         return "PASS", ""
     except Fail as e:
-        run.hints = run.failure_hints()
+        run.hints, run.trace = run.failure_hints(), run.transcript()
         return "FAIL", str(e)
     except Warn as e:
         return "WARN", str(e)
@@ -3243,12 +3283,53 @@ async def run_check(run, item):
     except Exception as e:  # a crash in a check is the server's failure to answer as expected
         if run.args.verbose:
             traceback.print_exc()
-        run.hints = run.failure_hints()
+        run.hints, run.trace = run.failure_hints(), run.transcript()
         return "FAIL", f"{type(e).__name__}: {e}"
     finally:
         for conn in run.conns:
             await conn.ws.close()
         run.conns.clear()
+
+
+def remember(run, item, status, detail):
+    """Keep a setup check's result, or for a skip for want of another setup check's, that check's."""
+    if item.setup:
+        cause = run.cause if status == "SKIP" and run.cause and run.cause[1] != "PASS" else None
+        run.setups[item.id] = cause or (item.id, status, detail)
+
+
+async def run_checks(run, chosen, last, counts, results, number):
+    """Run the chosen checks once, and the setup checks before the last of them, and print and collect the results."""
+    for index, item in enumerate(CHECKS):
+        if item not in chosen:
+            if not item.setup or index > last:
+                continue
+            status, detail = await run_check(run, item)  # learns what later checks use, such as the default room
+            remember(run, item, status, detail)
+            if status != "FAIL":  # a failure, such as no server frame, is reported all the same
+                run.notes.clear()
+                continue
+        else:
+            status, detail = await run_check(run, item)
+            remember(run, item, status, detail)
+        counts[status] += 1
+        label = f"§{item.ref}" if item.ref[:1].isdigit() else item.ref
+        print(f"{status:<6} {item.id:<36} {label:<9} {item.title}" + (f": {detail}" if detail else ""), flush=True)
+        hints = run.hints if status == "FAIL" else []
+        trace = run.trace if status == "FAIL" and run.args.trace else []
+        for note in run.notes:
+            print(f"       note: {note}", flush=True)
+        for hint in hints:
+            print(f"       hint: {hint}", flush=True)
+        if trace:
+            print("       trace: " + "\n              ".join(trace), flush=True)
+        result = {"id": item.id, "section": item.ref, "status": status, "run": number,
+                  "message": item.title + (f": {detail}" if detail else ""), "notes": list(run.notes),
+                  "hints": list(hints)}
+        if run.args.trace:
+            result["trace"] = list(trace)
+        results.append(result)
+        run.notes.clear()
 
 
 def selected(args, item):
@@ -3258,6 +3339,7 @@ def selected(args, item):
 
 
 async def main():
+    global WAIT, QUIET, SERVER_WAIT
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("url", nargs="?", help="WebSocket URL, such as ws://127.0.0.1:8765")
     parser.add_argument("--token", help="sign in with scheme token instead of guest")
@@ -3273,6 +3355,13 @@ async def main():
                         help="run only the checks whose ID matches this glob, such as 'external.A3.*'; repeatable")
     parser.add_argument("--scheme", metavar="NAME", action="append", choices=sorted(KNOWN["auth scheme"]),
                         help="run only this sign-in scheme's profile, and the core checks; repeatable")
+    parser.add_argument("--wait", metavar="SECONDS", type=float, default=WAIT,
+                        help=f"seconds to wait for an expected frame (default: {WAIT:g}); longer waits scale with it, "
+                             f"but a server frame still breaks §3.1 after {PROMPT:g}s")
+    parser.add_argument("--repeat", metavar="N", type=int, default=1,
+                        help="run the checks N times, and list the checks whose results differ between runs")
+    parser.add_argument("--trace", action="store_true",
+                        help="print the frames that each connection of a failed check sent and received")
     parser.add_argument("--list", action="store_true", help="list the checks, and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="print tracebacks of crashed checks")
     args = parser.parse_args()
@@ -3283,6 +3372,9 @@ async def main():
         return 0
     if not args.url:
         parser.error("the url is required")
+    if args.wait <= 0 or args.repeat < 1:
+        parser.error("--wait must be positive, and --repeat at least 1")
+    WAIT, QUIET, SERVER_WAIT = args.wait, args.wait / 4, max(args.wait, PROMPT) * 5
     args.sign_in = args.sign_in or bool(args.portal)
     run, counts, results = Run(args), dict.fromkeys(STATUSES, 0), []
     started = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -3292,42 +3384,36 @@ async def main():
     if not chosen:
         parser.error("no check matches --only and --scheme")
     last = CHECKS.index(chosen[-1])
-    for index, item in enumerate(CHECKS):
-        if item not in chosen:
-            if not item.setup or index > last:
-                continue
-            status, detail = await run_check(run, item)  # learns what later checks use, such as the default room
-            if status != "FAIL":  # a failure, such as no server frame, is reported all the same
-                run.notes.clear()
-                continue
-        else:
-            status, detail = await run_check(run, item)
-        counts[status] += 1
-        label = f"§{item.ref}" if item.ref[:1].isdigit() else item.ref
-        print(f"{status:<6} {item.id:<36} {label:<9} {item.title}" + (f": {detail}" if detail else ""), flush=True)
-        hints = run.hints if status == "FAIL" else []
-        for note in run.notes:
-            print(f"       note: {note}", flush=True)
-        for hint in hints:
-            print(f"       hint: {hint}", flush=True)
-        results.append({"id": item.id, "section": item.ref, "status": status,
-                        "message": item.title + (f": {detail}" if detail else ""), "notes": list(run.notes),
-                        "hints": list(hints)})
-        run.notes.clear()
+    for number in range(1, args.repeat + 1):
+        if args.repeat > 1:
+            print(f"Run {number} of {args.repeat}:", flush=True)
+            # Each run learns afresh, and the checks of seen rules report only what this run saw.
+            run.server = run.room = run.message = run.new_room = None
+            run.setups, run.violations, run.order, run.server_delays = {}, {}, {}, []
+        await run_checks(run, chosen, last, counts, results, number)
     if run.server:
         print(f"{run.server.get('agent', 'server')}: {', '.join(run.server.get('capabilities', [])) or 'core only'}")
-    checklist = [r for r in results if r["status"] == "MANUAL"]
+    checklist = list(dict.fromkeys(r["id"] for r in results if r["status"] == "MANUAL"))
     if checklist:
         print("For a person to check:")
-        for r in checklist:
-            item = next(c for c in CHECKS if c.id == r["id"])
+        for id in checklist:
+            item = next(c for c in CHECKS if c.id == id)
             print(f"  [ ] {item.id}: {item.title}")
+    if args.repeat > 1:
+        outcomes = {}
+        for r in results:
+            outcomes.setdefault(r["id"], []).append(r["status"])
+        flaky = {id: statuses for id, statuses in outcomes.items() if len(set(statuses)) > 1}
+        print(f"Results that differ between the {args.repeat} runs:" if flaky else
+              f"Every check had the same result in each of the {args.repeat} runs.")
+        for id, statuses in flaky.items():
+            print(f"  {id}: " + ", ".join(f"{statuses.count(s)} {s.lower()}" for s in STATUSES if s in statuses))
     print(", ".join(f"{counts[s]} {s.lower()}" for s in STATUSES))
     if run.person:
         shutil.rmtree(run.person.state, ignore_errors=True)
     if args.json:
         report = {"tool": "conform.py", "version": VERSION, "target": args.url, "started": started,
-                  "results": results, "summary": counts}
+                  "runs": args.repeat, "results": results, "summary": counts}
         Path(args.json).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     return 1 if counts["FAIL"] else 0
 
