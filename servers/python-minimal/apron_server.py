@@ -10,9 +10,10 @@ Or:  python -m pip install 'websockets>=14,<17'; python apron_server.py
 
 One room, guest identities, names, replies, and the latest 1,000 log records
 of history. No edits, room changes, reactions, ext, persistence, or retry
-deduplication. Reconnects get new IDs. Input shapes/types are assumed
-valid; malformed input may close a connection instead of returning protocol
-errors. No outgoing buffer limits.
+deduplication. Reconnects get new IDs. Invalid JSON gets parse_error, and a
+frame that is neither a request nor a notification gets invalid_request.
+Parameter shapes/types are assumed valid; malformed params may close a
+connection instead of returning protocol errors. No outgoing buffer limits.
 """
 
 import argparse
@@ -114,7 +115,14 @@ class ApronServer:
         return self.history(p) if method == "history" else self.create_message(self.clients[ws], p)
 
     def receive(self, ws, raw):
-        frame = json.loads(raw)
+        try:
+            frame = json.loads(raw)
+        except ValueError:
+            return send([ws], error={"code": -32700, "message": "Invalid JSON"})
+        # Errors for frames that are not requests carry no id (§1.1).
+        if not (isinstance(frame, dict) and isinstance(frame.get("method"), str)
+                and isinstance(frame.get("id", ""), str)):
+            return send([ws], error={"code": -32600, "message": "Not a request or a notification"})
         try:
             result = self.dispatch(ws, frame["method"], frame.get("params", {}))
             if "id" in frame:

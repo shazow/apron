@@ -4,8 +4,9 @@
 // One room, guest identities, names, replies, and the latest 1,000 log records
 // of RAM history. Restart clears history; reconnect assigns a new identity. No
 // retry deduplication, edits, room changes, reactions, ext, uploads, credentials,
-// or rate limits. Clients must send valid protocol frames; malformed input may
-// close the connection.
+// or rate limits. Invalid JSON gets parse_error, and a frame that is neither a
+// request nor a notification gets invalid_request; malformed params may close
+// the connection.
 
 const greeting = { apron: 10, agent: "apron-bun/10", auth: ["guest"], capabilities: ["history"] };
 const log = []; // Room and message records, ascending by log_id.
@@ -121,7 +122,15 @@ const server = Bun.serve({
       let frame;
       try {
         frame = JSON.parse(raw);
-        if (!frame || typeof frame !== "object" || Array.isArray(frame)) return ws.close(1003, "Invalid frame");
+      } catch {
+        return send(ws, { error: { code: -32700, message: "Invalid JSON" } });
+      }
+      // Errors for frames that are not requests carry no id (§1.1).
+      if (!frame || typeof frame !== "object" || Array.isArray(frame) || typeof frame.method !== "string"
+          || ("id" in frame && typeof frame.id !== "string")) {
+        return send(ws, { error: { code: -32600, message: "Not a request or a notification" } });
+      }
+      try {
         const result = dispatch(ws, frame.method, frame.params ?? {});
         if ("id" in frame) send(ws, { id: frame.id, result });
         if (frame.method === "auth") ws.subscribe("general");

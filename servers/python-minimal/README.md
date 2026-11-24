@@ -36,6 +36,6 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 - Without capability `ext`, the server drops `ext` that clients send.
 - Requests are not deduplicated; retrying a message may create a duplicate.
 - Unknown top-level message fields are dropped.
-- Malformed requests may close the connection instead of returning protocol errors.
+- Invalid JSON gets `error/parse_error`, and a frame that is neither a request nor a notification gets `error/invalid_request`. Malformed params may close the connection instead of returning protocol errors.
 - No credentials or rate limits are enforced.
 - Incoming frames are limited to 256 KiB.

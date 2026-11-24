@@ -1042,8 +1042,9 @@ async def _(run):
 
 
 async def malformed(run, text, what, allowed):
-    """Send text as a frame, then me, and return (conn, replies but me's). Each must be error/allowed. The server
-    MAY close the connection instead, and MAY send no error at all."""
+    """Send text as a frame, then me, and return (conn, replies but me's). Each must be error/allowed without an id:
+    the code that §1.1's table gives, and no id, as the frame is not a request (§1.1). The server MAY close the
+    connection instead, and MAY send no error at all."""
     conn = await run.open()
     start = len(conn.frames)
     await conn.send_raw(text)
@@ -1058,6 +1059,9 @@ async def malformed(run, text, what, allowed):
                if isinstance(f, dict) and "method" not in f and i != me]
     for reply in replies:
         must(code(reply) == CODES[allowed], f"{what} got {describe(reply)}, not error/{allowed}")
+        if "id" in reply:
+            raise Fail(f"the {allowed} for {what} has id {shown(reply['id'])}: an error that is not a reply to a "
+                       "request has no id (§1.1)")
     if conn.closed:
         run.info(f"the server closed the connection after {what}")
     elif not replies:
@@ -1067,9 +1071,17 @@ async def malformed(run, text, what, allowed):
 
 @check("core.shape.parse-error", "1.1", "invalid JSON gets error/parse_error without an id, or no reply")
 async def _(run):
-    _, replies = await malformed(run, '{"method": "me", "id": "' + next(ids) + '", "params": {', "invalid JSON", "parse_error")
-    for reply in replies:
-        must("id" not in reply, f"the parse_error has id {shown(reply['id'])}, from a frame that it could not read")
+    await malformed(run, '{"method": "me", "id": "' + next(ids) + '", "params": {', "invalid JSON", "parse_error")
+
+
+@check("core.shape.invalid-request", "1.1", "a frame that is neither a request nor a notification gets "
+       "error/invalid_request without an id, or no reply")
+async def _(run):
+    # Each id is a string in a frame (§1), and a frame with no method is neither a request nor a notification.
+    for text, what in ((json.dumps({"method": "me", "id": 42, "params": {}}), "a request whose id is a number"),
+                       (json.dumps({"id": next(ids), "params": {}}), "a frame with an id and no method"),
+                       (json.dumps(["me"]), "a JSON array")):
+        await malformed(run, text, what, "invalid_request")
 
 
 @check("core.retry.dedup", "1.2", "retries are deduplicated by (user_id, id)")
