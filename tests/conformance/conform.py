@@ -15,7 +15,8 @@ never fails.
 
 Each check opens its own connections to the WebSocket URL, and each connection
 waits for its server frame (§3.1). core.shape.server-frame-prompt fails if one
-took more than 2 seconds.
+took more than 2 seconds. Under a failed check, hint lines say which connection
+waited, for what, and what it received instead, and suggest what may be wrong.
 
 IDs are <scheme or area>.<area>.<name>, where the middle area is an attacker of
 the threat model (A1 to A5) or a plain area such as shape: external.A3.verifier,
@@ -123,6 +124,10 @@ class Fail(Exception): pass
 class Warn(Exception): pass
 class Skip(Exception): pass
 class Manual(Exception): pass  # a rule that a machine cannot check: a checklist item for a person
+
+
+def upper(text):
+    return text[:1].upper() + text[1:]
 
 
 def must(condition, why):
@@ -305,8 +310,8 @@ async def back_off(retry_after, waited, why, most=60):
 class Conn:
     """One WebSocket connection: frames in arrival order, and replies matched by id."""
 
-    def __init__(self, run, ws):
-        self.run, self.ws = run, ws
+    def __init__(self, run, ws, number=1, name=None):
+        self.run, self.ws, self.number, self.name = run, ws, number, name
         self.frames, self.closed, self.you = [], False, None
         self.shown = {}  # user_id -> (shown status, seen), as this connection last received them
         self.methods = {}  # request id -> method
@@ -335,8 +340,24 @@ class Conn:
                 self.closed = True
                 self.changed.notify_all()
 
-    async def wait(self, match, start=0, timeout=WAIT):
-        """Return (index, frame) of the first frame from start that matches, or (None, None)."""
+    def label(self):
+        who = [self.name] if self.name else []
+        if self.you:
+            who.append(f"user {self.you.get('user_id')}")
+        return f"connection {self.number}" + (f" ({', '.join(who)})" if who else "")
+
+    def summary(self, frame):
+        """A few words for a received frame, such as "message" or "reply to auth (error/denied)"."""
+        if not isinstance(frame, dict):
+            return "a frame that is not a JSON object"
+        if "method" in frame:
+            return str(frame["method"])
+        method = self.methods.get(frame.get("id"), repr(frame.get("id")))
+        return f"reply to {method}" + (f" ({describe(frame).split()[0]})" if "error" in frame else "")
+
+    async def wait(self, match, start=0, timeout=WAIT, what=None):
+        """Return (index, frame) of the first frame from start that matches, or (None, None). what says in a few
+        words what the frame is, for the hints of a failure."""
         deadline = time.monotonic() + timeout
         async with self.changed:
             while True:
@@ -345,6 +366,8 @@ class Conn:
                         return i, self.frames[i]
                 left = deadline - time.monotonic()
                 if self.closed or left <= 0:
+                    if self.closed or timeout >= WAIT:  # a shorter wait is for a frame that should not come
+                        self.run.missed(self, match, start, timeout, what)
                     return None, None
                 try:
                     await asyncio.wait_for(self.changed.wait(), left)
@@ -374,11 +397,12 @@ class Conn:
         await self.send(frame)
         i, reply = await self.reply(id, start)
         if reply is None:
-            raise Fail(f"no reply to {method}" + (" (connection closed)" if self.closed else ""))
+            raise Fail(f"no reply to {method}" + (" (connection closed)" if self.closed else f" within {WAIT:g}s"))
         return i, reply
 
     async def reply(self, id, start=0, timeout=WAIT):
-        return await self.wait(lambda f: f.get("id") == id and "method" not in f, start, timeout)
+        return await self.wait(lambda f: f.get("id") == id and "method" not in f, start, timeout,
+                               what=f"the reply to {self.methods.get(id, 'its request')}")
 
     async def call(self, method, params=None):
         """Send a request, fail on an error reply, and return the result."""
@@ -422,11 +446,13 @@ class Run:
         self.args, self.schema = args, Schema()
         self.server, self.room, self.message = None, None, None  # learned along the way
         self.violations = {}  # check key -> set of descriptions, from inspect
-        self.server_delays = []  # (check ID, seconds) of each connection's server frame, from connect
+        self.server_delays = []  # (check ID, seconds or None for none) of each connection's server frame
         self.check = None  # the ID of the running check
         self.order = {}  # (conn, room_id) -> greatest message log_id delivered
         self.conns = []  # of the running check
         self.notes = []  # of the running check, printed under its line
+        self.hints = []  # of the running check, printed under its line if it fails
+        self.miss = None  # the running check's last wait that timed out, or that its connection's close ended
         self.person = Person() if args.sign_in else None  # --sign-in
         self.begun, self.pages, self.oauth, self.flows = {}, {}, {}, {}  # sign-in answers, kept for later checks
         self.burned = None  # whether a failed redemption used up a code on this server, once a sign-in tells
@@ -443,6 +469,51 @@ class Run:
 
     def info(self, text):
         self.notes.append(text)
+
+    def hint(self, text):
+        """Suggest to an implementer what may have gone wrong, if the running check fails."""
+        self.hints.append(text)
+
+    def missed(self, conn, match, start, timeout, what):
+        got = [conn.summary(f) for f in conn.frames[start:]]
+        others = [c for c in self.conns if c is not conn and any(isinstance(f, dict) and match(f) for f in c.frames)]
+        close = (getattr(conn.ws, "close_code", None), getattr(conn.ws, "close_reason", None)) if conn.closed else None
+        self.miss = {"conn": conn, "what": what or "the frame that the check expects", "timeout": timeout, "got": got,
+                     "others": others, "open": len(self.conns), "close": close}
+
+    def failure_hints(self):
+        """The hints for a failed check: its own, then what its last missed wait suggests."""
+        hints, miss = list(self.hints), self.miss
+        if not miss:
+            return hints
+        conn, opened, got = miss["conn"], miss["open"], miss["got"]
+        where = "The check's only connection" if opened == 1 else f"{upper(conn.label())}, of {opened} that the check opened,"
+        if miss["close"]:
+            close_code, reason = miss["close"]
+            hint = (f"{where} waited for {miss['what']}, and the server closed it"
+                    + (f" with code {close_code}" if close_code else "") + (f" ({reason!r})" if reason else ""))
+        else:
+            hint = f"{where} waited {miss['timeout']:g}s for {miss['what']}"
+        shown = ", ".join(got[:6]) + (f", and {len(got) - 6} more" if len(got) > 6 else "")
+        hints.append(hint + (f". Meanwhile it received: {shown}." if got else ". Meanwhile it received nothing."))
+        if miss["others"] and miss["what"] != "its server frame":
+            labels = ", ".join(c.label() for c in miss["others"])
+            hints.append(f"{upper(labels)} did receive it. The server may send to some connections and not "
+                         "to others, such as only to the one that made the request.")
+        elif opened > 1 and not miss["close"]:
+            hints.append(f"The check had {opened} connections open at once. A server that serves one connection at a "
+                         "time, or that makes one connection wait for another's work, times out here.")
+        if miss["what"] == "its server frame":
+            earlier = [delay for _, delay in self.server_delays if delay is not None]
+            if earlier:
+                hints.append(f"{len(earlier)} earlier connection{'s' if len(earlier) > 1 else ''} of this run got "
+                             f"{'their' if len(earlier) > 1 else 'its'} server frame within {max(earlier):.1f}s. The "
+                             "server may slow down once it has served or holds other connections.")
+            hints.append("A server sends the server frame as soon as it accepts a connection (§3.1), from state that "
+                         "it already holds.")
+        elif miss["what"].startswith("the reply to") and not miss["close"]:
+            hints.append("Every request gets exactly one reply (§1.1), also a request that fails.")
+        return hints
 
     # Every frame from the server passes through here.
     def inspect(self, conn, frame, raw):
@@ -531,6 +602,8 @@ class Run:
         buffer and the frames queued unread are small, so a connection that stops reading backs up the server's
         writes after little traffic. With origin, the handshake sends that Origin header."""
         waited = 0
+        if self.conns:
+            already = f"This check already had {len(self.conns)} connection{'s' if len(self.conns) > 1 else ''} open."
         for attempt in itertools.count():
             try:
                 if small_buffers:
@@ -541,20 +614,25 @@ class Run:
             except InvalidStatus as error:
                 status = error.response.status_code
                 if status not in (429, 503):
+                    if self.conns:
+                        self.hint(f"{already} The server may limit the connections of one client or one user.")
                     raise
                 waited += await back_off(error.response.headers.get("Retry-After"), waited,
                                          f"the server's policy refused a connection: HTTP {status}")
             except (OSError, asyncio.TimeoutError) as error:
                 if attempt >= 20:
+                    if self.conns:
+                        self.hint(f"{already} The server may limit the connections of one client or one user, or "
+                                  "stop accepting while it serves another connection.")
                     raise Fail(f"cannot connect: {error}") from None
                 await asyncio.sleep(0.25)
-        conn = Conn(self, ws)
+        conn = Conn(self, ws, len(self.conns) + 1, name if auth else None)
         self.conns.append(conn)
         connected = time.monotonic()
-        _, server = await conn.wait(lambda f: f.get("method") == "server", timeout=SERVER_WAIT)
+        _, server = await conn.wait(lambda f: f.get("method") == "server", timeout=SERVER_WAIT, what="its server frame")
+        self.server_delays.append((self.check, time.monotonic() - connected if server else None))
         must(server is not None, f"no server frame within {SERVER_WAIT:g}s of connecting"
                                  + (" (the server closed the connection)" if conn.closed else ""))
-        self.server_delays.append((self.check, time.monotonic() - connected))
         self.server = self.server or server["params"]
         if auth:
             conn.you = (await conn.call("auth", self.auth(name)))["you"]
@@ -3114,12 +3192,19 @@ check("core.shape.schema", "1", "every frame matches schema/apron.schema.json")(
 
 @check("core.shape.server-frame-prompt", "3.1", "sends the server frame immediately on every connection")
 async def _(run):
-    late = [(id, delay) for id, delay in run.server_delays if delay > WAIT]
-    if late:
-        id, delay = max(late, key=lambda item: item[1])
-        raise Fail(f"{len(late)} of {len(run.server_delays)} connections waited more than {WAIT:g}s for their server "
-                   f"frame, up to {delay:.1f}s (in {id})")
-    slowest = max((delay for _, delay in run.server_delays), default=0)
+    late = [(id, delay) for id, delay in run.server_delays if delay is not None and delay > WAIT]
+    missing = [id for id, delay in run.server_delays if delay is None]
+    if late or missing:
+        run.hint("Send the server frame as soon as the server accepts a connection, from state that it already "
+                 "holds, not after a request that it makes for each connection.")
+        found = []
+        if late:
+            id, delay = max(late, key=lambda item: item[1])
+            found.append(f"{len(late)} waited more than {WAIT:g}s for their server frame, up to {delay:.1f}s (in {id})")
+        if missing:
+            found.append(f"{len(missing)} got none within {SERVER_WAIT:g}s (first in {missing[0]})")
+        raise Fail(f"of {len(run.server_delays)} connections, " + ", and ".join(found))
+    slowest = max((delay for _, delay in run.server_delays if delay is not None), default=0)
     if slowest >= QUIET:
         run.info(f"the slowest server frame came {slowest:.1f}s after connecting")
 
@@ -3135,8 +3220,8 @@ STATUSES = ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")
 
 
 async def run_check(run, item):
-    """Run one check, and return (status, detail)."""
-    run.check = item.id
+    """Run one check, and return (status, detail). A failure's hints are in run.hints."""
+    run.check, run.miss, run.hints = item.id, None, []
     try:
         if run.server is None and item is not CHECKS[0]:
             raise Skip("no server frame")
@@ -3147,6 +3232,7 @@ async def run_check(run, item):
         await item.fn(run)
         return "PASS", ""
     except Fail as e:
+        run.hints = run.failure_hints()
         return "FAIL", str(e)
     except Warn as e:
         return "WARN", str(e)
@@ -3157,6 +3243,7 @@ async def run_check(run, item):
     except Exception as e:  # a crash in a check is the server's failure to answer as expected
         if run.args.verbose:
             traceback.print_exc()
+        run.hints = run.failure_hints()
         return "FAIL", f"{type(e).__name__}: {e}"
     finally:
         for conn in run.conns:
@@ -3218,10 +3305,14 @@ async def main():
         counts[status] += 1
         label = f"§{item.ref}" if item.ref[:1].isdigit() else item.ref
         print(f"{status:<6} {item.id:<36} {label:<9} {item.title}" + (f": {detail}" if detail else ""), flush=True)
+        hints = run.hints if status == "FAIL" else []
         for note in run.notes:
             print(f"       note: {note}", flush=True)
+        for hint in hints:
+            print(f"       hint: {hint}", flush=True)
         results.append({"id": item.id, "section": item.ref, "status": status,
-                        "message": item.title + (f": {detail}" if detail else ""), "notes": list(run.notes)})
+                        "message": item.title + (f": {detail}" if detail else ""), "notes": list(run.notes),
+                        "hints": list(hints)})
         run.notes.clear()
     if run.server:
         print(f"{run.server.get('agent', 'server')}: {', '.join(run.server.get('capabilities', [])) or 'core only'}")

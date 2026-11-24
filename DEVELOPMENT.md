@@ -57,7 +57,9 @@ MANUAL items are listed again at the end, and never fail a run. An ID is
 rule guards against (`A1` to `A5`) or a plain area, such as `shape`:
 `external.A3.verifier`, `core.shape.server-frame`. `--list` prints every check.
 A refusal by the server's policy, such as a guest who may only read, skips the
-check with the server's message.
+check with the server's message. A failed check can print hints under its line:
+which connection waited, for what, and what it received instead, whether
+another connection of the check received it, and what the rule asks for.
 
 Each check opens its own connections, often several, and each connection waits
 for its `server` frame. A server sends that frame immediately (§3.1), so build
@@ -71,8 +73,9 @@ seconds before its check fails.
 - `--scheme NAME` runs one sign-in scheme's profile, and the core checks. It
   repeats.
 - `--json PATH` writes a report: `{"tool", "version", "target", "started",
-  "results": [{"id", "section", "status", "message", "notes"}], "summary"}`,
-  with a count for each status in `summary`.
+  "results": [{"id", "section", "status", "message", "notes", "hints"}],
+  "summary"}`, with a count for each status in `summary`. `hints` is empty
+  unless the check failed.
 - `--token` signs in with a token instead of as a guest. It posts messages and
   creates users, so point it at a test server.
 - `--origin` sets the `Origin` of a WebAuthn ceremony that conform.py runs
