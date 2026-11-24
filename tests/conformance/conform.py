@@ -109,6 +109,7 @@ SERVER_WAIT = max(WAIT, PROMPT) * 5  # seconds to wait for each connection's ser
 TRACE_LINE = 200  # characters of a frame that --trace prints
 MISSING = "9007199254740991"  # a log_id no test server has reached (2^53 - 1)
 BURST = 12  # messages a burst posts at once, without waiting for each result
+CONCURRENT = 8  # connections that core.delivery.concurrent-connections opens at once
 # Messages of SLOW_TEXT bytes posted to a reader that has stopped reading: 8 MiB, past what the kernel buffers
 # for a socket (Linux grows a send buffer up to 4 MiB by default), so the server's own writes back up.
 SLOW_BURST = 512
@@ -433,6 +434,15 @@ class Conn:
         return [f for f in self.frames[start:] if isinstance(f, dict) and match(f)]
 
 
+async def gather(*awaitables):
+    """Await all at once, and raise the first exception once all have finished, so none is left running."""
+    results = await asyncio.gather(*awaitables, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return results
+
+
 async def reply_to(conn, method, params):
     """Send a request, and return its reply."""
     return (await conn.request(method, params))[1]
@@ -543,7 +553,9 @@ class Run:
         shown = ", ".join(got[:6]) + (f", and {len(got) - 6} more" if len(got) > 6 else "")
         hints.append(hint + (f". Meanwhile it received: {shown}." if got else ". Meanwhile it received nothing."))
         if miss["others"] and miss["what"] != "its server frame":
-            labels = ", ".join(c.label() for c in miss["others"])
+            others = miss["others"]
+            labels = (others[0].label() if len(others) == 1
+                      else "connections " + ", ".join(str(c.number) for c in others))
             hints.append(f"{upper(labels)} did receive it. The server may send to some connections and not "
                          "to others, such as only to the one that made the request.")
         elif opened > 1 and not miss["close"]:
@@ -1078,6 +1090,55 @@ def delivered(conn, start, room_id):
         if params.get("room_id") == room_id and "log_id" in params:
             live.append((int(params["log_id"]), frame["method"]))
     return live
+
+
+@check("core.delivery.concurrent-connections", "3.5.3", f"{CONCURRENT} connections opened at once each get a server "
+       "frame within 2s, the replies to their requests, and a broadcast")
+async def _(run):
+    room = run.learned(run.room, "the default room is unknown", "core.message.default-room")
+    conns = await gather(*(run.open(auth=False) for _ in range(CONCURRENT)))
+    delays = sorted(delay for id, delay in run.server_delays[-CONCURRENT:] if id == run.check)
+    if delays and delays[-1] >= PROMPT / 4:
+        run.info(f"server frames came {delays[0]:.1f}s to {delays[-1]:.1f}s after connecting")
+    late = [delay for delay in delays if delay > PROMPT]
+    if late:
+        run.hint("Send the server frame as soon as the server accepts a connection, from state that it already holds. "
+                 "A server that prepares it under a lock, or one connection at a time, is late here.")
+    must(not late, f"{len(late)} of {CONCURRENT} server frames came more than {PROMPT:g}s after connecting, "
+                   f"up to {late[-1] if late else 0:.1f}s (§3.1)")
+
+    async def ask(conn, method, params):
+        id = next(ids)
+        start = len(conn.frames)
+        await conn.send({"method": method, "id": id, "params": params})
+        return (await conn.reply(id, start))[1]
+
+    async def everyone(method, params):
+        """Send method from every connection at once, and fail with the connections that got no reply."""
+        replies = await gather(*(ask(c, method, params(c)) for c in conns))
+        missing = [str(c.number) for c, reply in zip(conns, replies) if reply is None]
+        must(not missing, f"connection{'s' if len(missing) > 1 else ''} {', '.join(missing)} of {CONCURRENT} got no "
+                          f"reply to {method} within {WAIT:g}s")
+        return replies
+
+    for conn in conns:
+        conn.name = f"Conformance {conn.number}"
+    for conn, reply in zip(conns, await everyone("auth", lambda c: run.auth(c.name))):
+        await unless_policy(reply, "a sign-in")
+        must(signed_in(reply), f"{conn.label()}: auth got {describe(reply)}")
+        conn.you = reply["result"]["you"]
+    if run.has("rooms"):
+        for conn, reply in zip(conns, await everyone("room_join", lambda c: {"room_id": room})):
+            await unless_policy(reply, "a join")
+            must("result" in reply, f"{conn.label()}: room_join got {describe(reply)}")
+    for conn, reply in zip(conns, await everyone("me", lambda c: {})):
+        must("result" in reply, f"{conn.label()}: me got {describe(reply)}")
+    starts = [len(c.frames) for c in conns]
+    _, message_id = await run.post(conns[0], "conformance: to every connection")
+    found = await gather(*(c.wait(snapshot_of(message_id), start) for c, start in zip(conns, starts)))
+    missing = [str(c.number) for c, (_, frame) in zip(conns, found) if frame is None]
+    must(not missing, f"connection{'s' if len(missing) > 1 else ''} {', '.join(missing)} of {CONCURRENT} got no "
+                      "broadcast of the message")
 
 
 @check("core.delivery.burst", "3.5.3", "live delivery brings every record of a burst once, in log order", needs="history")
