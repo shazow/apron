@@ -88,6 +88,10 @@ seconds before its check fails.
   capability that a server stops advertising only turns its checks into SKIPs.
   It repeats.
 - `--strict` exits 1 on a WARN, as on a FAIL.
+- `--hide-skips` prints no SKIP lines, and counts the skips by reason and area
+  at the end, such as `22  not advertised (webauthn)`.
+- `--junit PATH` writes JUnit XML for CI: a FAIL is a failure, a SKIP or MANUAL
+  is skipped, and a WARN passes with its message in `system-out`.
 - `--json PATH` writes a report: `{"tool", "version", "target", "started",
   "runs", "server", "results": [{"id", "section", "status", "run", "message",
   "notes", "hints", "seconds"}], "summary"}`, with a count for each status in

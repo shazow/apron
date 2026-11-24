@@ -132,6 +132,12 @@ class Skip(Exception): pass
 class Manual(Exception): pass  # a rule that a machine cannot check: a checklist item for a person
 
 
+def shown(value, most=120):
+    """A value as JSON, cut to most characters, for a failure message."""
+    text = json.dumps(value, ensure_ascii=False)
+    return text if len(text) <= most else text[:most] + "…"
+
+
 def upper(text):
     return text[:1].upper() + text[1:]
 
@@ -319,7 +325,7 @@ class Conn:
 
     def __init__(self, run, ws, number=1, name=None):
         self.run, self.ws, self.number, self.name = run, ws, number, name
-        self.frames, self.closed, self.you = [], False, None
+        self.frames, self.closed, self.you, self.token = [], False, None, None
         self.started, self.log = time.monotonic(), []  # log: (seconds since started, "->" or "<-", frame text)
         self.shown = {}  # user_id -> (shown status, seen), as this connection last received them
         self.methods = {}  # request id -> method
@@ -402,6 +408,14 @@ class Conn:
         except ConnectionClosed:
             raise Fail(f"the server closed the connection before {frame.get('method')}") from None
 
+    async def send_raw(self, text):
+        """Send text as one frame as it is, such as a frame that is not valid JSON."""
+        self.log.append((time.monotonic() - self.started, "->", text))
+        try:
+            await self.ws.send(text)
+        except ConnectionClosed:
+            raise Fail("the server closed the connection before a frame was sent") from None
+
     async def request(self, method, params=None, id=None):
         """Send a request and return (index, reply)."""
         id = id or next(ids)
@@ -479,6 +493,7 @@ class Run:
         self.miss = None  # the running check's last wait that timed out, or that its connection's close ended
         self.trace = []  # lines of the running check's frames, kept if it fails with --trace
         self.setups = {}  # setup check ID -> (ID, status, detail) of it or of the setup check that made it skip
+        self.skips = {}  # "reason (area)" -> how many checks skipped with it, for --hide-skips
         self.cause = None  # the setup check result of the running check's last learned() that skipped
         self.person = Person() if args.sign_in else None  # --sign-in
         self.begun, self.pages, self.oauth, self.flows = {}, {}, {}, {}  # sign-in answers, kept for later checks
@@ -719,7 +734,8 @@ class Run:
                                  + (" (the server closed the connection)" if conn.closed else ""))
         self.server = self.server or server["params"]
         if auth:
-            conn.you = (await conn.call("auth", self.auth(name)))["you"]
+            result = await conn.call("auth", self.auth(name))
+            conn.you, conn.token = result["you"], result.get("token")
         return conn
 
     def auth(self, name):
@@ -891,6 +907,25 @@ async def _(run):
     expect_error(reply, "denied", "a made-up token")
 
 
+@check("token.shape.guest-round-trip", "3.2.1", "the token of a guest sign-in signs in again as the same user",
+       needs=lambda s: "guest" in s.get("auth", []) + s.get("signup", []) and "token" in s.get("auth", []))
+async def _(run):
+    conn = await run.open(auth=False)
+    _, reply = await conn.request("auth", {"scheme": "guest", "name": "Conformance Token"})
+    await unless_policy(reply, "a guest sign-in")
+    must(signed_in(reply), f"the guest sign-in got {describe(reply)}")
+    you, token = reply["result"]["you"], reply["result"].get("token")
+    if not isinstance(token, str):
+        raise Skip("the guest sign-in returned no token, which it MAY leave out (§3.2.1)")
+    again = await run.open(auth=False)
+    _, reply = await again.request("auth", {"scheme": "token", "token": token})
+    policy(reply)
+    must(signed_in(reply), f"the guest's token on a new connection got {describe(reply)}")
+    user_id = reply["result"]["you"]["user_id"]
+    must(user_id == you["user_id"], f"the guest's token signed in as {user_id}, not as the guest {you['user_id']}")
+    must("result" in (await conn.request("me", {}))[1], "the guest's first connection stopped answering me")
+
+
 @check("core.message.default-room", "3.6.3", "accepts message without room_id into its default room", setup=True)
 async def _(run):
     conn = await run.open()
@@ -1006,6 +1041,37 @@ async def _(run):
     should("result" in reply, f"a 250 kB message: {describe(reply)}")
 
 
+async def malformed(run, text, what, allowed):
+    """Send text as a frame, then me, and return (conn, replies but me's). Each must be error/allowed. The server
+    MAY close the connection instead, and MAY send no error at all."""
+    conn = await run.open()
+    start = len(conn.frames)
+    await conn.send_raw(text)
+    me = None
+    if not conn.closed:
+        try:
+            me = (await conn.request("me", {}))[0]
+        except Fail:
+            if not conn.closed:
+                raise
+    replies = [f for i, f in enumerate(conn.frames[start:], start)
+               if isinstance(f, dict) and "method" not in f and i != me]
+    for reply in replies:
+        must(code(reply) == CODES[allowed], f"{what} got {describe(reply)}, not error/{allowed}")
+    if conn.closed:
+        run.info(f"the server closed the connection after {what}")
+    elif not replies:
+        run.info(f"the server sent no error for {what}, and went on")
+    return conn, replies
+
+
+@check("core.shape.parse-error", "1.1", "invalid JSON gets error/parse_error without an id, or no reply")
+async def _(run):
+    _, replies = await malformed(run, '{"method": "me", "id": "' + next(ids) + '", "params": {', "invalid JSON", "parse_error")
+    for reply in replies:
+        must("id" not in reply, f"the parse_error has id {shown(reply['id'])}, from a frame that it could not read")
+
+
 @check("core.retry.dedup", "1.2", "retries are deduplicated by (user_id, id)")
 async def _(run):
     a, b = await run.joined(), await run.joined()
@@ -1038,6 +1104,51 @@ async def _(run):
     must(reply["result"].get("you", {}).get("user_id") == conn.you["user_id"], "a new name changed you.user_id")
 
 
+@check("core.identity.user-notifications", "3.3.3", "a rename sends you to the user's own connections, and new to "
+       "others who share a room")
+async def _(run):
+    if run.args.token:
+        raise Skip("needs two users; runs with guest sign-in")
+    a, b = await run.joined("Conformance A"), await run.joined("Conformance B")
+    own = [a]
+    if a.token and "token" in run.server.get("auth", []):  # a second connection of the same user
+        second = await run.open(auth=False)
+        second.name = a.name
+        _, reply = await second.request("auth", {"scheme": "token", "token": a.token})
+        if signed_in(reply) and reply["result"]["you"]["user_id"] == a.you["user_id"]:
+            second.you = reply["result"]["you"]
+            own.append(second)
+    for conn in own + [b]:
+        await conn.sync()
+    starts = {conn: len(conn.frames) for conn in own + [b]}
+    _, reply = await a.request("me", {"name": f"Conformance {secrets.token_hex(3)}"})
+    await unless_policy(reply, "a new name")
+    must("result" in reply, f"me with a new name: {describe(reply)}")
+    name, user_id = reply["result"]["you"].get("name"), a.you["user_id"]
+    await asyncio.sleep(QUIET)
+    for conn in own + [b]:
+        await conn.sync()
+
+    def about(f):
+        params = f.get("params", {})
+        return (f.get("method") == "user" and isinstance(params, dict)
+                and user_id in (params.get("you", {}).get("user_id"), params.get("new", {}).get("user_id")))
+    got = {conn: conn.since(starts[conn], about) for conn in own + [b]}
+    for conn in own:
+        for frame in got[conn]:
+            must("you" in frame["params"] and "new" not in frame["params"],
+                 f"{conn.label()}, the user's own, got {shown(frame['params'])}, not you")
+    for frame in got[b]:
+        params = frame["params"]
+        must("new" in params and "you" not in params, f"{b.label()}, another user, got {shown(params)}, not new")
+        must(params["new"].get("name") == name, f"new carries name {shown(params['new'].get('name'))}, not {shown(name)}")
+    if not any(got.values()):
+        raise Skip("the server sent no user notification for the rename, which it MAY leave out (§3.3.3)")
+    run.info("user notifications came to " + ", ".join(conn.label() for conn in own + [b] if got[conn])
+             + ("" if len(own) > 1 else "; no second connection of the user signed in with the token of its sign-in, "
+                                        "so only the connection that renamed was the user's own"))
+
+
 # §4 capabilities
 
 @check("history.shape.page", "4.3", "history pages the log", needs="history")
@@ -1046,14 +1157,17 @@ async def _(run):
     page = await conn.call("history", {"room_id": run.room} if run.room else {})
     for key in ("latest_log_id", "history_log_id"):
         must(key in page, f"the result has no {key} (§4.3.3)")
-    must(("first_log_id" in page) == ("last_log_id" in page), "the result has one of first_log_id and last_log_id")
-    must(isinstance(page.get("more"), bool), "more is not a boolean")
+    must(("first_log_id" in page) == ("last_log_id" in page),
+         f"the result has only one of first_log_id ({page.get('first_log_id')}) and last_log_id ({page.get('last_log_id')})")
+    must(isinstance(page.get("more"), bool), f"more is {shown(page.get('more'))}, not a boolean")
     for key in ("rooms", "messages", "reactions", "memberships"):
         log_ids = [int(r["log_id"]) for r in page.get(key, [])]
-        must(log_ids == sorted(log_ids), f"{key} are not in ascending log_id")
+        must(log_ids == sorted(log_ids), f"{key} are not in ascending log_id: {shown(log_ids)}")
     if run.message:
-        must(any(m.get("message_id") == run.message["message_id"] for m in page.get("messages", [])),
-             "the newest page lacks a recent message")
+        messages = page.get("messages", [])
+        must(any(m.get("message_id") == run.message["message_id"] for m in messages),
+             f"the newest page lacks recent message {run.message['message_id']}: it has {len(messages)} messages, "
+             f"log_ids {page.get('first_log_id')} to {page.get('last_log_id')}, more {shown(page.get('more'))}")
 
 
 @check("history.shape.all-rooms", "4.3", "history without room_id pages every room the connection receives, or is error/unsupported",
@@ -1222,8 +1336,11 @@ async def _(run):
     conn = await run.open()
     log_id = run.message["log_id"]
     page = await conn.call("history", {"room_id": run.room, "after": log_id, "before": log_id})
-    must([m.get("log_id") for m in page.get("messages", [])] == [log_id], "the slice is not the one record")
-    must(page.get("first_log_id") == log_id == page.get("last_log_id"), "first_log_id and last_log_id are not the record")
+    got = [m.get("log_id") for m in page.get("messages", [])]
+    must(got == [log_id], f"after and before {log_id} gave messages with log_ids {shown(got)}, not [{shown(log_id)}]")
+    must(page.get("first_log_id") == log_id == page.get("last_log_id"),
+         f"first_log_id is {shown(page.get('first_log_id'))} and last_log_id {shown(page.get('last_log_id'))}, "
+         f"not both {log_id}")
 
 
 @check("history.bounds.limit", "4.3.2", "limit takes the oldest with after and the newest without", needs="history")
@@ -1232,20 +1349,23 @@ async def _(run):
     posted = [(await run.post(conn, f"conformance: page {n}"))[1] for n in range(3)]
     forward = await conn.call("history", {"room_id": run.room, "after": posted[0], "limit": 2})
     must(forward.get("first_log_id") == posted[0], f"first_log_id is {forward.get('first_log_id')}, not {posted[0]}")
-    must(forward.get("more") is True, "more is not true")
+    must(forward.get("more") is True, f"after {posted[0]} with limit 2: more is {shown(forward.get('more'))}, not true")
     backward = await conn.call("history", {"room_id": run.room, "before": posted[2], "limit": 2})
     must(backward.get("last_log_id") == posted[2], f"last_log_id is {backward.get('last_log_id')}, not {posted[2]}")
-    must(backward.get("more") is True, "more is not true")
+    must(backward.get("more") is True, f"before {posted[2]} with limit 2: more is {shown(backward.get('more'))}, not true")
     rest = await conn.call("history", {"room_id": run.room, "after": str(int(forward["last_log_id"]) + 1), "limit": 200})
-    must(any(m.get("message_id") == posted[2] for m in rest.get("messages", [])), "continuing forward skipped a message")
+    got = [m.get("message_id") for m in rest.get("messages", [])]
+    must(posted[2] in got, f"continuing forward from {int(forward['last_log_id']) + 1} skipped message {posted[2]}: "
+                           f"got {shown(got)}")
 
 
 @check("history.bounds.empty", "4.3.2", "an empty slice has more: false and no bounds", needs="history")
 async def _(run):
     conn = await run.open()
     page = await conn.call("history", {"after": MISSING, **({"room_id": run.room} if run.room else {})})
-    must(page.get("more") is False, "more is not false")
-    must("first_log_id" not in page and "last_log_id" not in page, "the result has bounds")
+    must(page.get("more") is False, f"more is {shown(page.get('more'))}, not false")
+    must("first_log_id" not in page and "last_log_id" not in page,
+         f"the result has bounds: first_log_id {shown(page.get('first_log_id'))}, last_log_id {shown(page.get('last_log_id'))}")
 
 
 @check("edit.shape.save", "4.4", "a save is a new snapshot at a later log_id", needs="edit")
@@ -1287,6 +1407,74 @@ async def _(run):
     conn = await run.joined()
     reply = (await conn.request("message", {"message_id": MISSING, "room_id": run.room, "body": {"text": "x"}}))[1]
     expect_error(reply, "invalid_params", "saving an unknown message")
+
+
+@check("edit.shape.move", "4.4", "a save with another room_id moves the message, with prev_room_id, to both rooms",
+       needs=lambda s: {"edit", "rooms"} <= set(s.get("capabilities", [])))
+async def _(run):
+    room = run.learned(run.room, "the default room is unknown", "core.message.default-room")
+    a, b = await run.joined("Conformance A"), await run.joined("Conformance B")
+    _, reply = await a.request("room_set", {"title": "Conformance move"})
+    await unless_policy(reply, "a new room")
+    must(isinstance(reply.get("result", {}).get("room_id"), str), f"room_set got {describe(reply)}")
+    destination = reply["result"]["room_id"]
+    _, message_id = await run.post(a, "conformance: move me")
+    await b.expect(snapshot_of(message_id), "no broadcast to another member")
+    a_start, b_start = len(a.frames), len(b.frames)
+    _, reply = await a.request("message", {"message_id": message_id, "room_id": destination,
+                                           "body": {"text": "conformance: moved"}})
+    await unless_policy(reply, "a move")
+    must(reply.get("result", {}).get("message_id") == message_id, f"the move got {describe(reply)}")
+    _, moved = await a.expect(snapshot_of(message_id), "the mover, in both rooms, got no snapshot of the move", a_start)
+    p = moved["params"]
+    must(p.get("room_id") == destination, f"the snapshot's room_id is {shown(p.get('room_id'))}, not {destination}")
+    must(p.get("prev_room_id") == room, f"prev_room_id is {shown(p['prev_room_id']) if 'prev_room_id' in p else 'absent'}, "
+                                        f"not the source {room}")
+    must(p.get("body", {}).get("text") == "conformance: moved", f"body is {shown(p.get('body'))}")
+    _, seen = await b.expect(snapshot_of(message_id), "a member of the source room got no snapshot of the move",
+                             b_start)
+    must(seen["params"].get("prev_room_id") == room,
+         f"the source room's snapshot has prev_room_id {shown(seen['params'].get('prev_room_id'))}, not {room}")
+
+
+@check("edit.shape.other-user", "4.4", "a save of another user's message is error/denied, or keeps from", needs="edit")
+async def _(run):
+    if run.args.token:
+        raise Skip("needs two users; runs with guest sign-in")
+    a, b = await run.joined("Conformance A"), await run.joined("Conformance B")
+    _, message_id = await run.post(a, "conformance: someone else's")
+    await b.expect(snapshot_of(message_id), "no broadcast to another member")
+    start = len(a.frames)
+    _, reply = await b.request("message", {"message_id": message_id, "room_id": run.room,
+                                           "body": {"text": "conformance: saved by another user"}})
+    policy(reply)
+    if "error" in reply:
+        expect_error(reply, "denied", "a save of another user's message")
+        return run.info("the server refuses a save of another user's message")
+    run.info("the server lets another user save the message")
+    _, saved = await a.expect(snapshot_of(message_id), "no snapshot of the save", start)
+    author = saved["params"].get("from", {})
+    must(author.get("user_id") == a.you["user_id"],
+         f"from became {shown(author)}, not the author {a.you['user_id']}: the server keeps from")
+
+
+@check("edit.history.latest", "4.4", "history has a save's snapshot, with the saved body, at the save's log_id",
+       needs=lambda s: {"edit", "history"} <= set(s.get("capabilities", [])))
+async def _(run):
+    conn = await run.joined()
+    _, message_id = await run.post(conn, "conformance: before the save")
+    start = len(conn.frames)
+    await conn.call("message", {"message_id": message_id, "room_id": run.room, "body": {"text": "conformance: saved"}})
+    _, saved = await conn.expect(lambda f: snapshot_of(message_id)(f) and f["params"].get("log_id") != message_id,
+                                 "no snapshot of the save", start)
+    log_id = saved["params"]["log_id"]
+    page = await conn.call("history", {"room_id": run.room, "after": message_id, "limit": 200})
+    snapshots = [m for m in page.get("messages", []) if m.get("message_id") == message_id]
+    must(snapshots, f"history after {message_id} has no snapshot of the message")
+    latest = max(snapshots, key=lambda m: int(m["log_id"]))
+    must(latest.get("log_id") == log_id, f"the latest snapshot in history has log_id {latest.get('log_id')}, "
+                                         f"not the save's {log_id}")
+    must(latest.get("body", {}).get("text") == "conformance: saved", f"its body is {shown(latest.get('body'))}")
 
 
 @check("rooms.list.filter", "4.2.1", "room_list returns the arrays its filter asks for", needs="rooms")
@@ -3418,15 +3606,19 @@ async def run_checks(run, chosen, last, counts, results, number):
             remember(run, item, status, detail)
         counts[status] += 1
         label = f"§{item.ref}" if item.ref[:1].isdigit() else item.ref
-        print(f"{status:<6} {item.id:<36} {label:<9} {item.title}" + (f": {detail}" if detail else ""), flush=True)
         hints = run.hints if status == "FAIL" else []
         trace = run.trace if status == "FAIL" and run.args.trace else []
-        for note in run.notes:
-            print(f"       note: {note}", flush=True)
-        for hint in hints:
-            print(f"       hint: {hint}", flush=True)
-        if trace:
-            print("       trace: " + "\n              ".join(trace), flush=True)
+        if status == "SKIP":
+            reason = f"{detail} ({item.id.split('.')[0]})"
+            run.skips[reason] = run.skips.get(reason, 0) + 1
+        if status != "SKIP" or not run.args.hide_skips:
+            print(f"{status:<6} {item.id:<36} {label:<9} {item.title}" + (f": {detail}" if detail else ""), flush=True)
+            for note in run.notes:
+                print(f"       note: {note}", flush=True)
+            for hint in hints:
+                print(f"       hint: {hint}", flush=True)
+            if trace:
+                print("       trace: " + "\n              ".join(trace), flush=True)
         result = {"id": item.id, "section": item.ref, "status": status, "run": number,
                   "message": item.title + (f": {detail}" if detail else ""), "notes": list(run.notes),
                   "hints": list(hints), "seconds": round(time.monotonic() - began, 3)}
@@ -3434,6 +3626,32 @@ async def run_checks(run, chosen, last, counts, results, number):
             result["trace"] = list(trace)
         results.append(result)
         run.notes.clear()
+
+
+def write_junit(path, args, results, counts):
+    """Write the results as JUnit XML: FAIL is a failure, SKIP and MANUAL are skipped, and WARN passes with its
+    message in system-out."""
+    import xml.etree.ElementTree as ET
+    suite = ET.Element("testsuite", name="conform.py", tests=str(len(results)), failures=str(counts["FAIL"]),
+                       errors="0", skipped=str(counts["SKIP"] + counts["MANUAL"]),
+                       time=f"{sum(r['seconds'] for r in results):.3f}")
+    ET.SubElement(ET.SubElement(suite, "properties"), "property", name="target", value=args.url)
+    for r in results:
+        area, _, name = r["id"].rpartition(".")
+        case = ET.SubElement(suite, "testcase", classname=area or r["id"], time=f"{r['seconds']:.3f}",
+                             name=name + (f" (run {r['run']})" if args.repeat > 1 else ""))
+        text = "\n".join([r["message"]] + [f"note: {n}" for n in r["notes"]] + [f"hint: {h}" for h in r["hints"]]
+                         + r.get("trace", []))
+        if r["status"] == "FAIL":
+            ET.SubElement(case, "failure", message=r["message"]).text = text
+        elif r["status"] in ("SKIP", "MANUAL"):
+            ET.SubElement(case, "skipped", message=f"{r['status']}: {r['message']}")
+        elif r["status"] == "WARN" or r["notes"]:
+            ET.SubElement(case, "system-out").text = f"{r['status']}: {text}"
+    root =ET.Element("testsuites", name="conform.py")
+    root.append(suite)
+    ET.indent(root)
+    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
 
 
 def selected(args, item):
@@ -3470,6 +3688,9 @@ async def main():
                         help="fail unless the server advertises these capabilities or sign-in schemes, such as "
                              "'history,rooms'; repeatable")
     parser.add_argument("--strict", action="store_true", help="exit 1 on a WARN, as on a FAIL")
+    parser.add_argument("--hide-skips", action="store_true",
+                        help="print no SKIP lines, and count the skips by reason at the end")
+    parser.add_argument("--junit", metavar="PATH", help="write the results to PATH as JUnit XML, for CI")
     parser.add_argument("--list", action="store_true", help="list the checks, and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="print tracebacks of crashed checks")
     args = parser.parse_args()
@@ -3514,6 +3735,10 @@ async def main():
                             "notes": [], "hints": [], "seconds": 0})
     if run.server:
         print(f"{run.server.get('agent', 'server')}: {', '.join(run.server.get('capabilities', [])) or 'core only'}")
+    if args.hide_skips and run.skips:
+        print(f"Skipped {sum(run.skips.values())} checks, by reason and area:")
+        for reason, n in sorted(run.skips.items(), key=lambda item: -item[1]):
+            print(f"  {n:>4}  {reason}")
     checklist = list(dict.fromkeys(r["id"] for r in results if r["status"] == "MANUAL"))
     if checklist:
         print("For a person to check:")
@@ -3536,6 +3761,8 @@ async def main():
         report = {"tool": "conform.py", "version": VERSION, "target": args.url, "started": started,
                   "runs": args.repeat, "server": run.server, "results": results, "summary": counts}
         Path(args.json).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    if args.junit:
+        write_junit(args.junit, args, results, counts)
     return 1 if counts["FAIL"] or (args.strict and counts["WARN"]) else 0
 
 
