@@ -165,6 +165,7 @@ def describe(reply):
 
 
 def expect_error(reply, name, what):
+    policy(reply)  # a rate limit is the server's policy, whatever else the check expects
     must(code(reply) == CODES[name], f"{what}: expected error/{name}, got {describe(reply)}")
 
 
@@ -355,6 +356,18 @@ class Conn:
                 self.closed = True
                 self.changed.notify_all()
 
+    def closed_why(self, what):
+        """Raise for a connection that the server closed before what: Skip if the server's policy closed it, with an
+        error without id first, such as retry_after for a server at capacity (§1.1); otherwise Fail, with the close."""
+        notice = next((f for f in reversed(self.frames) if isinstance(f, dict) and "error" in f
+                       and "id" not in f and "method" not in f), None)
+        if notice and code(notice) in (CODES["retry_after"], CODES["denied"]):
+            raise Skip(f"the server's policy closed the connection before {what}: {describe(notice)}")
+        close_code, reason = getattr(self.ws, "close_code", None), getattr(self.ws, "close_reason", None)
+        raise Fail(f"the server closed the connection before {what}"
+                   + (f" (close code {close_code}" + (f", {reason!r}" if reason else "") + ")" if close_code else "")
+                   + (f", after {describe(notice)}" if notice else ""))
+
     def label(self):
         who = [self.name] if self.name else []
         if self.you:
@@ -406,7 +419,7 @@ class Conn:
         try:
             await self.ws.send(text)
         except ConnectionClosed:
-            raise Fail(f"the server closed the connection before {frame.get('method')}") from None
+            self.closed_why(frame.get("method"))
 
     async def send_raw(self, text):
         """Send text as one frame as it is, such as a frame that is not valid JSON. An id in it counts as sent, so
@@ -431,7 +444,9 @@ class Conn:
         await self.send(frame)
         i, reply = await self.reply(id, start)
         if reply is None:
-            raise Fail(f"no reply to {method}" + (" (connection closed)" if self.closed else f" within {WAIT:g}s"))
+            if self.closed:
+                self.closed_why(f"its reply to {method}")
+            raise Fail(f"no reply to {method} within {WAIT:g}s")
         return i, reply
 
     async def reply(self, id, start=0, timeout=None):
@@ -441,6 +456,7 @@ class Conn:
     async def call(self, method, params=None):
         """Send a request, fail on an error reply, and return the result."""
         _, reply = await self.request(method, params)
+        policy(reply)
         must("result" in reply, f"{method}: {describe(reply)}")
         return reply["result"]
 
@@ -737,6 +753,8 @@ class Run:
         connected = time.monotonic()
         _, server = await conn.wait(lambda f: f.get("method") == "server", timeout=SERVER_WAIT, what="its server frame")
         self.server_delays.append((self.check, time.monotonic() - connected if server else None))
+        if server is None and conn.closed:
+            conn.closed_why("its server frame")
         must(server is not None, f"no server frame within {SERVER_WAIT:g}s of connecting"
                                  + (" (the server closed the connection)" if conn.closed else ""))
         self.server = self.server or server["params"]
@@ -764,6 +782,7 @@ class Run:
         """Post a message, and return (result index, message_id)."""
         body = {"text": text, **({} if mentions is None else {"mentions": mentions})}
         i, reply = await conn.request("message", {"room_id": self.room, "body": body, **params})
+        await unless_policy(reply, "a post")
         must("result" in reply and isinstance(reply["result"].get("message_id"), str),
              f"posting: {describe(reply)}")
         return i, reply["result"]["message_id"]
@@ -1048,10 +1067,10 @@ async def _(run):
     should("result" in reply, f"a 250 kB message: {describe(reply)}")
 
 
-async def malformed(run, text, what, allowed):
-    """Send text as a frame, then me, and return (conn, replies but me's). Each must be error/allowed without an id:
-    the code that §1.1's table gives, and no id, as the frame is not a request (§1.1). The server MAY close the
-    connection instead, and MAY send no error at all."""
+async def malformed(run, text, what, allowed, sent_id=None):
+    """Send text as a frame, then me, and return (conn, replies but me's). Each must be error/allowed, the code that
+    §1.1's table gives. It has no id, or, as in JSON-RPC 2.0, the frame's own id when that is a string (sent_id).
+    The server MAY close the connection instead, and MAY send no error at all."""
     conn = await run.open()
     start = len(conn.frames)
     await conn.send_raw(text)
@@ -1066,9 +1085,10 @@ async def malformed(run, text, what, allowed):
                if isinstance(f, dict) and "method" not in f and i != me]
     for reply in replies:
         must(code(reply) == CODES[allowed], f"{what} got {describe(reply)}, not error/{allowed}")
-        if "id" in reply:
-            raise Fail(f"the {allowed} for {what} has id {shown(reply['id'])}: an error that is not a reply to a "
-                       "request has no id (§1.1)")
+        if "id" in reply and not (isinstance(sent_id, str) and reply["id"] == sent_id):
+            raise Fail(f"the {allowed} for {what} has id {shown(reply['id'])}"
+                       + (f", not the frame's {shown(sent_id)}" if isinstance(sent_id, str) else
+                          ": an error with no id that it could read has none (§1.1)"))
     if conn.closed:
         run.info(f"the server closed the connection after {what}")
     elif not replies:
@@ -1082,13 +1102,15 @@ async def _(run):
 
 
 @check("core.shape.invalid-request", "1.1", "a frame that is neither a request nor a notification gets "
-       "error/invalid_request without an id, or no reply")
+       "error/invalid_request, or no reply")
 async def _(run):
-    # Each id is a string in a frame (§1), and a frame with no method is neither a request nor a notification.
-    for text, what in ((json.dumps({"method": "me", "id": 42, "params": {}}), "a request whose id is a number"),
-                       (json.dumps({"id": next(ids), "params": {}}), "a frame with an id and no method"),
-                       (json.dumps(["me"]), "a JSON array")):
-        await malformed(run, text, what, "invalid_request")
+    # Each id is a string in a frame (§1), and a frame with no method is neither a request nor a notification. The
+    # error has no id, or the frame's own id when that is a string (§1.1, as in JSON-RPC 2.0); never a number.
+    id = next(ids)
+    for text, what, sent_id in ((json.dumps({"method": "me", "id": 42, "params": {}}), "a request whose id is a number", None),
+                                (json.dumps({"id": id, "params": {}}), "a frame with an id and no method", id),
+                                (json.dumps(["me"]), "a JSON array", None)):
+        await malformed(run, text, what, "invalid_request", sent_id)
 
 
 @check("core.retry.dedup", "1.2", "retries are deduplicated by (user_id, id)")
@@ -1223,6 +1245,9 @@ async def burst(run, conn, texts):
         must(reply, "no reply to a message of the burst" + (" (connection closed)" if conn.closed else ""))
         if code(reply) in (CODES["retry_after"], CODES["denied"]):
             raise Skip(f"the server's policy refused the burst: {describe(reply)}")
+        if code(reply) == CODES["too_large"]:
+            raise Skip(f"the server limits a message's size below the burst's {len(texts[0].encode())} bytes, as it "
+                       f"MAY (§1.1): {describe(reply)}")
         must(isinstance(reply.get("result", {}).get("message_id"), str), f"posting: {describe(reply)}")
         message_ids.append(reply["result"]["message_id"])
     return message_ids
@@ -1256,7 +1281,20 @@ def delivered(conn, start, room_id):
        "frame within 2s, the replies to their requests, and a broadcast")
 async def _(run):
     room = run.learned(run.room, "the default room is unknown", "core.message.default-room")
-    conns = await gather(*(run.open(auth=False) for _ in range(CONCURRENT)))
+    async def ask(conn, method, params):
+        id = next(ids)
+        start = len(conn.frames)
+        await conn.send({"method": method, "id": id, "params": params})
+        return (await conn.reply(id, start))[1]
+
+    async def connect():
+        """Open a connection, and sign it in as soon as its server frame came, as a server may time out a
+        connection that does not sign in."""
+        conn = await run.open(auth=False)
+        conn.name = f"Conformance {conn.number}"
+        return conn, await ask(conn, "auth", run.auth(conn.name))
+
+    conns, signed = zip(*await gather(*(connect() for _ in range(CONCURRENT))))
     delays = sorted(delay for id, delay in run.server_delays[-CONCURRENT:] if id == run.check)
     if delays and delays[-1] >= PROMPT / 4:
         run.info(f"server frames came {delays[0]:.1f}s to {delays[-1]:.1f}s after connecting")
@@ -1267,23 +1305,22 @@ async def _(run):
     must(not late, f"{len(late)} of {CONCURRENT} server frames came more than {PROMPT:g}s after connecting, "
                    f"up to {late[-1] if late else 0:.1f}s (§3.1)")
 
-    async def ask(conn, method, params):
-        id = next(ids)
-        start = len(conn.frames)
-        await conn.send({"method": method, "id": id, "params": params})
-        return (await conn.reply(id, start))[1]
-
     async def everyone(method, params):
         """Send method from every connection at once, and fail with the connections that got no reply."""
         replies = await gather(*(ask(c, method, params(c)) for c in conns))
+        for conn, reply in zip(conns, replies):
+            if reply is None and conn.closed:
+                conn.closed_why(f"its reply to {method}")
         missing = [str(c.number) for c, reply in zip(conns, replies) if reply is None]
         must(not missing, f"connection{'s' if len(missing) > 1 else ''} {', '.join(missing)} of {CONCURRENT} got no "
                           f"reply to {method} within {WAIT:g}s")
         return replies
 
-    for conn in conns:
-        conn.name = f"Conformance {conn.number}"
-    for conn, reply in zip(conns, await everyone("auth", lambda c: run.auth(c.name))):
+    for conn, reply in zip(conns, signed):
+        if reply is None:
+            if conn.closed:
+                conn.closed_why("its reply to auth")
+            raise Fail(f"{conn.label()} got no reply to auth within {WAIT:g}s")
         await unless_policy(reply, "a sign-in")
         must(signed_in(reply), f"{conn.label()}: auth got {describe(reply)}")
         conn.you = reply["result"]["you"]
