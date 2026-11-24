@@ -14,7 +14,7 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 
 - Apron protocol v10, advertising capability `history`.
 - One shared default room, `general`: requests without `room_id` use it, and its creation record, titled "General", is in history while retained. Without capability `rooms`, clients learn the room from the messages and history in it.
-- Guest authentication with `guest_` user IDs and changeable display names (`auth` or `me`; `""` clears the name). It offers only `guest`: the other schemes that PROTOCOL.md defines are `error/unsupported`, and any other scheme, or none, is `error/invalid_params`.
+- Guest authentication with `guest_` user IDs and changeable display names (`auth` or `me`; `""` clears the name). It offers only `guest`: any other scheme, or none, is `error/unsupported`.
 - `auth` and `me` results carry the complete `you`: `user_id` and `name`. Profile `avatar` and `ext` are declined.
 - Ordered, flat message snapshot broadcasts, including to the sender, before the sender's result. `message_id` equals the message's creation `log_id`. A message with no text and no embeds is `invalid_params`.
 - Replies via `reply_to` (a bare `{"message_id": ...}` reference); `body` (with `format` defaulting to `plain`) and embeds pass through.
@@ -36,6 +36,6 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 - Without capability `ext`, the server drops `ext` that clients send.
 - Requests are not deduplicated; retrying a message may create a duplicate.
 - Unknown top-level message fields are dropped.
-- Malformed requests may close the connection instead of returning protocol errors.
+- Invalid JSON gets `error/parse_error`, and a frame that is neither a request nor a notification gets `error/invalid_request`. Malformed params may close the connection instead of returning protocol errors.
 - No credentials or rate limits are enforced.
 - Incoming frames are limited to 256 KiB.

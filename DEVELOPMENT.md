@@ -57,19 +57,56 @@ MANUAL items are listed again at the end, and never fail a run. An ID is
 rule guards against (`A1` to `A5`) or a plain area, such as `shape`:
 `external.A3.verifier`, `core.shape.server-frame`. `--list` prints every check.
 A refusal by the server's policy, such as a guest who may only read, skips the
-check with the server's message.
+check with the server's message. A check that skips because a setup check, such
+as the one that finds the default room, did not pass gives that check's ID and
+result. A failed check can print hints under its line: which connection waited,
+for what, and what it received instead, whether another connection of the check
+received it, and what the rule asks for.
+
+Each check opens its own connections, often several, and each connection waits
+for its `server` frame. A server sends that frame immediately (§3.1), so build
+it from state that the server already holds, not from a request it makes per
+connection. `core.shape.server-frame-prompt` fails if a frame took more than 2
+seconds, and says which check waited longest. A connection waits up to 10
+seconds before its check fails.
 
 - `--only PATTERN` runs the checks whose IDs match a glob, such as
   `'external.A3.*'`. It repeats.
 - `--scheme NAME` runs one sign-in scheme's profile, and the core checks. It
   repeats.
+- `--trace` prints the frames that each connection of a failed check sent and
+  received, with the time since the connection opened.
+- `--repeat N` runs the checks N times, and lists the checks whose results
+  differ between the runs. A timing or concurrency bug often fails only some
+  of the time.
+- `--wait SECONDS` sets how long a check waits for an expected frame (default
+  2), such as for a server across a slow link. Longer waits scale with it. A
+  server frame that comes after 2 seconds still fails
+  `core.shape.server-frame-prompt`.
+- `--require NAMES` fails the run unless the server advertises these
+  capabilities or sign-in schemes, such as `history,rooms`. Without it, a
+  capability that a server stops advertising only turns its checks into SKIPs.
+  It repeats.
+- `--strict` exits 1 on a WARN, as on a FAIL.
+- `--hide-skips` prints no SKIP lines, and counts the skips by reason and area
+  at the end, such as `22  not advertised (webauthn)`.
+- `--junit PATH` writes JUnit XML for CI: a FAIL is a failure, a SKIP or MANUAL
+  is skipped, and a WARN passes with its message in `system-out`.
 - `--json PATH` writes a report: `{"tool", "version", "target", "started",
-  "results": [{"id", "section", "status", "message", "notes"}], "summary"}`,
-  with a count for each status in `summary`.
+  "runs", "server", "results": [{"id", "section", "status", "run", "message",
+  "notes", "hints", "seconds"}], "summary"}`, with a count for each status in
+  `summary`. `server` is the server frame's `params`. `run` counts from 1.
+  `hints` is empty unless the check failed. With `--trace`, each result also
+  has `trace`, its lines.
 - `--token` signs in with a token instead of as a guest. It posts messages and
   creates users, so point it at a test server.
 - `--origin` sets the `Origin` of a WebAuthn ceremony that conform.py runs
   itself, with a software authenticator. It defaults to the server's own origin.
+
+Some checks, such as `core.shape.schema`, judge every frame of the checks that
+ran before them. They say how many they judged, and skip if there were none, so
+with `--only` they cover only the frames of the chosen checks and of the setup
+checks those need. A violation names the check where it first came.
 
 Most sign-in checks need no one to sign in: begins, the sign-in pages' answers
 and headers, made-up codes and tokens, and `ext:oauth`'s endpoints. With
