@@ -5,13 +5,17 @@
 # ///
 """Check a running Apron server against PROTOCOL.md.
 
-Connects to a WebSocket URL, runs the core checklist (§3.6) and checks for each
-capability and sign-in scheme that the server advertises, and prints one line
-per check, with its stable ID and section: PASS, FAIL (a rule the server
-breaks), WARN (a SHOULD it does not follow), SKIP (with the reason), or MANUAL
-(a rule a machine cannot check, listed again at the end for a person). Every
-server frame is also validated against schema/apron.schema.json. Exits 1 if
-any check fails; MANUAL never fails.
+Runs the core checklist (§3.6) and checks for each capability and sign-in
+scheme that the server advertises, and prints one line per check, with its
+stable ID and section: PASS, FAIL (a rule the server breaks), WARN (a SHOULD it
+does not follow), SKIP (with the reason), or MANUAL (a rule a machine cannot
+check, listed again at the end for a person). Every server frame is also
+validated against schema/apron.schema.json. Exits 1 if any check fails; MANUAL
+never fails.
+
+Each check opens its own connections to the WebSocket URL, and each connection
+waits for its server frame (§3.1). core.shape.server-frame-prompt fails if one
+took more than 2 seconds.
 
 IDs are <scheme or area>.<area>.<name>, where the middle area is an attacker of
 the threat model (A1 to A5) or a plain area such as shape: external.A3.verifier,
@@ -93,6 +97,9 @@ from websockets.uri import parse_uri
 
 VERSION = 10
 WAIT = 2.0  # seconds to wait for an expected frame
+# Seconds to wait for each connection's server frame. One later than WAIT breaks §3.1's "immediately", and
+# core.shape.server-frame-prompt reports it once, but the check that opened the connection still goes on.
+SERVER_WAIT = WAIT * 5
 QUIET = 0.5  # seconds to wait for a frame that should not come
 MISSING = "9007199254740991"  # a log_id no test server has reached (2^53 - 1)
 BURST = 12  # messages a burst posts at once, without waiting for each result
@@ -415,6 +422,8 @@ class Run:
         self.args, self.schema = args, Schema()
         self.server, self.room, self.message = None, None, None  # learned along the way
         self.violations = {}  # check key -> set of descriptions, from inspect
+        self.server_delays = []  # (check ID, seconds) of each connection's server frame, from connect
+        self.check = None  # the ID of the running check
         self.order = {}  # (conn, room_id) -> greatest message log_id delivered
         self.conns = []  # of the running check
         self.notes = []  # of the running check, printed under its line
@@ -541,8 +550,11 @@ class Run:
                 await asyncio.sleep(0.25)
         conn = Conn(self, ws)
         self.conns.append(conn)
-        _, server = await conn.wait(lambda f: f.get("method") == "server")
-        must(server is not None, "no server frame on connect")
+        connected = time.monotonic()
+        _, server = await conn.wait(lambda f: f.get("method") == "server", timeout=SERVER_WAIT)
+        must(server is not None, f"no server frame within {SERVER_WAIT:g}s of connecting"
+                                 + (" (the server closed the connection)" if conn.closed else ""))
+        self.server_delays.append((self.check, time.monotonic() - connected))
         self.server = self.server or server["params"]
         if auth:
             conn.you = (await conn.call("auth", self.auth(name)))["you"]
@@ -3098,6 +3110,20 @@ def seen(key):
 
 
 check("core.shape.schema", "1", "every frame matches schema/apron.schema.json")(seen("schema"))
+
+
+@check("core.shape.server-frame-prompt", "3.1", "sends the server frame immediately on every connection")
+async def _(run):
+    late = [(id, delay) for id, delay in run.server_delays if delay > WAIT]
+    if late:
+        id, delay = max(late, key=lambda item: item[1])
+        raise Fail(f"{len(late)} of {len(run.server_delays)} connections waited more than {WAIT:g}s for their server "
+                   f"frame, up to {delay:.1f}s (in {id})")
+    slowest = max((delay for _, delay in run.server_delays), default=0)
+    if slowest >= QUIET:
+        run.info(f"the slowest server frame came {slowest:.1f}s after connecting")
+
+
 check("core.shape.one-reply", "1.1", "every request gets exactly one reply")(seen("replies"))
 check("core.shape.ids", "2", "IDs are well formed")(seen("ids"))
 check("core.delivery.order", "3.5.3", "each room's snapshots arrive in ascending log_id")(seen("order"))
@@ -3110,6 +3136,7 @@ STATUSES = ("PASS", "FAIL", "WARN", "SKIP", "MANUAL")
 
 async def run_check(run, item):
     """Run one check, and return (status, detail)."""
+    run.check = item.id
     try:
         if run.server is None and item is not CHECKS[0]:
             raise Skip("no server frame")

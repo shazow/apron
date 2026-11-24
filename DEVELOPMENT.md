@@ -59,6 +59,13 @@ rule guards against (`A1` to `A5`) or a plain area, such as `shape`:
 A refusal by the server's policy, such as a guest who may only read, skips the
 check with the server's message.
 
+Each check opens its own connections, often several, and each connection waits
+for its `server` frame. A server sends that frame immediately (§3.1), so build
+it from state that the server already holds, not from a request it makes per
+connection. `core.shape.server-frame-prompt` fails if a frame took more than 2
+seconds, and says which check waited longest. A connection waits up to 10
+seconds before its check fails.
+
 - `--only PATTERN` runs the checks whose IDs match a glob, such as
   `'external.A3.*'`. It repeats.
 - `--scheme NAME` runs one sign-in scheme's profile, and the core checks. It
