@@ -2489,6 +2489,12 @@ that finishes the exchange, as in external sign-in
 - Clients open `url` as [§4.12.2](#4122-signing-in) says. They finish with the
   action of begin, `code`, `code_verifier`, `redirect_uri`, and `client_id`,
   on any connection.
+- For a login, clients MAY add two hints to `url`: `login_hint`, the `user_id`
+  of the account that last signed in to the server on the client, and
+  `rp_id_last`, the RP ID of a login ceremony in the client that just ended
+  without a credential. Servers MAY use them only to order the RP IDs that
+  they ask for, and MAY ignore them. Servers MAY ask for `rp_id_last` last,
+  and MUST NOT leave it out because of the hint.
 - The page is an authorization endpoint of the server
   ([§4.12.3](#4123-authorization-server)).
 - The page refuses to be shown in a frame, and rejects client data with
