@@ -50,16 +50,16 @@ WebSockets that the object accepts can hibernate.
   - every message in a private room that the bot joined.
 - The owner can opt in to every new message in the rooms that the bot
   joined. Every platform that we looked at makes the full stream an opt-in.
-- Open question: a mention in a room that the bot has not joined. Telegram
-  delivers it, and lets the bot answer once, with no history.
-- Open question: edits, deletions, and reactions. To start, only new
-  messages call the webhook.
+- A mention is a user in `body.mentions`. Servers never parse `text` for
+  mentions ([§3.5.5](../PROTOCOL.md#355-mentions)). So a bot that also wants
+  `@user_id` in text, as [issue #139] suggests, opts in to every message.
+- To start, only new messages call the webhook
+  ([Q2](#open-questions)).
 - The server does not coalesce calls, wait first, or check whether the bot
   is attended, as it does for push to a person
-  ([§4.9.4](../PROTOCOL.md#494-wake)). Open question: whether the server
-  sends a burst as one call with several notifications, as Matrix does.
+  ([§4.9.4](../PROTOCOL.md#494-wake)).
 - The server skips a bot that has a live connection, since the bot already
-  gets the broadcast. Open question: call the webhook anyway.
+  gets the broadcast ([Q4](#open-questions)).
 
 ### Server: what a call carries
 
@@ -75,8 +75,16 @@ WebSockets that the object accepts can hibernate.
   ([§2.1](../PROTOCOL.md#21-log_id)). The server can keep the number in
   memory, with an epoch that changes when it restarts. A new epoch tells the
   bot to catch up.
-- The envelope says whether the sender is a bot, so that a bot does not have
-  to look it up.
+- The envelope says why the server called: a mention, a reply, a private
+  room, or every message. The server knows who wrote the message that was
+  replied to, so the bot does not have to remember the IDs of its own
+  messages, as [issue #139] asks bots on a connection to do.
+- The envelope carries the sender's `roles`
+  ([§3.3.4](../PROTOCOL.md#334-roles)), so that the bot can check who may
+  ask for what without a `room_list`.
+- The envelope says how many times the server tried the call, and when the
+  message came. A bot then knows when the moment has passed, such as for an
+  instant reaction.
 - After the server skips calls for a limit, the next call says how many it
   skipped, as Slack's `app_rate_limited` does.
 
@@ -85,9 +93,7 @@ WebSockets that the object accepts can hibernate.
 - The server signs each call. The signature covers a timestamp, the bot's
   `user_id`, and the raw body, so that a call cannot be replayed later or to
   another bot.
-- Open question: HMAC-SHA256 with a secret for each bot, as Slack and GitHub
-  use, or Ed25519 with one public key for the server, as Discord uses. With
-  Ed25519, the server keeps no secret for each bot, and can publish its key.
+- The signature scheme is open ([Q5](#open-questions)).
 - Before the server turns a webhook on, the URL proves that it answers for
   the bot, such as by echoing a challenge. This also stops an owner from
   aiming the server at a URL that is not a bot.
@@ -99,8 +105,7 @@ WebSockets that the object accepts can hibernate.
   the server busy.
 - The server retries a failed call a few times, with the same delivery ID,
   such as at once, after 1 minute, and after 5 minutes, as Slack does. Then
-  it gives up. Open question: how long to keep trying, since each retry
-  later than a moment costs the server a scheduled wake.
+  it gives up ([Q6](#open-questions)).
 - A bot recovers anything that was given up with `history`
   ([§4.3.5](../PROTOCOL.md#435-replay-and-recovery)). Apron bots can read
   history, unlike Telegram bots. So the server needs no long queue for each
@@ -110,13 +115,15 @@ WebSockets that the object accepts can hibernate.
   calls in 60 minutes, and only for apps with at least 1,000 calls an hour.
 - The owner can see the webhook's state: when it last failed and why, and
   how many calls it skipped. Telegram's `getWebhookInfo` does this.
+- The owner can pause the webhook and turn it on again without losing its
+  settings. This is the kill switch that [issue #139] asks for.
+- The owner can send a test call ([Q12](#open-questions)).
 
 ### Server: bounds
 
 - A bot's own messages, and other bots' messages, do not call webhooks, so
   that two bots cannot call each other forever. Telegram and Teams do the
-  same by default. Open question: allow it as an opt-in. Telegram allows it
-  since 2026, and asks bots to guard against loops.
+  same by default ([Q7](#open-questions)).
 - The server limits calls for each bot and for the whole server, each day.
 - Choosing whom to call costs no storage reads in the common case.
 - The webhook URL is a public `https` URL, as for push endpoints
@@ -129,8 +136,8 @@ WebSockets that the object accepts can hibernate.
   separate `/bot-webhook <url>` and `/bot-webhook off`.
 - The owner chooses what calls the webhook: messages meant for the bot, or
   every message.
-- Open question: whether the bot can also set its own webhook over the
-  protocol, and so whether this becomes an extension or stays server policy.
+- Whether the bot can also set its own webhook is open
+  ([Q8](#open-questions)).
 - Rules that sign out idle bots, or drop push registrations that are not
   renewed, must not drop a bot that is woken rarely. Otherwise the recipe
   tells bots to sign in on a schedule.
@@ -142,19 +149,20 @@ WebSockets that the object accepts can hibernate.
   ([Appendix B.2](../PROTOCOL.md#b2-a-bot-connects-posts-once-and-disconnects)).
 - The bot can read the context that it needs, such as a thread or the
   message that was replied to, with `history`, in the same connection.
-- Open question: an answer in the webhook's HTTP response, as Telegram,
-  Zulip, and Mattermost allow. It saves a connection for a bot that answers
-  at once. The few seconds of the deadline bound what it costs the server.
-  The bot cannot learn whether the post worked, as Telegram warns.
-- Open question: a plain HTTP endpoint for posting, for bots that cannot
-  open a WebSocket. Discord gives each call a token that posts follow-ups
-  for 15 minutes.
+- The server deduplicates requests by `user_id` and `id`
+  ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)), for 24 hours on
+  the Cloudflare server. A bot that takes its `id` from the message that it
+  answers posts once, even with no state of its own.
+- Other ways to answer are open ([Q9](#open-questions),
+  [Q10](#open-questions), [Q11](#open-questions)).
 
 ### Bot client
 
 - Check the signature and the timestamp, then answer `202` at once. Do the
   work after the answer, such as with `waitUntil` or a queue.
 - Drop a call whose delivery ID it has seen.
+- React at once to a call on its first try, such as with 👀, as [issue #139]
+  suggests. Skip it on a retry or a catch-up.
 - Remember the last sequence number. On a gap or a new epoch, catch up with
   `history` in the rooms where it matters.
 - Use one handler for a `message` from the webhook and one from a
@@ -166,12 +174,82 @@ WebSockets that the object accepts can hibernate.
   ([§3.5.4](../PROTOCOL.md#354-references)).
 - Wait for `retry_after` when the server asks for it.
 - Sign in on a schedule, if the server signs out idle bots.
+- Keep the token in one place, and remove token-like strings from what it
+  sends, as [issue #139] suggests.
+- [Issue #139] has a longer checklist for bots on a connection. Most of it
+  holds for bots woken by a webhook too.
 
 ### Reference implementation
 
 - A template bot for one serverless platform, to start with Cloudflare
   Workers.
 - Support for webhooks in the Cloudflare server (apron-server-cloudflare).
+- Where a serverless bot keeps its state ([Q14](#open-questions)).
+
+## Open questions
+
+Delivery:
+
+1. **Mentions outside the bot's rooms.** Does a mention in a room that the
+   bot has not joined call the webhook? Telegram's Guest Mode delivers it,
+   and lets the bot answer once, with no history. A bot's catch-up with
+   `history` and no `room_id` covers only the rooms that it joined
+   ([§4.3](../PROTOCOL.md#43-history)), so it would miss these.
+2. **Other events.** Do edits, deletions, reactions, and membership changes
+   call the webhook? A call when an owner adds the bot to a room would let
+   it greet once, as [issue #139] asks.
+3. **Bursts.** Does the server send a burst as one call with several
+   notifications, as Matrix and Meta do? It would cut requests from a busy
+   room without dropping any.
+4. **Connected bots.** Does the server call the webhook while the bot has a
+   live connection?
+
+Trust:
+
+5. **Signatures.** HMAC-SHA256 with a secret for each bot, as Slack and
+   GitHub use, or Ed25519 with one public key for the server, as Discord
+   uses? With Ed25519, the server keeps no secret for each bot, and can
+   publish its key. The bot then holds no second secret next to its token,
+   which [issue #139] asks for.
+6. **Retries.** How long does the server keep trying? Each retry later than
+   a moment costs the server a scheduled wake.
+7. **Bot to bot.** Can an owner opt in to calls for other bots' messages?
+   Telegram allows it since 2026, and asks bots to guard against loops.
+8. **Who sets the webhook.** Can the bot set its own webhook over the
+   protocol? If so, this becomes an extension, not server policy.
+
+Answering:
+
+9. **Answers in the response.** Can the bot answer in the webhook's HTTP
+   response, as Telegram, Zulip, and Mattermost allow? It saves a
+   connection for a bot that answers at once, and the deadline bounds what
+   it costs the server. It would also let the bot react or show typing at
+   once, which [issue #139] asks for, without a connection. The bot cannot
+   learn whether the post worked, as Telegram warns.
+10. **Posting over HTTP.** Is there a plain HTTP endpoint for posting, for
+    bots that cannot open a WebSocket? Discord gives each call a token that
+    posts follow-ups for 15 minutes.
+11. **Many calls at once.** A bot that answers each call on its own
+    connection opens many at once in a busy room. [Issue #139] tells bots to
+    hold one connection, ever. The Cloudflare server allows 8 signed-in
+    connections for each account, and the newest signs out the oldest. It
+    also admits 30 connections a minute for each address. A Worker's
+    address is its zone, so all the Workers in one account share it, as in
+    `<account>.workers.dev`. Does the bot send its answers through one
+    connection, such as in a Durable Object, or do Q9 or Q10 answer this?
+
+Operations:
+
+12. **Test calls.** Can the owner send a test call, or call again for a
+    message, as GitHub's redelivery does? [Issue #139] asks bots to prove
+    each change against a live server.
+13. **Catch-up.** Does the sequence number earn its place? A bot could
+    instead run one `history` call with no `room_id` on every wake. That
+    costs a read for each call, and misses rooms that the bot has not
+    joined (Q1).
+14. **Bot state.** Where does a serverless bot keep its sequence number,
+    checkpoint, and the fact that it greeted a room? Cloudflare's KV is
+    eventually consistent; a Durable Object is not.
 
 ## Prior art
 
@@ -191,3 +269,6 @@ goes away when the recipe is done.
 ## Limits
 
 To be written.
+
+[issue #139]: https://github.com/shazow/apron/issues/139
+[Issue #139]: https://github.com/shazow/apron/issues/139
