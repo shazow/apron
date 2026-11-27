@@ -17,5 +17,4 @@ Each recipe has its own file in [recipes/](recipes/):
   passkeys?
 - [Trusted federation](recipes/trusted_federation.md): Can two Apron servers
   share rooms?
-- [Bots](recipes/bot.md) (draft): Can a bot stay offline until a message
-  needs it?
+- [Bots](recipes/bot.md) (draft): How can a bot run on Apron?
