@@ -311,6 +311,50 @@ Shape of the hook:
     ID or sequence number. A webhook of its own can carry the whole
     message.
 
+Beyond messages, popular on other platforms:
+
+17. **Bot commands.** Can a bot offer its own commands, such as `/weather`,
+    that [`ext:command_list`](../extensions/ext_command_list.md) lists, and
+    that reach the bot as a call? Telegram (`setMyCommands`),
+    Discord (application commands), and Slack (slash commands) all do this.
+    Discord and Slack also offer commands on one message, such as
+    "Summarize this". An Apron command can already carry `reply_to`
+    ([§4.1](../PROTOCOL.md#41-command)). Today only the server defines
+    commands.
+18. **Buttons.** Can a bot offer choices, whose choice calls the bot?
+    Telegram has inline keyboards, Discord has components, and Slack has
+    Block Kit. Apron's `actions` embed
+    ([Appendix C.3](../PROTOCOL.md#c3-actions-embed)) is under
+    consideration, and only servers set it.
+19. **Private replies.** Can a bot answer only the user who asked, as
+    Slack's and Discord's ephemeral messages do, and Telegram's since 2026?
+    Apron's `~private` notices
+    ([Appendix A.1](../PROTOCOL.md#a1-system-identities-and-scoped-notices))
+    go to one connection, and only the server sends them.
+20. **Incoming webhooks.** Can a script post to a room with one HTTP POST to
+    a secret URL, with no bot code and no WebSocket? Discord, Slack, Zulip,
+    and Mattermost all offer this, mostly for alerts from CI and
+    monitoring. It differs from Q10, which is for bots that already
+    hold a token.
+21. **Following a conversation.** After a mention, does the bot get the
+    follow-ups in that thread without another mention? Slack's assistant
+    threads and Discord's threads work this way, and LLM bots depend on it.
+    Apron's threads are rooms ([§4.2.4](../PROTOCOL.md#424-creating-and-editing)),
+    so the bot could join the thread, and the scope could be set for each
+    room.
+22. **Thinking, streaming, and stop.** Can a user stop a bot's long answer?
+    Telegram streams drafts (`sendMessageDraft`), and tells the bot when the
+    user presses Stop (`stopped_message_generation`). Slack lets an
+    assistant show a status such as "is thinking…". Apron streams with
+    `embed:append` ([§4.8.5](../PROTOCOL.md#485-embedappend)), and shows
+    typing, but has no stop signal.
+23. **Finding and adding bots.** How do people find a bot, and add it to
+    their rooms or talk to it alone? Discord has an app directory and
+    invite links with permissions, Slack asks for scopes at install, and
+    Telegram opens a chat from a link (`?start=`). On the Cloudflare server
+    an owner adds their own bot, and members of a private room can add
+    anyone to it.
+
 ## Prior art
 
 Research notes from the official documentation, November 2026. This section
