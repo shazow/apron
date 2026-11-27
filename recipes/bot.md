@@ -309,7 +309,14 @@ Shape of the hook:
     with push could call bots. But its payload is at most 2048 bytes, cut
     to fit ([§4.9.3](../PROTOCOL.md#493-payload)), and it has no delivery
     ID or sequence number. A webhook of its own can carry the whole
-    message.
+    message. A middle way is a field on `relay` that asks for the whole
+    message, as Matrix pushers choose `data.format`. A kind from outside
+    the core is named with `ext:` ([§4](../PROTOCOL.md#4-capabilities)),
+    such as `ext:hook`. Prior art for registering pushes: Matrix pushers
+    (`kind: "http"` to a push gateway, which answers with the push keys to
+    remove), Mastodon's Web Push subscriptions (with `alerts` and `policy`
+    filters), UnifiedPush (Web Push through a distributor), and Telegram's
+    `setWebhook`, where a bot sets its own hook.
 
 Beyond messages, popular on other platforms:
 
