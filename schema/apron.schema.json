@@ -1192,7 +1192,16 @@
           "$ref": "#/$defs/OwnUser"
         },
         "new": {
-          "$ref": "#/$defs/User"
+          "description": "§3.3.3: {} with old when the account was removed",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/User"
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
         },
         "old": {
           "$ref": "#/$defs/User"
@@ -1214,6 +1223,26 @@
         "old": [
           "new"
         ]
+      },
+      "if": {
+        "required": [
+          "new"
+        ],
+        "properties": {
+          "new": {
+            "maxProperties": 0
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "old"
+        ],
+        "properties": {
+          "old": {
+            "maxProperties": 1
+          }
+        }
       }
     },
     "ReactionsEvent": {

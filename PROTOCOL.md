@@ -586,6 +586,8 @@ others who share a room with the user. `new` is the current object of the user.
     "old": {"user_id": "guest_1234", "name": "Ada L"}
   }
 }
+// <- the account and its records are gone
+{"method": "user", "params": {"new": {}, "old": {"user_id": "guest_1234"}}}
 ```
 
 - `you` replaces the identity of the connection. If its `user_id` changes, the
@@ -598,6 +600,13 @@ others who share a room with the user. `new` is the current object of the user.
   servers announce that the previous identity left. They do not send `old`.
 - After a `user_id` change, logged records keep the old `user_id`. Clients MAY
   treat it as the new identity.
+- A `new` of `{}` with `old` means that the server removed the account of
+  `old.user_id` and its records. `new` is not a user object. The server sends
+  it to others who shared a room with the user.
+- `old` in a removal carries only `user_id`.
+- Clients forget the kept object of a removed user, and every `user_id` that
+  became it. They remove the records whose `from` is the user, and the user's
+  memberships.
 
 #### 3.3.4 Roles
 
