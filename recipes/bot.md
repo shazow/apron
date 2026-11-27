@@ -316,7 +316,11 @@ Shape of the hook:
     (`kind: "http"` to a push gateway, which answers with the push keys to
     remove), Mastodon's Web Push subscriptions (with `alerts` and `policy`
     filters), UnifiedPush (Web Push through a distributor), and Telegram's
-    `setWebhook`, where a bot sets its own hook.
+    `setWebhook`, where a bot sets its own hook. No client uses `relay`
+    today. StupidSocial, a native iOS client, registers `webpush` with its
+    own stateless Web Push endpoint, which checks the server's VAPID
+    signature and forwards the ciphertext to APNs. Sidetable, for macOS,
+    shows local notifications only while it runs.
 
 Beyond messages, popular on other platforms:
 
@@ -361,6 +365,32 @@ Beyond messages, popular on other platforms:
     Telegram opens a chat from a link (`?start=`). On the Cloudflare server
     an owner adds their own bot, and members of a private room can add
     anyone to it.
+
+Shape of the hook, continued:
+
+24. **A token to connect back.** Does each call carry a short-lived token
+    that signs in as the bot, so that a hook needs no long-lived token of
+    its own? Discord's interaction token (15 minutes, follow-ups only) and
+    Slack's `response_url` (30 minutes, 5 uses) do this. It would be
+    limited to the bot's rooms and to posting, reacting, typing, and
+    reading, and could be signed rather than stored.
+25. **Frames in the response.** If Q9 is yes, is the response body a list
+    of request frames, one JSON object a line, that the server runs as the
+    bot? It reuses the frames that a connection sends, with no results
+    back.
+26. **One hook for each bot.** Is a hook a registration among many, as a
+    device's push is, or one setting for each bot, as Telegram's
+    `setWebhook` and Mastodon's one subscription for each token are? Push
+    registrations lapse unless a connection renews them, which suits
+    devices and not a hook that rarely connects.
+27. **Unregistering everything.** Can a client remove all the
+    registrations that it made without remembering each `url`, such as by
+    `push_id`, or all those that its credential made? Mastodon ties a
+    subscription to its access token.
+28. **The name.** `ext:hook` or `ext:webhook`? The thing is an outgoing
+    webhook, as Telegram's `setWebhook` and Zulip's outgoing webhooks are.
+    Incoming webhooks (Q20) go the other way. "Hook" here already means a
+    deploy hook that posts on a schedule.
 
 ## Prior art
 
