@@ -5,9 +5,9 @@ reference bot clients.
 
 **How can a bot run on Apron?** In one of two ways. A **daemon** holds a
 connection, reads every message in its rooms, and picks out what it needs.
-A **hook** sleeps until the server calls it, and then connects only for as
-long as it has work. Daemons work today. Hooks need a server that calls
-them, which this recipe drafts.
+A **webhook bot** sleeps until the server calls it, and then connects only for as
+long as it has work. Daemons work today. Webhook bots need a server that
+calls them, which this recipe drafts.
 
 ## Requirements
 
@@ -21,7 +21,7 @@ comes from.
    broadcast in the rooms that it joined, and filters each message as it
    comes. It suits a host that runs all the time, such as a server, a
    container, or a computer at home.
-2. **Hook.** The server calls the bot's hook when a message needs it. The
+2. **Webhook bot.** The server calls the bot's webhook when a message needs it. The
    bot then does what the message asks. It can connect to read more
    context, post an answer, or react, and then close. It suits a
    serverless host, such as a Cloudflare Worker, an AWS Lambda function, or
@@ -29,10 +29,10 @@ comes from.
 
 A bot that posts on its own schedule, such as a deploy hook or a cron job
 ([Appendix B.2](../PROTOCOL.md#b2-a-bot-connects-posts-once-and-disconnects)),
-is a hook that something other than the server calls.
+works like a webhook bot that something other than the server starts.
 
 A daemon suits a bot that reads most messages, or that answers at once and
-often. A hook suits a bot that answers now and then. A daemon on a
+often. A webhook suits a bot that answers now and then. A daemon on a
 serverless host costs as much as one on any other host, or more. For
 example, a Cloudflare Durable Object stays awake for as long as its own
 WebSocket client is open, because only WebSockets that the object accepts
@@ -50,11 +50,11 @@ can hibernate.
   - it replies to a message of the bot's
     ([§3.5.4](../PROTOCOL.md#354-references));
   - it is in a private room that the bot joined.
-- A daemon checks this itself. For a hook, the server checks it.
+- A daemon checks this itself. For a webhook, the server checks it.
 - Servers never parse `text` for mentions
   ([§3.5.5](../PROTOCOL.md#355-mentions)). A bot that also wants
   `@user_id` in text, as [issue #139] suggests, reads every message: as a
-  daemon, or as a hook that gets every message.
+  daemon, or as a webhook that gets every message.
 - A bot ignores its own messages and, by default, other bots' messages, so
   that two bots cannot answer each other forever.
 - A bot answers with an `id` that comes from the message that it answers.
@@ -108,22 +108,22 @@ Bot client:
 - Run under a supervisor that checks liveness, with a kill switch that
   keeps the bot off until its owner turns it on.
 
-### Hook: what calls the hook
+### Webhook: what calls the webhook
 
-- By default, the server calls the hook for each new message that is meant
+- By default, the server calls the webhook for each new message that is meant
   for the bot ([Both modalities](#both-modalities)).
 - The owner can opt in to every new message in the rooms that the bot
   joined. Every platform that we looked at makes the full stream an opt-in.
-- To start, only new messages call the hook ([Q2](#open-questions)).
+- To start, only new messages call the webhook ([Q2](#open-questions)).
 - The server does not coalesce calls, wait first, or check whether the bot
   is attended, as it does for push to a person
   ([§4.9.4](../PROTOCOL.md#494-wake)).
 - The server skips a bot that has a live connection, since the bot already
   gets the broadcast ([Q4](#open-questions)).
-- Other bots' messages do not call the hook. Telegram and Teams do the
+- Other bots' messages do not call the webhook. Telegram and Teams do the
   same by default ([Q7](#open-questions)).
 
-### Hook: what a call carries
+### Webhook: what a call carries
 
 - The body is a versioned envelope. It holds the same `message` notification
   that a daemon gets: the whole message, with `log_id`, not cut down to fit
@@ -139,7 +139,7 @@ Bot client:
   bot to catch up.
 - The envelope says why the server called: a mention, a reply, a private
   room, or every message. The server knows who wrote the message that was
-  replied to, so a hook does not have to remember the IDs of its own
+  replied to, so a webhook does not have to remember the IDs of its own
   messages, as a daemon does.
 - The envelope carries the sender's `roles`
   ([§3.3.4](../PROTOCOL.md#334-roles)), so that the bot can check who may
@@ -150,17 +150,17 @@ Bot client:
 - After the server skips calls for a limit, the next call says how many it
   skipped, as Slack's `app_rate_limited` does.
 
-### Hook: signing and verifying
+### Webhook: signing and verifying
 
 - The server signs each call. The signature covers a timestamp, the bot's
   `user_id`, and the raw body, so that a call cannot be replayed later or to
   another bot.
 - The signature scheme is open ([Q5](#open-questions)).
-- Before the server turns a hook on, the URL proves that it answers for
+- Before the server turns a webhook on, the URL proves that it answers for
   the bot, such as by echoing a challenge. This also stops an owner from
   aiming the server at a URL that is not a bot.
 
-### Hook: acknowledgement and failure
+### Webhook: acknowledgement and failure
 
 - The bot answers 2xx within a few seconds. Discord and Slack allow 3
   seconds. A slow answer counts as a failure, so that a slow bot cannot keep
@@ -172,37 +172,37 @@ Bot client:
   ([§4.3.5](../PROTOCOL.md#435-replay-and-recovery)). Apron bots can read
   history, unlike Telegram bots. So the server needs no long queue for each
   bot, as Telegram keeps for 24 hours.
-- The server turns off a hook that answers 404 or 410, or that fails most
+- The server turns off a webhook that answers 404 or 410, or that fails most
   calls for an hour, and tells the owner. Slack's rule is more than 95% of
   calls in 60 minutes, and only for apps with at least 1,000 calls an hour.
-- The owner can see the hook's state: when it last failed and why, and how
+- The owner can see the webhook's state: when it last failed and why, and how
   many calls it skipped. Telegram's `getWebhookInfo` does this.
-- The owner can pause the hook and turn it on again without losing its
+- The owner can pause the webhook and turn it on again without losing its
   settings. This is the kill switch that [issue #139] asks for.
 - The owner can send a test call ([Q12](#open-questions)).
 
-### Hook: bounds, configuration, and lifecycle
+### Webhook: bounds, configuration, and lifecycle
 
 - The server limits calls for each bot and for the whole server, each day.
 - Choosing whom to call costs no storage reads in the common case.
-- The hook URL is a public `https` URL, as for push endpoints
+- The webhook URL is a public `https` URL, as for push endpoints
   ([§4.9.1](../PROTOCOL.md#491-registration)).
-- The owner sets the hook when the bot is made, and changes or removes it
+- The owner sets the webhook when the bot is made, and changes or removes it
   later. On the Cloudflare server this could be `/invite-bot [url]`, and a
   separate `/bot-webhook <url>` and `/bot-webhook off`.
-- The owner chooses what calls the hook: messages meant for the bot, or
+- The owner chooses what calls the webhook: messages meant for the bot, or
   every message.
-- A new token does not drop the hook. A change to the hook does not rotate
+- A new token does not drop the webhook. A change to the webhook does not rotate
   the token.
-- Whether the bot can also set its own hook is open
+- Whether the bot can also set its own webhook is open
   ([Q8](#open-questions)).
 - Rules that sign out idle bots, or drop push registrations that are not
   renewed, must not drop a bot that is called rarely. Otherwise the recipe
-  tells hooks to sign in on a schedule.
+  tells webhooks to sign in on a schedule.
 
-### Hook: doing more after a call
+### Webhook: doing more after a call
 
-- A hook that needs more connects for a short time: for example `auth`,
+- A webhook that needs more connects for a short time: for example `auth`,
   then `history` for the thread or the message that was replied to, then
   `message`, then close
   ([Appendix B.2](../PROTOCOL.md#b2-a-bot-connects-posts-once-and-disconnects)).
@@ -223,32 +223,44 @@ Bot client:
 
 ### Reference implementation
 
-- A template daemon, and a template hook for one serverless platform, to
+- A template daemon, and a template webhook for one serverless platform, to
   start with Cloudflare Workers.
-- Support for hooks in the Cloudflare server (apron-server-cloudflare).
-- Where a serverless hook keeps its state ([Q14](#open-questions)).
+- Support for webhooks in the Cloudflare server (apron-server-cloudflare).
+- Where a serverless webhook keeps its state ([Q14](#open-questions)).
+
+## Decisions so far
+
+- The name is **webhook** (Q28). A bot that the server calls is a webhook
+  bot.
+- The webhook is a change to the protocol, not an extension, unless too much
+  stays undecided (Q6, Q8, Q16).
+- The webhook's response can carry request frames, one JSON object a line,
+  that the server runs as the bot (Q9, Q25).
+- A call can carry a short-lived token that signs in as the bot (Q24). Tokens
+  are opaque ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)), so its form is
+  up to the server, such as a signed token with an expiry and a prefix.
 
 ## Open questions
 
-Hook delivery:
+Webhook delivery:
 
 1. **Mentions outside the bot's rooms.** How does a bot learn of a
    mention in a room that it has not joined? A daemon gets no broadcast
    from that room, and a catch-up with `history` and no `room_id` covers
    only the rooms that it joined ([§4.3](../PROTOCOL.md#43-history)). For a
-   hook, the server could call it anyway. Telegram's Guest Mode delivers
+   webhook, the server could call it anyway. Telegram's Guest Mode delivers
    such a mention, and lets the bot answer once, with no history.
 2. **Other events.** Do edits, deletions, reactions, and membership changes
-   call the hook? A call when an owner adds the bot to a room would let
+   call the webhook? A call when an owner adds the bot to a room would let
    it greet once, as [issue #139] asks.
 3. **Bursts.** Does the server send a burst as one call with several
    notifications, as Matrix and Meta do? It would cut requests from a busy
    room without dropping any.
 4. **Both at once.** Can one bot be a daemon while it is connected, and a
-   hook while it is not? The server would skip the hook while the bot has
+   webhook bot while it is not? The server would skip the webhook while the bot has
    a live connection, and call it otherwise.
 
-Hook trust:
+Webhook trust:
 
 5. **Signatures.** HMAC-SHA256 with a secret for each bot, as Slack and
    GitHub use, or Ed25519 with one public key for the server, as Discord
@@ -259,12 +271,12 @@ Hook trust:
    a moment costs the server a scheduled wake.
 7. **Bot to bot.** Can an owner opt in to calls for other bots' messages?
    Telegram allows it since 2026, and asks bots to guard against loops.
-8. **Who sets the hook.** Can the bot set its own hook over the
+8. **Who sets the webhook.** Can the bot set its own webhook over the
    protocol? If so, this becomes an extension, not server policy.
 
-Hook answers:
+Webhook answers:
 
-9. **Answers in the response.** Can the bot answer in the hook's HTTP
+9. **Answers in the response.** Can the bot answer in the webhook's HTTP
    response, as Telegram, Zulip, and Mattermost allow? It saves a
    connection for a bot that answers at once, and the deadline bounds what
    it costs the server. It would also let the bot react or show typing at
@@ -301,9 +313,9 @@ Daemons:
     without joining each one? Joining lists the bot as a member of every
     room, and it misses rooms made after it last joined.
 
-Shape of the hook:
+Shape of the webhook:
 
-16. **A push kind, or its own thing.** Is the hook push kind `relay`
+16. **A push kind, or its own thing.** Is the webhook push kind `relay`
     ([§4.9.2](../PROTOCOL.md#492-kinds)) with a wake policy for bots, or a
     webhook of its own? `relay` is already in the protocol, so any server
     with push could call bots. But its payload is at most 2048 bytes, cut
@@ -312,11 +324,11 @@ Shape of the hook:
     message. A middle way is a field on `relay` that asks for the whole
     message, as Matrix pushers choose `data.format`. A kind from outside
     the core is named with `ext:` ([§4](../PROTOCOL.md#4-capabilities)),
-    such as `ext:hook`. Prior art for registering pushes: Matrix pushers
+    such as `ext:webhook`. Prior art for registering pushes: Matrix pushers
     (`kind: "http"` to a push gateway, which answers with the push keys to
     remove), Mastodon's Web Push subscriptions (with `alerts` and `policy`
     filters), UnifiedPush (Web Push through a distributor), and Telegram's
-    `setWebhook`, where a bot sets its own hook. No client uses `relay`
+    `setWebhook`, where a bot sets its own webhook. No client uses `relay`
     today. StupidSocial, a native iOS client, registers `webpush` with its
     own stateless Web Push endpoint, which checks the server's VAPID
     signature and forwards the ciphertext to APNs. Sidetable, for macOS,
@@ -366,10 +378,10 @@ Beyond messages, popular on other platforms:
     an owner adds their own bot, and members of a private room can add
     anyone to it.
 
-Shape of the hook, continued:
+Shape of the webhook, continued:
 
 24. **A token to connect back.** Does each call carry a short-lived token
-    that signs in as the bot, so that a hook needs no long-lived token of
+    that signs in as the bot, so that a webhook needs no long-lived token of
     its own? Discord's interaction token (15 minutes, follow-ups only) and
     Slack's `response_url` (30 minutes, 5 uses) do this. It would be
     limited to the bot's rooms and to posting, reacting, typing, and
@@ -378,19 +390,44 @@ Shape of the hook, continued:
     of request frames, one JSON object a line, that the server runs as the
     bot? It reuses the frames that a connection sends, with no results
     back.
-26. **One hook for each bot.** Is a hook a registration among many, as a
+26. **One webhook for each bot.** Is a webhook a registration among many, as a
     device's push is, or one setting for each bot, as Telegram's
     `setWebhook` and Mastodon's one subscription for each token are? Push
     registrations lapse unless a connection renews them, which suits
-    devices and not a hook that rarely connects.
+    devices and not a webhook that rarely connects.
 27. **Unregistering everything.** Can a client remove all the
     registrations that it made without remembering each `url`, such as by
     `push_id`, or all those that its credential made? Mastodon ties a
     subscription to its access token.
-28. **The name.** `ext:hook` or `ext:webhook`? The thing is an outgoing
-    webhook, as Telegram's `setWebhook` and Zulip's outgoing webhooks are.
-    Incoming webhooks (Q20) go the other way. "Hook" here already means a
-    deploy hook that posts on a schedule.
+28. **The name.** Decided: webhook. The thing is an outgoing webhook, as
+    Telegram's `setWebhook` and Zulip's outgoing webhooks are. Incoming
+    webhooks (Q20) go the other way.
+
+Federation and transports:
+
+29. **One webhook for bots and links.** The trusted federation recipe
+    already wakes a mirror that sleeps: its link registers a `relay` push
+    with the wake scope `ext:remote`, and the owner POSTs `{"push_id": …}`
+    or `{}` to a URL on the mirror's own host, one push for several records
+    ([trusted federation](trusted_federation.md#draft-extension-extremote)).
+    Does the webhook replace this, with a mode that only knocks and may
+    cover a burst, beside the mode that carries each message?
+30. **Other transports.** Is HTTPS POST enough to wake an account, or does
+    the webhook also need to open a WebSocket, or another transport, to the
+    account that it wakes?
+
+Learned from Zulip:
+
+31. **Failures that people see.** Zulip posts "Failure! Bot is unavailable"
+    in the conversation when its outgoing webhook fails, and sends the
+    bot's owner a direct message with the status and the response. Does
+    the server tell the asker, the owner, or both?
+32. **Storage for bots.** Zulip keeps up to 10,000,000 characters of key and
+    value storage for each bot on the server, so that a webhook bot needs
+    no database. Does an Apron server offer this, which would answer Q14?
+33. **Buttons as messages.** Zulip's button widget makes a click send an
+    ordinary message, with the bot mentioned, so a click calls the bot by
+    the usual path. Is that enough for Q18, without a callback of its own?
 
 ## Prior art
 
@@ -403,9 +440,9 @@ goes away when the recipe is done.
 | Discord | Gateway WebSocket for messages; HTTP only for commands and other interactions | Message text only in DMs and mentions, unless `MESSAGE_CONTENT` is approved | Ed25519 of timestamp and body; probes with bad signatures, and removes URLs that accept them | 3 seconds; webhook events retried for 10 minutes, then disabled | In the response, or deferred, with a token for follow-ups for 15 minutes |
 | Slack | Events API over HTTP, or Socket Mode | `app_mention`, or every message where the app is a member with `*:history` scopes | HMAC-SHA256 of `v0:timestamp:body`; 5-minute window | 3 seconds; retried at once, after 1 minute, after 5 minutes; off after more than 95% failures in an hour | Web API; slash commands in the response, or `response_url` 5 times in 30 minutes |
 | Matrix application service | Ordered transactions of events, each with a `txnId` | Every event in rooms that its namespaces match | `Authorization: Bearer <hs_token>` | Queued, with exponential backoff; a retry repeats its transaction exactly | Client-server API |
-| Zulip | Outgoing webhook, or an event queue with long polling | Mentions and DMs | Fixed token in the body | 10 seconds; retries not documented | `{"content": …}` in the response, or the REST API |
+| Zulip | Outgoing webhook, or an event queue with long polling | Mentions and DMs; never other bots' messages | Fixed token in the body, never rotated | 10 seconds; 4 tries on a timeout or a failed connection, none on an error status; then "Failure!" in the conversation and a direct message to the owner | `{"content": …}` in the response, which the server posts in the same topic, or the REST API |
 | Teams (Bot Framework) | HTTP POST of Activities | Mentions, unless the install grants permission for all messages; never other bots | JWT from the Bot Connector, checked against its published keys | 15 seconds | Connector REST API |
-| GitHub (not chat) | Webhook | What the hook subscribes to | HMAC-SHA256 (`X-Hub-Signature-256`); a delivery ID | 10 seconds; no automatic retries; manual redelivery for 3 days | Not applicable |
+| GitHub (not chat) | Webhook | What the webhook subscribes to | HMAC-SHA256 (`X-Hub-Signature-256`); a delivery ID | 10 seconds; no automatic retries; manual redelivery for 3 days | Not applicable |
 
 ## Limits
 
