@@ -507,15 +507,12 @@ webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
       {
         "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
         "from": {"user_id": "alice", "name": "Alice", "roles": ["admin"]},
-        "reply_to": {"message_id": "1724803100377"},
+        "reply_to": {
+          "message_id": "1724803100377", "log_id": "1724803100377", "room_id": "general",
+          "from": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
+          "body": {"text": "Sunny today, 21°C."}
+        },
         "body": {"text": "@bot_ada and tomorrow?", "mentions": ["bot_ada"]}
-      }
-    ],
-    "replied": [
-      {
-        "message_id": "1724803100377", "log_id": "1724803100377", "room_id": "general",
-        "from": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
-        "body": {"text": "Sunny today, 21°C."}
       }
     ],
     "rooms": [{"room_id": "general", "log_id": "1724790000000", "title": "General"}],
@@ -570,7 +567,6 @@ class Call {                    // ext:webhook notification params: the body of 
   joined?: Room[];              // rooms that the account joined, with members
   left?: { room_id: string }[]; // rooms that the account is no longer in, for any reason
   // records that help read the call
-  replied?: Message[];          // the messages that messages in `messages` reply to
   users?: User[];               // user objects (§3.3.1) that the call refers to
 }
 ```
@@ -636,10 +632,11 @@ Calls:
 - `joined` and `left` tell the account of changes to its own rooms, under
   every scope. `left` also covers a room that the account lost without a
   membership record.
-- A call also carries records that help read it: `rooms` and `users` that
-  its records refer to, and in `replied`, the messages that its messages
-  reply to, one level deep. These are records that the account may see. The
-  account applies them as any record
+- A call also carries records that help read it: the `rooms` and `users`
+  that its records refer to. A message's `reply_to` is the full snapshot of
+  the message that it replies to, as servers may send it
+  ([§3.5.4](../PROTOCOL.md#354-references)). These are records that the
+  account may see. The account applies them as any record
   ([§2.3](../PROTOCOL.md#23-records-and-replay)).
 - With `format` `"knock"`, a call carries no records, and `latest_log_id` is
   the newest record that matched. One knock covers every record committed
@@ -649,8 +646,8 @@ Calls:
   `since` is absent, or is not where the account last read to, the account
   reads `history` from where it last read
   ([§4.3.5](../PROTOCOL.md#435-replay-and-recovery)).
-- To fit its limits, the server leaves out `replied` first, then the other
-  records that help read the call. Then it splits the records over several
+- To fit its limits, the server first sends `reply_to` bare, then leaves out
+  the other records that help read the call. Then it splits the records over several
   calls.
 - `token` (optional) is a bearer token that signs in as the account
   ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)). The server chooses its
