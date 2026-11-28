@@ -913,7 +913,9 @@
           ]
         },
         "wake": {
+          "description": "Selects at least one scope that the server supports for the kind (§4.9.2).",
           "type": "array",
+          "minItems": 1,
           "items": {
             "type": "string"
           }

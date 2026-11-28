@@ -322,6 +322,16 @@
           "badge"
         ]
       }
+    },
+    {
+      "name": "empty-wake",
+      "valid": false,
+      "why": "a wake that selects no scope that the server supports for the kind is invalid_params",
+      "params": {
+        "kind": "webhook",
+        "url": "https://bot.example/apron",
+        "wake": []
+      }
     }
   ],
   "servers": [

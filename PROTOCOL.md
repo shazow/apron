@@ -2285,9 +2285,11 @@ server accepts `push_register` and `push_unregister`.
   - `records`: every record of the rooms that the user joined: message
     snapshots, reactions, memberships, and room records.
 - Servers advertise only the scopes that they implement for each kind, and
-  ignore other scopes in `wake`. An empty `wake` wakes for nothing. Without
-  `wake`, the server uses its default scopes. These SHOULD be `mentions` and
-  `replies`, and also `private` for a `webhook`, where advertised.
+  ignore other scopes in `wake`. A `wake` that selects no scope that the
+  server supports for the kind is `invalid_params`.
+- Without `wake`, the server uses its default scopes. These SHOULD be
+  `mentions` and `replies`, and also `private` for a `webhook`, where
+  advertised.
 - Servers do not push transient notices ([§3.5.3](#353-delivery)), and do not
   wake a user for the user's own messages, except under `records`. Server
   policy decides other wake rules, such as rate limits.
@@ -2462,10 +2464,8 @@ Registration:
 
 Wake:
 
-- A message from a user with the role `bot` ([§3.3.4](#334-roles)) matches
-  none of `mentions`, `replies`, and `private`.
 - Changes to the account's rooms, which a call carries in `joined` and
-  `left`, call the webhook under every scope.
+  `left`, always call the webhook.
 - Servers SHOULD NOT call while the account has a connection open.
 
 Calls:
@@ -2478,6 +2478,7 @@ Calls:
   committed before the server sent it.
 - Servers SHOULD send each `reply_to` as a full snapshot
   ([§3.5.4](#354-references)).
+- The user objects of a call carry their `roles` ([§3.3.4](#334-roles)).
 - When `since` is absent, or is not where the account last read, the account
   reads `history` from its place ([§4.3.5](#435-replay-and-recovery)).
 - The server signs each call and each verification with the Standard Webhooks
@@ -3149,9 +3150,6 @@ server.
 - After `denied`, clients do not reconnect on their own. After `retry_after`,
   they wait for the delay ([§1.1](#11-envelope-and-replies)). This prevents
   reconnection storms from revoked or misconfigured clients.
-- A message from a bot wakes no webhook under `mentions`, `replies`, or
-  `private` ([§4.9.4](#494-webhook)). So two bots that answer each other do not
-  call each other without end.
 
 ---
 

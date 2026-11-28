@@ -56,8 +56,9 @@ can hibernate.
   ([§3.5.5](../PROTOCOL.md#355-mentions)). A bot that also wants
   `@user_id` in text, as [issue #139] suggests, reads every message: as a
   daemon, or as a webhook that gets every message.
-- A bot ignores its own messages and, by default, other bots' messages, so
-  that two bots cannot answer each other forever.
+- A bot ignores its own messages and, by default, messages from users with
+  the role `bot`, so that two bots cannot answer each other forever. The
+  server does not filter them for the bot.
 - A bot answers with an `id` that comes from the message that it answers.
   The server deduplicates requests by `user_id` and `id`
   ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)), for 24 hours on
@@ -124,9 +125,11 @@ Bot client:
   is attended, as it does for push to a person.
 - The server skips a bot that has a live connection, since the bot already
   gets the broadcast.
-- Other bots' messages match none of `mentions`, `replies`, and `private`.
-  Telegram and Teams do the same by default. `joined` and `records` include
-  them.
+- The server does not filter other bots' messages: they match each scope
+  like any message. A call carries each sender's user object with its
+  `roles` ([§4.9.4](../PROTOCOL.md#494-webhook)), so the bot ignores other
+  bots itself. Telegram and Teams filter them on the server by default. A
+  server can still limit calls between bots, as policy.
 
 ### Webhook: what a call carries
 
@@ -242,7 +245,8 @@ Bot client:
   such as with `waitUntil` or a queue.
 - Answer the endpoint verification even before the bot can check a call.
 - Drop a call whose `webhook-id` it has seen.
-- Answer only the messages in `wake`.
+- Answer only the messages in `wake`. By default, skip those whose `from`
+  has the role `bot`.
 - React at once to a call on its first `attempt`, such as with 👀, as
   [issue #139] suggests. Skip it on a retry.
 - Remember where the last call ended. When `since` is absent or differs,
@@ -267,8 +271,11 @@ Bot client:
   `webhook` registration does not lapse while the bot stays away (Q26).
   Registering again with the same `url` returns its state.
 - Each push kind has its own wake scopes, in `server.push`. `records` adds
-  every record of the bot's rooms (Q2). Other bots' messages match none of
-  `mentions`, `replies`, and `private` (Q7).
+  every record of the bot's rooms (Q2).
+- The protocol does not filter bots' messages (Q7). A call carries each
+  sender's user object with its `roles`, so a bot ignores other bots'
+  messages if it wants. A server can still limit calls between bots, as
+  policy.
 - Calls follow Standard Webhooks, signed with Ed25519 (`v2a`), to a URL that
   passed endpoint verification (Q5).
 - A call is one `webhook` notification, sent as JSON. Its `params` are flat:
@@ -318,7 +325,7 @@ Webhook trust:
    which [issue #139] asks for.
 6. **Retries.** Settled: server policy, with the advice under [acknowledgement and failure](#webhook-acknowledgement-and-failure). How long does the server keep trying? Each retry later than
    a moment costs the server a scheduled wake.
-7. **Bot to bot.** Settled in v11 ([§4.9.4](../PROTOCOL.md#494-webhook)). Can an owner opt in to calls for other bots' messages?
+7. **Bot to bot.** Settled in v11: the server does not filter bots' messages, and a call carries each sender's `roles`, so the bot decides ([§4.9.4](../PROTOCOL.md#494-webhook)). Can an owner opt in to calls for other bots' messages?
    Telegram allows it since 2026, and asks bots to guard against loops.
 8. **Who sets the webhook.** Settled in v11 ([§4.9.4](../PROTOCOL.md#494-webhook)). Can the bot set its own webhook over the
    protocol? If so, this becomes an extension, not server policy.
