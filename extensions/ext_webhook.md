@@ -47,7 +47,7 @@ webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
     "you": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
     "attempt": 1, "since": "1724803100377",
     "first_log_id": "1724803200042", "last_log_id": "1724803200042",
-    "token": "apron_webhook_…",
+    "token": "apron_webhook_…", "token_expires": "1724804101000",
     "wake": {"1724803200042": ["mentions", "replies"]},
     "messages": [
       {
@@ -104,6 +104,7 @@ class Call {                    // ext:webhook notification params: the body of 
   last_log_id?: string;
   latest_log_id?: string;       // "knock" only: the newest record that matched
   token?: string;               // a bearer token that signs in as the account (§3.2.1)
+  token_expires?: string;       // when token stops working, in the format of a log_id (§2.1)
   wake?: Record<string, string[]>;  // message_id: the scopes that the message matched
   skipped?: number;             // calls left out for a limit since the previous call
   // records, as history names them (§4.3)
@@ -213,6 +214,10 @@ class Call {                    // ext:webhook notification params: the body of 
   ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)). The server chooses its
   lifetime and what it allows, such as 15 minutes of posting, reacting,
   typing, and `history` in the account's rooms.
+- `token_expires` is present with `token`. It is the time when the token
+  stops working, in the format of a `log_id`
+  ([§2.1](../PROTOCOL.md#21-log_id)). The token MAY stop working earlier,
+  such as when the account gets a new bearer token.
 - `skipped` counts the calls that the server left out for a limit since the
   previous call.
 
@@ -234,8 +239,8 @@ class Call {                    // ext:webhook notification params: the body of 
 
 ## Responses
 
-- The URL answers 2xx within a time limit that the server chooses. Anything
-  else is a failure.
+- The URL answers 2xx within 30 seconds. Anything else is a failure, and so
+  is no answer within 30 seconds.
 - An empty 2xx acknowledges the call.
 - The body of a 2xx MAY be request frames, one a line, as on a byte-stream
   transport ([§1](../PROTOCOL.md#1-transport--framing)).

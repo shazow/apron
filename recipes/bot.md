@@ -164,9 +164,9 @@ Bot client:
 
 ### Webhook: acknowledgement and failure
 
-- The bot answers 2xx within a few seconds. Discord and Slack allow 3
-  seconds. A slow answer counts as a failure, so that a slow bot cannot keep
-  the server busy.
+- The bot answers 2xx within 30 seconds, the top of the range that Standard
+  Webhooks suggests. Discord and Slack allow 3 seconds. A slow answer counts
+  as a failure, so that a slow bot cannot keep the server busy for long.
 - The server retries a failed call a few times, with the same delivery ID,
   such as at once, after 5 seconds, and after 5 minutes. Then it gives up
   ([Q6](#open-questions)).
