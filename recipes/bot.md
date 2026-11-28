@@ -159,7 +159,8 @@ Bot client:
 - The signature follows Standard Webhooks, with Ed25519
   ([Draft extension](#draft-extension-extwebhook)).
 - Before the server turns a webhook on, the URL proves that it answers for
-  the bot, such as by echoing a challenge. This also stops an owner from
+  the bot, by signing a challenge with what it uses to check calls. This
+  also stops an owner from
   aiming the server at a URL that is not a bot.
 
 ### Webhook: acknowledgement and failure
