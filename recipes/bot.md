@@ -482,14 +482,14 @@ open while it waits.
   }
 }
 // <- the setting as it is now; the server verifies the URL first
-{"id": "c1", "result": {"url": "https://bot.example/apron", "wake": ["mentions", "replies", "private"], "format": "full", "state": "verifying"}}
+{"id": "c1", "result": {"url": "https://bot.example/apron", "wake": ["mentions", "replies", "private"], "format": "full", "endpoint_id": "wh_4f2kQ9xT", "state": "verifying"}}
 ```
 
 ```http
 POST /apron HTTP/1.1
 Host: bot.example
 Content-Type: application/json
-webhook-id: 1724803200042.bot_ada.1
+webhook-id: msg_1724803200042_4f2kQ9xT
 webhook-timestamp: 1724803201
 webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
 
@@ -531,16 +531,16 @@ class Webhook {                 // ext:webhook params and result
   wake?: string[];              // default ["mentions", "replies", "private"]
   format?: string = "full";     // "full" or "knock"
   paused?: boolean = false;
+  endpoint_id?: string;         // result only: the Standard Webhooks endpoint ID, without "."
   state?: string;               // result only: "verifying", "on", "paused", or "failing"
   error?: string;               // result only: why the last call failed
 }
 
 class Call {                    // the body of a call
-  type: string;                 // "apron.records", or "apron.verify"
+  type: string;                 // "apron.records"
   user_id: string;              // the account that the call is for
   since?: string;               // last_log_id of the previous call to this webhook
   token?: string;               // a bearer token that signs in as the account (§3.2.1)
-  challenge?: string;           // apron.verify only
   wake?: Record<string, string[]>;  // message_id: the scopes that it matched
   skipped?: number;             // calls left out for a limit since the previous call
   rooms?: Room[];               // the arrays and log_id bounds of a history result (§4.3)
@@ -572,12 +572,15 @@ Setting the webhook:
 
 Verifying:
 
-- When `url` changes, the server sends a call of `type` `"apron.verify"`
-  with a `challenge`, and no records. `state` is `"verifying"` until the
-  URL answers.
-- The URL answers 2xx with `{"challenge": …}` and the same value. Then
-  `state` is `"on"`. Otherwise it is `"failing"`, with `error`, and the
-  server sends nothing else to the URL.
+- When `url` changes, the server verifies the URL with the endpoint
+  verification extension of Standard Webhooks: a signed POST with a
+  `webhook-challenge` header, which the URL answers with
+  `webhook-challenge-response`. An echo of the challenge would prove
+  neither that the URL holds the key nor that it agreed to calls from this
+  server.
+- `state` is `"verifying"` until the URL answers. Then it is `"on"`.
+  Otherwise it is `"failing"`, with `error`, and the server sends nothing
+  else to the URL.
 - Server policy can bind a link's URL to the address of its server instead,
   as the trusted federation recipe does.
 
@@ -625,9 +628,13 @@ Signatures:
 - Calls follow Standard Webhooks, with its headers `webhook-id`,
   `webhook-timestamp`, and `webhook-signature`.
 - `webhook-id` identifies the call. It is the same on each retry.
-- The server signs with the asymmetric scheme `v2a` (Ed25519), with the
-  account's `user_id` as the endpoint ID. `keys` lists the public keys. A
-  call can carry several signatures while a key changes.
+- The server signs with the asymmetric scheme `v2a` (Ed25519). `keys` lists
+  the public keys. A call can carry several signatures while a key changes.
+- The endpoint ID is `endpoint_id` from the result. The server chooses it
+  for each webhook, keeps it for as long as the webhook has its `url`, and
+  never puts `.` in it, as Standard Webhooks requires. A `user_id` can
+  contain `.`, so it is not the endpoint ID.
+- `webhook-id` never contains `.` either.
 - The account checks a signature with one of `keys`, checks that
   `webhook-timestamp` is within 5 minutes, and drops a `webhook-id` that it
   has seen.
@@ -662,7 +669,9 @@ answers `ext:webhook` as an unknown method
 
 ### References
 
-- [Standard Webhooks 1.0](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md)
+- [Standard Webhooks 1.0](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md),
+  and its [endpoint verification](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/extensions/endpoint-verification.md)
+  extension
 - [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032): Ed25519
 
 ## Limits
