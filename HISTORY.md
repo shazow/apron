@@ -72,6 +72,7 @@ PROTOCOL.md's front matter (`version`, `updated`) matches it.
 ### New
 
 - **Passkeys go anywhere:** Clients on any domain can use a server's passkeys through its passkey page, which the `webauthn` begin refers to. Before, only clients on the server's domain or a related one could. [§4.10.1](PROTOCOL.md#4101-passkey-page) ([#115](https://github.com/shazow/apron/pull/115))
+- **Account removal reaches clients:** Servers that remove an account and its records, such as in an admin purge, can say so with a `user` notification whose `new` is `{}`. Clients forget the user and remove the user's records and memberships, so that they don't keep them until they load those rooms from scratch. [§3.3.3](PROTOCOL.md#333-changes) ([#144](https://github.com/shazow/apron/pull/144))
 - **Sign-in buttons, in the server's own words:** Servers can name each sign-in scheme for their users, such as "Acme SSO", in the `server` frame's `labels`. [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115))
 - **One mention for a whole role:** Clients can mention everyone in a room who has a role, with the prefix `@&`. [A.3](PROTOCOL.md#a3-prefixes-in-text) ([#101](https://github.com/shazow/apron/pull/101))
 - **Extension data at sign-in:** Clients can send `ext` in `auth`, for extensions that sign in. Servers without such an extension ignore it. [§3.2](PROTOCOL.md#32-authentication) ([#115](https://github.com/shazow/apron/pull/115))
