@@ -61,6 +61,18 @@ version gets a level-2 heading `vN (YYYY-MM-DD)` above the others, and
 PROTOCOL.md's front matter (`version`, `updated`) matches it.
 -->
 
+## v11 (2026-11-28)
+
+### Breaking
+
+- **Push configuration moves into each kind:** Clients read the wake scopes from the `wake` of each kind in `server.push`, and the VAPID key from `webpush.vapid_key`, because `server.push.wake` and `webpush.key` are gone. Servers MAY still send both for clients of version 10, so that each kind can support its own scopes without breaking those clients. [§4.9](PROTOCOL.md#49-push), [§4.9.2](PROTOCOL.md#492-kinds) ([#143](https://github.com/shazow/apron/pull/143))
+- **The `badge` scope is gone:** Servers send a push only for a message, and send none for a message that `mute` or a chosen `dnd` silences. Clients that kept an app badge current with `badge` get `unread` only with a message push. [§4.9.4](PROTOCOL.md#494-wake), [§4.9.3](PROTOCOL.md#493-payload) ([#143](https://github.com/shazow/apron/pull/143))
+- **The `relay` kind is gone:** Native apps that registered `relay` register `webpush` with a Web Push endpoint of their own instead, since nothing implemented relays. The payload of §4.9.3 is now the `webpush` payload, and other kinds define their own. [§4.9.2](PROTOCOL.md#492-kinds), [§4.9.3](PROTOCOL.md#493-payload) ([#143](https://github.com/shazow/apron/pull/143))
+
+### New
+
+- **Bots run on webhooks:** Bots and other accounts that run only when called can register the push kind `webhook`, so that they keep no connection open. Servers that offer it verify the URL first, then POST the records that concern the account in signed Standard Webhooks calls, and run the request frames that the account answers with. [§4.9.5](PROTOCOL.md#495-webhook), [§4.9.1](PROTOCOL.md#491-registration), [§5.5](PROTOCOL.md#55-network-privacy-and-server-requests) ([#143](https://github.com/shazow/apron/pull/143))
+
 ## v10 (2026-11-16)
 
 ### Breaking

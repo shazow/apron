@@ -10,7 +10,7 @@ written, and in reactions as a placeholder ([§4.7](../PROTOCOL.md#47-reactions)
 // <- the server frame
 {
   "method": "server", "params": {
-    "apron": 10, "auth": ["token"], "capabilities": ["reactions", "ext:emoji"],
+    "apron": 11, "auth": ["token"], "capabilities": ["reactions", "ext:emoji"],
     "ext": {"emoji": {"catalog_url": "https://chat.example/e/catalog-7f3a9c.json"}}
   }
 }

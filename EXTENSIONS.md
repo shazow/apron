@@ -48,6 +48,3 @@ Each extension has its own file in [extensions/](extensions/):
   server's external sign-in ([§4.12](PROTOCOL.md#412-external-sign-in)) can go,
   such as "GitHub" and "Google", and lets a client send the user's choice with
   the begin.
-- [`ext:webhook`](extensions/ext_webhook.md) (draft): Adds webhooks: the server
-  sends an account the records that concern it, in HTTPS calls to a URL that
-  the account sets.

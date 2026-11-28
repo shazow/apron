@@ -8,7 +8,7 @@ offer only the commands that they handle themselves.
 
 ```jsonc
 // <- the server frame
-{"method": "server", "params": {"apron": 10, "auth": ["token"], "capabilities": ["command", "ext:command_list"]}}
+{"method": "server", "params": {"apron": 11, "auth": ["token"], "capabilities": ["command", "ext:command_list"]}}
 // -> list the commands that the user can use
 {"method": "ext:command_list", "id": "c40", "params": {}}
 // <-

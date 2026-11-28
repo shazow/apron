@@ -527,23 +527,74 @@
           }
         },
         "push": {
+          "description": "Each push kind's configuration, with the wake scopes that the server supports for it (§4.9). A top-level wake list, and webpush.key, are for clients of version 10.",
           "type": "object",
           "properties": {
             "webpush": {
               "type": "object",
               "properties": {
-                "key": {
+                "vapid_key": {
                   "type": "string"
+                },
+                "key": {
+                  "description": "For clients of version 10: the value of vapid_key (§4.9).",
+                  "type": "string"
+                },
+                "wake": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
-                "key"
+                "vapid_key"
+              ]
+            },
+            "webhook": {
+              "type": "object",
+              "properties": {
+                "signature_keys": {
+                  "description": "Ed25519 public keys, whpk_ and base64 (§4.9.5).",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^whpk_"
+                  }
+                },
+                "wake": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "format": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "signature_keys",
+                "wake"
               ]
             },
             "wake": {
               "type": "array",
               "items": {
                 "type": "string"
+              }
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "wake": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -832,16 +883,13 @@
       "type": "object",
       "properties": {
         "kind": {
-          "description": "A key of server.push other than wake (§4.9).",
+          "description": "A key of server.push (§4.9.1).",
           "type": "string",
           "not": {
             "const": "wake"
           }
         },
         "url": {
-          "type": "string"
-        },
-        "token": {
           "type": "string"
         },
         "push_id": {
@@ -868,6 +916,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "format": {
+          "description": "webhook: one of server.push.webhook.format (§4.9.5).",
+          "type": "string"
         }
       },
       "required": [
@@ -1134,7 +1186,32 @@
       "type": "object"
     },
     "PushRegisterResult": {
-      "type": "object"
+      "description": "§4.9.5: a webhook registration's state; {} for other kinds",
+      "type": "object",
+      "properties": {
+        "endpoint_id": {
+          "type": "string",
+          "pattern": "^[^.]+$"
+        },
+        "state": {
+          "enum": [
+            "verifying",
+            "on",
+            "failing"
+          ]
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "dependentRequired": {
+        "endpoint_id": [
+          "state"
+        ],
+        "state": [
+          "endpoint_id"
+        ]
+      }
     },
     "PushUnregisterResult": {
       "type": "object"
@@ -1645,7 +1722,8 @@
                 "server",
                 "user",
                 "pong",
-                "status"
+                "status",
+                "webhook"
               ]
             },
             {
@@ -1811,6 +1889,28 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "webhook"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "params"
+            ],
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/WebhookEvent"
+              }
+            }
+          }
         }
       ]
     },
@@ -1901,12 +2001,13 @@
           "room_update",
           "server",
           "status",
-          "user"
+          "user",
+          "webhook"
         ]
       }
     },
     "PushPayload": {
-      "description": "§4.9: the payload every push kind delivers",
+      "description": "§4.9.3: the payload of a webpush push",
       "type": "object",
       "properties": {
         "push_id": {
@@ -1935,7 +2036,10 @@
             }
           ]
         }
-      }
+      },
+      "required": [
+        "message"
+      ]
     },
     "StatusParams": {
       "description": "§4.5",
@@ -1999,6 +2103,105 @@
       "required": [
         "mute"
       ]
+    },
+    "WebhookEvent": {
+      "description": "§4.9.5: the params of a webhook call",
+      "type": "object",
+      "properties": {
+        "server": {
+          "type": "string"
+        },
+        "you": {
+          "$ref": "#/$defs/OwnUser"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "since": {
+          "$ref": "#/$defs/LogId"
+        },
+        "first_log_id": {
+          "$ref": "#/$defs/LogId"
+        },
+        "last_log_id": {
+          "$ref": "#/$defs/LogId"
+        },
+        "latest_log_id": {
+          "$ref": "#/$defs/LogId"
+        },
+        "token": {
+          "type": "string"
+        },
+        "token_expires": {
+          "$ref": "#/$defs/LogId"
+        },
+        "wake": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Message"
+          }
+        },
+        "reactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReactionSet"
+          }
+        },
+        "memberships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Membership"
+          }
+        },
+        "rooms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Room"
+          }
+        },
+        "joined": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Room"
+          }
+        },
+        "left": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RoomRef"
+          }
+        },
+        "users": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/User"
+          }
+        }
+      },
+      "required": [
+        "server",
+        "you",
+        "attempt"
+      ],
+      "dependentRequired": {
+        "token": [
+          "token_expires"
+        ]
+      }
     }
   }
 }

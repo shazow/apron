@@ -14,7 +14,7 @@ repeats a variant, seen stays the same while a user's shown status stays
 offline and arrives with each complete user object with a shown offline and
 each user notification that changes it to offline,
 and the cases of tests/fixtures/push.json are valid, or break a rule, as they
-say (including the 2048-byte payload limit). The cases of
+say (including the 2048-byte limit of a webpush payload). The cases of
 tests/fixtures/terminal.json have unique names, a level, and an expected
 screen that fits 80×40 as the file describes it.
 
@@ -81,8 +81,8 @@ KNOWN = {
     "capability": {"command", "history", "rooms", "edit", "status", "activity", "reactions", "embed:upload", "embed:append", "embed:terminal", "ext"},
     "auth scheme": {"guest", "token", "webauthn", "email", "external"},
     "embed kind": {"upload", "append", "terminal", "iframe", "html"},
-    "push kind": {"relay", "webpush"},
-    "wake scope": {"mentions", "private", "replies", "joined", "badge"},
+    "push kind": {"webpush", "webhook"},
+    "wake scope": {"mentions", "private", "replies", "joined", "records"},
 }
 
 # Unknown names a fixture keeps without the prefix on purpose.
@@ -105,9 +105,13 @@ def names(value):
     if value.get("method") == "server":
         yield from (("capability", c) for c in params.get("capabilities", []))
         yield from (("auth scheme", s) for s in params.get("auth", []) + params.get("signup", []))
-        push = params.get("push", {})
-        yield from (("push kind", k) for k in push if k != "wake")
-        yield from (("wake scope", w) for w in push.get("wake", []))
+        for kind, config in params.get("push", {}).items():
+            if kind == "wake":  # for clients of version 10 (§4.9)
+                yield from (("wake scope", w) for w in config)
+                continue
+            yield "push kind", kind
+            if isinstance(config, dict):
+                yield from (("wake scope", w) for w in config.get("wake", []))
     if value.get("method") == "auth" and "scheme" in params:
         yield "auth scheme", params["scheme"]
     if value.get("method") == "push_register":
@@ -257,6 +261,10 @@ def check_fixtures():
                 check_case(case, case["payload"], "PushPayload", f"{where} payload {case['name']}", PUSH_LIMIT)
             for case in data["registrations"]:
                 check_case(case, case["params"], "PushRegisterParams", f"{where} registration {case['name']}")
+            for case in data.get("servers", []):
+                check_case(case, case["frame"], "ServerFrame", f"{where} server {case['name']}")
+            for case in data.get("webhooks", []):
+                check_case(case, case["frame"], "ServerNotification", f"{where} webhook {case['name']}")
 
 
 TERMINAL_COLS, TERMINAL_ROWS = 80, 40
@@ -325,6 +333,8 @@ def check_case(case, instance, name, where, limit=None):
     while errors and errors[-1].startswith(where + ":"):
         found.append(errors.pop())
     check_names(instance if name != "PushRegisterParams" else {"method": "push_register", "params": instance}, where)
+    if name == "ServerFrame":
+        check_version(instance, where)
     while errors and errors[-1].startswith(where + ":"):
         found.append(errors.pop())
     size = len(json.dumps(instance, ensure_ascii=False, separators=(",", ":")).encode())
