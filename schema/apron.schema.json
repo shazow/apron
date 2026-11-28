@@ -555,7 +555,7 @@
               "type": "object",
               "properties": {
                 "signature_keys": {
-                  "description": "Ed25519 public keys, whpk_ and base64 (§4.9.5).",
+                  "description": "Ed25519 public keys, whpk_ and base64 (§4.9.4).",
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -893,6 +893,7 @@
           "type": "string"
         },
         "push_id": {
+          "description": "webpush: an opaque ID that the payload carries (§4.9.3).",
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]{1,64}$"
         },
@@ -918,7 +919,7 @@
           }
         },
         "format": {
-          "description": "webhook: one of server.push.webhook.format (§4.9.5).",
+          "description": "webhook: one of server.push.webhook.format (§4.9.4).",
           "type": "string"
         }
       },
@@ -1186,7 +1187,7 @@
       "type": "object"
     },
     "PushRegisterResult": {
-      "description": "§4.9.5: a webhook registration's state; {} for other kinds",
+      "description": "§4.9.4: a webhook registration's state; {} for other kinds",
       "type": "object",
       "properties": {
         "endpoint_id": {
@@ -2105,7 +2106,7 @@
       ]
     },
     "WebhookEvent": {
-      "description": "§4.9.5: the params of a webhook call",
+      "description": "§4.9.4: the params of a webhook call",
       "type": "object",
       "properties": {
         "server": {

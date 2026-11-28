@@ -1704,7 +1704,7 @@ A user's status has three views:
   input. They then SHOULD send the seconds since the last input. They do not
   wait on a connection that starts unattended.
 - Servers MAY treat the connection as idle from the time that `idle` reports,
-  such as to wake the user for mentions since then ([§4.9.4](#494-wake)).
+  such as to wake the user for mentions since then ([§4.9.3](#493-web-push)).
 - Servers never send `idle`.
 
 **`mute`** silences the notifications of the user:
@@ -2221,12 +2221,10 @@ advertises it.
 `server.push` ([§3.1](#31-server-frame)) maps each supported push kind to its
 public configuration. The `wake` key of each configuration lists the wake
 scopes that the server supports for the kind. If `server.push` is present, the
-server accepts `push_register` and `push_unregister`. A server that advertises
-`push` SHOULD advertise `status` ([§4.5](#45-status)).
+server accepts `push_register` and `push_unregister`.
 
-- For clients of version 10, servers MAY also send `server.push.wake`, a list
-  of wake scopes, and `server.push.webpush.key`, with the value of
-  `vapid_key`. Clients ignore both, and `wake` is not a kind.
+- Servers MAY also send `server.push.wake` and `server.push.webpush.key` as in
+  version 10, for clients of that version. Clients ignore both.
 
 ```jsonc
 // <- the server frame offers webpush and webhook
@@ -2252,9 +2250,9 @@ server accepts `push_register` and `push_unregister`. A server that advertises
 
 #### 4.9.1 Registration
 
-- `kind` is a key of `server.push`. Fields other than `url`, `push_id`, and
-  `wake` are specific to the kind. Third-party kinds ([§4](#4-capabilities))
-  define their own delivery.
+- `kind` is a key of `server.push`. Fields other than `url` and `wake` are
+  specific to the kind. Third-party kinds ([§4](#4-capabilities)) define their
+  own delivery.
 - `url` is required. A registration belongs to the authenticated user and its
   `url`. It stays after the connection that made it closes.
 - A registration with the same `url` replaces the earlier registration of the
@@ -2264,41 +2262,72 @@ server accepts `push_register` and `push_unregister`. A server that advertises
   An endpoint that the server will not send to is `invalid_params`.
 - Servers SHOULD accept only `https` push endpoints that resolve to addresses
   that are not internal.
-- `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`. Clients
-  choose one for each server and account. It is an opaque value that shows
-  neither the server nor the account.
-- Clients SHOULD register on each connection. Servers MAY drop a registration
-  other than a `webhook` that the client did not renew within a
-  server-defined period. Servers MAY also drop the least recently renewed
-  registrations above a server-defined number for each user.
+- Servers MAY drop the least recently renewed registrations above a
+  server-defined number for each user.
 - Clients SHOULD unregister before they sign out. Servers MAY remove the
   registrations of a user when they revoke the sessions of that user.
 - Servers remove a registration whose `url` does not accept pushes, such as
   one that answers 410, or a push service that answers 404.
 
-#### 4.9.2 Kinds
+#### 4.9.2 Wake
 
-- `webpush`: Web Push ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)),
-  which delivers the payload of [§4.9.3](#493-payload).
-  - `vapid_key` is the VAPID public key of the server
-    ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)): an uncompressed
-    P-256 point in unpadded base64url. Clients subscribe with it as the
-    application server key. They subscribe again when it changes.
-  - `url` is the subscription endpoint. `keys` (required) holds its `p256dh`
-    and `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
-  - Servers encrypt the payload as one `aes128gcm` record
-    ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign with the
-    private key for `vapid_key`.
-  - Servers send `TTL` and `Urgency` headers with every push. `Urgency` is
-    `normal` for a push that only `joined` selects, and `high` for all
-    others.
-- `webhook`: HTTPS calls to a URL that the account serves
-  ([§4.9.5](#495-webhook)).
+- `wake` (optional) lists the scopes that a registration wakes for. These
+  scopes select new records in rooms that the user can see:
+  - `mentions`: new messages whose `mentions` list the user
+    ([§3.5.5](#355-mentions)). Servers MAY also wake for an edit that adds the
+    user to `mentions`.
+  - `private`: new messages in private rooms
+    ([§4.2.4](#424-creating-and-editing)) that the user joined, and in their
+    threads.
+  - `replies`: new messages whose `reply_to` refers to a message of the user
+    ([§3.5.4](#354-references)).
+  - `joined`: new messages in rooms that the user joined.
+  - `records`: every record of the rooms that the user joined: message
+    snapshots, reactions, memberships, and room records.
+- Servers advertise only the scopes that they implement for each kind, and
+  ignore other scopes in `wake`. An empty `wake` wakes for nothing. Without
+  `wake`, the server uses its default scopes. These SHOULD be `mentions` and
+  `replies`, and also `private` for a `webhook`, where advertised.
+- Servers do not push transient notices ([§3.5.3](#353-delivery)), and do not
+  wake a user for the user's own messages, except under `records`. Server
+  policy decides other wake rules, such as rate limits.
 
-#### 4.9.3 Payload
+#### 4.9.3 Web Push
 
-A `webpush` push delivers this payload: a UTF-8 JSON object of at most 2048
-bytes.
+`webpush` delivers pushes with Web Push
+([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)), such as to a browser or
+a phone.
+
+Registration:
+
+- `vapid_key` is the VAPID public key of the server
+  ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)): an uncompressed P-256
+  point in unpadded base64url. Clients subscribe with it as the application
+  server key. They subscribe again when it changes.
+- `url` is the subscription endpoint. `keys` (required) holds its `p256dh` and
+  `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
+- `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`. Clients
+  choose one for each server and account. It is an opaque value that shows
+  neither the server nor the account.
+- Clients SHOULD register on each connection. Servers MAY drop a registration
+  that the client did not renew within a server-defined period.
+
+Delivery:
+
+- Servers encrypt the payload as one `aes128gcm` record
+  ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign with the
+  private key for `vapid_key`.
+- Servers send `TTL` and `Urgency` headers with every push. `Urgency` is
+  `normal` for a push that only `joined` selects, and `high` for all others.
+- Servers send no push for a message that `mute` or a chosen `dnd`
+  ([§4.5.1](#451-values)) silences.
+- A server that offers `webpush` SHOULD advertise `status`
+  ([§4.5](#45-status)).
+- Suggested convention: wake a user only when the user's presence is `idle`
+  or `offline` ([§4.5.1](#451-values)). Servers MAY wait a short time first,
+  and skip the push if the `read_message_id` of the user is past the message.
+
+Each push carries this payload, a UTF-8 JSON object of at most 2048 bytes:
 
 - `push_id`: the `push_id` of the registration, if it has one. Clients drop a
   payload with a `push_id` that they do not know. A client that registered a
@@ -2327,32 +2356,7 @@ bytes.
 }
 ```
 
-#### 4.9.4 Wake
-
-- `wake` (optional) lists the scopes that a registration wakes for. These
-  scopes select new messages in rooms that the user can see:
-  - `mentions`: messages whose `mentions` list the user
-    ([§3.5.5](#355-mentions)). Servers MAY also wake for an edit that adds the
-    user to `mentions`.
-  - `private`: messages in private rooms ([§4.2.4](#424-creating-and-editing))
-    that the user joined, and in their threads.
-  - `replies`: messages whose `reply_to` refers to a message of the user
-    ([§3.5.4](#354-references)).
-  - `joined`: messages in rooms that the user joined.
-- Servers advertise only the scopes that they implement, and ignore other
-  scopes in `wake`. An empty `wake` wakes for nothing. Without `wake`, the
-  server uses its default scopes. These SHOULD be `mentions` and `replies`,
-  where advertised.
-- Servers send no push for a message that `mute` or a chosen `dnd`
-  ([§4.5.1](#451-values)) silences.
-- Servers do not push transient notices ([§3.5.3](#353-delivery)), and do not
-  wake a user for the user's own messages. Server policy decides other wake
-  rules, such as rate limits.
-- Suggested convention: wake a user only when the user's presence is `idle`
-  or `offline` ([§4.5.1](#451-values)). Servers MAY wait a short time first,
-  and skip the push if the `read_message_id` of the user is past the message.
-
-#### 4.9.5 Webhook
+#### 4.9.4 Webhook
 
 A webhook lets an account that runs only when called, such as a bot on a
 serverless host, keep no connection open. The server sends the records that
@@ -2410,7 +2414,7 @@ webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
 ```ts
 class WebhookConfig {           // server.push.webhook
   signature_keys: string[];     // the server's Ed25519 public keys, "whpk_" and base64
-  wake: string[];               // the scopes that the server supports (§4.9.4)
+  wake: string[];               // the scopes that the server supports (§4.9.2)
   format?: string[] = ["full"]; // the formats that the server offers: "full", "knock"
 }
 
@@ -2434,7 +2438,7 @@ class Webhook {                 // params of a webhook call
   wake?: object;                // message_id: the scopes that the message matched
   skipped?: number;             // calls left out for a limit since the previous call
 
-  messages?: Message[];         // records, as history names them (§4.3)
+  messages?: Message[];         // records, split by kind as in a history result (§4.3)
   reactions?: object[];
   memberships?: object[];
   rooms?: Room[];               // also the rooms that the records refer to
@@ -2458,15 +2462,10 @@ Registration:
 
 Wake:
 
-- `records` selects every record of the rooms that the account joined,
-  the account's own included: message snapshots, reactions, memberships, and
-  room records.
 - A message from a user with the role `bot` ([§3.3.4](#334-roles)) matches
   none of `mentions`, `replies`, and `private`.
 - Changes to the account's rooms, which a call carries in `joined` and
   `left`, call the webhook under every scope.
-- The server does not wait before a call, and does not apply `mute` and
-  `dnd`.
 - Servers SHOULD NOT call while the account has a connection open.
 
 Calls:
@@ -2997,7 +2996,7 @@ server.
   user's address, get the token from the user or the client, and sign in to
   the other server as the user (mix-up).
 - Clients send `resource` for the server that they are connected to, never
-  one that a server names ([§4.12.2](#4122-signing-in)), and a server redeems
+  one that a server sends ([§4.12.2](#4122-signing-in)), and a server redeems
   only a code for its own origin ([§4.12.4](#4124-redemption)). So a server
   that points its `url` at another server's page gets no code that the other
   server would redeem. Servers on one host and port share an origin, so they
@@ -3121,13 +3120,13 @@ server.
   that it does not own.
 - `write_url` is a credential that expires ([§4.8.3](#483-writes)). So only
   the sender can write an upload.
-- Servers accept only `https` push endpoints that do not resolve to internal
-  addresses ([§4.9.1](#491-registration)). This prevents server-side request
-  forgery (SSRF) against the server's network.
+- The rule against push endpoints at internal addresses
+  ([§4.9.1](#491-registration)) prevents server-side request forgery (SSRF)
+  against the server's network.
 - Servers verify a webhook's `url` before they call it
-  ([§4.9.5](#495-webhook)). So an account cannot aim the server's calls, and
+  ([§4.9.4](#494-webhook)). So an account cannot aim the server's calls, and
   their load, at a URL that does not answer for it.
-- Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
+- Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-web-push)).
   So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
 - Interactive clients ask the user before they connect to a server that the
@@ -3150,6 +3149,9 @@ server.
 - After `denied`, clients do not reconnect on their own. After `retry_after`,
   they wait for the delay ([§1.1](#11-envelope-and-replies)). This prevents
   reconnection storms from revoked or misconfigured clients.
+- A message from a bot wakes no webhook under `mentions`, `replies`, or
+  `private` ([§4.9.4](#494-webhook)). So two bots that answer each other do not
+  call each other without end.
 
 ---
 

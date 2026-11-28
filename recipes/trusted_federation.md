@@ -39,7 +39,7 @@ account that reads the room, and writes as the mirror's users
    of the room, and B answers its user.
 5. B can stay connected, or close the connection when the room is quiet. A
    wakes it with a webhook call when the room changes
-   ([§4.9.5](../PROTOCOL.md#495-webhook)).
+   ([§4.9.4](../PROTOCOL.md#494-webhook)).
 6. A is the authority for the room: its order, its threads, and its
    moderation. B decides which of its users are in the mirror room.
 
@@ -287,7 +287,7 @@ Links:
   that exist when the link joins, and to each new one.
 - A link's webhook is a `push_register` of kind `webhook`, with the wake
   scope `records` and the format `knock`
-  ([§4.9.5](../PROTOCOL.md#495-webhook)). It wakes the link for every record
+  ([§4.9.2](../PROTOCOL.md#492-wake), [§4.9.4](../PROTOCOL.md#494-webhook)). It wakes the link for every record
   of the rooms that the link has joined, the link's own included. An owner
   with `ext:remote` offers both in `server.push.webhook`.
 - A knock covers every record committed before the owner sent it, and a

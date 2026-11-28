@@ -1,7 +1,7 @@
 {
   "format": 1,
   "kind": "push",
-  "description": "Push payloads, registrations, server frames, and webhook calls (§4.9). A webpush payload is a UTF-8 JSON object of at most 2048 bytes, measured here as compact JSON (no whitespace between tokens). A valid payload conforms to the schema and fits; each invalid case breaks the one rule its why states. Registrations are push_register params, servers are server frames that advertise push, and webhooks are webhook call bodies (§4.9.5). tests/schema/validate.py checks them all.",
+  "description": "Push payloads, registrations, server frames, and webhook calls (§4.9). A webpush payload is a UTF-8 JSON object of at most 2048 bytes, measured here as compact JSON (no whitespace between tokens). A valid payload conforms to the schema and fits; each invalid case breaks the one rule its why states. Registrations are push_register params, servers are server frames that advertise push, and webhooks are webhook call bodies (§4.9.4). tests/schema/validate.py checks them all.",
   "references": [
     "PROTOCOL.md#49-push"
   ],

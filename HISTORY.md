@@ -65,12 +65,12 @@ PROTOCOL.md's front matter (`version`, `updated`) matches it.
 
 ### Breaking
 
-- **Push configuration moves into each kind:** Clients read the wake scopes from the `wake` of each kind in `server.push`, and the VAPID key from `webpush.vapid_key`, because `server.push.wake` and `webpush.key` are gone. Servers MAY still send both for clients of version 10, so that each kind can support its own scopes without breaking those clients. [§4.9](PROTOCOL.md#49-push), [§4.9.2](PROTOCOL.md#492-kinds) ([#143](https://github.com/shazow/apron/pull/143))
-- **`relay` and `badge` retire:** Native apps that registered `relay` register `webpush` with a Web Push endpoint of their own instead, since nothing implemented relays, and the payload of §4.9.3 is now the `webpush` payload. `badge` worked only through relays, so servers now push only for a message: clients get `unread` only with a message push, and no push for a message that `mute` or a chosen `dnd` silences. [§4.9.2](PROTOCOL.md#492-kinds), [§4.9.3](PROTOCOL.md#493-payload), [§4.9.4](PROTOCOL.md#494-wake) ([#143](https://github.com/shazow/apron/pull/143))
+- **Push configuration moves into each kind:** Clients read the wake scopes from the `wake` of each kind in `server.push`, and the VAPID key from `webpush.vapid_key`, because `server.push.wake` and `webpush.key` are gone. Servers MAY still send both for clients of version 10, so that each kind can support its own scopes without breaking those clients. [§4.9](PROTOCOL.md#49-push), [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
+- **`relay` and `badge` retire:** Native apps that registered `relay` register `webpush` with a Web Push endpoint of their own instead, since nothing implemented relays, and the payload of §4.9.3 is now the `webpush` payload. `badge` worked only through relays, so servers now push only for a message: clients get `unread` only with a message push, and no push for a message that `mute` or a chosen `dnd` silences. [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
 
 ### New
 
-- **Bots run on webhooks:** Bots and other accounts that run only when called can register the push kind `webhook`, so that they keep no connection open. Servers that offer it verify the URL first, then POST the records that concern the account in signed Standard Webhooks calls, and run the request frames that the account answers with. [§4.9.5](PROTOCOL.md#495-webhook), [§4.9.1](PROTOCOL.md#491-registration), [§5.5](PROTOCOL.md#55-network-privacy-and-server-requests) ([#143](https://github.com/shazow/apron/pull/143))
+- **Bots run on webhooks:** Bots and other accounts that run only when called can register the push kind `webhook`, so that they keep no connection open. Servers that offer it verify the URL first, then POST the records that concern the account in signed Standard Webhooks calls, and run the request frames that the account answers with. [§4.9.4](PROTOCOL.md#494-webhook), [§4.9.1](PROTOCOL.md#491-registration), [§5.5](PROTOCOL.md#55-network-privacy-and-server-requests) ([#143](https://github.com/shazow/apron/pull/143))
 
 ## v10 (2026-11-16)
 
@@ -101,7 +101,7 @@ PROTOCOL.md's front matter (`version`, `updated`) matches it.
 
 - **Tokens stay with their server:** Clients send a bearer token only to the server address that they got it from, so that another server cannot sign in as the user with it. [§3.2.1](PROTOCOL.md#321-bearer-tokens) ([#130](https://github.com/shazow/apron/pull/130))
 - **`credential` is the browser's JSON:** Clients send `credential` in a WebAuthn `finish` as `toJSON()` returns it. [§4.10](PROTOCOL.md#410-webauthn-authentication) ([#130](https://github.com/shazow/apron/pull/130))
-- **Mutes and unread counts follow the server:** Servers may let mentions through a room mute, and decide how mutes change `unread`. A `status` request with `room_id` and no `mute` is no longer refused. [§4.5.3](PROTOCOL.md#453-the-status-request), [§4.9.3](PROTOCOL.md#493-payload) ([#112](https://github.com/shazow/apron/pull/112))
+- **Mutes and unread counts follow the server:** Servers may let mentions through a room mute, and decide how mutes change `unread`. A `status` request with `room_id` and no `mute` is no longer refused. [§4.5.3](PROTOCOL.md#453-the-status-request), [§4.9.3](PROTOCOL.md#493-web-push) ([#112](https://github.com/shazow/apron/pull/112))
 - **Version mismatches warn, and carry on:** Clients that see another protocol version warn, and continue. [§3.1](PROTOCOL.md#31-server-frame) ([#105](https://github.com/shazow/apron/pull/105))
 - **Reactions keep their first order:** Servers keep reactions in the order in which they first appeared. [§4.7](PROTOCOL.md#47-reactions) ([#105](https://github.com/shazow/apron/pull/105))
 
