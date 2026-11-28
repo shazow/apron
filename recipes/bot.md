@@ -239,8 +239,10 @@ Bot client:
 - It is its own request, not a kind of `push_register`, and each account has
   one webhook (Q16, Q26). The bot sets it (Q8).
 - Calls follow Standard Webhooks, signed with Ed25519 (Q5).
-- A call has the shape of a `history` result, with `since` (Q13), and
-  carries the records that help read it.
+- A call is one `ext:webhook` notification, sent as JSON. Its `params` are
+  flat: `server` and `you` say who it is for, then each kind of payload in
+  its own field, named as `history` and `room_update` name them, with
+  `since` (Q13) and the records that help read it.
 - One webhook serves bots and federation links, with two formats: `full`
   and `knock` (Q29). HTTPS is the only transport (Q30).
 - `relay` retires, and `ext:remote` moves to the webhook. `push_register`
@@ -494,20 +496,31 @@ webhook-timestamp: 1724803201
 webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
 
 {
-  "type": "apron.records", "user_id": "bot_ada", "since": "1724803100377",
-  "token": "apron_webhook_…",
-  "wake": {"1724803200042": ["mentions"]},
-  "rooms": [{"room_id": "general", "log_id": "1724790000000", "title": "General"}],
-  "messages": [
-    {
-      "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
-      "from": {"user_id": "alice", "name": "Alice", "roles": ["admin"]},
-      "body": {"text": "@bot_ada what's the weather?", "mentions": ["bot_ada"]}
-    }
-  ],
-  "reactions": [], "memberships": [],
-  "users": [{"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]}],
-  "first_log_id": "1724803200042", "last_log_id": "1724803200042"
+  "method": "ext:webhook", "params": {
+    "server": "wss://chat.example/ws",
+    "you": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
+    "attempt": 1, "since": "1724803100377",
+    "first_log_id": "1724803200042", "last_log_id": "1724803200042",
+    "token": "apron_webhook_…",
+    "wake": {"1724803200042": ["mentions", "replies"]},
+    "messages": [
+      {
+        "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
+        "from": {"user_id": "alice", "name": "Alice", "roles": ["admin"]},
+        "reply_to": {"message_id": "1724803100377"},
+        "body": {"text": "@bot_ada and tomorrow?", "mentions": ["bot_ada"]}
+      }
+    ],
+    "replied": [
+      {
+        "message_id": "1724803100377", "log_id": "1724803100377", "room_id": "general",
+        "from": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
+        "body": {"text": "Sunny today, 21°C."}
+      }
+    ],
+    "rooms": [{"room_id": "general", "log_id": "1724790000000", "title": "General"}],
+    "users": [{"user_id": "alice", "name": "Alice", "roles": ["admin"]}]
+  }
 }
 ```
 
@@ -516,7 +529,7 @@ HTTP/1.1 200 OK
 Content-Type: application/jsonl
 
 {"method": "reactions", "id": "r-1724803200042", "params": {"message_id": "1724803200042", "emojis": ["👀"]}}
-{"method": "message", "id": "a-1724803200042", "params": {"room_id": "general", "reply_to": {"message_id": "1724803200042"}, "body": {"text": "Sunny, 21°C."}}}
+{"method": "message", "id": "a-1724803200042", "params": {"room_id": "general", "reply_to": {"message_id": "1724803200042"}, "body": {"text": "Rain tomorrow, 14°C."}}}
 ```
 
 ```ts
@@ -536,21 +549,29 @@ class Webhook {                 // ext:webhook params and result
   error?: string;               // result only: why the last call failed
 }
 
-class Call {                    // the body of a call
-  type: string;                 // "apron.records"
-  user_id: string;              // the account that the call is for
-  since?: string;               // last_log_id of the previous call to this webhook
+class Call {                    // ext:webhook notification params: the body of a call
+  // the call
+  server: string;               // the server's address (§1)
+  you: User;                    // the account, as `you` after auth (§3.2)
+  attempt: number;              // 1, then 2 and up on each retry
+  since?: string;               // last_log_id or latest_log_id of the previous call to this webhook
+  first_log_id?: string;        // the bounds of the records that matched, as in history (§4.3)
+  last_log_id?: string;
+  latest_log_id?: string;       // "knock" only: the newest record that matched
   token?: string;               // a bearer token that signs in as the account (§3.2.1)
-  wake?: Record<string, string[]>;  // message_id: the scopes that it matched
+  wake?: Record<string, string[]>;  // message_id: the scopes that the message matched
   skipped?: number;             // calls left out for a limit since the previous call
-  rooms?: Room[];               // the arrays and log_id bounds of a history result (§4.3)
+  // records, as history names them (§4.3)
   messages?: Message[];
   reactions?: Reactions[];
   memberships?: Membership[];
-  users?: User[];               // user objects (§3.3.1) that the records refer to
-  first_log_id?: string;
-  last_log_id?: string;
-  latest_log_id?: string;       // "knock" only
+  rooms?: Room[];               // room records that changed, or that the call refers to
+  // changes to the account's rooms, as room_update names them (§4.2.3)
+  joined?: Room[];              // rooms that the account joined, with members
+  left?: { room_id: string }[]; // rooms that the account is no longer in, for any reason
+  // records that help read the call
+  replied?: Message[];          // the messages that messages in `messages` reply to
+  users?: User[];               // user objects (§3.3.1) that the call refers to
 }
 ```
 
@@ -600,14 +621,26 @@ What calls the webhook:
 
 Calls:
 
-- A call is a POST of a `Call` as `application/json`.
+- A call is a POST of one `ext:webhook` notification
+  ([§1](../PROTOCOL.md#1-transport--framing)) as `application/json`. Its
+  `params` are flat: each field holds one kind of payload, under the name
+  that `history` or `room_update` gives it.
+- `server` and `you` say which server called and for which account, so that
+  one URL can serve several servers and accounts. The account trusts only
+  the `keys` of the server that `server` refers to.
+- `you` changes when the account's profile or `roles` change, as a `user`
+  `you` notification would ([§3.3.3](../PROTOCOL.md#333-changes)).
 - With `format` `"full"`, a call carries the records that matched, in
   `log_id` order. One call can carry several. `wake` lists the scopes of each
-  new message that matched.
-- A call also carries records that help read it, such as the users and rooms
-  that its records refer to, and the message that a message replies to.
-  These are records that the account may see. The account applies them as
-  any record ([§2.3](../PROTOCOL.md#23-records-and-replay)).
+  new message that matched. A bot answers only the messages in `wake`.
+- `joined` and `left` tell the account of changes to its own rooms, under
+  every scope. `left` also covers a room that the account lost without a
+  membership record.
+- A call also carries records that help read it: `rooms` and `users` that
+  its records refer to, and in `replied`, the messages that its messages
+  reply to, one level deep. These are records that the account may see. The
+  account applies them as any record
+  ([§2.3](../PROTOCOL.md#23-records-and-replay)).
 - With `format` `"knock"`, a call carries no records, and `latest_log_id` is
   the newest record that matched. One knock covers every record committed
   before it was sent. A record after it gets another.
@@ -616,8 +649,9 @@ Calls:
   `since` is absent, or is not where the account last read to, the account
   reads `history` from where it last read
   ([§4.3.5](../PROTOCOL.md#435-replay-and-recovery)).
-- To fit its limits, the server leaves out records that help read a call
-  first. Then it splits the records over several calls.
+- To fit its limits, the server leaves out `replied` first, then the other
+  records that help read the call. Then it splits the records over several
+  calls.
 - `token` (optional) is a bearer token that signs in as the account
   ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)). The server chooses its
   lifetime and what it allows, such as 15 minutes, and posting, reacting,
