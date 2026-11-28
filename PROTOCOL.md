@@ -2257,9 +2257,9 @@ server accepts `push_register` and `push_unregister`.
   `url`. It stays after the connection that made it closes.
 - A registration with the same `url` replaces the earlier registration of the
   user. `push_unregister` removes it. Unregistering an unknown `url` succeeds.
-- Servers MAY refuse a registration with `denied`, such as from a guest
-  ([§3.2](#32-authentication)), or a `webhook` from a user that is not a bot.
-  An endpoint that the server will not send to is `invalid_params`.
+- Server policy decides which users may register each kind, such as only
+  users who are not guests ([§3.2](#32-authentication)), or a `webhook` only
+  for users with the role `bot` ([§3.3.4](#334-roles)).
 - Servers SHOULD accept only `https` push endpoints that resolve to addresses
   that are not internal.
 - Servers MAY drop the least recently renewed registrations above a

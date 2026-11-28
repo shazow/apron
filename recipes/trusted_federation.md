@@ -289,7 +289,8 @@ Links:
   scope `records` and the format `knock`
   ([§4.9.2](../PROTOCOL.md#492-wake), [§4.9.4](../PROTOCOL.md#494-webhook)). It wakes the link for every record
   of the rooms that the link has joined, the link's own included. An owner
-  with `ext:remote` offers both in `server.push.webhook`.
+  with `ext:remote` offers both in `server.push.webhook`, and lets links
+  register a `webhook` ([§4.9.1](../PROTOCOL.md#491-registration)).
 - A knock covers every record committed before the owner sent it, and a
   record after it gets another knock, so no record waits for the mirror's
   next poll.

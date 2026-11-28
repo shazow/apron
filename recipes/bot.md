@@ -209,8 +209,10 @@ Bot client:
 - The webhook URL is a public `https` URL, as for every push endpoint
   ([§4.9.1](../PROTOCOL.md#491-registration)).
 - The bot registers its own webhook with `push_register` and the kind
-  `webhook`, and chooses what calls it with `wake`. A server can refuse a
-  `webhook` from an account that is not a bot.
+  `webhook`, and chooses what calls it with `wake`. Which accounts may
+  register a `webhook` is server policy
+  ([§4.9.1](../PROTOCOL.md#491-registration)). A server can allow it for
+  bots and federation links, and refuse it for other accounts.
 - The owner can also see, pause, and remove it, with commands that are up
   to the server, such as `/webhook`.
 - A new token does not drop the webhook. A change to the webhook does not
