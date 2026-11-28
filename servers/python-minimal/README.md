@@ -12,7 +12,7 @@ uv run apron_server.py --host 0.0.0.0 --port 8765
 
 ## Features
 
-- Apron protocol v10, advertising capability `history`.
+- Apron protocol v11, advertising capability `history`.
 - One shared default room, `general`: requests without `room_id` use it, and its creation record, titled "General", is in history while retained. Without capability `rooms`, clients learn the room from the messages and history in it.
 - Guest authentication with `guest_` user IDs and changeable display names (`auth` or `me`; `""` clears the name). It offers only `guest`: any other scheme, or none, is `error/unsupported`.
 - `auth` and `me` results carry the complete `you`: `user_id` and `name`. Profile `avatar` and `ext` are declined.

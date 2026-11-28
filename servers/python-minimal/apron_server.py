@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["websockets>=14,<17"]
 # ///
-"""Apron Chat v10 for trusted, compliant clients.
+"""Apron Chat v11 for trusted, compliant clients.
 
 Run: uv run apron_server.py [--host 0.0.0.0] [--port 8765]
 Or:  python -m pip install 'websockets>=14,<17'; python apron_server.py
@@ -27,7 +27,7 @@ from websockets.asyncio.server import broadcast, serve
 from websockets.exceptions import ConnectionClosed
 
 
-GREETING = {"apron": 10, "agent": "apron-python/10", "auth": ["guest"],
+GREETING = {"apron": 11, "agent": "apron-python/11", "auth": ["guest"],
             "capabilities": ["history"]}
 
 

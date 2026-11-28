@@ -1,6 +1,6 @@
 ---
-version: 10
-updated: 2026-11-16
+version: 11
+updated: 2026-11-28
 license: CC0-1.0
 ---
 
@@ -27,7 +27,7 @@ Example of a valid session:
 
 ```jsonc
 // <- server greeting with capabilities and auth schemes
-{"method": "server", "params": {"apron": 10, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
+{"method": "server", "params": {"apron": 11, "capabilities": ["rooms"], "auth": ["guest", "token"]}}
 
 // -> guest auth, requesting a display name (the server may choose something else)
 {"method": "auth", "id": "c1", "params": {"scheme": "guest", "name": "Ada"}}
@@ -324,7 +324,7 @@ class Server {
   status?: string[];            // optional chosen status values accepted (§4.5.1)
 
   // push, without a capability
-  push?: object;                // push kinds and wake scopes; enables push (§4.9)
+  push?: object;                // push kinds and their configurations; enables push (§4.9)
 
   // extensions
   ext?: object;                 // extension data (§4.13)
@@ -339,7 +339,7 @@ not work, and continue as well as it can.
 ```json
 {
   "method": "server", "params": {
-    "apron": 10,
+    "apron": 11,
     "agent": "impl-name/1.0",
     "capabilities": ["history", "edit"],
     "auth": ["token"]
@@ -887,7 +887,7 @@ The features in this section add these methods
 | sent by | requests (with `id`) | notifications (without `id`) |
 |---------|----------------------|------------------------------|
 | client  | `command`, `room_list`, `room_join`, `room_leave`, `room_set`, `history`, `status`, `reactions`, `push_register`, `push_unregister` | `activity` |
-| server  | none | `room_update`, `status`, `activity`, `reactions` |
+| server  | none | `room_update`, `status`, `activity`, `reactions`, `webhook` |
 
 A name that this document does not define is an **extension name**. It starts
 with `ext:`, such as the capability `ext:irc`. This applies to every list of
@@ -1593,7 +1593,7 @@ user.
 // <- the server frame accepts dnd and invisible
 {
   "method": "server", "params": {
-    "apron": 10, "capabilities": ["status"], "auth": ["token"],
+    "apron": 11, "capabilities": ["status"], "auth": ["token"],
     "status": ["dnd", "invisible"]
   }
 }
@@ -1709,7 +1709,7 @@ A user's status has three views:
   input. They then SHOULD send the seconds since the last input. They do not
   wait on a connection that starts unattended.
 - Servers MAY treat the connection as idle from the time that `idle` reports,
-  such as to wake the user for mentions since then ([§4.9.4](#494-wake)).
+  such as to wake the user for mentions since then ([§4.9.3](#493-web-push)).
 - Servers never send `idle`.
 
 **`mute`** silences the notifications of the user:
@@ -2217,30 +2217,30 @@ carry one for the server.
 
 ### 4.9 Push
 
-Push reaches users when no client is open, such as a phone in a pocket. The
-server sends a small payload to a push service that the client registered, and
-the client shows it as a notification. Push has no capability of its own.
-`server.push` advertises it.
+Push reaches users when no client is open, such as a phone in a pocket, or a
+bot that runs only when called. The server sends a payload to a URL that the
+client registered: a push service that shows a notification, or a webhook that
+the account serves. Push has no capability of its own. `server.push`
+advertises it.
 
 `server.push` ([§3.1](#31-server-frame)) maps each supported push kind to its
-public configuration. Its `wake` key lists the wake scopes that the server
-supports. If `server.push` is present, the server accepts `push_register` and
-`push_unregister`. A server that advertises `push` SHOULD advertise `status`
-([§4.5](#45-status)).
+public configuration. Each configuration carries `wake`, a non-empty list of
+the wake scopes that the server supports for the kind. If `server.push` is
+present, the server accepts `push_register` and `push_unregister`.
+
+- Servers MAY also send `server.push.wake` and `server.push.webpush.key` as in
+  version 10, for clients of earlier versions. Clients MAY read both from a
+  server whose `apron` is below 11, and ignore them from other servers.
 
 ```jsonc
-// <- the server frame offers relay and webpush
+// <- the server frame offers webpush and webhook
 {
   "method": "server", "params": {
-    "apron": 10, "capabilities": ["status"], "auth": ["webauthn", "token"],
-    "push": {"relay": {}, "webpush": {"key": "BNcR..."}, "wake": ["mentions", "replies", "private"]}
-  }
-}
-// ->
-{
-  "method": "push_register", "id": "c30", "params": {
-    "kind": "relay", "url": "https://relay.example/p/xyz", "token": "...", "push_id": "t65S5XBst9bSDpjJ",
-    "keys": {"p256dh": "BKx...", "auth": "Q2w..."}
+    "apron": 11, "capabilities": ["status"], "auth": ["webauthn", "token"],
+    "push": {
+      "webpush": {"vapid_key": "BNcR...", "wake": ["mentions", "replies", "private"]},
+      "webhook": {"signature_keys": ["whpk_UGPbZjhyIvQnydGh/Q+Wb1vVexqu0D1rOnceurAF15k="], "wake": ["mentions", "replies", "private", "joined", "records"], "format": ["full", "knock"]}
+    }
   }
 }
 // ->
@@ -2251,67 +2251,96 @@ supports. If `server.push` is present, the server accepts `push_register` and
   }
 }
 // ->
-{"method": "push_unregister", "id": "c32", "params": {"url": "https://relay.example/p/xyz"}}
+{"method": "push_unregister", "id": "c32", "params": {"url": "https://push.example/s/abc"}}
 ```
 
 #### 4.9.1 Registration
 
-- `kind` is a key of `server.push` other than `wake`. Fields other than `url`,
-  `push_id`, and `wake` are specific to the kind. Third-party kinds
+- `kind` is a key of `server.push` other than `wake`. Fields other than `url`
+  and `wake` are specific to the kind. Third-party kinds
   ([§4](#4-capabilities)) define their own delivery.
 - `url` is required. A registration belongs to the authenticated user and its
   `url`. It stays after the connection that made it closes.
-- A registration with the same `url` replaces the earlier registration of the
-  user. `push_unregister` removes it. Unregistering an unknown `url` succeeds.
-- Servers MAY refuse a registration with `denied`, such as from a guest
-  ([§3.2](#32-authentication)). An endpoint that the server will not send to
-  is `invalid_params`.
+- A user has one registration for each `url`, of any kind. A registration
+  replaces the user's earlier one with the same `url`, also one of another
+  kind. `push_unregister` removes it. Unregistering an unknown `url`
+  succeeds.
+- Server policy decides which users may register each kind, such as only
+  users who are not guests ([§3.2](#32-authentication)), or a `webhook` only
+  for users with the role `bot` ([§3.3.4](#334-roles)).
 - Servers SHOULD accept only `https` push endpoints that resolve to addresses
   that are not internal.
+- Servers MAY drop the least recently renewed registrations above a
+  server-defined number for each user.
+- Clients SHOULD unregister before they sign out. Servers MAY remove the
+  registrations of a user when they revoke the sessions of that user.
+- Servers remove a registration whose `url` does not accept pushes, such as
+  one that answers 410, or a push service that answers 404.
+
+#### 4.9.2 Wake
+
+- `wake` (optional) lists the scopes that a registration wakes for. These
+  scopes select new records in rooms that the user can see:
+  - `mentions`: new messages whose `mentions` list the user
+    ([§3.5.5](#355-mentions)). Servers MAY also wake for an edit that adds the
+    user to `mentions`.
+  - `private`: new messages in private rooms
+    ([§4.2.4](#424-creating-and-editing)) that the user joined, and in their
+    threads.
+  - `replies`: new messages whose `reply_to` refers to a message of the user
+    ([§3.5.4](#354-references)).
+  - `joined`: new messages in rooms that the user joined.
+  - `records`: every record of the rooms that the user joined: message
+    snapshots, reactions, memberships, and room records.
+- Servers advertise for each kind only the scopes that they implement. They
+  SHOULD advertise only those that every user who may register the kind can
+  use.
+- Servers ignore the scopes in `wake` that they do not support for the kind
+  and the user. A `wake` that selects none that they support is
+  `invalid_params`.
+- Without `wake`, the server uses its default scopes. These SHOULD be
+  `mentions` and `replies`, and also `private` for a `webhook`, where
+  advertised.
+- Servers do not push transient notices ([§3.5.3](#353-delivery)), and do not
+  wake a user for the user's own messages, except under `records`. Server
+  policy decides other wake rules, such as rate limits.
+
+#### 4.9.3 Web Push
+
+`webpush` delivers pushes with Web Push
+([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)), such as to a browser or
+a phone.
+
+Registration:
+
+- `vapid_key` is the VAPID public key of the server
+  ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)): an uncompressed P-256
+  point in unpadded base64url. Clients subscribe with it as the application
+  server key. They subscribe again when it changes.
+- `url` is the subscription endpoint. `keys` (required) holds its `p256dh` and
+  `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
 - `push_id` (optional) is 1 to 64 characters from `A-Z a-z 0-9 - _`. Clients
   choose one for each server and account. It is an opaque value that shows
   neither the server nor the account.
 - Clients SHOULD register on each connection. Servers MAY drop a registration
-  that the client did not renew within a server-defined period. Servers MAY
-  also drop the least recently renewed registrations above a server-defined
-  number for each user.
-- Clients SHOULD unregister before they sign out. Servers MAY remove the
-  registrations of a user when they revoke the sessions of that user.
-- Servers remove a registration whose `url` does not accept pushes, such as
-  one that answers 404 or 410.
+  that the client did not renew within a server-defined period.
 
-#### 4.9.2 Kinds
+Delivery:
 
-- `relay`: the server sends the payload in a POST to `url`, with `token`
-  (optional) as a bearer token. The relay is responsible for delivery after
-  that POST. Native apps use a relay that their vendor runs.
-  - `keys` (optional) holds a `p256dh` and an `auth` that the client
-    generated, as for `webpush`.
-  - With `keys`, the body is the payload, encrypted as for `webpush`. It has
-    `Content-Type: application/octet-stream` and `Content-Encoding:
-    aes128gcm`.
-  - Without `keys`, the body is the payload with `Content-Type:
-    application/json`.
-- `webpush`: Web Push ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)).
-  - `key` is the VAPID public key of the server
-    ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)): an uncompressed
-    P-256 point in unpadded base64url. Clients subscribe with it as the
-    application server key. They subscribe again when it changes.
-  - `url` is the subscription endpoint. `keys` (required) holds its `p256dh`
-    and `auth` in unpadded base64url, as in `PushSubscription.toJSON()`.
-  - Servers encrypt the payload as one `aes128gcm` record
-    ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign with the
-    private key for `key`.
-- Servers send `TTL` and `Urgency` headers
-  ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)) with every push, also
-  to relays. `Urgency` is:
-  - `low` for a push without `message`.
-  - `normal` for a push that only `joined` selects.
-  - `high` for all other pushes.
+- Servers encrypt the payload as one `aes128gcm` record
+  ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)), and sign with the
+  private key for `vapid_key`.
+- Servers send `TTL` and `Urgency` headers with every push. `Urgency` is
+  `normal` for a push that only `joined` selects, and `high` for all others.
+- Servers send no push for a message that `mute` or a chosen `dnd`
+  ([§4.5.1](#451-values)) silences.
+- A server that offers `webpush` SHOULD advertise `status`
+  ([§4.5](#45-status)).
+- Suggested convention: wake a user only when the user's presence is `idle`
+  or `offline` ([§4.5.1](#451-values)). Servers MAY wait a short time first,
+  and skip the push if the `read_message_id` of the user is past the message.
 
-#### 4.9.3 Payload
-
-Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
+Each push carries this payload, a UTF-8 JSON object of at most 2048 bytes:
 
 - `push_id`: the `push_id` of the registration, if it has one. Clients drop a
   payload with a `push_id` that they do not know. A client that registered a
@@ -2320,19 +2349,16 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
   such as messages after the read cursors of the user ([§4.6](#46-activity)).
   It is the same for all registrations of the user. Clients MAY show it as an
   app badge.
-  - Servers whose `server.push.wake` lists `badge` send `unread`.
 - `message`: the message ([§3.5](#35-messages)) without `log_id`. Clients
-  never install it as a snapshot. Servers do not push transient notices.
+  never install it as a snapshot.
   - Servers SHOULD omit `format`, `embeds`, and `ext`.
   - To fit the limit, servers MAY truncate `body.text`, and leave out any
     field except `message_id`, `room_id`, and `from.user_id`.
-  - Clients do not show a notification for a payload without `message`.
 - Clients SHOULD show at most one notification for each `push_id` and
   `message_id`. A later notification for the same pair replaces the earlier
   one, from a push or from the client's own connection.
 
-```jsonc
-// a message push
+```json
 {
   "push_id": "t65S5XBst9bSDpjJ", "unread": 2,
   "message": {
@@ -2341,36 +2367,173 @@ Every kind delivers the same payload: a UTF-8 JSON object of at most 2048 bytes.
     "body": {"text": "Deploy is done, can someone check the dashboards?"}
   }
 }
-// a badge push, after the user read on another device
-{"push_id": "t65S5XBst9bSDpjJ", "unread": 0}
 ```
 
-#### 4.9.4 Wake
+#### 4.9.4 Webhook
 
-- `wake` (optional) lists the scopes that a registration wakes for. Each scope
-  except `badge` selects new messages in rooms that the user can see:
-  - `mentions`: messages whose `mentions` list the user
-    ([§3.5.5](#355-mentions)). Servers MAY also wake for an edit that adds the
-    user to `mentions`.
-  - `private`: messages in private rooms ([§4.2.4](#424-creating-and-editing))
-    that the user joined, and in their threads.
-  - `replies`: messages whose `reply_to` refers to a message of the user
-    ([§3.5.4](#354-references)).
-  - `joined`: messages in rooms that the user joined.
-  - `badge`: every change to `unread`. A push for a change that no other scope
-    selects has no `message`. Servers ignore `badge` for `webpush`. Servers
-    MAY skip intermediate values of `unread`, and send only the latest.
-- Servers advertise only the scopes that they implement, and ignore other
-  scopes in `wake`. An empty `wake` wakes for nothing. Without `wake`, the
-  server uses its default scopes. These SHOULD be `mentions` and `replies`,
-  where advertised.
-- A push that `mute` or a chosen `dnd` ([§4.5.1](#451-values)) silences has
-  no `message`. It goes only to registrations that wake for `badge`.
-- Servers do not wake a user for the user's own messages. Server policy
-  decides other wake rules, such as rate limits.
-- Suggested convention: wake a user only when the user's presence is `idle`
-  or `offline` ([§4.5.1](#451-values)). Servers MAY wait a short time first,
-  and skip the push if the `read_message_id` of the user is past the message.
+A webhook lets an account that runs only when called, such as a bot on a
+serverless host, keep no connection open. The server sends the records that
+concern the account in HTTPS calls that follow
+[Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md),
+and the account can answer with frames.
+
+```jsonc
+// -> the bot registers; server.push.webhook is as in §4.9
+{
+  "method": "push_register", "id": "c33", "params": {
+    "kind": "webhook", "url": "https://bot.example/apron", "wake": ["mentions", "replies", "private"]
+  }
+}
+// <-
+{"id": "c33", "result": {"endpoint_id": "wh_4f2kQ9xT", "state": "verifying"}}
+```
+
+A call, after Alice replies to the bot:
+
+```http
+POST /apron HTTP/1.1
+Host: bot.example
+Content-Type: application/json
+webhook-id: msg_1724803200042_4f2kQ9xT
+webhook-timestamp: 1724803201
+webhook-signature: v2a,8+CoxNutM2GFI9/SzzUTFWSM/4S/4CnU8T/rgQ3EBXEYeDgUfMcv+rEJthsMa33YnO1Azv4LimqEuunGdqu6Aw==
+
+{
+  "method": "webhook", "params": {
+    "server": "wss://chat.example/ws",
+    "you": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
+    "attempt": 1, "since": "1724803100377",
+    "first_log_id": "1724803200042", "last_log_id": "1724803200042",
+    "token": "apron_webhook_…", "token_expires": "1724804101000",
+    "wake": {"1724803200042": ["mentions", "replies"]},
+    "messages": [
+      {
+        "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
+        "from": {"user_id": "alice", "name": "Alice", "roles": ["admin"]},
+        "reply_to": {
+          "message_id": "1724803100377", "log_id": "1724803100377", "room_id": "general",
+          "from": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
+          "body": {"text": "Sunny today, 21°C."}
+        },
+        "body": {"text": "@bot_ada and tomorrow?", "mentions": ["bot_ada"]}
+      }
+    ],
+    "rooms": [{"room_id": "general", "log_id": "1724790000000", "title": "General"}],
+    "users": [{"user_id": "alice", "name": "Alice", "roles": ["admin"]}]
+  }
+}
+```
+
+```ts
+class WebhookConfig {           // server.push.webhook
+  signature_keys: string[];     // the server's Ed25519 public keys: "whpk_" and the base64 of the raw 32 bytes
+  wake: string[];               // the scopes that the server supports (§4.9.2)
+  format?: string[] = ["full"]; // the formats that the server offers: "full", "knock"
+}
+
+class WebhookRegistration {     // push_register params and result, besides kind, url, and wake
+  format?: string = "full";     // params: one of server.push.webhook.format
+  endpoint_id?: string;         // result: the endpoint ID of the signatures
+  state?: string;               // result: "verifying", "on", "paused", or "failing"
+  error?: string;               // result, with any state: the last failure
+}
+
+class Webhook {                 // params of a webhook call or verification
+  server: string;               // the server address that the registration was made on (§1)
+  you: User;                    // the account, as `you` after auth (§3.2)
+  attempt?: number;             // a call: 1, then 2 and up on each retry
+  since?: string;               // last_log_id or latest_log_id of an earlier call
+  first_log_id?: string;        // "full": the bounds of the records, as in history (§4.3)
+  last_log_id?: string;
+  latest_log_id?: string;       // "knock": the newest record that matched
+  token?: string;               // a short-lived bearer token for the account (§3.2.1)
+  token_expires?: string;       // with token: when it stops working, as a log_id (§2.1)
+  wake?: object;                // message_id: the scopes that the message matched
+  skipped?: number;             // calls left out for a limit since the previous call
+
+  messages?: Message[];         // records, split by kind as in a history result (§4.3)
+  reactions?: object[];
+  memberships?: object[];
+  rooms?: Room[];               // also the rooms that the records refer to
+  joined?: Room[];              // changes to the account's rooms, as in room_update (§4.2.3)
+  left?: object[];
+  users?: User[];               // user objects that the call refers to
+}
+```
+
+Registration:
+
+- The server chooses an `endpoint_id` for each registration. It is unique
+  among the server's webhooks, and has no `.`.
+- Registering a `webhook` again with the same `url` keeps the `endpoint_id`,
+  and returns the current `state`.
+- Before its first call to a `url`, the server MUST verify the `url` with the
+  [endpoint verification](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/extensions/endpoint-verification.md)
+  of Standard Webhooks. `state` is `"verifying"` until the `url` passes.
+- The server sends the verification after the `push_register` result, which
+  carries the `endpoint_id` that the answer needs.
+- The body of a verification is a `webhook` notification with only `server`
+  and `you`.
+- Servers SHOULD retry a verification that fails. Server policy decides when.
+- A newer verification of a `url` replaces an older one that the server is
+  still retrying.
+- Registering again verifies the `url` again when `state` is `"verifying"` or
+  `"failing"`.
+- `state` is `"failing"` once the server stops retrying a verification or a
+  call that fails.
+- `"failing"` alone does not stop calls. Server policy decides whether and
+  when the server stops calling a failing webhook.
+- `state` is `"paused"` while server policy stops the calls, such as when the
+  account's owner pauses them.
+- `error` (optional) says why the last verification, call, or frame in a
+  response failed. It MAY come with any `state`.
+
+Wake:
+
+- Changes to the account's rooms, which a call carries in `joined` and
+  `left`, always call the webhook.
+- Servers SHOULD NOT call while the account has a connection open.
+
+Calls:
+
+- A call is an HTTPS POST of one `webhook` notification, as
+  `application/json`.
+- With the `format` `"full"`, a call carries the records that matched, in
+  `log_id` order. One call MAY carry several.
+- With `"knock"`, a call carries no records, and none of `wake`, `rooms`,
+  `joined`, `left`, and `users`. It covers every record that was committed
+  before the server sent it.
+- Servers SHOULD send each `reply_to` as a full snapshot
+  ([§3.5.4](#354-references)).
+- The user objects of a call carry their `roles` ([§3.3.4](#334-roles)), each
+  record's `from` included.
+- `since` is the `last_log_id` or `latest_log_id` of the last earlier call
+  that carried one.
+- When `since` is absent, or is not where the account last read, the account
+  reads `history` from its place ([§4.3.5](#435-replay-and-recovery)).
+- `token` (optional) is a short-lived bearer token for the account. The
+  account MAY sign in with it ([§3.2.1](#321-bearer-tokens)) until
+  `token_expires`, such as to answer the call. It does not replace any
+  existing long-lived tokens.
+- An `auth` with the call's `token` returns no `token`. Servers MAY close a
+  connection that signed in with it after `token_expires`.
+- The server signs each call and each verification with the Standard Webhooks
+  scheme `v2a` (Ed25519), and `endpoint_id` as the endpoint ID. While its
+  `signature_keys` change, it signs with each of them.
+- `webhook-id` is the same on each retry of a call, and has no `.`.
+
+Responses:
+
+- A call succeeds when the `url` answers 2xx within 30 seconds. Any other
+  outcome is a failure.
+- The body of a 2xx MAY hold frames, requests or notifications, one a line,
+  as on a byte-stream transport ([§1](#1-transport--framing)).
+- The server runs them in order as the account, and sends no results. It
+  deduplicates requests as any request
+  ([§1.2](#12-retries-and-deduplication)).
+- If the call carried a `token`, the frames can do only what the `token`
+  allows. A frame that the `token` does not allow, or that fails, sets
+  `error`.
 
 ### 4.10 WebAuthn authentication
 
@@ -2874,7 +3037,7 @@ server.
   user's address, get the token from the user or the client, and sign in to
   the other server as the user (mix-up).
 - Clients send `resource` for the server that they are connected to, never
-  one that a server names ([§4.12.2](#4122-signing-in)), and a server redeems
+  one that a server sends ([§4.12.2](#4122-signing-in)), and a server redeems
   only a code for its own origin ([§4.12.4](#4124-redemption)). So a server
   that points its `url` at another server's page gets no code that the other
   server would redeem. Servers on one host and port share an origin, so they
@@ -2998,10 +3161,13 @@ server.
   that it does not own.
 - `write_url` is a credential that expires ([§4.8.3](#483-writes)). So only
   the sender can write an upload.
-- Servers accept only `https` push endpoints that do not resolve to internal
-  addresses ([§4.9.1](#491-registration)). This prevents server-side request
-  forgery (SSRF) against the server's network.
-- Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-payload)).
+- The rule against push endpoints at internal addresses
+  ([§4.9.1](#491-registration)) prevents server-side request forgery (SSRF)
+  against the server's network.
+- Servers verify a webhook's `url` before they call it
+  ([§4.9.4](#494-webhook)). So an account cannot aim the server's calls, and
+  their load, at a URL that does not answer for it.
+- Clients drop push payloads with an unknown `push_id` ([§4.9.3](#493-web-push)).
   So stale pushes for a removed account, and forged pushes to a known endpoint,
   show no notification.
 - Interactive clients ask the user before they connect to a server that the
@@ -3193,7 +3359,7 @@ the previous one rather than show both.
 
 ```jsonc
 // <-
-{"method": "server", "params": {"apron": 10, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
+{"method": "server", "params": {"apron": 11, "capabilities": ["rooms"], "auth": ["webauthn", "token", "guest"]}}
 // <- before any auth
 {
   "method": "message", "params": {
@@ -3223,7 +3389,7 @@ connection, and the server returns the original result rather than posting twice
 {"method": "auth", "id": "c1", "params": {"scheme": "token", "token": "...", "agent": "deploy-hook/1.0"}}
 {"method": "message", "id": "deploy-7f3a", "params": {"room_id": "ops", "body": {"text": "Deployed v1.4.2"}}}
 // <-
-{"method": "server", "params": {"apron": 10, "capabilities": ["rooms"], "auth": ["token"]}}
+{"method": "server", "params": {"apron": 11, "capabilities": ["rooms"], "auth": ["token"]}}
 // <-
 {"id": "c1", "result": {"you": {"user_id": "deploy-bot", "name": "Deploy"}}}
 // <- then the bot closes the connection

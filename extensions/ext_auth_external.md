@@ -8,7 +8,7 @@ Lists the ways that a server's external sign-in
 // <- the server offers three ways
 {
   "method": "server", "params": {
-    "apron": 10, "auth": ["external", "token"],
+    "apron": 11, "auth": ["external", "token"],
     "labels": {"external": "Acme login"},
     "capabilities": ["ext:auth_external"],
     "ext": {"auth_external": {"options": [

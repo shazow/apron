@@ -38,8 +38,8 @@ account that reads the room, and writes as the mirror's users
    such as `bob@b.example`. The record then reaches B like any other record
    of the room, and B answers its user.
 5. B can stay connected, or close the connection when the room is quiet. A
-   wakes it with a push when the room changes
-   ([§4.9](../PROTOCOL.md#49-push)).
+   wakes it with a webhook call when the room changes
+   ([§4.9.4](../PROTOCOL.md#494-webhook)).
 6. A is the authority for the room: its order, its threads, and its
    moderation. B decides which of its users are in the mirror room.
 
@@ -99,10 +99,10 @@ Reading:
   question is a thread, the mirror stops only that mirror thread, and its
   threads.
 - A mirror that stays connected receives the room live. A mirror that sleeps
-  between requests, such as a Cloudflare Durable Object, registers a `relay`
-  push for the link with the wake scope `ext:remote`, closes its connection,
-  and reads again when the push arrives. It also reads after its own users'
-  requests, and now and then, in case a push was lost.
+  between requests, such as a Cloudflare Durable Object, registers a webhook
+  for the link, closes its connection, and reads again when a call arrives.
+  It also reads after its own users' requests, and now and then, in case a
+  call was lost.
 - The mirror reads the owner's records only from the link's connection, so
   it never copies its own copies. It keeps the original's `message_id` of
   each copy apart from the copy's `ext`, because a tombstone has no `ext`.
@@ -150,7 +150,7 @@ Server policies:
 
 - Policies that refuse automated clients, such as other Cloudflare Workers,
   or that remove idle accounts or quiet rooms, need to leave links, their
-  pushes, remote users, and shared rooms alone.
+  webhooks, remote users, and shared rooms alone.
 - A copy sends pushes like any message ([§4.9](../PROTOCOL.md#49-push)). After
   a long outage, the mirror can leave old messages out of pushes.
 - A mirror's admin or moderator who deletes a copy that they did not write
@@ -285,27 +285,26 @@ Links:
 - The server joins the link to each thread of a room that the link has
   joined, when every member of the room can see the thread: to the threads
   that exist when the link joins, and to each new one.
-- A link's `push_register` of kind `relay`, with a `token` and the wake scope
-  `ext:remote`, wakes the link for every record of the rooms that the link
-  has joined, the link's own included ([§4.9.4](../PROTOCOL.md#494-wake)).
-  The server accepts it whether or not `server.push` lists `relay` or
-  `ext:remote`, so the mirror registers without looking.
-- The server sends such a push as a POST of `{"push_id": …}`, or `{}`, as
-  `application/json`, with the `token` as a bearer token and the headers of
-  [§4.9.2](../PROTOCOL.md#492-kinds), also while one of the link's
-  connections is open. The server can wait a moment, and send one push for
-  several records. A push covers every record committed before it is sent,
-  and a record after it gets another push, so no record waits for the
-  mirror's next poll.
-- The server accepts the registration only when its `url` is `https`, or
+- A link's webhook is a `push_register` of kind `webhook`, with the wake
+  scope `records` and the format `knock`
+  ([§4.9.2](../PROTOCOL.md#492-wake), [§4.9.4](../PROTOCOL.md#494-webhook)). It wakes the link for every record
+  of the rooms that the link has joined, the link's own included. An owner
+  with `ext:remote` offers both in `server.push.webhook`, and lets links
+  register a `webhook` ([§4.9.1](../PROTOCOL.md#491-registration)).
+- A knock covers every record committed before the owner sent it, and a
+  record after it gets another knock, so no record waits for the mirror's
+  next poll.
+- The server accepts a link's webhook only when its `url` is `https`, or
   `http` on a loopback host, on the host and port of the link's server
-  (otherwise a link could make the server send requests elsewhere). A
-  registration without `token` is `invalid_params`.
+  (otherwise a link could make the server send requests elsewhere). It also
+  verifies the `url`, as for every webhook.
 - The mirror serves this URL on the host and port of its own address,
   `https` for `wss` and `http` for `ws`, at a path of its choosing. It
-  answers 204, or 404 for an unknown URL or token. A mirror that sleeps
-  registers on each connection. The server removes a registration whose URL answers 404 or 410
-  ([§4.9.1](../PROTOCOL.md#491-registration)).
+  answers the verification with the owner's `signature_keys` and the registration's
+  `endpoint_id`, and checks the signature of each call. It answers 204, or
+  410 for a URL that it no longer serves, which removes the registration
+  ([§4.9.1](../PROTOCOL.md#491-registration)). A mirror that sleeps
+  registers on each connection.
 - A link's connection can close at any time. Nothing that the server keeps
   depends on it.
 - When a link leaves a room, or another user removes it, the server also

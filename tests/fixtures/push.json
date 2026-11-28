@@ -1,7 +1,7 @@
 {
   "format": 1,
   "kind": "push",
-  "description": "Push payloads and registrations (§4.9). A payload is a UTF-8 JSON object of at most 2048 bytes, measured here as compact JSON (no whitespace between tokens). A valid payload conforms to the schema and fits; each invalid one breaks the one rule its why states. Registrations are push_register params. tests/schema/validate.py checks both.",
+  "description": "Push payloads, registrations, server frames, and webhook calls (§4.9). A webpush payload is a UTF-8 JSON object of at most 2048 bytes, measured here as compact JSON (no whitespace between tokens). A valid payload conforms to the schema and fits; each invalid case breaks the one rule its why states. Registrations are push_register params, servers are server frames that advertise push, and webhooks are the bodies of webhook calls and verifications (§4.9.4). tests/schema/validate.py checks them all.",
   "references": [
     "PROTOCOL.md#49-push"
   ],
@@ -26,8 +26,9 @@
       }
     },
     {
-      "name": "badge",
-      "valid": true,
+      "name": "unread-only",
+      "valid": false,
+      "why": "a payload carries message: there are no pushes of unread alone",
       "payload": {
         "push_id": "t65S5XBst9bSDpjJ",
         "unread": 0
@@ -37,7 +38,14 @@
       "name": "registration-without-push-id",
       "valid": true,
       "payload": {
-        "unread": 3
+        "unread": 3,
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice"
+          }
+        }
       }
     },
     {
@@ -147,7 +155,14 @@
       "why": "push_id is made of A-Z a-z 0-9 - _",
       "payload": {
         "push_id": "t65S5/XBst9b+SDp",
-        "unread": 1
+        "unread": 1,
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice"
+          }
+        }
       }
     },
     {
@@ -156,7 +171,14 @@
       "why": "push_id is at most 64 characters",
       "payload": {
         "push_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        "unread": 1
+        "unread": 1,
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice"
+          }
+        }
       }
     },
     {
@@ -165,7 +187,14 @@
       "why": "unread is a count",
       "payload": {
         "push_id": "t65S5XBst9bSDpjJ",
-        "unread": -1
+        "unread": -1,
+        "message": {
+          "message_id": "1724803200042",
+          "room_id": "general",
+          "from": {
+            "user_id": "alice"
+          }
+        }
       }
     },
     {
@@ -189,28 +218,6 @@
   ],
   "registrations": [
     {
-      "name": "relay-with-keys",
-      "valid": true,
-      "params": {
-        "kind": "relay",
-        "url": "https://relay.example/p/xyz",
-        "token": "rt_1",
-        "push_id": "t65S5XBst9bSDpjJ",
-        "keys": {
-          "p256dh": "BKx",
-          "auth": "Q2w"
-        }
-      }
-    },
-    {
-      "name": "relay-plain",
-      "valid": true,
-      "params": {
-        "kind": "relay",
-        "url": "https://relay.example/p/xyz"
-      }
-    },
-    {
       "name": "webpush",
       "valid": true,
       "params": {
@@ -229,21 +236,35 @@
       }
     },
     {
+      "name": "webhook",
+      "valid": true,
+      "params": {
+        "kind": "webhook",
+        "url": "https://bot.example/apron",
+        "wake": [
+          "mentions",
+          "replies",
+          "private",
+          "records"
+        ],
+        "format": "knock"
+      }
+    },
+    {
+      "name": "webhook-defaults",
+      "valid": true,
+      "params": {
+        "kind": "webhook",
+        "url": "https://bot.example/apron"
+      }
+    },
+    {
       "name": "extension-kind",
       "valid": true,
       "params": {
         "kind": "ext:apns",
-        "url": "https://relay.example/apns",
+        "url": "https://push.example/apns",
         "device": "a1b2"
-      }
-    },
-    {
-      "name": "wake-is-not-a-kind",
-      "valid": false,
-      "why": "wake is a key of server.push, not a kind",
-      "params": {
-        "kind": "wake",
-        "url": "https://push.example/s/abc"
       }
     },
     {
@@ -260,7 +281,7 @@
       "valid": false,
       "why": "url is required",
       "params": {
-        "kind": "relay"
+        "kind": "webhook"
       }
     },
     {
@@ -268,9 +289,336 @@
       "valid": false,
       "why": "push_id is made of A-Z a-z 0-9 - _",
       "params": {
+        "kind": "webpush",
+        "url": "https://push.example/s/abc",
+        "push_id": "chat.example/ada",
+        "keys": {
+          "p256dh": "BOr",
+          "auth": "Hn3"
+        }
+      }
+    },
+    {
+      "name": "retired-kind",
+      "valid": false,
+      "why": "relay is no longer a push kind, and a kind that this document does not define starts with ext:",
+      "params": {
         "kind": "relay",
-        "url": "https://relay.example/p/xyz",
-        "push_id": "chat.example/ada"
+        "url": "https://relay.example/p/xyz"
+      }
+    },
+    {
+      "name": "retired-scope",
+      "valid": false,
+      "why": "badge is no longer a wake scope",
+      "params": {
+        "kind": "webpush",
+        "url": "https://push.example/s/abc",
+        "keys": {
+          "p256dh": "BOr",
+          "auth": "Hn3"
+        },
+        "wake": [
+          "badge"
+        ]
+      }
+    },
+    {
+      "name": "empty-wake",
+      "valid": false,
+      "why": "a wake that selects no scope that the server supports for the kind is invalid_params",
+      "params": {
+        "kind": "webhook",
+        "url": "https://bot.example/apron",
+        "wake": []
+      }
+    }
+  ],
+  "servers": [
+    {
+      "name": "webpush-and-webhook",
+      "valid": true,
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "capabilities": [
+            "status"
+          ],
+          "push": {
+            "webpush": {
+              "vapid_key": "BNcR",
+              "wake": [
+                "mentions",
+                "replies",
+                "private"
+              ]
+            },
+            "webhook": {
+              "signature_keys": [
+                "whpk_UGPbZjhyIvQnydGh/Q+Wb1vVexqu0D1rOnceurAF15k="
+              ],
+              "wake": [
+                "mentions",
+                "replies",
+                "private",
+                "joined",
+                "records"
+              ],
+              "format": [
+                "full",
+                "knock"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "fields-for-version-10",
+      "valid": true,
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "push": {
+            "webpush": {
+              "vapid_key": "BNcR",
+              "key": "BNcR",
+              "wake": [
+                "mentions",
+                "replies"
+              ]
+            },
+            "wake": [
+              "mentions",
+              "replies"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "webhook-without-signature-keys",
+      "valid": false,
+      "why": "server.push.webhook carries signature_keys",
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "push": {
+            "webhook": {
+              "wake": [
+                "mentions"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "webpush-with-only-the-version-10-key",
+      "valid": false,
+      "why": "server.push.webpush carries vapid_key",
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "push": {
+            "webpush": {
+              "key": "BNcR",
+              "wake": [
+                "mentions"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "webpush-without-wake",
+      "valid": false,
+      "why": "every kind's configuration in server.push carries a non-empty wake",
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "push": {
+            "webpush": {
+              "vapid_key": "BNcR"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "extension-kind-with-empty-wake",
+      "valid": false,
+      "why": "every kind's configuration in server.push carries a non-empty wake",
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "push": {
+            "ext:apns": {
+              "wake": []
+            }
+          }
+        }
+      }
+    }
+  ],
+  "webhooks": [
+    {
+      "name": "full",
+      "valid": true,
+      "frame": {
+        "method": "webhook",
+        "params": {
+          "server": "wss://chat.example/ws",
+          "you": {
+            "user_id": "bot_ada",
+            "name": "Ada's bot",
+            "roles": [
+              "bot"
+            ]
+          },
+          "attempt": 1,
+          "since": "1724803100377",
+          "first_log_id": "1724803200042",
+          "last_log_id": "1724803200042",
+          "token": "apron_webhook_1",
+          "token_expires": "1724804101000",
+          "wake": {
+            "1724803200042": [
+              "mentions",
+              "replies"
+            ]
+          },
+          "messages": [
+            {
+              "message_id": "1724803200042",
+              "log_id": "1724803200042",
+              "room_id": "general",
+              "from": {
+                "user_id": "alice",
+                "name": "Alice"
+              },
+              "reply_to": {
+                "message_id": "1724803100377",
+                "log_id": "1724803100377",
+                "room_id": "general",
+                "from": {
+                  "user_id": "bot_ada",
+                  "name": "Ada's bot"
+                },
+                "body": {
+                  "text": "Sunny today, 21°C."
+                }
+              },
+              "body": {
+                "text": "@bot_ada and tomorrow?",
+                "mentions": [
+                  "bot_ada"
+                ]
+              }
+            }
+          ],
+          "users": [
+            {
+              "user_id": "alice",
+              "name": "Alice"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "knock",
+      "valid": true,
+      "frame": {
+        "method": "webhook",
+        "params": {
+          "server": "wss://a.example/ws",
+          "you": {
+            "user_id": "link_b",
+            "name": "b.example"
+          },
+          "attempt": 2,
+          "latest_log_id": "1724803600000"
+        }
+      }
+    },
+    {
+      "name": "verification",
+      "valid": true,
+      "frame": {
+        "method": "webhook",
+        "params": {
+          "server": "wss://chat.example/ws",
+          "you": {
+            "user_id": "bot_ada",
+            "name": "Ada's bot",
+            "roles": [
+              "bot"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "knock-with-wake",
+      "valid": false,
+      "why": "a knock call carries no wake, joined, or left",
+      "frame": {
+        "method": "webhook",
+        "params": {
+          "server": "wss://a.example/ws",
+          "you": {
+            "user_id": "link_b"
+          },
+          "attempt": 1,
+          "latest_log_id": "1724803600000",
+          "wake": {
+            "1724803600000": [
+              "records"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "token-without-expiry",
+      "valid": false,
+      "why": "token_expires comes with token",
+      "frame": {
+        "method": "webhook",
+        "params": {
+          "server": "wss://chat.example/ws",
+          "you": {
+            "user_id": "bot_ada"
+          },
+          "attempt": 1,
+          "token": "apron_webhook_1"
+        }
       }
     }
   ]

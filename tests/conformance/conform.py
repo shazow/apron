@@ -99,7 +99,7 @@ from websockets.frames import Opcode
 from websockets.http11 import Response
 from websockets.uri import parse_uri
 
-VERSION = 10
+VERSION = 11
 WAIT = 2.0  # seconds to wait for an expected frame (--wait)
 QUIET = WAIT / 4  # seconds to wait for a frame that should not come
 # Seconds after which a server frame breaks §3.1's "immediately". It does not scale with --wait.

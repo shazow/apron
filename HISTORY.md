@@ -61,6 +61,21 @@ version gets a level-2 heading `vN (YYYY-MM-DD)` above the others, and
 PROTOCOL.md's front matter (`version`, `updated`) matches it.
 -->
 
+## v11 (2026-11-28)
+
+### Breaking
+
+- **Push configuration moves into each kind:** Servers advertise each kind's wake scopes as `wake` in its configuration in `server.push`, so that each kind can support its own scopes, and refuse with `invalid_params` a `wake` that selects none that they support for the kind and the user, an empty one included. The VAPID key moves to `webpush.vapid_key`, and clients read the old `server.push.wake` and `webpush.key` only from a server whose `apron` is below 11, since other servers MAY leave them out. [§4.9](PROTOCOL.md#49-push), [§4.9.2](PROTOCOL.md#492-wake), [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
+- **`relay` and `badge` retire:** Native apps that registered `relay` register `webpush` instead, and clients get no more pushes that only update `unread`, since `badge` worked only through relays. Every push now carries `message`, and servers send no push for a message that `mute` or a chosen `dnd` silences. [§4.9.2](PROTOCOL.md#492-wake), [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
+
+### New
+
+- **Bots run on webhooks:** Bots and other accounts that run only when called can register the push kind `webhook`, where server policy allows, and wake for every record of their rooms with the new scope `records`, so that they keep no connection open. Servers that offer it verify the `url` first, then POST the matching records, or only a knock, as `webhook` notifications signed with Standard Webhooks' `v2a`, and run the frames that a 2xx answer holds as the account, within what the call's short-lived `token` allows. [§4.9.4](PROTOCOL.md#494-webhook), [§4.9.1](PROTOCOL.md#491-registration), [§4.9.2](PROTOCOL.md#492-wake), [§5.5](PROTOCOL.md#55-network-privacy-and-server-requests) ([#143](https://github.com/shazow/apron/pull/143))
+
+### Clarified
+
+- **One registration for each URL, of any kind:** Servers keep one registration for each of a user's `url`s, so that registering a `url` again replaces its registration, also one of another kind. [§4.9.1](PROTOCOL.md#491-registration) ([#143](https://github.com/shazow/apron/pull/143))
+
 ## v10 (2026-11-16)
 
 ### Breaking
@@ -91,7 +106,7 @@ PROTOCOL.md's front matter (`version`, `updated`) matches it.
 
 - **Tokens stay with their server:** Clients send a bearer token only to the server address that they got it from, so that another server cannot sign in as the user with it. [§3.2.1](PROTOCOL.md#321-bearer-tokens) ([#130](https://github.com/shazow/apron/pull/130))
 - **`credential` is the browser's JSON:** Clients send `credential` in a WebAuthn `finish` as `toJSON()` returns it. [§4.10](PROTOCOL.md#410-webauthn-authentication) ([#130](https://github.com/shazow/apron/pull/130))
-- **Mutes and unread counts follow the server:** Servers may let mentions through a room mute, and decide how mutes change `unread`. A `status` request with `room_id` and no `mute` is no longer refused. [§4.5.3](PROTOCOL.md#453-the-status-request), [§4.9.3](PROTOCOL.md#493-payload) ([#112](https://github.com/shazow/apron/pull/112))
+- **Mutes and unread counts follow the server:** Servers may let mentions through a room mute, and decide how mutes change `unread`. A `status` request with `room_id` and no `mute` is no longer refused. [§4.5.3](PROTOCOL.md#453-the-status-request), [§4.9.3](PROTOCOL.md#493-web-push) ([#112](https://github.com/shazow/apron/pull/112))
 - **Version mismatches warn, and carry on:** Clients that see another protocol version warn, and continue. [§3.1](PROTOCOL.md#31-server-frame) ([#105](https://github.com/shazow/apron/pull/105))
 - **Reactions keep their first order:** Servers keep reactions in the order in which they first appeared. [§4.7](PROTOCOL.md#47-reactions) ([#105](https://github.com/shazow/apron/pull/105))
 
