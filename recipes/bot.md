@@ -232,11 +232,11 @@ Bot client:
   one a line. The server can limit how many it runs, such as 10, and report
   a frame that fails in `error`.
 - A call can carry a short-lived `token` for the connection, so that the
-  bot needs no long-lived token of its own. It does not replace a token that
-  the bot saved ([§4.9.4](../PROTOCOL.md#494-webhook)). A server can let
-  it sign in for 15 minutes, and post, react, show typing, and read
-  `history` only in the bot's rooms. It can stop working earlier, such as
-  when the bot gets a new bearer token.
+  bot needs no long-lived token of its own. It does not replace any existing
+  long-lived tokens of the bot ([§4.9.4](../PROTOCOL.md#494-webhook)). A
+  server can let it sign in for 15 minutes, and post, react, show typing,
+  and read `history` only in the bot's rooms. It can stop working earlier,
+  such as when the bot gets a new bearer token.
 - What happens when many calls come at once is open
   ([Q11](#open-questions)).
 
@@ -272,7 +272,8 @@ Bot client:
   the draft `ext:webhook`.
 - A bot registers it with `push_register`, as a device does (Q8, Q16). A
   `webhook` registration does not lapse while the bot stays away (Q26).
-  Registering again with the same `url` returns its state.
+  Registering again with the same `url` keeps its `endpoint_id`, and
+  returns its state.
 - Each push kind has its own wake scopes, in `server.push`. `records` adds
   every record of the bot's rooms (Q2).
 - The protocol does not filter bots' messages (Q7). A call carries each

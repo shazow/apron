@@ -2452,9 +2452,10 @@ class Webhook {                 // params of a webhook call
 
 Registration:
 
-- Registering again with the same `url` returns the current `state`.
-- The server chooses a new `endpoint_id` for each `url`. It is unique among
-  the server's webhooks, and has no `.`.
+- The server chooses an `endpoint_id` for each registration. It is unique
+  among the server's webhooks, and has no `.`.
+- Registering again with the same `url` keeps the `endpoint_id`, and returns
+  the current `state`.
 - Before its first call to a `url`, the server MUST verify the `url` with the
   [endpoint verification](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/extensions/endpoint-verification.md)
   of Standard Webhooks. `state` is `"verifying"` until the `url` passes.
@@ -2481,8 +2482,8 @@ Calls:
 - The user objects of a call carry their `roles` ([§3.3.4](#334-roles)).
 - `token` (optional) is a short-lived bearer token for the account. The
   account MAY sign in with it ([§3.2.1](#321-bearer-tokens)) until
-  `token_expires`, such as to answer the call. It does not replace a token
-  that the account saved.
+  `token_expires`, such as to answer the call. It does not replace any
+  existing long-lived tokens.
 - When `since` is absent, or is not where the account last read, the account
   reads `history` from its place ([§4.3.5](#435-replay-and-recovery)).
 - The server signs each call and each verification with the Standard Webhooks
