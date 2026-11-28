@@ -1,8 +1,8 @@
 # Bots
 
-**Status**: Draft. Requirements, open questions, and a draft extension,
-[`ext:webhook`](#draft-extension-extwebhook), while we research the server
-API and reference bot clients.
+**Status**: Draft. Requirements and open questions, while we research the
+server API and reference bot clients. Webhook bots use the draft extension
+[`ext:webhook`](../extensions/ext_webhook.md).
 
 **How can a bot run on Apron?** In one of two ways. A **daemon** holds a
 connection, reads every message in its rooms, and picks out what it needs.
@@ -157,7 +157,7 @@ Bot client:
   `user_id`, and the raw body, so that a call cannot be replayed later or to
   another bot.
 - The signature follows Standard Webhooks, with Ed25519
-  ([Draft extension](#draft-extension-extwebhook)).
+  ([`ext:webhook`](../extensions/ext_webhook.md)).
 - Before the server turns a webhook on, the URL proves that it answers for
   the bot, by signing a challenge with what it uses to check calls. This
   also stops an owner from aiming the server at a URL that is not a bot.
@@ -233,9 +233,9 @@ Bot client:
 
 - The name is **webhook** (Q28). A bot that the server calls is a webhook
   bot.
-- The webhook is a draft extension, `ext:webhook`, for now
-  ([Draft extension](#draft-extension-extwebhook)). It may become part of
-  PROTOCOL.md once it has proved itself.
+- The webhook is an extension, [`ext:webhook`](../extensions/ext_webhook.md),
+  still a draft. It may become part of PROTOCOL.md once it has proved
+  itself.
 - It is its own request, not a kind of `push_register`, and each account has
   one webhook (Q16, Q26). The bot sets it (Q8).
 - Calls follow Standard Webhooks, signed with Ed25519 (Q5).
@@ -276,21 +276,21 @@ Webhook delivery:
 
 Webhook trust:
 
-5. **Signatures.** Settled by the draft extension. HMAC-SHA256 with a secret for each bot, as Slack and
+5. **Signatures.** Settled by `ext:webhook`. HMAC-SHA256 with a secret for each bot, as Slack and
    GitHub use, or Ed25519 with one public key for the server, as Discord
    uses? With Ed25519, the server keeps no secret for each bot, and can
    publish its key. The bot then holds no second secret next to its token,
    which [issue #139] asks for.
-6. **Retries.** Settled by the draft extension. How long does the server keep trying? Each retry later than
+6. **Retries.** Settled by `ext:webhook`. How long does the server keep trying? Each retry later than
    a moment costs the server a scheduled wake.
 7. **Bot to bot.** Can an owner opt in to calls for other bots' messages?
    Telegram allows it since 2026, and asks bots to guard against loops.
-8. **Who sets the webhook.** Settled by the draft extension. Can the bot set its own webhook over the
+8. **Who sets the webhook.** Settled by `ext:webhook`. Can the bot set its own webhook over the
    protocol? If so, this becomes an extension, not server policy.
 
 Webhook answers:
 
-9. **Answers in the response.** Settled by the draft extension. Can the bot answer in the webhook's HTTP
+9. **Answers in the response.** Settled by `ext:webhook`. Can the bot answer in the webhook's HTTP
    response, as Telegram, Zulip, and Mattermost allow? It saves a
    connection for a bot that answers at once, and the deadline bounds what
    it costs the server. It would also let the bot react or show typing at
@@ -313,7 +313,7 @@ Operations:
 12. **Test calls.** Can the owner send a test call, or call again for a
     message, as GitHub's redelivery does? [Issue #139] asks bots to prove
     each change against a live server.
-13. **Catch-up.** Settled by the draft extension. Does the sequence number earn its place? A bot could
+13. **Catch-up.** Settled by `ext:webhook`. Does the sequence number earn its place? A bot could
     instead run one `history` call with no `room_id` on every wake. That
     costs a read for each call, and misses rooms that the bot has not
     joined (Q1).
@@ -329,7 +329,7 @@ Daemons:
 
 Shape of the webhook:
 
-16. **A push kind, or its own thing.** Settled by the draft extension. Is the webhook push kind `relay`
+16. **A push kind, or its own thing.** Settled by `ext:webhook`. Is the webhook push kind `relay`
     ([§4.9.2](../PROTOCOL.md#492-kinds)) with a wake policy for bots, or a
     webhook of its own? `relay` is already in the protocol, so any server
     with push could call bots. But its payload is at most 2048 bytes, cut
@@ -394,17 +394,17 @@ Beyond messages, popular on other platforms:
 
 Shape of the webhook, continued:
 
-24. **A token to connect back.** Settled by the draft extension. Does each call carry a short-lived token
+24. **A token to connect back.** Settled by `ext:webhook`. Does each call carry a short-lived token
     that signs in as the bot, so that a webhook needs no long-lived token of
     its own? Discord's interaction token (15 minutes, follow-ups only) and
     Slack's `response_url` (30 minutes, 5 uses) do this. It would be
     limited to the bot's rooms and to posting, reacting, typing, and
     reading, and could be signed rather than stored.
-25. **Frames in the response.** Settled by the draft extension. If Q9 is yes, is the response body a list
+25. **Frames in the response.** Settled by `ext:webhook`. If Q9 is yes, is the response body a list
     of request frames, one JSON object a line, that the server runs as the
     bot? It reuses the frames that a connection sends, with no results
     back.
-26. **One webhook for each bot.** Settled by the draft extension. Is a webhook a registration among many, as a
+26. **One webhook for each bot.** Settled by `ext:webhook`. Is a webhook a registration among many, as a
     device's push is, or one setting for each bot, as Telegram's
     `setWebhook` and Mastodon's one subscription for each token are? Push
     registrations lapse unless a connection renews them, which suits
@@ -419,14 +419,14 @@ Shape of the webhook, continued:
 
 Federation and transports:
 
-29. **One webhook for bots and links.** Settled by the draft extension. The trusted federation recipe
+29. **One webhook for bots and links.** Settled by `ext:webhook`. The trusted federation recipe
     already wakes a mirror that sleeps: its link registers a `relay` push
     with the wake scope `ext:remote`, and the owner POSTs `{"push_id": …}`
     or `{}` to a URL on the mirror's own host, one push for several records
     ([trusted federation](trusted_federation.md#draft-extension-extremote)).
     Does the webhook replace this, with a mode that only knocks and may
     cover a burst, beside the mode that carries each message?
-30. **Other transports.** Settled by the draft extension. Is HTTPS POST enough to wake an account, or does
+30. **Other transports.** Settled by `ext:webhook`. Is HTTPS POST enough to wake an account, or does
     the webhook also need to open a WebSocket, or another transport, to the
     account that it wakes?
 
@@ -457,253 +457,6 @@ goes away when the recipe is done.
 | Zulip | Outgoing webhook, or an event queue with long polling | Mentions and DMs; never other bots' messages | Fixed token in the body, never rotated | 10 seconds; 4 tries on a timeout or a failed connection, none on an error status; then "Failure!" in the conversation and a direct message to the owner | `{"content": …}` in the response, which the server posts in the same topic, or the REST API |
 | Teams (Bot Framework) | HTTP POST of Activities | Mentions, unless the install grants permission for all messages; never other bots | JWT from the Bot Connector, checked against its published keys | 15 seconds | Connector REST API |
 | GitHub (not chat) | Webhook | What the webhook subscribes to | HMAC-SHA256 (`X-Hub-Signature-256`); a delivery ID | 10 seconds; no automatic retries; manual redelivery for 3 days | Not applicable |
-
-## Draft extension: `ext:webhook`
-
-This recipe needs one change to the wire, which servers advertise as the
-capability `ext:webhook`. It is a draft: it can still change, and it moves to
-the [extensions](../EXTENSIONS.md) once it has proved itself.
-
-Adds webhooks: the server sends an account the records that concern it in
-HTTPS calls to a URL that the account sets. So an account, such as a bot or
-a link ([trusted federation](trusted_federation.md)), needs no connection
-open while it waits.
-
-```jsonc
-// <- the server frame
-{
-  "method": "server", "params": {
-    "apron": 10, "auth": ["token"], "capabilities": ["history", "ext:webhook"],
-    "ext": {"webhook": {"keys": ["whpk_MCowBQYDK2VwAyEA…"], "wake": ["mentions", "replies", "private", "joined"]}}
-  }
-}
-// -> the bot sets its webhook
-{
-  "method": "ext:webhook", "id": "c1", "params": {
-    "url": "https://bot.example/apron", "wake": ["mentions", "replies", "private"]
-  }
-}
-// <- the setting as it is now; the server verifies the URL first
-{"id": "c1", "result": {"url": "https://bot.example/apron", "wake": ["mentions", "replies", "private"], "format": "full", "endpoint_id": "wh_4f2kQ9xT", "state": "verifying"}}
-```
-
-```http
-POST /apron HTTP/1.1
-Host: bot.example
-Content-Type: application/json
-webhook-id: msg_1724803200042_4f2kQ9xT
-webhook-timestamp: 1724803201
-webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
-
-{
-  "method": "ext:webhook", "params": {
-    "server": "wss://chat.example/ws",
-    "you": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
-    "attempt": 1, "since": "1724803100377",
-    "first_log_id": "1724803200042", "last_log_id": "1724803200042",
-    "token": "apron_webhook_…",
-    "wake": {"1724803200042": ["mentions", "replies"]},
-    "messages": [
-      {
-        "message_id": "1724803200042", "log_id": "1724803200042", "room_id": "general",
-        "from": {"user_id": "alice", "name": "Alice", "roles": ["admin"]},
-        "reply_to": {
-          "message_id": "1724803100377", "log_id": "1724803100377", "room_id": "general",
-          "from": {"user_id": "bot_ada", "name": "Ada's bot", "roles": ["bot"]},
-          "body": {"text": "Sunny today, 21°C."}
-        },
-        "body": {"text": "@bot_ada and tomorrow?", "mentions": ["bot_ada"]}
-      }
-    ],
-    "rooms": [{"room_id": "general", "log_id": "1724790000000", "title": "General"}],
-    "users": [{"user_id": "alice", "name": "Alice", "roles": ["admin"]}]
-  }
-}
-```
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/jsonl
-
-{"method": "reactions", "id": "r-1724803200042", "params": {"message_id": "1724803200042", "emojis": ["👀"]}}
-{"method": "message", "id": "a-1724803200042", "params": {"room_id": "general", "reply_to": {"message_id": "1724803200042"}, "body": {"text": "Rain tomorrow, 14°C."}}}
-```
-
-```ts
-class WebhookServer {           // server.ext.webhook
-  keys: string[];               // the server's Ed25519 public keys, "whpk_" and base64
-  wake: string[];               // the scopes that this server implements
-  format?: string[] = ["full"]; // the formats that this server sends: "full", "knock"
-}
-
-class Webhook {                 // ext:webhook params and result
-  url?: string;                 // https; "" removes the webhook
-  wake?: string[];              // default ["mentions", "replies", "private"]
-  format?: string = "full";     // "full" or "knock"
-  paused?: boolean = false;
-  endpoint_id?: string;         // result only: the Standard Webhooks endpoint ID, without "."
-  state?: string;               // result only: "verifying", "on", "paused", or "failing"
-  error?: string;               // result only: why the last call failed
-}
-
-class Call {                    // ext:webhook notification params: the body of a call
-  // the call
-  server: string;               // the server's address (§1)
-  you: User;                    // the account, as `you` after auth (§3.2)
-  attempt: number;              // 1, then 2 and up on each retry
-  since?: string;               // last_log_id or latest_log_id of the previous call to this webhook
-  first_log_id?: string;        // the bounds of the records that matched, as in history (§4.3)
-  last_log_id?: string;
-  latest_log_id?: string;       // "knock" only: the newest record that matched
-  token?: string;               // a bearer token that signs in as the account (§3.2.1)
-  wake?: Record<string, string[]>;  // message_id: the scopes that the message matched
-  skipped?: number;             // calls left out for a limit since the previous call
-  // records, as history names them (§4.3)
-  messages?: Message[];
-  reactions?: Reactions[];
-  memberships?: Membership[];
-  rooms?: Room[];               // room records that changed, or that the call refers to
-  // changes to the account's rooms, as room_update names them (§4.2.3)
-  joined?: Room[];              // rooms that the account joined, with members
-  left?: { room_id: string }[]; // rooms that the account is no longer in, for any reason
-  // records that help read the call
-  users?: User[];               // user objects (§3.3.1) that the call refers to
-}
-```
-
-Setting the webhook:
-
-- `ext:webhook` sets the webhook of the authenticated account. An account
-  has at most one. Params merge into it as user objects do
-  ([§3.3.1](../PROTOCOL.md#331-user-objects)). `{}` changes nothing.
-- The result is the whole setting as it is now, with its `state`.
-- Server policy decides which accounts may set a webhook, such as bots and
-  links. Others get `denied`.
-- `url` is an `https` URL that the server will send to, as for push
-  endpoints ([§4.9.1](../PROTOCOL.md#491-registration)). Another is
-  `invalid_params`. `"url": ""` removes the webhook.
-- A webhook stays until the account removes it, or the server turns it off.
-  It does not lapse when the account stays away. A new token for the account
-  does not remove it.
-- `paused: true` stops calls and keeps the setting.
-
-Verifying:
-
-- When `url` changes, the server verifies the URL with the endpoint
-  verification extension of Standard Webhooks: a signed POST with a
-  `webhook-challenge` header, which the URL answers with
-  `webhook-challenge-response`. An echo of the challenge would prove
-  neither that the URL holds the key nor that it agreed to calls from this
-  server.
-- `state` is `"verifying"` until the URL answers. Then it is `"on"`.
-  Otherwise it is `"failing"`, with `error`, and the server sends nothing
-  else to the URL.
-- Server policy can bind a link's URL to the address of its server instead,
-  as the trusted federation recipe does.
-
-What calls the webhook:
-
-- `wake` lists the scopes of the calls, from those that `server.ext.webhook`
-  lists. Others are ignored. `[]` calls for nothing.
-- `mentions`, `replies`, and `private` match new messages as for push
-  ([§4.9.4](../PROTOCOL.md#494-wake)), with the account as the user. A
-  message from a user with the role `bot` matches none of them.
-- `joined` matches every record of the rooms that the account joined:
-  messages and their changes, reactions, memberships, and room records.
-- No record of the account's own matches, except for `joined`.
-- The server does not wait, coalesce, or check status or mutes before a
-  call, as it does for push.
-- The server sends no calls while the account has an open connection.
-
-Calls:
-
-- A call is a POST of one `ext:webhook` notification
-  ([§1](../PROTOCOL.md#1-transport--framing)) as `application/json`. Its
-  `params` are flat: each field holds one kind of payload, under the name
-  that `history` or `room_update` gives it.
-- `server` and `you` say which server called and for which account, so that
-  one URL can serve several servers and accounts. The account trusts only
-  the `keys` of the server that `server` refers to.
-- `you` changes when the account's profile or `roles` change, as a `user`
-  `you` notification would ([§3.3.3](../PROTOCOL.md#333-changes)).
-- With `format` `"full"`, a call carries the records that matched, in
-  `log_id` order. One call can carry several. `wake` lists the scopes of each
-  new message that matched. A bot answers only the messages in `wake`.
-- `joined` and `left` tell the account of changes to its own rooms, under
-  every scope. `left` also covers a room that the account lost without a
-  membership record.
-- A call also carries records that help read it: the `rooms` and `users`
-  that its records refer to. A message's `reply_to` is the full snapshot of
-  the message that it replies to, as servers may send it
-  ([§3.5.4](../PROTOCOL.md#354-references)). These are records that the
-  account may see. The account applies them as any record
-  ([§2.3](../PROTOCOL.md#23-records-and-replay)).
-- With `format` `"knock"`, a call carries no records, and `latest_log_id` is
-  the newest record that matched. One knock covers every record committed
-  before it was sent. A record after it gets another.
-- `since` is the `last_log_id`, or the `latest_log_id`, of the previous call
-  to this webhook. The server leaves it out when it does not know. When
-  `since` is absent, or is not where the account last read to, the account
-  reads `history` from where it last read
-  ([§4.3.5](../PROTOCOL.md#435-replay-and-recovery)).
-- To fit its limits, the server first sends `reply_to` bare, then leaves out
-  the other records that help read the call. Then it splits the records over several
-  calls.
-- `token` (optional) is a bearer token that signs in as the account
-  ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)). The server chooses its
-  lifetime and what it allows, such as 15 minutes, and posting, reacting,
-  typing, and `history` in the account's rooms.
-
-Signatures:
-
-- Calls follow Standard Webhooks, with its headers `webhook-id`,
-  `webhook-timestamp`, and `webhook-signature`.
-- `webhook-id` identifies the call. It is the same on each retry.
-- The server signs with the asymmetric scheme `v2a` (Ed25519). `keys` lists
-  the public keys. A call can carry several signatures while a key changes.
-- The endpoint ID is `endpoint_id` from the result. The server chooses it
-  for each webhook, keeps it for as long as the webhook has its `url`, and
-  never puts `.` in it, as Standard Webhooks requires. A `user_id` can
-  contain `.`, so it is not the endpoint ID.
-- `webhook-id` never contains `.` either.
-- The account checks a signature with one of `keys`, checks that
-  `webhook-timestamp` is within 5 minutes, and drops a `webhook-id` that it
-  has seen.
-
-Responses:
-
-- The URL answers 2xx within the server's time limit, such as 5 seconds.
-  Anything else is a failure.
-- The body of a 2xx can be request frames, one a line, as on a byte-stream
-  transport ([§1](../PROTOCOL.md#1-transport--framing)). The server runs them
-  in order as the account, with what `token` allows, and sends no results.
-  It deduplicates them as any request
-  ([§1.2](../PROTOCOL.md#12-retries-and-deduplication)).
-- The server limits how many frames it runs, such as 4. A frame that fails
-  sets `error`.
-
-Failures:
-
-- The server retries a call that timed out, could not connect, or got a 5xx
-  or a 429, a few times, such as at once, after 5 seconds, and after 5
-  minutes. It honors `Retry-After`.
-- The server does not retry a call that got another 4xx.
-- A 410 removes the webhook.
-- After calls fail for a time that the server chooses, `state` is
-  `"failing"`, and the server can stop calling until the account sets the
-  webhook again.
-
-Without the extension, a bot holds a connection
-([Daemon](#daemon)), or connects on its own schedule. A server without it
-answers `ext:webhook` as an unknown method
-([§1](../PROTOCOL.md#1-transport--framing)).
-
-### References
-
-- [Standard Webhooks 1.0](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md),
-  and its [endpoint verification](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/extensions/endpoint-verification.md)
-  extension
-- [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032): Ed25519
 
 ## Limits
 
