@@ -527,7 +527,7 @@
           }
         },
         "push": {
-          "description": "Each push kind's configuration, with the non-empty list of wake scopes that the server supports for it (§4.9). A top-level wake list, and webpush.key, are for clients of version 10.",
+          "description": "Each push kind's configuration, with the non-empty list of wake scopes that the server supports for it (§4.9). A top-level wake list, and webpush.key, are for clients of earlier versions, as in version 10.",
           "type": "object",
           "properties": {
             "webpush": {
@@ -537,7 +537,7 @@
                   "type": "string"
                 },
                 "key": {
-                  "description": "For clients of version 10: the value of vapid_key (§4.9).",
+                  "description": "For clients of earlier versions: the value of vapid_key (§4.9).",
                   "type": "string"
                 },
                 "wake": {

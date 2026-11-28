@@ -2224,8 +2224,8 @@ the wake scopes that the server supports for the kind. If `server.push` is
 present, the server accepts `push_register` and `push_unregister`.
 
 - Servers MAY also send `server.push.wake` and `server.push.webpush.key` as in
-  version 10, for clients of that version. Clients MAY read both from a server
-  whose `apron` is 10, and ignore them from other servers.
+  version 10, for clients of earlier versions. Clients MAY read both from a
+  server whose `apron` is below 11, and ignore them from other servers.
 
 ```jsonc
 // <- the server frame offers webpush and webhook
@@ -2287,9 +2287,12 @@ present, the server accepts `push_register` and `push_unregister`.
   - `joined`: new messages in rooms that the user joined.
   - `records`: every record of the rooms that the user joined: message
     snapshots, reactions, memberships, and room records.
-- Servers advertise only the scopes that they implement for each kind, and
-  ignore other scopes in `wake`. A `wake` that selects no scope that the
-  server supports for the kind and the user is `invalid_params`.
+- Servers advertise for each kind only the scopes that they implement. They
+  SHOULD advertise only those that every user who may register the kind can
+  use.
+- Servers ignore the scopes in `wake` that they do not support for the kind
+  and the user. A `wake` that selects none that they support is
+  `invalid_params`.
 - Without `wake`, the server uses its default scopes. These SHOULD be
   `mentions` and `replies`, and also `private` for a `webhook`, where
   advertised.
@@ -2467,10 +2470,14 @@ Registration:
 - The body of a verification is a `webhook` notification with only `server`
   and `you`.
 - Servers SHOULD retry a verification that fails. Server policy decides when.
+- A newer verification of a `url` replaces an older one that the server is
+  still retrying.
 - Registering again verifies the `url` again when `state` is `"verifying"` or
   `"failing"`.
 - `state` is `"failing"` once the server stops retrying a verification or a
   call that fails.
+- `"failing"` alone does not stop calls. Server policy decides whether and
+  when the server stops calling a failing webhook.
 - `state` is `"paused"` while server policy stops the calls, such as when the
   account's owner pauses them.
 - `error` (optional) says why the last verification, call, or frame in a

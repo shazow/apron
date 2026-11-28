@@ -106,7 +106,7 @@ def names(value):
         yield from (("capability", c) for c in params.get("capabilities", []))
         yield from (("auth scheme", s) for s in params.get("auth", []) + params.get("signup", []))
         for kind, config in params.get("push", {}).items():
-            if kind == "wake":  # for clients of version 10 (§4.9)
+            if kind == "wake":  # for clients of earlier versions (§4.9)
                 yield from (("wake scope", w) for w in config)
                 continue
             yield "push kind", kind

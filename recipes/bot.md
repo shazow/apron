@@ -161,8 +161,8 @@ A webhook bot:
    - The verification's body carries `server` and `you`. So a URL that
      serves several registrations finds the `endpoint_id` to answer with.
    - Registering again while `state` is `"verifying"` or `"failing"` sends
-     a new verification. So a bot that missed the first one registers
-     again.
+     a new verification, which replaces one that the server is still
+     retrying. So a bot that missed the first one registers again.
    - Server: try the verification again a few times, such as on the
      schedule of a call's retries. After the last try fails, `state` is
      `"failing"`, and `error` says why.
@@ -225,8 +225,9 @@ A webhook bot:
     - Server: don't retry a call that got 3xx or another 4xx, and don't
       follow redirects. A 410 removes the registration
       ([§4.9.1](../PROTOCOL.md#491-registration)).
-    - Server: when most calls fail for an hour, set `state` to `"failing"`,
-      stop calling until the bot registers again, and tell the owner.
+    - Server: `"failing"` alone does not stop calls
+      ([§4.9.4](../PROTOCOL.md#494-webhook)). When most calls fail for an
+      hour, stop calling until the bot registers again, and tell the owner.
       Slack's rule is more than 95% of calls in 60 minutes, and only for apps
       with at least 1,000 calls an hour.
     - The bot or its owner sees the webhook's `state` by registering again
