@@ -600,9 +600,9 @@ others who share a room with the user. `new` is the current object of the user.
   servers announce that the previous identity left. They do not send `old`.
 - After a `user_id` change, logged records keep the old `user_id`. Clients MAY
   treat it as the new identity.
-- A `new` of `{}` with `old` means that the server removed the account of
-  `old.user_id` and its records. Clients forget the user and the user's
-  records.
+- A `new` of `{}` with `old` instead means that the server removed the account
+  of `old.user_id` and its records. Clients forget the user and the user's
+  records. The server MAY send it to every connection.
 
 #### 3.3.4 Roles
 
