@@ -2479,6 +2479,10 @@ Calls:
 - Servers SHOULD send each `reply_to` as a full snapshot
   ([§3.5.4](#354-references)).
 - The user objects of a call carry their `roles` ([§3.3.4](#334-roles)).
+- `token` (optional) is a short-lived bearer token for the account. The
+  account MAY sign in with it ([§3.2.1](#321-bearer-tokens)) until
+  `token_expires`, such as to answer the call. It does not replace a token
+  that the account saved.
 - When `since` is absent, or is not where the account last read, the account
   reads `history` from its place ([§4.3.5](#435-replay-and-recovery)).
 - The server signs each call and each verification with the Standard Webhooks

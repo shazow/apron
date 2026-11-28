@@ -232,10 +232,11 @@ Bot client:
   one a line. The server can limit how many it runs, such as 10, and report
   a frame that fails in `error`.
 - A call can carry a short-lived `token` for the connection, so that the
-  bot needs no long-lived token of its own. A server can let it sign in for
-  15 minutes, and post, react, show typing, and read `history` only in the
-  bot's rooms. It can stop working earlier, such as when the bot gets a new
-  bearer token.
+  bot needs no long-lived token of its own. It does not replace a token that
+  the bot saved ([§4.9.4](../PROTOCOL.md#494-webhook)). A server can let
+  it sign in for 15 minutes, and post, react, show typing, and read
+  `history` only in the bot's rooms. It can stop working earlier, such as
+  when the bot gets a new bearer token.
 - What happens when many calls come at once is open
   ([Q11](#open-questions)).
 
