@@ -527,7 +527,7 @@
           }
         },
         "push": {
-          "description": "Each push kind's configuration, with the wake scopes that the server supports for it (§4.9). A top-level wake list, and webpush.key, are for clients of version 10.",
+          "description": "Each push kind's configuration, with the non-empty list of wake scopes that the server supports for it (§4.9). A top-level wake list, and webpush.key, are for clients of version 10.",
           "type": "object",
           "properties": {
             "webpush": {
@@ -544,18 +544,20 @@
                   "type": "array",
                   "items": {
                     "type": "string"
-                  }
+                  },
+                  "minItems": 1
                 }
               },
               "required": [
-                "vapid_key"
+                "vapid_key",
+                "wake"
               ]
             },
             "webhook": {
               "type": "object",
               "properties": {
                 "signature_keys": {
-                  "description": "Ed25519 public keys, whpk_ and base64 (§4.9.4).",
+                  "description": "Ed25519 public keys: whpk_ and the base64 of the raw 32 bytes (§4.9.4).",
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -566,7 +568,8 @@
                   "type": "array",
                   "items": {
                     "type": "string"
-                  }
+                  },
+                  "minItems": 1
                 },
                 "format": {
                   "type": "array",
@@ -594,9 +597,13 @@
                 "type": "array",
                 "items": {
                   "type": "string"
-                }
+                },
+                "minItems": 1
               }
-            }
+            },
+            "required": [
+              "wake"
+            ]
           }
         },
         "ext": {
@@ -1200,10 +1207,12 @@
           "enum": [
             "verifying",
             "on",
+            "paused",
             "failing"
           ]
         },
         "error": {
+          "description": "The last failure, with any state (§4.9.4).",
           "type": "string"
         }
       },
@@ -2108,7 +2117,7 @@
       ]
     },
     "WebhookEvent": {
-      "description": "§4.9.4: the params of a webhook call",
+      "description": "§4.9.4: the params of a webhook call, or of a verification with only server and you",
       "type": "object",
       "properties": {
         "server": {
@@ -2197,13 +2206,33 @@
       },
       "required": [
         "server",
-        "you",
-        "attempt"
+        "you"
       ],
       "dependentRequired": {
         "token": [
           "token_expires"
         ]
+      },
+      "dependentSchemas": {
+        "latest_log_id": {
+          "description": "knock: no records, and none of wake, rooms, joined, left, and users",
+          "propertyNames": {
+            "not": {
+              "enum": [
+                "first_log_id",
+                "last_log_id",
+                "wake",
+                "messages",
+                "reactions",
+                "memberships",
+                "rooms",
+                "joined",
+                "left",
+                "users"
+              ]
+            }
+          }
+        }
       }
     }
   }

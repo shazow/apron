@@ -1,7 +1,7 @@
 {
   "format": 1,
   "kind": "push",
-  "description": "Push payloads, registrations, server frames, and webhook calls (§4.9). A webpush payload is a UTF-8 JSON object of at most 2048 bytes, measured here as compact JSON (no whitespace between tokens). A valid payload conforms to the schema and fits; each invalid case breaks the one rule its why states. Registrations are push_register params, servers are server frames that advertise push, and webhooks are webhook call bodies (§4.9.4). tests/schema/validate.py checks them all.",
+  "description": "Push payloads, registrations, server frames, and webhook calls (§4.9). A webpush payload is a UTF-8 JSON object of at most 2048 bytes, measured here as compact JSON (no whitespace between tokens). A valid payload conforms to the schema and fits; each invalid case breaks the one rule its why states. Registrations are push_register params, servers are server frames that advertise push, and webhooks are the bodies of webhook calls and verifications (§4.9.4). tests/schema/validate.py checks them all.",
   "references": [
     "PROTOCOL.md#49-push"
   ],
@@ -263,7 +263,7 @@
       "valid": true,
       "params": {
         "kind": "ext:apns",
-        "url": "https://relay.example/apns",
+        "url": "https://push.example/apns",
         "device": "a1b2"
       }
     },
@@ -359,7 +359,7 @@
             },
             "webhook": {
               "signature_keys": [
-                "whpk_MCowBQYDK2VwAyEA"
+                "whpk_UGPbZjhyIvQnydGh/Q+Wb1vVexqu0D1rOnceurAF15k="
               ],
               "wake": [
                 "mentions",
@@ -442,6 +442,44 @@
               "wake": [
                 "mentions"
               ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "webpush-without-wake",
+      "valid": false,
+      "why": "every kind's configuration in server.push carries a non-empty wake",
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "push": {
+            "webpush": {
+              "vapid_key": "BNcR"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "extension-kind-with-empty-wake",
+      "valid": false,
+      "why": "every kind's configuration in server.push carries a non-empty wake",
+      "frame": {
+        "method": "server",
+        "params": {
+          "apron": 11,
+          "auth": [
+            "token"
+          ],
+          "push": {
+            "ext:apns": {
+              "wake": []
             }
           }
         }
@@ -530,17 +568,40 @@
       }
     },
     {
-      "name": "without-attempt",
-      "valid": false,
-      "why": "attempt is required",
+      "name": "verification",
+      "valid": true,
       "frame": {
         "method": "webhook",
         "params": {
           "server": "wss://chat.example/ws",
           "you": {
-            "user_id": "bot_ada"
+            "user_id": "bot_ada",
+            "name": "Ada's bot",
+            "roles": [
+              "bot"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "knock-with-wake",
+      "valid": false,
+      "why": "a knock call carries no wake, joined, or left",
+      "frame": {
+        "method": "webhook",
+        "params": {
+          "server": "wss://a.example/ws",
+          "you": {
+            "user_id": "link_b"
           },
-          "latest_log_id": "1724803600000"
+          "attempt": 1,
+          "latest_log_id": "1724803600000",
+          "wake": {
+            "1724803600000": [
+              "records"
+            ]
+          }
         }
       }
     },

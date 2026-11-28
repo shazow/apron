@@ -130,8 +130,8 @@ A webhook bot:
    - The bot needs no scope to hear that it joined or left a room. Those
      changes always call the webhook, so the bot can greet a room once, as
      [issue #139] asks.
-   - The default `format` is `full`. A `knock` call carries no records, for
-     an account that reads them itself, as a
+   - The default `format` is `full`. A `knock` call carries no records,
+     `wake`, or room changes, for an account that reads them itself, as a
      [federation link](trusted_federation.md#draft-extension-extremote)
      does.
    - Registering again with the same `url` keeps the `endpoint_id`, and
@@ -147,18 +147,25 @@ A webhook bot:
    - Server: a new token does not drop the webhook, and a change to the
      webhook does not rotate the token.
    - Server: let the owner see, pause, and remove the webhook, with commands
-     such as `/webhook` and `/webhook pause`. A pause keeps the settings.
-     It is the kill switch that [issue #139] asks for.
+     such as `/webhook` and `/webhook pause`. A pause keeps the settings,
+     and `state` is `"paused"`. It is the kill switch that [issue #139] asks
+     for.
 9. The bot answers the server's endpoint verification
    ([§4.9.4](../PROTOCOL.md#494-webhook)). The server sends it right after
    the `push_register` result. `state` stays `"verifying"` until the URL
    passes.
    - Serve the URL before the bot registers.
    - The answer needs the `endpoint_id`. Save it where the webhook can read
-     it, such as in a Durable Object, as soon as the result comes.
+     it, such as in a Durable Object, as soon as the result comes. The
+     challenge can come before the bot has saved it.
+   - The verification's body carries `server` and `you`. So a URL that
+     serves several registrations finds the `endpoint_id` to answer with.
+   - Registering again while `state` is `"verifying"` or `"failing"` sends
+     a new verification. So a bot that missed the first one registers
+     again.
    - Server: try the verification again a few times, such as on the
-     schedule of a call's retries. While it fails, `state` is `"failing"`,
-     and `error` says why.
+     schedule of a call's retries. After the last try fails, `state` is
+     `"failing"`, and `error` says why.
    - The verification also stops an owner from aiming the server's calls at
      a URL that is not a bot
      ([§5.5](../PROTOCOL.md#55-network-privacy-and-server-requests)).
@@ -172,8 +179,8 @@ A webhook bot:
     - `wake`, the scopes that each new message matched. The server knows who
       wrote the message that was replied to, so the bot does not have to
       remember the IDs of its own messages.
-    - the `users`, with their `roles`, the `rooms`, and each `reply_to` as a
-      full snapshot. The bot then needs no `room_list` or `history` in the
+    - the `users`, the `rooms`, and each `reply_to` as a full snapshot.
+      Every user object carries its `roles`, each record's `from` included. The bot then needs no `room_list` or `history` in the
       common case.
     - `attempt`, `since`, and `token`, which other steps use.
 
@@ -223,11 +230,13 @@ A webhook bot:
       Slack's rule is more than 95% of calls in 60 minutes, and only for apps
       with at least 1,000 calls an hour.
     - The bot or its owner sees the webhook's `state` by registering again
-      with the same `url`. With `"failing"`, `error` says why, as Telegram's
-      `getWebhookInfo` does.
-12. A bot that answers at once can answer in the response: request frames,
-    one a line, that the server runs in order as the bot
-    ([§4.9.4](../PROTOCOL.md#494-webhook)).
+      with the same `url`. `error` says what failed last, with any `state`,
+      as Telegram's `getWebhookInfo` does.
+12. A bot that answers at once can answer in the response: frames, one a
+    line, that the server runs in order as the bot
+    ([§4.9.4](../PROTOCOL.md#494-webhook)). They can be requests, or
+    notifications such as `activity` with `typing`
+    ([§4.6](../PROTOCOL.md#46-activity)).
 
     ```http
     HTTP/1.1 200 OK
@@ -241,7 +250,8 @@ A webhook bot:
       server.
     - The bot does its work before it answers, within the 30 seconds.
     - The server sends no results. So the bot cannot learn whether a post
-      worked, as Telegram warns.
+      worked, as Telegram warns. A frame that fails, or that the call's
+      `token` does not allow, sets the webhook's `error`.
     - The server deduplicates the frames as any request. So a retried call
       that gets the same answer posts once.
     - Server: limit how many frames one response runs, such as 10.
@@ -252,6 +262,9 @@ A webhook bot:
     - The call's `token` signs in as the bot until `token_expires`. So the
       bot needs no long-lived token of its own. The call's token replaces
       none of the bot's long-lived tokens.
+    - The `auth` result has no new `token`, and the server can close the
+      connection after `token_expires`. So connect back soon after the
+      call.
     - Server: tokens are opaque ([§3.2.1](../PROTOCOL.md#321-bearer-tokens)),
       so the call's token can be a signed token with an expiry and a prefix,
       and need no storage.
@@ -270,7 +283,8 @@ A webhook bot:
       ([question 3](#open-questions)).
 14. The bot catches up when it missed a call.
     - Remember where the last call ended: its `last_log_id`, or its
-      `latest_log_id` for a knock.
+      `latest_log_id` for a knock. A call that carries only `joined` or
+      `left` does not move it.
     - `since` is where the previous call ended. When it is absent, or is not
       where the bot last read, read `history` from there
       ([§4.3.5](../PROTOCOL.md#435-replay-and-recovery)). A gap in

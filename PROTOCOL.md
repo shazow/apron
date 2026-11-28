@@ -2219,12 +2219,13 @@ the account serves. Push has no capability of its own. `server.push`
 advertises it.
 
 `server.push` ([§3.1](#31-server-frame)) maps each supported push kind to its
-public configuration. The `wake` key of each configuration lists the wake
-scopes that the server supports for the kind. If `server.push` is present, the
-server accepts `push_register` and `push_unregister`.
+public configuration. Each configuration carries `wake`, a non-empty list of
+the wake scopes that the server supports for the kind. If `server.push` is
+present, the server accepts `push_register` and `push_unregister`.
 
 - Servers MAY also send `server.push.wake` and `server.push.webpush.key` as in
-  version 10, for clients of that version. Clients ignore both.
+  version 10, for clients of that version. Clients MAY read both from a server
+  whose `apron` is 10, and ignore them from other servers.
 
 ```jsonc
 // <- the server frame offers webpush and webhook
@@ -2233,7 +2234,7 @@ server accepts `push_register` and `push_unregister`.
     "apron": 11, "capabilities": ["status"], "auth": ["webauthn", "token"],
     "push": {
       "webpush": {"vapid_key": "BNcR...", "wake": ["mentions", "replies", "private"]},
-      "webhook": {"signature_keys": ["whpk_MCowBQYDK2VwAyEA..."], "wake": ["mentions", "replies", "private", "joined", "records"], "format": ["full", "knock"]}
+      "webhook": {"signature_keys": ["whpk_UGPbZjhyIvQnydGh/Q+Wb1vVexqu0D1rOnceurAF15k="], "wake": ["mentions", "replies", "private", "joined", "records"], "format": ["full", "knock"]}
     }
   }
 }
@@ -2250,13 +2251,15 @@ server accepts `push_register` and `push_unregister`.
 
 #### 4.9.1 Registration
 
-- `kind` is a key of `server.push`. Fields other than `url` and `wake` are
-  specific to the kind. Third-party kinds ([§4](#4-capabilities)) define their
-  own delivery.
+- `kind` is a key of `server.push` other than `wake`. Fields other than `url`
+  and `wake` are specific to the kind. Third-party kinds
+  ([§4](#4-capabilities)) define their own delivery.
 - `url` is required. A registration belongs to the authenticated user and its
   `url`. It stays after the connection that made it closes.
-- A registration with the same `url` replaces the earlier registration of the
-  user. `push_unregister` removes it. Unregistering an unknown `url` succeeds.
+- A user has one registration for each `url`, of any kind. A registration
+  replaces the user's earlier one with the same `url`, also one of another
+  kind. `push_unregister` removes it. Unregistering an unknown `url`
+  succeeds.
 - Server policy decides which users may register each kind, such as only
   users who are not guests ([§3.2](#32-authentication)), or a `webhook` only
   for users with the role `bot` ([§3.3.4](#334-roles)).
@@ -2286,7 +2289,7 @@ server accepts `push_register` and `push_unregister`.
     snapshots, reactions, memberships, and room records.
 - Servers advertise only the scopes that they implement for each kind, and
   ignore other scopes in `wake`. A `wake` that selects no scope that the
-  server supports for the kind is `invalid_params`.
+  server supports for the kind and the user is `invalid_params`.
 - Without `wake`, the server uses its default scopes. These SHOULD be
   `mentions` and `replies`, and also `private` for a `webhook`, where
   advertised.
@@ -2364,7 +2367,7 @@ A webhook lets an account that runs only when called, such as a bot on a
 serverless host, keep no connection open. The server sends the records that
 concern the account in HTTPS calls that follow
 [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md),
-and the account can answer with requests.
+and the account can answer with frames.
 
 ```jsonc
 // -> the bot registers; server.push.webhook is as in §4.9
@@ -2385,7 +2388,7 @@ Host: bot.example
 Content-Type: application/json
 webhook-id: msg_1724803200042_4f2kQ9xT
 webhook-timestamp: 1724803201
-webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
+webhook-signature: v2a,8+CoxNutM2GFI9/SzzUTFWSM/4S/4CnU8T/rgQ3EBXEYeDgUfMcv+rEJthsMa33YnO1Azv4LimqEuunGdqu6Aw==
 
 {
   "method": "webhook", "params": {
@@ -2415,7 +2418,7 @@ webhook-signature: v2a,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4…
 
 ```ts
 class WebhookConfig {           // server.push.webhook
-  signature_keys: string[];     // the server's Ed25519 public keys, "whpk_" and base64
+  signature_keys: string[];     // the server's Ed25519 public keys: "whpk_" and the base64 of the raw 32 bytes
   wake: string[];               // the scopes that the server supports (§4.9.2)
   format?: string[] = ["full"]; // the formats that the server offers: "full", "knock"
 }
@@ -2423,15 +2426,15 @@ class WebhookConfig {           // server.push.webhook
 class WebhookRegistration {     // push_register params and result, besides kind, url, and wake
   format?: string = "full";     // params: one of server.push.webhook.format
   endpoint_id?: string;         // result: the endpoint ID of the signatures
-  state?: string;               // result: "verifying", "on", or "failing"
-  error?: string;               // result, with "failing": why
+  state?: string;               // result: "verifying", "on", "paused", or "failing"
+  error?: string;               // result, with any state: the last failure
 }
 
-class Webhook {                 // params of a webhook call
-  server: string;               // the server's address (§1)
+class Webhook {                 // params of a webhook call or verification
+  server: string;               // the server address that the registration was made on (§1)
   you: User;                    // the account, as `you` after auth (§3.2)
-  attempt: number;              // 1, then 2 and up on each retry
-  since?: string;               // last_log_id or latest_log_id of the previous call
+  attempt?: number;             // a call: 1, then 2 and up on each retry
+  since?: string;               // last_log_id or latest_log_id of an earlier call
   first_log_id?: string;        // "full": the bounds of the records, as in history (§4.3)
   last_log_id?: string;
   latest_log_id?: string;       // "knock": the newest record that matched
@@ -2454,14 +2457,24 @@ Registration:
 
 - The server chooses an `endpoint_id` for each registration. It is unique
   among the server's webhooks, and has no `.`.
-- Registering again with the same `url` keeps the `endpoint_id`, and returns
-  the current `state`.
+- Registering a `webhook` again with the same `url` keeps the `endpoint_id`,
+  and returns the current `state`.
 - Before its first call to a `url`, the server MUST verify the `url` with the
   [endpoint verification](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/extensions/endpoint-verification.md)
   of Standard Webhooks. `state` is `"verifying"` until the `url` passes.
 - The server sends the verification after the `push_register` result, which
   carries the `endpoint_id` that the answer needs.
-- `state` is `"failing"` while verification or calls fail.
+- The body of a verification is a `webhook` notification with only `server`
+  and `you`.
+- Servers SHOULD retry a verification that fails. Server policy decides when.
+- Registering again verifies the `url` again when `state` is `"verifying"` or
+  `"failing"`.
+- `state` is `"failing"` once the server stops retrying a verification or a
+  call that fails.
+- `state` is `"paused"` while server policy stops the calls, such as when the
+  account's owner pauses them.
+- `error` (optional) says why the last verification, call, or frame in a
+  response failed. It MAY come with any `state`.
 
 Wake:
 
@@ -2475,17 +2488,23 @@ Calls:
   `application/json`.
 - With the `format` `"full"`, a call carries the records that matched, in
   `log_id` order. One call MAY carry several.
-- With `"knock"`, a call carries no records. It covers every record that was
-  committed before the server sent it.
+- With `"knock"`, a call carries no records, and none of `wake`, `rooms`,
+  `joined`, `left`, and `users`. It covers every record that was committed
+  before the server sent it.
 - Servers SHOULD send each `reply_to` as a full snapshot
   ([§3.5.4](#354-references)).
-- The user objects of a call carry their `roles` ([§3.3.4](#334-roles)).
+- The user objects of a call carry their `roles` ([§3.3.4](#334-roles)), each
+  record's `from` included.
+- `since` is the `last_log_id` or `latest_log_id` of the last earlier call
+  that carried one.
+- When `since` is absent, or is not where the account last read, the account
+  reads `history` from its place ([§4.3.5](#435-replay-and-recovery)).
 - `token` (optional) is a short-lived bearer token for the account. The
   account MAY sign in with it ([§3.2.1](#321-bearer-tokens)) until
   `token_expires`, such as to answer the call. It does not replace any
   existing long-lived tokens.
-- When `since` is absent, or is not where the account last read, the account
-  reads `history` from its place ([§4.3.5](#435-replay-and-recovery)).
+- An `auth` with the call's `token` returns no `token`. Servers MAY close a
+  connection that signed in with it after `token_expires`.
 - The server signs each call and each verification with the Standard Webhooks
   scheme `v2a` (Ed25519), and `endpoint_id` as the endpoint ID. While its
   `signature_keys` change, it signs with each of them.
@@ -2495,10 +2514,14 @@ Responses:
 
 - A call succeeds when the `url` answers 2xx within 30 seconds. Any other
   outcome is a failure.
-- The body of a 2xx MAY hold request frames, one a line, as on a byte-stream
-  transport ([§1](#1-transport--framing)).
+- The body of a 2xx MAY hold frames, requests or notifications, one a line,
+  as on a byte-stream transport ([§1](#1-transport--framing)).
 - The server runs them in order as the account, and sends no results. It
-  deduplicates them as any request ([§1.2](#12-retries-and-deduplication)).
+  deduplicates requests as any request
+  ([§1.2](#12-retries-and-deduplication)).
+- If the call carried a `token`, the frames can do only what the `token`
+  allows. A frame that the `token` does not allow, or that fails, sets
+  `error`.
 
 ### 4.10 WebAuthn authentication
 
