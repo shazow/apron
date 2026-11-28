@@ -65,12 +65,16 @@ PROTOCOL.md's front matter (`version`, `updated`) matches it.
 
 ### Breaking
 
-- **Push configuration moves into each kind:** Clients read the wake scopes from the `wake` of each kind in `server.push`, and the VAPID key from `webpush.vapid_key`, so that each kind can support its own scopes. Servers MAY still send `server.push.wake` and `webpush.key` for clients of version 10, and refuse a `wake` that selects no scope that they support for the kind with `invalid_params`, where an empty `wake` used to wake for nothing. [§4.9](PROTOCOL.md#49-push), [§4.9.2](PROTOCOL.md#492-wake), [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
-- **`relay` and `badge` retire:** Native apps that registered `relay` register `webpush` with their own Web Push endpoint instead. `badge` worked only through relays, so every push now carries a message, and servers send no push for a message that `mute` or a chosen `dnd` silences. [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
+- **Push configuration moves into each kind:** Servers advertise each kind's wake scopes as `wake` in its configuration in `server.push`, and the VAPID key as `webpush.vapid_key`, so that each kind can support its own scopes. Clients read them there, since servers MAY leave out `server.push.wake` and `webpush.key`, and send a `wake` that selects a scope that the server supports for the kind and the user: servers refuse any other `wake`, an empty one included, with `invalid_params`. [§4.9](PROTOCOL.md#49-push), [§4.9.2](PROTOCOL.md#492-wake), [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
+- **`relay` and `badge` retire:** Native apps that registered `relay` register `webpush` instead, and clients get no more pushes that only update `unread`, since `badge` worked only through relays. Every push now carries `message`, and servers send no push for a message that `mute` or a chosen `dnd` silences. [§4.9.2](PROTOCOL.md#492-wake), [§4.9.3](PROTOCOL.md#493-web-push) ([#143](https://github.com/shazow/apron/pull/143))
 
 ### New
 
-- **Bots run on webhooks:** Bots and other accounts that run only when called can register the push kind `webhook`, where server policy allows, and wake for every record of their rooms with the new scope `records`, so that they keep no connection open. Servers that offer it verify the URL first, then POST the records, or only a knock, in signed Standard Webhooks calls that can carry a short-lived token, and run the request frames that the account answers with. [§4.9.4](PROTOCOL.md#494-webhook), [§4.9.1](PROTOCOL.md#491-registration), [§4.9.2](PROTOCOL.md#492-wake), [§5.5](PROTOCOL.md#55-network-privacy-and-server-requests) ([#143](https://github.com/shazow/apron/pull/143))
+- **Bots run on webhooks:** Bots and other accounts that run only when called can register the push kind `webhook`, where server policy allows, and wake for every record of their rooms with the new scope `records`, so that they keep no connection open. Servers that offer it verify the `url` first, then POST the matching records, or only a knock, as `webhook` notifications signed with Standard Webhooks' `v2a`, and run the frames that a 2xx answer holds as the account, within what the call's short-lived `token` allows. [§4.9.4](PROTOCOL.md#494-webhook), [§4.9.1](PROTOCOL.md#491-registration), [§4.9.2](PROTOCOL.md#492-wake), [§5.5](PROTOCOL.md#55-network-privacy-and-server-requests) ([#143](https://github.com/shazow/apron/pull/143))
+
+### Clarified
+
+- **One registration for each URL, of any kind:** Servers keep one registration for each of a user's `url`s, so that registering a `url` again replaces its registration, also one of another kind. [§4.9.1](PROTOCOL.md#491-registration) ([#143](https://github.com/shazow/apron/pull/143))
 
 ## v10 (2026-11-16)
 
